@@ -1,0 +1,14 @@
+[package]
+name = "takusu-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+
+cpal = "0.17.3"
+
+whisper-rs = "0.16.0"
+hf-hub = { version = "0.5.0", features = ["rustls-tls", "tokio"], default-features = false }
