@@ -2,6 +2,8 @@
   description = "A full Rust flake";
 
   inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -63,14 +65,26 @@
           };
 
           devShells.default = pkgs.mkShell {
-            buildInputs = with pkgs; [
+            nativeBuildInputs = with pkgs; [
               cargo-expand
               cargo-nextest
-
               rust-bin
-
               pkg-config
+              cmake
+              stdenv.cc
+              mold
             ];
+
+            buildInputs = with pkgs; [
+              alsa-lib
+              libpulseaudio
+              libclang
+            ];
+
+            shellHook = ''
+              export LIBCLANG_PATH=${pkgs.libclang.lib}/lib
+              export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${pkgs.stdenv.cc}/bin/cc
+            '';
           };
         };
     };
