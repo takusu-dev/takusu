@@ -64,12 +64,12 @@
 
           devShells.default = pkgs.mkShell {
             buildInputs = with pkgs; [
-              z3
-
               cargo-expand
               cargo-nextest
 
               rust-bin
+
+              pkg-config
             ];
           };
         };

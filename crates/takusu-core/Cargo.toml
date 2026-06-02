@@ -8,3 +8,13 @@ repository.workspace = true
 [dependencies]
 thiserror.workspace = true
 jiff.workspace = true
+rand.workspace = true
+rustc-hash.workspace = true
+rayon.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "plan"
+harness = false

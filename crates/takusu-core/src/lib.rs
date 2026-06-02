@@ -1,114 +1,445 @@
+//! # takusu-core — schedule planner
+//!
+//! ユーザーのタスク集合から自動スケジュールを構築するコアライブラリ。
+//! 焼きなまし法 (SA) + 大規模近傍探索 (LNS) + Tabu Search で最適化する。
+//!
+//! ## 概要
+//!
+//! ```no_run
+//! use takusu_core::{Planner, NormalDist, Point, SleepConfig, Task};
+//! use jiff::Timestamp;
+//!
+//! let mut planner = Planner::new(Point::now(5), SleepConfig::disabled());
+//!
+//! // 軽量なタスク追加
+//! let task_id = planner.add(Task {
+//!     id: 0,
+//!     start: Some(Point::from_raw(0)),
+//!     end: Point::from_raw(100),
+//!     cost_estimate: NormalDist::new(10, 2),
+//!     depends: vec![],
+//!     parallelizable: false,
+//!     allows_parallel: false,
+//!     abandonability: 0.5,
+//! }).unwrap();
+//!
+//! let plan = planner.plan();
+//! if let Some(start) = plan.task_start(task_id) {
+//!     println!("task {task_id} starts at slot {}", start.0);
+//! }
+//! ```
+//!
+//! ## 時間の単位
+//!
+//! すべての時間は `Point` (i64) で表現する。
+//! 1 単位 = 5 分。`Point::from_timestamp(ts, 5)` で jiff の Timestamp から変換。
+//! `Point::from_raw(n)` でスロット値から直接生成。
+//!
+//! ## 睡眠
+//!
+//! `SleepConfig::recommended()` で 22:00-06:00 (8時間) の標準設定が得られる。
+//! `SleepConfig::disabled()` で睡眠制約なし。
+
+mod anneal;
+mod evaluate;
+mod solver;
+
 use jiff::Timestamp;
 use thiserror::Error;
 
+// ── Point ────────────────────────────────────────────────────────────
+
+/// 離散時間点。1単位 = 5分。
+///
+/// `Point(i64)` で、`i64` はエポックからの 5 分スロット数。
+/// `Point(0)` が Timestamp(0) = UNIX エポック。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Point(i64);
+pub struct Point(pub i64);
 
 impl Point {
+    /// jiff の `Timestamp` から `per` 分単位の Point に変換。
+    /// 通常 `per` は 5。
     pub fn from_timestamp(ts: Timestamp, per: u16) -> Point {
         Point(ts.as_second() / per as i64 / 60)
     }
 
+    /// 現在時刻の Point。
+    pub fn now(per: u16) -> Self {
+        Self::from_timestamp(Timestamp::now(), per)
+    }
+
+    /// スロット値から Point を生成。`Point::from_raw(12)` = 60 分後。
+    pub fn from_raw(n: i64) -> Self {
+        Point(n)
+    }
+
+    /// 絶対値の差 (符号なし)。
     pub fn diff(lhs: Point, rhs: Point) -> i64 {
         (lhs.0 - rhs.0).abs()
     }
 
-    pub fn now(per: u16) -> Self {
-        Self::from_timestamp(Timestamp::now(), per)
+    /// 符号付きの差。`lhs - rhs`。前後関係の判定に使う。
+    pub fn delta(lhs: Point, rhs: Point) -> i64 {
+        lhs.0 - rhs.0
     }
 }
 
-/// start <= task < end
-#[derive(Debug, Clone)]
-pub struct Task {
-    pub id: usize, // takusu-serveで適宜nanoidと変換してもらう
-
-    pub start: Option<Point>,
-    pub end: Point,
-
-    pub cost_estimate: NormalDist, // 初期の実装ではavgだけ考えればいい
-
-    pub depends: Vec<usize>,
-    // TODO: pluginable, parallelとか
+impl std::ops::Add<i64> for Point {
+    type Output = Point;
+    fn add(self, rhs: i64) -> Point {
+        Point(self.0 + rhs)
+    }
 }
 
-impl Task {}
+impl std::ops::Sub<i64> for Point {
+    type Output = Point;
+    fn sub(self, rhs: i64) -> Point {
+        Point(self.0 - rhs)
+    }
+}
 
-#[derive(Debug, Clone)]
+// ── NormalDist ────────────────────────────────────────────────────────
+
+/// 正規分布（平均と標準偏差）。タスクの所要時間見積りに使う。
+///
+/// - `sigma = 0`: 確定タスク（予定など）
+/// - `sigma` 大: 不安定なタスク。後ろにバッファが取られる
+///
+/// `avg`/`sigma` の単位は 5 分スロット数。
+#[derive(Debug, Clone, Copy)]
 pub struct NormalDist {
     pub avg: u64,
     pub sigma: u64,
 }
 
-#[derive(Debug)]
-pub struct Planner {
-    tasks: Vec<Task>,
-    now: Point,
+impl NormalDist {
+    /// `avg` スロット、`sigma` スロットの正規分布。
+    pub fn new(avg: u64, sigma: u64) -> Self {
+        Self { avg, sigma }
+    }
 }
 
-#[derive(Debug)]
+// ── SleepConfig ───────────────────────────────────────────────────────
+
+/// 睡眠設定。
+///
+/// 一日の基点 (`day_start`) からの相対スロット数で睡眠時間帯を指定する。
+/// 例: `day_start=0` (0:00基点), `start=264` (22:00), `end=360` (翌6:00) → 8時間睡眠。
+#[derive(Debug, Clone, Copy)]
+pub struct SleepConfig {
+    /// 一日の基点 (エポックからのスロット)。通常 0。
+    pub day_start: i64,
+    /// 睡眠開始 (基点からの相対スロット)。
+    pub start: i64,
+    /// 睡眠終了 (基点からの相対スロット)。end > start。
+    pub end: i64,
+}
+
+impl SleepConfig {
+    /// 推奨設定: 22:00–06:00 (8時間), 一日は 0:00 基点。
+    pub fn recommended() -> Self {
+        Self {
+            day_start: 0,
+            start: 264, // 22 * 12
+            end: 360,   // 30 * 12 = 6:00 next day
+        }
+    }
+
+    /// 睡眠制約なし (遠い未来に睡眠を置くことで実質無効化)。
+    pub fn disabled() -> Self {
+        Self {
+            day_start: 0,
+            start: 1_000_000,
+            end: 2_000_000,
+        }
+    }
+}
+
+impl Default for SleepConfig {
+    fn default() -> Self {
+        Self::disabled()
+    }
+}
+
+// ── Task ──────────────────────────────────────────────────────────────
+
+/// プランナーに渡すタスク。
+///
+/// タスクは 5 分スロットに離散化された時間軸上に配置される。
+/// `start <= task < end`。
+#[derive(Debug, Clone)]
+pub struct Task {
+    /// タスク ID。add_task 時に自動設定されるが、外部で管理したい場合は任意の値。
+    pub id: usize,
+
+    /// 開始可能時間。None の場合は即時開始可能。
+    pub start: Option<Point>,
+
+    /// 締切。この時刻までに終了している必要がある。
+    pub end: Point,
+
+    /// 所要時間の見積り (正規分布)。
+    pub cost_estimate: NormalDist,
+
+    /// 依存タスクの ID リスト。これらのタスクがすべて終了してから開始可能。
+    pub depends: Vec<usize>,
+
+    /// 他のタスク実行中でも実行可能か (例: スマホでできるタスク)。
+    pub parallelizable: bool,
+
+    /// このタスク実行中に他のタスクの並行実行を許すか (例: 電車移動)。
+    pub allows_parallel: bool,
+
+    /// 諦めやすさ [0.0, 1.0]。大きいほど諦められやすい。
+    /// 全タスクが収まらない場合、この値が大きいタスクからドロップされる。
+    pub abandonability: f64,
+}
+
+// ── Plan ──────────────────────────────────────────────────────────────
+
+/// プランナーの出力。タスクの割り当て結果。
+///
+/// タスクは常に全数スケジュールされる。
+/// `abandonability` が高いタスクは deadline 超過が許容されるが、諦められない。
+#[derive(Debug, Clone)]
 pub struct Plan {
-    // start <= (task) <= end , id
+    /// スケジュールされたタスク。各要素は `(開始slot, 終了slot, task_id)`。
     pub schedules: Vec<(Point, Point, usize)>,
 }
 
+impl Plan {
+    /// タスクの開始時刻。
+    pub fn task_start(&self, task_id: usize) -> Option<Point> {
+        self.schedules
+            .iter()
+            .find(|(_, _, id)| *id == task_id)
+            .map(|(s, _, _)| *s)
+    }
+
+    /// タスクの終了時刻。
+    pub fn task_end(&self, task_id: usize) -> Option<Point> {
+        self.schedules
+            .iter()
+            .find(|(_, _, id)| *id == task_id)
+            .map(|(_, e, _)| *e)
+    }
+
+    /// タスクがスケジュールされているか（常に true のはず）。
+    pub fn is_scheduled(&self, task_id: usize) -> bool {
+        self.schedules.iter().any(|(_, _, id)| *id == task_id)
+    }
+}
+
+// ── Error ─────────────────────────────────────────────────────────────
+
+/// プランナーのエラー。
 #[derive(Debug, Error)]
 pub enum Error {
+    /// 開始可能時刻が締切より後。
     #[error("The start is {0:?} but the end is {1:?} which is earlier than the start")]
     LateStart(Point, Point),
 }
 
 type ResultE<T> = Result<T, Error>;
 
-// 基本的に焼きなまし法?
-// 期限が過ぎているやつがあったら最優先
-// freenessを計算して低いやつから
-// あとグラフを解析する
+// ── Planner ───────────────────────────────────────────────────────────
+
+/// スケジュールプランナー。タスクを登録して `plan()` でスケジュールを得る。
+///
+/// ## 使用例
+///
+/// ```
+/// use takusu_core::{Planner, Task, NormalDist, Point, SleepConfig};
+///
+/// let mut p = Planner::new(Point::from_raw(0), SleepConfig::disabled());
+///
+/// p.add(Task {
+///     id: 0,
+///     start: Some(Point::from_raw(0)),
+///     end: Point::from_raw(20),
+///     cost_estimate: NormalDist::new(5, 0),
+///     depends: vec![],
+///     parallelizable: false,
+///     allows_parallel: false,
+///     abandonability: 0.5,
+/// }).unwrap();
+///
+/// let plan = p.plan();
+/// assert!(plan.is_scheduled(0));
+/// ```
+#[derive(Debug)]
+pub struct Planner {
+    tasks: Vec<Task>,
+    now: Point,
+    per: u16,
+    sleep: SleepConfig,
+}
+
 impl Planner {
-    pub fn new(now: Point) -> Self {
-        Self { tasks: vec![], now }
+    /// 新しいプランナーを作成。
+    ///
+    /// - `now`: 現在時刻 (これより前にタスクを配置しない)
+    /// - `sleep`: 睡眠設定。`SleepConfig::recommended()` または `SleepConfig::disabled()`
+    pub fn new(now: Point, sleep: SleepConfig) -> Self {
+        Self {
+            tasks: vec![],
+            now,
+            per: 5,
+            sleep,
+        }
     }
 
-    // the higher, the freer(so can be delayed)
-    fn freeness(&self, id: usize) -> f64 {
-        1. - (self.tasks[id].cost_estimate.avg as f64
-            / Point::diff(
-                self.tasks[id]
-                    .start
-                    .or(Some(Point(0)))
-                    .unwrap()
-                    .max(self.now),
-                self.tasks[id].end,
-            ) as f64)
-    }
-
-    pub fn add_task(
-        &mut self,
-        start: Option<Point>,
-        end: Point,
-        cost_estimate: NormalDist,
-        depends: Vec<usize>,
-    ) -> ResultE<usize> {
+    /// タスクを登録。戻り値は登録されたタスク ID (= `self.tasks.len() - 1`)。
+    ///
+    /// `task.id` は内部的に上書きされる。外部で ID を管理したい場合は
+    /// `add()` の戻り値を保持すること。
+    pub fn add(&mut self, task: Task) -> ResultE<usize> {
         let id = self.tasks.len();
 
-        if let Some(start) = start
-            && start > end
+        if let Some(start) = task.start
+            && start > task.end
         {
-            return Err(Error::LateStart(start, end));
+            return Err(Error::LateStart(start, task.end));
         }
 
-        self.tasks.push(Task {
-            id,
-            start,
-            end,
-            cost_estimate,
-            depends,
-        });
+        self.tasks.push(Task { id, ..task });
 
         Ok(id)
     }
 
+    /// スケジュールを計算して返す。
+    ///
+    /// 内部では 4 本の独立 SA チェーンを並列実行し最良解を選択する。
+    /// deadline 超過タスクは `abandonability` の高い順に自動ドロップされる。
     pub fn plan(&self) -> Plan {
-        todo!()
+        solver::solve(self)
+    }
+
+    /// 登録された全タスクを返す。
+    pub fn tasks(&self) -> &[Task] {
+        &self.tasks
+    }
+
+    pub(crate) fn freeness(&self, id: usize) -> f64 {
+        1. - (self.tasks[id].cost_estimate.avg as f64
+            / Point::diff(
+                self.tasks[id].start.unwrap_or(Point(0)).max(self.now),
+                self.tasks[id].end,
+            ) as f64)
+    }
+}
+
+impl Default for Planner {
+    fn default() -> Self {
+        Self::new(Point(0), SleepConfig::disabled())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn planner_simple_two_tasks() {
+        let mut p = Planner::default();
+        let _a = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(5),
+                cost_estimate: NormalDist::new(1, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+        let b = p
+            .add(Task {
+                id: 1,
+                start: Some(Point(0)),
+                end: Point(5),
+                cost_estimate: NormalDist::new(1, 2),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+
+        let plan = p.plan();
+        assert_eq!(plan.schedules.len(), 2);
+        assert!(plan.task_end(b).unwrap().0 <= 5);
+    }
+
+    #[test]
+    fn planner_sleep_avoided() {
+        let mut p = Planner::new(
+            Point(0),
+            SleepConfig {
+                day_start: 0,
+                start: 0,
+                end: 96,
+            },
+        );
+        p.add(Task {
+            id: 0,
+            start: Some(Point(0)),
+            end: Point(200),
+            cost_estimate: NormalDist::new(10, 0),
+            depends: vec![],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+        })
+        .unwrap();
+
+        let plan = p.plan();
+        let sleep_occupied: i64 = plan
+            .schedules
+            .iter()
+            .filter(|(s, e, _)| s.0 < 96 && e.0 > 0)
+            .map(|(s, e, _)| {
+                let o_start = s.0.max(0);
+                let o_end = e.0.min(96);
+                (o_end - o_start).max(0)
+            })
+            .sum();
+
+        assert!(sleep_occupied < 96);
+    }
+
+    #[test]
+    fn planner_deadline_miss_still_scheduled() {
+        let mut p = Planner::default();
+        p.add(Task {
+            id: 0,
+            start: Some(Point(0)),
+            end: Point(0),
+            cost_estimate: NormalDist::new(5, 0),
+            depends: vec![],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.9,
+        })
+        .unwrap();
+
+        let plan = p.plan();
+        assert!(
+            plan.is_scheduled(0),
+            "task should be scheduled even if deadline is impossible. schedules={:?}",
+            plan.schedules
+        );
+    }
+
+    #[test]
+    fn plan_convenience_methods() {
+        let plan = Plan {
+            schedules: vec![(Point(1), Point(3), 42)],
+        };
+        assert_eq!(plan.task_start(42), Some(Point(1)));
+        assert_eq!(plan.task_end(42), Some(Point(3)));
+        assert!(plan.is_scheduled(42));
+        assert!(!plan.is_scheduled(99));
     }
 }
