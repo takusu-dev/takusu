@@ -57,7 +57,10 @@ impl NWeekday {
     }
 
     pub fn nth(n: i8, weekday: Weekday) -> Self {
-        Self { n: Some(n), weekday }
+        Self {
+            n: Some(n),
+            weekday,
+        }
     }
 }
 

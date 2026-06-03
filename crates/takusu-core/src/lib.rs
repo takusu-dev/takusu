@@ -45,6 +45,7 @@ mod evaluate;
 mod solver;
 
 use jiff::Timestamp;
+use rustc_hash::FxHashSet;
 use thiserror::Error;
 
 // ── Point ────────────────────────────────────────────────────────────
@@ -230,6 +231,17 @@ impl Plan {
     }
 }
 
+// ── RescheduleRange ───────────────────────────────────────────────────
+
+/// 部分再スケジュールの期間指定。
+#[derive(Debug, Clone, Copy)]
+pub struct RescheduleRange {
+    /// 期間の開始 (このスロット以降に開始されるタスクが再スケジュール対象)。
+    pub from: Point,
+    /// 期間の終了 (このスロット以前に終了されるタスクが再スケジュール対象)。
+    pub until: Point,
+}
+
 // ── Error ─────────────────────────────────────────────────────────────
 
 /// プランナーのエラー。
@@ -314,6 +326,55 @@ impl Planner {
     /// deadline 超過ペナルティが軽減されるが、ドロップはされない。
     pub fn plan(&self) -> Plan {
         solver::solve(self)
+    }
+
+    /// 固定タスクを保持したまま未固定タスクをスケジュール。
+    ///
+    /// `pinned` に含まれるタスクは指定位置に固定され、近傍操作の対象外。
+    /// 未固定タスクのみがSAで配置される。評価関数は固定・未固定両方を考慮する。
+    pub fn plan_partial(&self, pinned: &[(Point, Point, usize)]) -> Plan {
+        solver::solve_partial(self, pinned)
+    }
+
+    /// 指定期間内のタスクのみ再スケジュール。
+    ///
+    /// `current_schedule` に含まれるタスクのうち、期間外のものを固定とみなす。
+    /// `pinned` に追加で固定したいタスクも指定できる。
+    /// 期間内 (`range.from <= start` かつ `end <= range.until`) のタスクのみがSAで再配置される。
+    pub fn plan_in_range(
+        &self,
+        range: &RescheduleRange,
+        current_schedule: &[(Point, Point, usize)],
+        extra_pinned: &[usize],
+    ) -> Plan {
+        let mut pinned: Vec<(Point, Point, usize)> = Vec::new();
+        let mut pinned_ids: FxHashSet<usize> = extra_pinned.iter().copied().collect();
+
+        for (s, e, id) in current_schedule {
+            let out_of_range = e.0 <= range.from.0 || s.0 >= range.until.0;
+            if out_of_range || extra_pinned.contains(id) {
+                pinned.push((*s, *e, *id));
+                pinned_ids.insert(*id);
+            }
+        }
+
+        let mut sub_planner = Planner::new(self.now, self.sleep);
+        for task in &self.tasks {
+            if !pinned_ids.contains(&task.id) {
+                let mut t = task.clone();
+                t.id = sub_planner.tasks.len();
+                sub_planner.add(t).ok();
+            }
+        }
+
+        let sub_plan = solver::solve_partial(&sub_planner, &[]);
+
+        let mut schedules = pinned;
+        for (s, e, sub_id) in &sub_plan.schedules {
+            let orig_id = sub_planner.tasks[*sub_id].id;
+            schedules.push((*s, *e, orig_id));
+        }
+        Plan { schedules }
     }
 
     /// 登録された全タスクを返す。
@@ -442,5 +503,112 @@ mod tests {
         assert_eq!(plan.task_end(42), Some(Point(3)));
         assert!(plan.is_scheduled(42));
         assert!(!plan.is_scheduled(99));
+    }
+
+    #[test]
+    fn plan_partial_keeps_pinned() {
+        let mut p = Planner::default();
+        let a = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(20),
+                cost_estimate: NormalDist::new(3, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+        let _b = p
+            .add(Task {
+                id: 1,
+                start: Some(Point(0)),
+                end: Point(20),
+                cost_estimate: NormalDist::new(3, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+
+        let pinned = vec![(Point(0), Point(3), a)];
+        let plan = p.plan_partial(&pinned);
+
+        let pinned_start = plan.task_start(a).unwrap();
+        let pinned_end = plan.task_end(a).unwrap();
+        assert_eq!(
+            pinned_start,
+            Point(0),
+            "pinned task start should be unchanged"
+        );
+        assert_eq!(pinned_end, Point(3), "pinned task end should be unchanged");
+        assert_eq!(plan.schedules.len(), 2, "all tasks should be scheduled");
+    }
+
+    #[test]
+    fn plan_partial_no_pinned_equals_plan() {
+        let mut p = Planner::default();
+        p.add(Task {
+            id: 0,
+            start: Some(Point(0)),
+            end: Point(10),
+            cost_estimate: NormalDist::new(2, 0),
+            depends: vec![],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+        })
+        .unwrap();
+
+        let plan_full = p.plan();
+        let plan_partial = p.plan_partial(&[]);
+        assert_eq!(
+            plan_partial.schedules.len(),
+            plan_full.schedules.len(),
+            "plan_partial with no pinned should schedule all tasks"
+        );
+    }
+
+    #[test]
+    fn plan_in_range_reschedules_within_range() {
+        let mut p = Planner::default();
+        let _a = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(50),
+                cost_estimate: NormalDist::new(5, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+        let _b = p
+            .add(Task {
+                id: 1,
+                start: Some(Point(50)),
+                end: Point(100),
+                cost_estimate: NormalDist::new(5, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+
+        let current = p.plan();
+        let range = RescheduleRange {
+            from: Point(0),
+            until: Point(50),
+        };
+        let replanned = p.plan_in_range(&range, &current.schedules, &[]);
+        assert_eq!(
+            replanned.schedules.len(),
+            2,
+            "all tasks should be scheduled"
+        );
     }
 }

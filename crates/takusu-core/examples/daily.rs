@@ -54,8 +54,8 @@ fn main() {
         planner
             .add(Task {
                 id: 0,
-                start: Some(Point(72)), // 06:00 以降
-                end: Point(96),         // 08:00 までに
+                start: Some(Point(72)),               // 06:00 以降
+                end: Point(96),                       // 08:00 までに
                 cost_estimate: NormalDist::new(6, 1), // 30分 ±5分
                 depends: vec![],
                 parallelizable: false,
@@ -72,7 +72,7 @@ fn main() {
             .add(Task {
                 id: 0,
                 start: Some(Point(72)),
-                end: Point(192), // 16:00 までに
+                end: Point(192),                       // 16:00 までに
                 cost_estimate: NormalDist::new(12, 3), // 60分 ±15分
                 depends: vec![],
                 parallelizable: false,
@@ -103,8 +103,8 @@ fn main() {
     let survey_id = planner
         .add(Task {
             id: 0,
-            start: Some(Point(96)), // 08:00 以降
-            end: Point(168),        // 14:00 までに
+            start: Some(Point(96)),                // 08:00 以降
+            end: Point(168),                       // 14:00 までに
             cost_estimate: NormalDist::new(18, 1), // 90分 ±5分
             depends: vec![],
             parallelizable: false,
@@ -152,8 +152,8 @@ fn main() {
         planner
             .add(Task {
                 id: 0,
-                start: Some(Point(168)), // 14:00 以降
-                end: Point(264),         // 22:00 までに
+                start: Some(Point(168)),               // 14:00 以降
+                end: Point(264),                       // 22:00 までに
                 cost_estimate: NormalDist::new(12, 4), // 60分 ±20分
                 depends: vec![list_id],
                 parallelizable: false,
@@ -280,7 +280,12 @@ fn main() {
                 (Some(de), Some(ss)) if de <= ss => "✓",
                 _ => "✗",
             };
-            println!("  {} {} → {}  ({} ends {}, starts {})", ok, from, to, from,
+            println!(
+                "  {} {} → {}  ({} ends {}, starts {})",
+                ok,
+                from,
+                to,
+                from,
                 dep_end.map(|p| fmt_time(p.0)).unwrap_or_default(),
                 self_start.map(|p| fmt_time(p.0)).unwrap_or_default(),
             );
@@ -300,8 +305,7 @@ fn main() {
             let b_name = name_of(&ids, b_id);
             let task_a = &tasks[*a_id];
             let task_b = &tasks[*b_id];
-            let parallel_ok =
-                (task_a.allows_parallel && task_b.parallelizable)
+            let parallel_ok = (task_a.allows_parallel && task_b.parallelizable)
                 || (task_b.allows_parallel && task_a.parallelizable);
             let mark = if parallel_ok { "✓" } else { "⚠" };
             println!(

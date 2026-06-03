@@ -172,8 +172,13 @@ mod tests {
     #[test]
     fn weekday_roundtrip() {
         for wd in [
-            Weekday::Mon, Weekday::Tue, Weekday::Wed,
-            Weekday::Thu, Weekday::Fri, Weekday::Sat, Weekday::Sun,
+            Weekday::Mon,
+            Weekday::Tue,
+            Weekday::Wed,
+            Weekday::Thu,
+            Weekday::Fri,
+            Weekday::Sat,
+            Weekday::Sun,
         ] {
             let jiff_wd = wd.to_jiff();
             let back = Weekday::from_jiff(jiff_wd);
@@ -274,12 +279,11 @@ mod tests {
         let until = point_at(date(2025, 3, 10), &TimeOfDay::new(9, 0).unwrap(), &tz);
 
         let iter = RecurrenceGenerator::new(
-            RecurrenceRule::weekly()
-                .by_day(vec![
-                    NWeekday::every(Weekday::Mon),
-                    NWeekday::every(Weekday::Wed),
-                    NWeekday::every(Weekday::Fri),
-                ]),
+            RecurrenceRule::weekly().by_day(vec![
+                NWeekday::every(Weekday::Mon),
+                NWeekday::every(Weekday::Wed),
+                NWeekday::every(Weekday::Fri),
+            ]),
             TimeOfDay::new(9, 0).unwrap(),
             tz.clone(),
             NormalDist::new(6, 0),

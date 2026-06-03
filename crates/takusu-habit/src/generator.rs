@@ -1,11 +1,11 @@
+use jiff::ToSpan;
 use jiff::civil::Date;
 use jiff::tz::TimeZone;
-use jiff::ToSpan;
 use takusu_core::{NormalDist, Point, Task};
 
-use crate::rule::{Frequency, NWeekday, RecurrenceRule, Weekday};
-use crate::time::{date_time_to_point, date_to_day_number, point_to_date, TimeOfDay};
 use crate::GeneratedTask;
+use crate::rule::{Frequency, NWeekday, RecurrenceRule, Weekday};
+use crate::time::{TimeOfDay, date_time_to_point, date_to_day_number, point_to_date};
 
 pub struct RecurrenceGenerator {
     rule: RecurrenceRule,
@@ -73,8 +73,7 @@ impl RecurrenceGenerator {
                     date.weekday() == start_wd
                         && days_from_start % (7 * self.rule.interval as i64) == 0
                 } else {
-                    self.matches_weekday(date)
-                        && self.is_in_weekly_interval(days_from_start)
+                    self.matches_weekday(date) && self.is_in_weekly_interval(days_from_start)
                 }
             }
             Frequency::Monthly => {
@@ -112,17 +111,17 @@ impl RecurrenceGenerator {
     fn matches_weekday(&self, date: Date) -> bool {
         let jiff_wd = date.weekday();
         let our_wd = Weekday::from_jiff(jiff_wd);
-        self.rule
-            .by_day
-            .iter()
-            .any(|nw| nw.weekday == our_wd)
+        self.rule.by_day.iter().any(|nw| nw.weekday == our_wd)
     }
 
     fn matches_by_day(&self, date: Date) -> bool {
         if self.rule.by_day.is_empty() {
             return true;
         }
-        self.rule.by_day.iter().any(|nw| self.is_nth_weekday(date, nw))
+        self.rule
+            .by_day
+            .iter()
+            .any(|nw| self.is_nth_weekday(date, nw))
     }
 
     fn is_nth_weekday(&self, date: Date, nw: &NWeekday) -> bool {

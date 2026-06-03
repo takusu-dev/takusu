@@ -23,14 +23,30 @@ takusu/
 ├── Cargo.toml                # Rust workspace root
 ├── crates/
 │   ├── takusu-core/          # Core planner (data types, scheduling algorithm)
-│   │   ├── src/lib.rs        #   Public API (Point, Task, NormalDist, Planner, Plan)
+│   │   ├── src/lib.rs        #   Public API (Point, Task, NormalDist, Planner, Plan, RescheduleRange)
 │   │   ├── src/evaluate.rs   #   Evaluation function (8 components)
-│   │   ├── src/anneal.rs     #   SA + LNS + Tabu Search
-│   │   ├── src/solver.rs     #   Parallel restart + solve entry point
+│   │   ├── src/anneal.rs     #   SA + LNS + Tabu Search (full + partial)
+│   │   ├── src/solver.rs     #   Parallel restart + solve/solve_partial entry points
 │   │   ├── benches/plan.rs   #   Criterion benchmark (25 tasks)
 │   │   └── examples/daily.rs #   Example: 1-day schedule with 9 tasks
-│   ├── takusu-serve/         # REST API server (Planner server)
-│   │   └── src/main.rs       #   (placeholder: "Hello, world!")
+│   ├── takusu-serve/         # REST API server (axum + SQLite)
+│   │   ├── SPEC.md           #   API仕様書
+│   │   ├── src/
+│   │   │   ├── main.rs       #   Entry point, server startup
+│   │   │   ├── app.rs        #   Router & AppState definition
+│   │   │   ├── auth.rs       #   Bearer token auth middleware + SHA-256 hashing
+│   │   │   ├── db.rs         #   SQLite pool init & migrations
+│   │   │   ├── error.rs      #   AppError enum (NotFound/BadRequest/Unauthorized/Conflict/Internal)
+│   │   │   ├── model.rs      #   DB row structs & request/response types
+│   │   │   └── handler/
+│   │   │       ├── task.rs   #   Task CRUD + iCal import
+│   │   │       ├── habit.rs  #   Habit CRUD
+│   │   │       ├── schedule.rs # Schedule generate/reschedule/move/clear
+│   │   │       └── token.rs  #   Token issue/list/revoke
+│   │   ├── migrations/001_init.sql  # DB schema
+│   │   └── tests/integration.rs     # 16 integration tests (axum oneshot)
+│   ├── takusu-ical/          # iCalendar parser (pure, no HTTP dependency)
+│   │   └── src/lib.rs        #   parse_ical() → Vec<IcalTask>
 │   ├── takusu-audio/         # Audio processing (recording + Whisper STT)
 │   │   └── src/
 │   │       ├── lib.rs
@@ -57,22 +73,32 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `cargo check` | Type-check all crates |
 | `cargo fmt` / `treefmt` | Format code |
 | `cargo clippy` | Lint |
-| `cargo nextest run -p takusu-core` | Run 18 tests |
+| `cargo nextest run --workspace` | Run all 69 tests |
+| `cargo nextest run -p takusu-core` | Run core planner tests (23) |
+| `cargo nextest run -p takusu-serve` | Run integration tests (16) |
+| `cargo nextest run -p takusu-ical` | Run iCal parser tests (5) |
 | `cargo bench -p takusu-core` | Run benchmark (~148ms for 25 tasks) |
 | `cargo run --example daily` | Run daily schedule example |
-| `cargo test -p takusu-core --doc` | Run 2 doc-tests |
 
 ## Workspace Dependencies
 
 | Crate | Version | Used by | Notes |
 |-------|---------|---------|-------|
 | `thiserror` | 2.0 | workspace | Error derive macro |
-| `jiff` | 0.2.21 | takusu-core | Date/time handling |
+| `jiff` | 0.2.21 | takusu-core, takusu-serve | Date/time handling |
 | `rand` | 0.8 | takusu-core | RNG for SA |
 | `rustc-hash` | 2.1 | takusu-core | `FxHashSet` (faster than std) |
 | `rayon` | 1.10 | takusu-core | Parallel SA restarts |
 | `criterion` | 0.5 | takusu-core (dev) | Benchmarking |
 | `tokio` | 1.52.0 | workspace | Async runtime (full features) |
+| `axum` | 0.8 | takusu-serve | HTTP framework |
+| `sqlx` | 0.8 (sqlite) | takusu-serve | SQLite async driver |
+| `serde` / `serde_json` | 1 / 1 | takusu-serve, takusu-ical | Serialization |
+| `uuid` | 1 (v7) | takusu-serve | ID generation |
+| `sha2` | 0.10 | takusu-serve | Token hashing |
+| `tower-http` | 0.6 (cors,trace) | takusu-serve | HTTP middleware |
+| `tracing` / `tracing-subscriber` | 0.1 / 0.3 | takusu-serve | Logging |
+| `async-trait` | 0.1 | takusu-serve | Async trait |
 | `cpal` | 0.17.3 | takusu-audio | Audio input |
 | `whisper-rs` | 0.16.0 | takusu-audio | Whisper STT |
 | `hf-hub` | 0.5.0 | takusu-audio | HuggingFace model download |
@@ -89,6 +115,9 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 - **Evaluation caching**: `eval_current` / `eval_best` cached per temperature step;
   only `eval_neighbor` computed per iteration (3-4x speedup over naive)
 - **Cooling**: α=0.93, `iter_per_temp = tasks × 20`, T₀ = total_avg × 0.1
+- **Partial rescheduling**: `plan_partial(pinned)` pins tasks, optimizes the rest.
+  `plan_in_range(range, schedule, extra_pinned)` identifies out-of-range tasks
+  from current schedule and reschedules only within-range tasks.
 
 ### Evaluation Function (8 components)
 
@@ -126,6 +155,40 @@ This ensures SA gradients guide towards feasibility rather than oscillating.
 - `Point::from_timestamp(ts, 5)` for jiff conversion.
 - `Point::from_raw(n)` for direct slot value.
 - Sleep window: defined in slots relative to `day_start`. Default: 22:00–06:00.
+
+## takusu-serve API
+
+### Authentication
+
+- Root token: `TAKUSU_ROOT_TOKEN` env var (format: `tsk_` + UUID v7)
+- Issued tokens: stored as SHA-256 hash in `tokens` table
+- Any valid token can issue new tokens (trust chain)
+- Revocation is per-token, no cascade
+- All `/api/*` endpoints require `Authorization: Bearer <token>`
+- `/health` requires no auth
+
+### Endpoints
+
+See `SPEC.md` for full API specification. Summary:
+
+- **Task**: CRUD + iCal import (`/api/tasks`, `/api/tasks/import/ical`)
+- **Habit**: CRUD (`/api/habits`)
+- **Schedule**: get/generate/reschedule/move/clear (`/api/schedule/*`)
+- **Token**: issue/list/revoke (`/api/tokens`)
+
+### Testing
+
+Integration tests use `axum::Router::oneshot()` with in-memory SQLite.
+No external HTTP server needed. Run with `cargo nextest run -p takusu-serve`.
+
+### Key Architecture Decisions
+
+- **Single active schedule**: `schedules` table has one row (`id = 'active'`), UPSERT on generate
+- **Task CRUD does not auto-reschedule**: responses include `unscheduled_count`
+- **Move entry with validation**: `PATCH /api/schedule/entries/:task_id` returns 409
+  with warnings on violations; `force: true` overrides
+- **iCal import skips duplicates**: by `ical_uid` column (unique index)
+- **Token hashing**: tokens stored as SHA-256, full token only returned on creation
 
 ## Key Design Decisions (from main.typ)
 

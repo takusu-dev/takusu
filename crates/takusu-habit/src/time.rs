@@ -1,6 +1,6 @@
+use jiff::Timestamp;
 use jiff::civil::Date;
 use jiff::tz::TimeZone;
-use jiff::Timestamp;
 use takusu_core::Point;
 
 pub const SLOT_MINUTES: i64 = 5;
@@ -20,9 +20,12 @@ impl TimeOfDay {
         if hour > 23 || minute > 59 {
             return None;
         }
-// snap minute to 5-min slots
-    let snapped = (minute as i64 / SLOT_MINUTES * SLOT_MINUTES) as u8;
-        Some(Self { hour, minute: snapped })
+        // snap minute to 5-min slots
+        let snapped = (minute as i64 / SLOT_MINUTES * SLOT_MINUTES) as u8;
+        Some(Self {
+            hour,
+            minute: snapped,
+        })
     }
 
     pub fn hour(self) -> i8 {
@@ -40,11 +43,7 @@ pub fn point_to_date(point: Point, tz: &TimeZone) -> Date {
     ts.to_zoned(tz.clone()).date()
 }
 
-pub fn date_time_to_point(
-    date: Date,
-    time: &TimeOfDay,
-    tz: &TimeZone,
-) -> Option<Point> {
+pub fn date_time_to_point(date: Date, time: &TimeOfDay, tz: &TimeZone) -> Option<Point> {
     let dt = date.at(time.hour(), time.minute(), 0, 0);
     let tz_name = tz.iana_name()?;
     let zdt = dt.in_tz(tz_name).ok()?;

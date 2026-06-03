@@ -197,9 +197,7 @@ fn build_initial(planner: &Planner) -> Plan {
         }
     }
 
-    Plan {
-        schedules,
-    }
+    Plan { schedules }
 }
 
 pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
@@ -255,6 +253,202 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
     best
 }
 
+pub fn sa_lns_partial(
+    planner: &Planner,
+    pinned: &[(Point, Point, usize)],
+    rng: &mut impl Rng,
+) -> Plan {
+    if pinned.is_empty() {
+        return sa_lns(planner, rng);
+    }
+
+    let pinned_ids: FxHashSet<usize> = pinned.iter().map(|(_, _, id)| *id).collect();
+
+    let unpinned_count = planner
+        .tasks
+        .iter()
+        .filter(|t| !pinned_ids.contains(&t.id))
+        .count();
+    let task_count = planner.tasks.len().max(1);
+
+    let mut current = build_initial_partial(planner, pinned);
+    let mut best = current.clone();
+
+    let total_avg: i64 = planner
+        .tasks
+        .iter()
+        .filter(|t| !pinned_ids.contains(&t.id))
+        .map(|t| t.cost_estimate.avg as i64)
+        .sum();
+    let t0 = (total_avg as f64 * 0.1).max(1.0);
+    let alpha = 0.93;
+    let t_min = t0 * 1e-4;
+    let iter_per_temp = unpinned_count.max(1) * 20;
+
+    let mut tabu = TabuList::new(task_count * 2);
+    let mut temperature = t0;
+
+    let mut eval_current = evaluate(planner, &current, temperature, t0);
+    let mut eval_best = eval_current;
+
+    while temperature > t_min {
+        for _ in 0..iter_per_temp {
+            let neighbor = generate_neighbor_partial(planner, &current, rng, &pinned_ids);
+            let eval_neighbor = evaluate(planner, &neighbor, temperature, t0);
+
+            if is_tabu(&tabu, &neighbor) && eval_neighbor <= eval_best {
+                continue;
+            }
+
+            let delta = eval_neighbor - eval_current;
+
+            if delta > 0.0 || rng.r#gen::<f64>() < (delta / temperature).exp() {
+                mark_tabu(&mut tabu, &neighbor);
+                current = neighbor;
+                eval_current = eval_neighbor;
+
+                if eval_current > eval_best {
+                    best = current.clone();
+                    eval_best = eval_current;
+                }
+            }
+        }
+
+        temperature *= alpha;
+        eval_current = evaluate(planner, &current, temperature, t0);
+        eval_best = evaluate(planner, &best, temperature, t0);
+    }
+
+    best
+}
+
+fn build_initial_partial(planner: &Planner, pinned: &[(Point, Point, usize)]) -> Plan {
+    let pinned_ids: FxHashSet<usize> = pinned.iter().map(|(_, _, id)| *id).collect();
+
+    let mut unpinned: Vec<usize> = planner
+        .tasks
+        .iter()
+        .filter(|t| !pinned_ids.contains(&t.id))
+        .map(|t| t.id)
+        .collect();
+
+    unpinned.sort_by(|a, b| {
+        planner
+            .freeness(*a)
+            .partial_cmp(&planner.freeness(*b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut schedules: Vec<(Point, Point, usize)> = pinned.to_vec();
+
+    for task_id in unpinned {
+        let task = &planner.tasks[task_id];
+        let dur = (task.cost_estimate.avg as i64).max(1);
+
+        let earliest = compute_earliest(planner, &schedules, task);
+        if let Some((start, end)) = try_place(planner, &schedules, task, earliest, dur) {
+            schedules.push((start, end, task_id));
+        } else {
+            let last_end = schedules
+                .iter()
+                .map(|(_, e, _)| e.0)
+                .max()
+                .unwrap_or(planner.now.0);
+            let fallback_start = Point(last_end).max(planner.now);
+            let fallback_end = Point(fallback_start.0 + dur);
+            schedules.push((fallback_start, fallback_end, task_id));
+        }
+    }
+
+    Plan { schedules }
+}
+
+fn generate_neighbor_partial(
+    planner: &Planner,
+    current: &Plan,
+    rng: &mut impl Rng,
+    pinned_ids: &FxHashSet<usize>,
+) -> Plan {
+    let unpinned: Vec<usize> = current
+        .schedules
+        .iter()
+        .filter(|(_, _, id)| !pinned_ids.contains(id))
+        .map(|(_, _, id)| *id)
+        .collect();
+
+    if unpinned.is_empty() {
+        return current.clone();
+    }
+
+    let r = rng.gen_range(0..100u32) as i32;
+    let idx = rng.gen_range(0..unpinned.len());
+    let target_id = unpinned[idx];
+
+    let pos = current
+        .schedules
+        .iter()
+        .position(|(_, _, id)| *id == target_id)
+        .unwrap();
+
+    let (start, end, task_id) = current.schedules[pos];
+    let dur = end.0 - start.0;
+
+    match r {
+        0..=49 => {
+            let range = (dur / 2).max(1);
+            let k = rand_range(rng, -range, range + 1);
+            let new_start_0 = (start.0 + k).max(planner.now.0);
+            let mut new_scheds = current.schedules.to_vec();
+            new_scheds[pos] = (Point(new_start_0), Point(new_start_0 + dur), task_id);
+            Plan {
+                schedules: new_scheds,
+            }
+        }
+        50..=69 => {
+            if dur <= 1 {
+                return current.clone();
+            }
+            let delta: i64 = if rng.r#gen::<bool>() { 1 } else { -1 };
+            let new_dur = dur + delta;
+            if new_dur < 1 {
+                return current.clone();
+            }
+            let mut new_scheds = current.schedules.to_vec();
+            new_scheds[pos] = (start, Point(start.0 + new_dur), task_id);
+            Plan {
+                schedules: new_scheds,
+            }
+        }
+        _ => {
+            if unpinned.len() < 2 {
+                return current.clone();
+            }
+            let other_idx = rng.gen_range(0..unpinned.len());
+            if other_idx == idx {
+                return current.clone();
+            }
+            let other_id = unpinned[other_idx];
+            let other_pos = current
+                .schedules
+                .iter()
+                .position(|(_, _, id)| *id == other_id)
+                .unwrap();
+
+            let (a_s, a_e, a_id) = current.schedules[pos];
+            let (b_s, b_e, b_id) = current.schedules[other_pos];
+            let a_dur = a_e.0 - a_s.0;
+            let b_dur = b_e.0 - b_s.0;
+
+            let mut new_scheds = current.schedules.to_vec();
+            new_scheds[pos] = (b_s, Point(b_s.0 + a_dur), a_id);
+            new_scheds[other_pos] = (a_s, Point(a_s.0 + b_dur), b_id);
+            Plan {
+                schedules: new_scheds,
+            }
+        }
+    }
+}
+
 fn is_tabu(tabu: &TabuList, plan: &Plan) -> bool {
     plan.schedules
         .iter()
@@ -267,11 +461,7 @@ fn mark_tabu(tabu: &mut TabuList, plan: &Plan) {
     }
 }
 
-fn generate_neighbor(
-    planner: &Planner,
-    current: &Plan,
-    rng: &mut impl Rng,
-) -> Plan {
+fn generate_neighbor(planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Plan {
     let r = rng.gen_range(0..100u32) as i32;
 
     let result = match r {
@@ -411,9 +601,7 @@ fn neighbor_lns(planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Option
 
     let rebuilt = greedy_rebuild(planner, &remaining, &destroyed_ids);
 
-    Some(Plan {
-        schedules: rebuilt,
-    })
+    Some(Plan { schedules: rebuilt })
 }
 
 fn greedy_rebuild(

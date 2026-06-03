@@ -249,10 +249,7 @@ fn parallel_violation_score(planner: &Planner, schedules: &[(Point, Point, usize
     -(penalty_slots as f64) * W_PARALLEL_VIOL
 }
 
-fn inclusion_bonus(
-    _planner: &Planner,
-    schedules: &[(Point, Point, usize)],
-) -> f64 {
+fn inclusion_bonus(_planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
     schedules.len() as f64 * W_INCLUSION
 }
 
