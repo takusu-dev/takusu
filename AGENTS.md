@@ -55,8 +55,16 @@ takusu/
 │   │       ├── lib.rs
 │   │       ├── record.rs     #   (empty)
 │   │       └── transcription.rs
-│   └── google-cal/           # Google Calendar API client (reqwest + OAuth2)
-│       └── src/lib.rs        #   Client, sync(), delete_all(), OAuth2 helpers
+│   ├── takusu-client/         # HTTP client library for takusu-serve API
+│   │   └── src/lib.rs         #   Client, all request/response types
+│   ├── takusu-cli/            # CLI client (clap derive, editor-based task editing)
+│   │   └── src/
+│   │       ├── main.rs        #   CLI entry point + subcommand routing
+│   │       ├── editor.rs      #   $EDITOR-based task editing (format/parse/open)
+│   │       ├── display_rich.rs#   Table display (comfy-table + colored)
+│   │       └── display_simple.rs # Plain-text display
+│   └── google-cal/            # Google Calendar API client (reqwest + OAuth2)
+│       └── src/lib.rs         #   Client, sync(), delete_all(), OAuth2 helpers
 ├── flake.nix                 # Nix development environment
 ├── rust-toolchain.toml       # Rust toolchain config
 └── .envrc                    # direnv config
@@ -82,6 +90,7 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `cargo nextest run -p takusu-ical` | Run iCal parser tests (5) |
 | `cargo bench -p takusu-core` | Run benchmark (~148ms for 25 tasks) |
 | `cargo run --example daily` | Run daily schedule example |
+| `cargo run -p takusu-cli -- --help` | Run CLI client |
 
 ## Workspace Dependencies
 
@@ -102,7 +111,11 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `tower-http` | 0.6 (cors,trace) | takusu-serve | HTTP middleware |
 | `tracing` / `tracing-subscriber` | 0.1 / 0.3 | takusu-serve | Logging |
 | `async-trait` | 0.1 | takusu-serve | Async trait |
-| `reqwest` | 0.12 (rustls-tls) | google-cal, takusu-serve | HTTP client |
+| `reqwest` | 0.12 (rustls-tls) | google-cal, takusu-serve, takusu-client | HTTP client |
+| `clap` | 4 (derive,env) | takusu-cli | CLI argument parsing |
+| `comfy-table` | 7 | takusu-cli | Rich table display |
+| `jiff` | 0.2.21 | takusu-core, takusu-serve, takusu-cli | Date/time handling |
+| `serde` / `serde_json` | 1 / 1 | takusu-serve, takusu-ical, takusu-client | Serialization |
 | `cpal` | 0.17.3 | takusu-audio | Audio input |
 | `whisper-rs` | 0.16.0 | takusu-audio | Whisper STT |
 | `hf-hub` | 0.5.0 | takusu-audio | HuggingFace model download |
@@ -216,6 +229,27 @@ No external HTTP server needed. Run with `cargo nextest run -p takusu-serve`.
   dependencies, parallelizability, and `abandonability` (deadline flexibility).
 - **No existing README** — the design document (`main.typ`) and this file serve
   as the primary project documentation.
+
+## takusu-cli
+
+CLI client using clap derive with nested subcommands: `task`, `schedule`, `token`, `sync`.
+
+- **Display modes**: `--mode rich` (comfy-table) / `--mode simple` (plain text)
+- **Auth**: `--token` flag or `TAKUSU_TOKEN` env var
+- **Editor-based editing**: `task edit <ID>` writes task fields to a temp file,
+  opens `$EDITOR` (default `vi`), then parses the saved file and sends PATCH.
+  Lines starting with `#` are comments. Empty values are not updated.
+- **Subcommands**: `task {list,show,create,edit,update,replace,delete}`,
+  `schedule {get,generate,reschedule,move,clear}`,
+  `token {create,list,revoke}`, `sync {settings,setup,oauth-url,oauth-callback,trigger}`
+
+## takusu-client
+
+Standalone HTTP client library for takusu-serve. Reused by takusu-cli and any future client (Android Kotlin, etc.).
+
+- Types mirror server `model.rs` request/response structs (`TaskRow`, `CreateTask`, `UpdateTask`, etc.)
+- `Client` struct holds `base_url` + `token`, all methods are async
+- Error type: `ClientError { Http, Api { status, body } }` — no `thiserror` dependency
 
 ## Code Style
 
