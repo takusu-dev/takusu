@@ -1909,6 +1909,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "takusu-habit"
+version = "0.1.0"
+dependencies = [
+ "jiff",
+ "takusu-core",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "takusu-serve"
 version = "0.1.0"
 

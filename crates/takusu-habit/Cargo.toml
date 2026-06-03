@@ -1,0 +1,11 @@
+[package]
+name = "takusu-habit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+takusu-core = { path = "../takusu-core" }
+jiff.workspace = true
+thiserror.workspace = true

@@ -14,6 +14,11 @@
       inputs.nixpkgs-lib.follows = "nixpkgs";
     };
 
+    mcp-servers-nix = {
+      url = "github:natsukium/mcp-servers-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     treefmt-nix.url = "github:numtide/treefmt-nix";
     systems.url = "github:nix-systems/default";
   };
@@ -42,6 +47,22 @@
         }:
         let
           rust-bin = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+          mcp-servers = import inputs.mcp-servers-nix { inherit pkgs; };
+          mcp-config = mcp-servers.lib.mkConfig pkgs {
+            flavor = "opencode";
+            fileName = "opencode.json";
+            programs = {
+              serena = {
+                enable = true;
+                context = "agent";
+                extraPackages = [
+                  pkgs.rust-analyzer
+                  pkgs.nixd
+                ];
+              };
+              context7.enable = true;
+            };
+          };
         in
         {
           _module.args.pkgs = import inputs.nixpkgs {
@@ -84,6 +105,10 @@
             shellHook = ''
               export LIBCLANG_PATH=${pkgs.libclang.lib}/lib
               export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${pkgs.stdenv.cc}/bin/cc
+              if [ -L opencode.json ]; then
+                unlink opencode.json
+              fi
+              ln -sf ${mcp-config} opencode.json
             '';
           };
         };
