@@ -180,7 +180,8 @@ fn duration_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64
 }
 
 fn sleep_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
-    let (_day_start_epoch, sleep_start_rel, sleep_end_rel) = (
+    let slots_per_day: i64 = (24 * 60) / planner.per as i64;
+    let (day_start_epoch, sleep_start_rel, sleep_end_rel) = (
         planner.sleep.day_start,
         planner.sleep.start,
         planner.sleep.end,
@@ -192,10 +193,13 @@ fn sleep_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
         return 0.0;
     }
 
-    let mut day_start_point = Point(plan_start.0 / sleep_len * sleep_len);
+    let first_day = day_start_epoch
+        + (plan_start.0 - day_start_epoch).div_euclid(slots_per_day) * slots_per_day;
+    let mut day_start_point = Point(first_day - slots_per_day);
+
     let mut score = 0.0;
 
-    while day_start_point.0 <= plan_end.0 {
+    while day_start_point.0 + sleep_start_rel <= plan_end.0 {
         let sleep_window_start = Point(day_start_point.0 + sleep_start_rel);
         let sleep_window_end = Point(day_start_point.0 + sleep_end_rel);
 
@@ -217,7 +221,7 @@ fn sleep_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
             }
         }
 
-        day_start_point = Point(day_start_point.0 + sleep_len);
+        day_start_point = Point(day_start_point.0 + slots_per_day);
     }
 
     score
@@ -515,6 +519,64 @@ mod tests {
         assert!(
             (score_overlap - score_no).abs() < 1e-6,
             "parallel tasks should have no violation penalty. overlap={score_overlap} no={score_no}"
+        );
+    }
+
+    #[test]
+    fn sleep_recommended_nighttime_penalized() {
+        let mut p = Planner::new(Point(0), SleepConfig::recommended());
+
+        let id = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(500),
+                cost_estimate: NormalDist::new(12, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+
+        let day_plan = plan_with(vec![(Point(96), Point(108), id)]);
+        let night_plan = plan_with(vec![(Point(276), Point(288), id)]);
+
+        let day_score = evaluate(&p, &day_plan, 0.0, 1.0);
+        let night_score = evaluate(&p, &night_plan, 0.0, 1.0);
+
+        assert!(
+            day_score > night_score,
+            "Daytime should score higher than nighttime: day={day_score} night={night_score}"
+        );
+    }
+
+    #[test]
+    fn sleep_recommended_second_day() {
+        let mut p = Planner::new(Point(0), SleepConfig::recommended());
+
+        let id = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(1000),
+                cost_estimate: NormalDist::new(20, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+
+        let day2_plan = plan_with(vec![(Point(400), Point(420), id)]);
+        let night2_plan = plan_with(vec![(Point(552), Point(572), id)]);
+
+        let day2_score = evaluate(&p, &day2_plan, 0.0, 1.0);
+        let night2_score = evaluate(&p, &night2_plan, 0.0, 1.0);
+
+        assert!(
+            day2_score > night2_score,
+            "Second day afternoon should score higher than second night: day2={day2_score} night2={night2_score}"
         );
     }
 }

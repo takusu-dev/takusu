@@ -310,7 +310,8 @@ impl Planner {
     /// スケジュールを計算して返す。
     ///
     /// 内部では 4 本の独立 SA チェーンを並列実行し最良解を選択する。
-    /// deadline 超過タスクは `abandonability` の高い順に自動ドロップされる。
+    /// 全タスクがスケジュールされる。`abandonability` が高いタスクは
+    /// deadline 超過ペナルティが軽減されるが、ドロップはされない。
     pub fn plan(&self) -> Plan {
         solver::solve(self)
     }
