@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 takusu-core.workspace = true
 takusu-ical.workspace = true
+google-cal.workspace = true
 axum.workspace = true
 tokio.workspace = true
 sqlx.workspace = true

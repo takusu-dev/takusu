@@ -2,6 +2,7 @@ use axum::Router;
 use axum::middleware;
 use axum::routing::{delete, get, patch, post, put};
 use sqlx::SqlitePool;
+use std::sync::Arc;
 
 use crate::auth;
 use crate::handler;
@@ -10,6 +11,7 @@ use crate::handler;
 pub struct AppState {
     pub db: SqlitePool,
     pub root_token: String,
+    pub sync_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 pub fn app(state: AppState) -> Router {
@@ -41,6 +43,11 @@ pub fn app(state: AppState) -> Router {
         .route("/tokens", post(handler::token::create_token))
         .route("/tokens", get(handler::token::list_tokens))
         .route("/tokens/{id}", delete(handler::token::revoke_token))
+        .route("/sync/settings", get(handler::sync::get_settings))
+        .route("/sync/settings", put(handler::sync::update_settings))
+        .route("/sync/oauth/url", post(handler::sync::oauth_url))
+        .route("/sync/oauth/callback", post(handler::sync::oauth_callback))
+        .route("/sync/trigger", post(handler::sync::trigger_sync))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,

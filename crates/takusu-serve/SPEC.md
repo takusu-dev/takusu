@@ -7,7 +7,8 @@ crates/
 ├── takusu-core/       # スケジューリングコア (既存 + plan_partial/plan_in_range 追加)
 ├── takusu-serve/      # REST APIサーバー (axum + SQLite)
 ├── takusu-ical/       # iCalendarパーサー (独立クレート)
-└── takusu-audio/     # 音声処理 (既存)
+├── takusu-audio/      # 音声処理 (既存)
+└── google-cal/        # Google Calendar APIクライアント (OAuth2 + 差分同期)
 ```
 
 ## 依存クレート
@@ -22,6 +23,7 @@ crates/
 | `sha2` | トークンハッシュ |
 | `takusu-core` | スケジューリング |
 | `takusu-ical` | iCalパース |
+| `google-cal` | Google Calendar API連携 |
 | `tower-http` (cors, trace) | ミドルウェア |
 | `tracing` | ログ |
 
@@ -104,6 +106,23 @@ CREATE TABLE schedules (
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
     schedule    TEXT NOT NULL
+);
+
+CREATE TABLE google_cal_settings (
+    id            TEXT PRIMARY KEY DEFAULT 'active',
+    enabled       BOOLEAN NOT NULL DEFAULT 0,
+    calendar_id   TEXT NOT NULL DEFAULT 'primary',
+    client_id     TEXT NOT NULL DEFAULT '',
+    client_secret TEXT NOT NULL DEFAULT '',
+    refresh_token TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE google_cal_events (
+    task_id         TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    google_event_id TEXT NOT NULL,
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 ```
 
@@ -355,6 +374,171 @@ API ↔ `takusu-core` 変換:
 - `avg_minutes` / `sigma_minutes` → `NormalDist::new(avg / 5, sigma / 5)`: 分 → スロット
 - `depends` の `Vec<String>` (UUID) → `Vec<usize>` (Planner内部ID): Plannerに渡す際にインデックスにマッピング
 
+### Sync (Google Calendar連携)
+
+| メソッド | パス | 説明 |
+|---|---|---|
+| `GET` | `/api/sync/settings` | 同期設定取得 |
+| `PUT` | `/api/sync/settings` | 同期設定更新 (UPSERT) |
+| `POST` | `/api/sync/oauth/url` | OAuth2 認可URL生成 |
+| `POST` | `/api/sync/oauth/callback` | OAuth2 コールバック (refresh_token保存) |
+| `POST` | `/api/sync/trigger` | 手動同期トリガー |
+
+#### GET /api/sync/settings
+
+```json
+{
+  "enabled": false,
+  "calendar_id": "primary",
+  "client_id": "",
+  "has_client_secret": false,
+  "has_refresh_token": false
+}
+```
+
+`client_secret` と `refresh_token` はレスポンスに含まず、設定済みかどうかのブール値のみ返す。
+
+#### PUT /api/sync/settings
+
+```json
+{
+  "enabled": true,
+  "calendar_id": "primary",
+  "client_id": "xxx.apps.googleusercontent.com",
+  "client_secret": "GOCSPX-xxx",
+  "refresh_token": null
+}
+```
+
+省略したフィールドは既存値を維持 (UPSERT)。`refresh_token` は通常OAuth2コールバックで設定されるため、ここでは設定しない。
+
+#### POST /api/sync/oauth/url
+
+```json
+{
+  "redirect_uri": "https://example.com/callback"
+}
+```
+
+レスポンス:
+
+```json
+{
+  "url": "https://accounts.google.com/o/oauth2/v2/auth?..."
+}
+```
+
+ユーザーをこのURLにリダイレクトし、Google認可後にリダイレクトURIに `code` パラメータが付与される。
+
+#### POST /api/sync/oauth/callback
+
+```json
+{
+  "code": "4/0AX4X...",
+  "redirect_uri": "https://example.com/callback"
+}
+```
+
+レスポンス:
+
+```json
+{
+  "refresh_token_set": true
+}
+```
+
+認可コードをGoogleに送信し、取得したrefresh_tokenをDBに保存。事前に `PUT /api/sync/settings` で `client_id` / `client_secret` を設定しておく必要がある。
+
+#### POST /api/sync/trigger
+
+```json
+{
+  "status": "sync_triggered"
+}
+```
+
+手動で同期をトリガー。実際の同期はバックグラウンドで実行され、レスポンスは即座に返却される。
+
+### 同期アーキテクチャ
+
+#### 自動トリガー
+
+スケジュールの再計算時に自動的に同期がトリガーされる:
+
+- `POST /api/schedule/generate` — スケジュール生成後
+- `POST /api/schedule/reschedule` — 再スケジュール後
+- `PATCH /api/schedule/entries/:task_id` — タスク移動後
+- `DELETE /api/schedule` — スケジュールクリア後
+
+いずれも `tokio::spawn` でバックグラウンド実行。レスポンスは同期待たず即時返却。
+
+#### リトライ
+
+失敗時は指数バックオフで最大3回リトライ:
+
+| 試行 | 待機 |
+|---|---|
+| 1回目 | 即時 |
+| 2回目 | 5秒 |
+| 3回目 | 10秒 |
+| 4回目 | 20秒 |
+
+リトライ間で `tokio::sync::Mutex` ロックを解放し、他の同期要求をブロックしないよう設計。
+
+#### 同期ロック
+
+`AppState` の `sync_lock: Arc<Mutex<()>>` により、同時に1つの同期のみ実行可能。スケジュール操作ごとに `tokio::spawn` で同期タスクを起動するが、ロック取得後に実行されるため並行実行はされない。
+
+#### 差分ベース同期フロー
+
+1. DBから設定読み込み → `enabled=false` または `refresh_token` がなければ終了
+2. アクティブスケジュール取得:
+   - **スケジュールあり**: 各タスクの `title` / `description` をDBから取得し、`SyncEntry` 構築
+   - **スケジュールなし**: 既存のGoogle Calendarイベントを全削除し、マッピングDBもクリア
+3. `google_cal_events` テーブルから既存マッピング (`task_id → google_event_id`) を取得
+4. `Client::sync()` を呼び出し:
+   - マッピングに存在しないタスク → Google Calendarイベント作成
+   - マッピングに存在するタスク → Google Calendarイベント更新
+   - スケジュールに存在しないマッピング → Google Calendarイベント削除
+   - 更新失敗時 → 新規作成にフォールバック
+5. 結果のマッピングを `google_cal_events` に UPSERT / DELETE
+
+#### google-cal クレート
+
+`crates/google-cal/` — Google Calendar APIクライアント。HTTP依存のみ (rustls-tls)。
+
+主要型:
+
+```rust
+pub struct Client {
+    client_id, client_secret, refresh_token, calendar_id
+}
+
+pub struct SyncEntry {
+    pub task_id: String,
+    pub summary: String,
+    pub description: Option<String>,
+    pub start: String,   // ISO 8601
+    pub end: String,      // ISO 8601
+}
+
+pub struct SyncResult {
+    pub mappings: Vec<(String, String)>,  // (task_id, google_event_id)
+    pub deleted: Vec<String>,              // 削除された google_event_id
+}
+```
+
+主要メソッド:
+
+| メソッド | 説明 |
+|---|---|
+| `Client::sync(entries, existing)` | 差分同期 (作成/更新/削除) |
+| `Client::delete_all(event_ids)` | 全イベント削除 |
+| `oauth_url(client_id, redirect_uri)` | OAuth2 認可URL生成 |
+| `exchange_code(client_id, secret, code, redirect_uri)` | 認可コード→トークン交換 |
+
+イベントには `extendedProperties.private.takusuTaskId` でタスクIDを埋め込む。
+
 ## 環境変数
 
 | 変数 | デフォルト | 説明 |
@@ -411,3 +595,5 @@ impl Planner {
 1. **takusu-core**: `plan_partial` / `plan_in_range` 追加 + テスト
 2. **takusu-ical**: ICalパーサー実装
 3. **takusu-serve**: db → model → auth → handler → main の順
+4. **google-cal**: Google Calendar APIクライアント実装 (OAuth2, 差分同期)
+5. **takusu-serve (sync)**: DB マイグレーション → handler/sync.rs → scheduleハンドラにトリガー統合

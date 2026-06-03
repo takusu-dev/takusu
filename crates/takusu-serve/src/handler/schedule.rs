@@ -107,6 +107,11 @@ pub async fn generate_schedule(
     let result = sqlx::query_as::<_, ScheduleRow>("SELECT * FROM schedules WHERE id = 'active'")
         .fetch_one(&state.db)
         .await?;
+    let db = state.db.clone();
+    let lock = state.sync_lock.clone();
+    tokio::spawn(async move {
+        crate::handler::sync::run_sync_with_retry(&db, &lock).await;
+    });
     Ok(Json(result))
 }
 pub async fn reschedule(
@@ -230,6 +235,11 @@ async fn save_schedule(
     let result = sqlx::query_as::<_, ScheduleRow>("SELECT * FROM schedules WHERE id = 'active'")
         .fetch_one(&state.db)
         .await?;
+    let db = state.db.clone();
+    let lock = state.sync_lock.clone();
+    tokio::spawn(async move {
+        crate::handler::sync::run_sync_with_retry(&db, &lock).await;
+    });
     Ok(Json(result))
 }
 pub async fn move_entry(
@@ -283,6 +293,11 @@ pub async fn move_entry(
     .execute(&state.db)
     .await?;
     let entry = &entries[idx];
+    let db = state.db.clone();
+    let lock = state.sync_lock.clone();
+    tokio::spawn(async move {
+        crate::handler::sync::run_sync_with_retry(&db, &lock).await;
+    });
     if warnings.is_empty() {
         Ok(Json(serde_json::json!({
             "task_id": entry.task_id,
@@ -302,5 +317,10 @@ pub async fn clear_schedule(State(state): State<AppState>) -> Result<StatusCode,
     sqlx::query("DELETE FROM schedules WHERE id = 'active'")
         .execute(&state.db)
         .await?;
+    let db = state.db.clone();
+    let lock = state.sync_lock.clone();
+    tokio::spawn(async move {
+        crate::handler::sync::run_sync_with_retry(&db, &lock).await;
+    });
     Ok(StatusCode::NO_CONTENT)
 }

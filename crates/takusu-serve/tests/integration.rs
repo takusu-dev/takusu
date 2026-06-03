@@ -15,6 +15,7 @@ async fn setup() -> (AppState, SqlitePool) {
     let state = AppState {
         db: pool.clone(),
         root_token: ROOT_TOKEN.to_string(),
+        sync_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
     };
     (state, pool)
 }

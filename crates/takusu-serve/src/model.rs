@@ -171,3 +171,46 @@ pub struct TokenRow {
 pub struct CreateToken {
     pub label: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct GoogleCalSettingsRow {
+    pub id: String,
+    pub enabled: bool,
+    pub calendar_id: String,
+    pub client_id: String,
+    pub client_secret: String,
+    pub refresh_token: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GoogleCalSettingsResponse {
+    pub enabled: bool,
+    pub calendar_id: String,
+    pub client_id: String,
+    pub has_client_secret: bool,
+    pub has_refresh_token: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateGoogleCalSettings {
+    pub enabled: Option<bool>,
+    pub calendar_id: Option<String>,
+    pub client_id: Option<String>,
+    pub client_secret: Option<String>,
+    pub refresh_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct GoogleCalEventRow {
+    pub task_id: String,
+    pub google_event_id: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OAuthCallbackRequest {
+    pub code: String,
+    pub redirect_uri: String,
+}

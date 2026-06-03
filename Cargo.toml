@@ -27,5 +27,7 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 takusu-core = { path = "crates/takusu-core" }
 takusu-ical = { path = "crates/takusu-ical" }
+google-cal = { path = "crates/google-cal" }

@@ -42,8 +42,11 @@ takusu/
 │   │   │       ├── task.rs   #   Task CRUD + iCal import
 │   │   │       ├── habit.rs  #   Habit CRUD
 │   │   │       ├── schedule.rs # Schedule generate/reschedule/move/clear
+│   │   │       ├── sync.rs   #   Google Calendar sync settings/OAuth/trigger
 │   │   │       └── token.rs  #   Token issue/list/revoke
-│   │   ├── migrations/001_init.sql  # DB schema
+│   │   ├── migrations/
+│   │   │   ├── 001_init.sql        # DB schema
+│   │   │   └── 002_google_cal.sql  # Google Calendar settings & event mappings
 │   │   └── tests/integration.rs     # 16 integration tests (axum oneshot)
 │   ├── takusu-ical/          # iCalendar parser (pure, no HTTP dependency)
 │   │   └── src/lib.rs        #   parse_ical() → Vec<IcalTask>
@@ -52,8 +55,8 @@ takusu/
 │   │       ├── lib.rs
 │   │       ├── record.rs     #   (empty)
 │   │       └── transcription.rs
-│   └── google-cal/           # Google Calendar sync
-│       └── src/lib.rs        #   (placeholder)
+│   └── google-cal/           # Google Calendar API client (reqwest + OAuth2)
+│       └── src/lib.rs        #   Client, sync(), delete_all(), OAuth2 helpers
 ├── flake.nix                 # Nix development environment
 ├── rust-toolchain.toml       # Rust toolchain config
 └── .envrc                    # direnv config
@@ -73,8 +76,8 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `cargo check` | Type-check all crates |
 | `cargo fmt` / `treefmt` | Format code |
 | `cargo clippy` | Lint |
-| `cargo nextest run --workspace` | Run all 69 tests |
-| `cargo nextest run -p takusu-core` | Run core planner tests (23) |
+| `cargo nextest run --workspace` | Run all 68 tests |
+| `cargo nextest run -p takusu-core` | Run core planner tests |
 | `cargo nextest run -p takusu-serve` | Run integration tests (16) |
 | `cargo nextest run -p takusu-ical` | Run iCal parser tests (5) |
 | `cargo bench -p takusu-core` | Run benchmark (~148ms for 25 tasks) |
@@ -99,6 +102,7 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `tower-http` | 0.6 (cors,trace) | takusu-serve | HTTP middleware |
 | `tracing` / `tracing-subscriber` | 0.1 / 0.3 | takusu-serve | Logging |
 | `async-trait` | 0.1 | takusu-serve | Async trait |
+| `reqwest` | 0.12 (rustls-tls) | google-cal, takusu-serve | HTTP client |
 | `cpal` | 0.17.3 | takusu-audio | Audio input |
 | `whisper-rs` | 0.16.0 | takusu-audio | Whisper STT |
 | `hf-hub` | 0.5.0 | takusu-audio | HuggingFace model download |
@@ -175,6 +179,7 @@ See `SPEC.md` for full API specification. Summary:
 - **Habit**: CRUD (`/api/habits`)
 - **Schedule**: get/generate/reschedule/move/clear (`/api/schedule/*`)
 - **Token**: issue/list/revoke (`/api/tokens`)
+- **Sync**: Google Calendar settings/OAuth/trigger (`/api/sync/*`)
 
 ### Testing
 
@@ -189,6 +194,15 @@ No external HTTP server needed. Run with `cargo nextest run -p takusu-serve`.
   with warnings on violations; `force: true` overrides
 - **iCal import skips duplicates**: by `ical_uid` column (unique index)
 - **Token hashing**: tokens stored as SHA-256, full token only returned on creation
+- **Google Calendar sync is fire-and-forget**: schedule generate/reschedule/move/clear
+  triggers background sync via `tokio::spawn`. Response is returned before sync completes.
+  Sync uses a `tokio::sync::Mutex` lock to prevent concurrent runs. Failed syncs retry
+  up to 3 times with exponential backoff (5s, 10s, 20s).
+- **google-cal crate**: standalone Google Calendar API client. `Client::sync()` does
+  diff-based sync (create/update/delete against existing mappings). `Client::delete_all()`
+  removes all events. OAuth2 flow: `oauth_url()` → user authorize → `exchange_code()`.
+- **AppState has sync_lock**: `Arc<Mutex<()>>` serialized via the lock inside the retry loop
+  (lock acquired per attempt, released before sleep).
 
 ## Key Design Decisions (from main.typ)
 
@@ -212,6 +226,7 @@ No external HTTP server needed. Run with `cargo nextest run -p takusu-serve`.
 - Workspace-level dependency versions defined in root `Cargo.toml`
 - `FxHashSet` over `HashSet` for performance-critical collections
 - Edition 2024: `gen` is a reserved keyword → use `r#gen` for rand trait methods
+- **reqwest**: Use `rustls-tls` feature (not default native-tls) to avoid OpenSSL dependency
 
 ## Benchmark
 
