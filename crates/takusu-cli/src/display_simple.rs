@@ -1,5 +1,5 @@
-use takusu_client::{ScheduleEntry, TaskRow};
 use jiff::Timestamp;
+use takusu_client::{ScheduleEntry, TaskRow};
 
 pub fn display_tasks(tasks: &[TaskRow]) {
     if tasks.is_empty() {
@@ -17,10 +17,7 @@ pub fn display_tasks(tasks: &[TaskRow]) {
             _ => "[?]",
         };
         let short_id = &t.id[..8];
-        println!(
-            "{} {} {}",
-            status_marker, short_id, t.title
-        );
+        println!("{} {} {}", status_marker, short_id, t.title);
         println!(
             "   deadline: {} | est: {}min (+/-{}) | abandon: {:.1}",
             t.end_at, t.avg_minutes, t.sigma_minutes, t.abandonability
@@ -53,14 +50,7 @@ pub fn display_schedule(entries: &[ScheduleEntry], tasks: &[TaskRow]) {
         let start = fmt_simple(&e.start_at);
         let end = fmt_simple(&e.end_at);
         let dur = fmt_duration(&e.start_at, &e.end_at);
-        println!(
-            "  {:>3}. {} -- {} [{}] {}",
-            i + 1,
-            start,
-            end,
-            dur,
-            title
-        );
+        println!("  {:>3}. {} -- {} [{}] {}", i + 1, start, end, dur, title);
         println!("       id: {}", short_id);
     }
 }
@@ -71,11 +61,7 @@ pub fn display_tokens(tokens: &[takusu_client::TokenRow]) {
         return;
     }
     for t in tokens {
-        let revoked = t
-            .revoked_at
-            .as_deref()
-            .map(|_| " [REVOKED]")
-            .unwrap_or("");
+        let revoked = t.revoked_at.as_deref().map(|_| " [REVOKED]").unwrap_or("");
         println!(
             "  #{} {:8}  {}{}",
             t.id,
@@ -89,7 +75,9 @@ pub fn display_tokens(tokens: &[takusu_client::TokenRow]) {
 fn fmt_simple(iso: &str) -> String {
     iso.parse::<Timestamp>()
         .map(|ts| {
-            let zdt = ts.in_tz("UTC").unwrap_or_else(|_| ts.to_zoned(jiff::tz::TimeZone::UTC));
+            let zdt = ts
+                .in_tz("UTC")
+                .unwrap_or_else(|_| ts.to_zoned(jiff::tz::TimeZone::UTC));
             zdt.strftime("%d %H:%M").to_string()
         })
         .unwrap_or_else(|_| iso.to_string())
@@ -100,7 +88,7 @@ fn fmt_duration(start_iso: &str, end_iso: &str) -> String {
     let end: Result<Timestamp, _> = end_iso.parse();
     match (start, end) {
         (Ok(s), Ok(e)) => {
-            let secs = (e.as_second() - s.as_second()).abs() as u64;
+            let secs = (e.as_second() - s.as_second()).unsigned_abs();
             let mins = secs / 60;
             if mins >= 60 {
                 format!("{}h{}m", mins / 60, mins % 60)

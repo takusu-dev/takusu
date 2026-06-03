@@ -41,7 +41,7 @@ pub async fn generate_schedule(
         let placeholders = task_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql =
             format!("SELECT * FROM tasks WHERE id IN ({placeholders}) AND status = 'pending'");
-        let mut q = sqlx::query_as::<_, TaskRow>(&sql);
+        let mut q = sqlx::query_as::<_, TaskRow>(sqlx::AssertSqlSafe(sql.as_str()));
         for id in task_ids {
             q = q.bind(id);
         }

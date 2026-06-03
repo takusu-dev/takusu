@@ -19,7 +19,7 @@
 //! | 15%  | reorder       |
 //! | 15%  | lns (destroy+rebuild) |
 
-use rand::Rng;
+use rand::{Rng, RngExt};
 use rustc_hash::FxHashSet;
 
 use super::*;
@@ -56,7 +56,7 @@ fn rand_range(rng: &mut impl Rng, low: i64, high: i64) -> i64 {
     if high <= low {
         return low;
     }
-    rng.gen_range(low..high)
+    rng.random_range(low..high)
 }
 
 fn topological_order(planner: &Planner, active: &FxHashSet<usize>) -> Vec<usize> {
@@ -233,7 +233,7 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
 
             let delta = eval_neighbor - eval_current;
 
-            if delta > 0.0 || rng.r#gen::<f64>() < (delta / temperature).exp() {
+            if delta > 0.0 || rng.random::<f64>() < (delta / temperature).exp() {
                 mark_tabu(&mut tabu, &neighbor);
                 current = neighbor;
                 eval_current = eval_neighbor;
@@ -302,7 +302,7 @@ pub fn sa_lns_partial(
 
             let delta = eval_neighbor - eval_current;
 
-            if delta > 0.0 || rng.r#gen::<f64>() < (delta / temperature).exp() {
+            if delta > 0.0 || rng.random::<f64>() < (delta / temperature).exp() {
                 mark_tabu(&mut tabu, &neighbor);
                 current = neighbor;
                 eval_current = eval_neighbor;
@@ -380,8 +380,8 @@ fn generate_neighbor_partial(
         return current.clone();
     }
 
-    let r = rng.gen_range(0..100u32) as i32;
-    let idx = rng.gen_range(0..unpinned.len());
+    let r = rng.random_range(0..100u32) as i32;
+    let idx = rng.random_range(0..unpinned.len());
     let target_id = unpinned[idx];
 
     let pos = current
@@ -408,7 +408,7 @@ fn generate_neighbor_partial(
             if dur <= 1 {
                 return current.clone();
             }
-            let delta: i64 = if rng.r#gen::<bool>() { 1 } else { -1 };
+            let delta: i64 = if rng.random::<bool>() { 1 } else { -1 };
             let new_dur = dur + delta;
             if new_dur < 1 {
                 return current.clone();
@@ -423,7 +423,7 @@ fn generate_neighbor_partial(
             if unpinned.len() < 2 {
                 return current.clone();
             }
-            let other_idx = rng.gen_range(0..unpinned.len());
+            let other_idx = rng.random_range(0..unpinned.len());
             if other_idx == idx {
                 return current.clone();
             }
@@ -462,7 +462,7 @@ fn mark_tabu(tabu: &mut TabuList, plan: &Plan) {
 }
 
 fn generate_neighbor(planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Plan {
-    let r = rng.gen_range(0..100u32) as i32;
+    let r = rng.random_range(0..100u32) as i32;
 
     let result = match r {
         0..=24 => neighbor_shift(planner, current, rng),
@@ -480,7 +480,7 @@ fn neighbor_shift(planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Opti
     if schedules.is_empty() {
         return None;
     }
-    let idx = rng.gen_range(0..schedules.len());
+    let idx = rng.random_range(0..schedules.len());
     let (start, end, task_id) = schedules[idx];
     let dur = end.0 - start.0;
     let range = (dur / 2).max(1);
@@ -499,8 +499,8 @@ fn neighbor_swap(_planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Opti
     if schedules.len() < 2 {
         return None;
     }
-    let a = rng.gen_range(0..schedules.len());
-    let mut b = rng.gen_range(0..schedules.len());
+    let a = rng.random_range(0..schedules.len());
+    let mut b = rng.random_range(0..schedules.len());
     if b == a {
         b = (a + 1) % schedules.len();
     }
@@ -523,13 +523,13 @@ fn neighbor_duration(_planner: &Planner, current: &Plan, rng: &mut impl Rng) -> 
     if schedules.is_empty() {
         return None;
     }
-    let idx = rng.gen_range(0..schedules.len());
+    let idx = rng.random_range(0..schedules.len());
     let (start, end, task_id) = schedules[idx];
     let dur = end.0 - start.0;
     if dur <= 1 {
         return None;
     }
-    let delta: i64 = if rng.r#gen::<bool>() { 1 } else { -1 };
+    let delta: i64 = if rng.random::<bool>() { 1 } else { -1 };
     let new_dur = dur + delta;
     if new_dur < 1 {
         return None;
@@ -547,8 +547,8 @@ fn neighbor_reorder(_planner: &Planner, current: &Plan, rng: &mut impl Rng) -> O
     if schedules.len() < 2 {
         return None;
     }
-    let a = rng.gen_range(0..schedules.len());
-    let mut b = rng.gen_range(0..schedules.len());
+    let a = rng.random_range(0..schedules.len());
+    let mut b = rng.random_range(0..schedules.len());
     if b == a {
         b = (a + 1) % schedules.len();
     }
@@ -579,7 +579,7 @@ fn neighbor_lns(planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Option
         return None;
     }
 
-    let pivot_idx = rng.gen_range(0..schedules.len());
+    let pivot_idx = rng.random_range(0..schedules.len());
     let (pivot_start, pivot_end, _) = schedules[pivot_idx];
 
     let window_size = ((pivot_end.0 - pivot_start.0) * 2)
@@ -638,7 +638,7 @@ fn greedy_rebuild(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::thread_rng;
+    use rand::rng;
 
     fn test_planner(tasks: Vec<Task>) -> Planner {
         Planner {
@@ -736,7 +736,7 @@ mod tests {
             abandonability: 0.5,
         };
         let p = test_planner(vec![t0, t1]);
-        let mut rng = thread_rng();
+        let mut rng = rng();
         let plan = sa_lns(&p, &mut rng);
 
         assert_eq!(plan.schedules.len(), 2, "both tasks should be scheduled");
@@ -782,7 +782,7 @@ mod tests {
             abandonability: 0.5,
         };
         let p = test_planner(vec![t0, t1]);
-        let mut rng = thread_rng();
+        let mut rng = rng();
         let plan = sa_lns(&p, &mut rng);
 
         let t0_entry = plan.schedules.iter().find(|(_, _, id)| *id == 0).unwrap();

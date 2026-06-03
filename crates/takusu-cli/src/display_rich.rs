@@ -1,6 +1,6 @@
-use takusu_client::{ScheduleEntry, TaskRow};
-use comfy_table::{presets::UTF8_FULL, Cell, Color, ContentArrangement, Table};
+use comfy_table::{Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 use jiff::Timestamp;
+use takusu_client::{ScheduleEntry, TaskRow};
 
 pub fn display_tasks(tasks: &[TaskRow]) {
     if tasks.is_empty() {
@@ -97,7 +97,9 @@ pub fn display_schedule(entries: &[ScheduleEntry], tasks: &[TaskRow]) {
 fn format_datetime(iso: &str) -> String {
     iso.parse::<Timestamp>()
         .map(|ts| {
-            let zdt = ts.in_tz("UTC").unwrap_or_else(|_| ts.to_zoned(jiff::tz::TimeZone::UTC));
+            let zdt = ts
+                .in_tz("UTC")
+                .unwrap_or_else(|_| ts.to_zoned(jiff::tz::TimeZone::UTC));
             zdt.strftime("%m/%d %H:%M").to_string()
         })
         .unwrap_or_else(|_| iso.to_string())
@@ -108,7 +110,7 @@ fn format_duration(start_iso: &str, end_iso: &str) -> String {
     let end: Result<Timestamp, _> = end_iso.parse();
     match (start, end) {
         (Ok(s), Ok(e)) => {
-            let secs = (e.as_second() - s.as_second()).abs() as u64;
+            let secs = (e.as_second() - s.as_second()).unsigned_abs();
             let mins = secs / 60;
             if mins >= 60 {
                 format!("{}h{}m", mins / 60, mins % 60)

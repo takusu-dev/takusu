@@ -77,12 +77,7 @@ impl Client {
         if let Some(ref v) = query.habit_id {
             url.push_str(&format!("{sep}habit_id={v}"));
         }
-        let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(&self.token)
-            .send()
-            .await?;
+        let resp = self.http.get(&url).bearer_auth(&self.token).send().await?;
         let status = resp.status().as_u16();
         if status >= 400 {
             let body = resp.text().await.unwrap_or_default();
@@ -251,7 +246,10 @@ impl Client {
 
     // ── Token ──
 
-    pub async fn create_token(&self, label: Option<&str>) -> Result<TokenCreateResponse, ClientError> {
+    pub async fn create_token(
+        &self,
+        label: Option<&str>,
+    ) -> Result<TokenCreateResponse, ClientError> {
         let body = serde_json::json!({ "label": label });
         let resp = self
             .request(reqwest::Method::POST, "/api/tokens")
@@ -329,7 +327,10 @@ impl Client {
         Ok(resp.json().await?)
     }
 
-    pub async fn get_oauth_url(&self, redirect_uri: &str) -> Result<serde_json::Value, ClientError> {
+    pub async fn get_oauth_url(
+        &self,
+        redirect_uri: &str,
+    ) -> Result<serde_json::Value, ClientError> {
         let body = serde_json::json!({ "redirect_uri": redirect_uri });
         let resp = self
             .request(reqwest::Method::POST, "/api/sync/oauth/url")

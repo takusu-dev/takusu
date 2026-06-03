@@ -58,8 +58,20 @@ pub fn parse_edited_task(content: &str) -> Option<UpdateTask> {
         let value = value.trim();
         match key {
             "title" => title = Some(value.to_string()),
-            "description" => description = if value.is_empty() { Some(None) } else { Some(Some(value.to_string())) },
-            "start_at" => start_at = if value.is_empty() { Some(None) } else { Some(Some(value.to_string())) },
+            "description" => {
+                description = if value.is_empty() {
+                    Some(None)
+                } else {
+                    Some(Some(value.to_string()))
+                }
+            }
+            "start_at" => {
+                start_at = if value.is_empty() {
+                    Some(None)
+                } else {
+                    Some(Some(value.to_string()))
+                }
+            }
             "end_at" => end_at = Some(value.to_string()),
             "status" => status = Some(value.to_string()),
             "avg_minutes" => avg_minutes = Some(value.parse().ok()?),
@@ -71,7 +83,11 @@ pub fn parse_edited_task(content: &str) -> Option<UpdateTask> {
                 let items: Vec<String> = if value.is_empty() {
                     vec![]
                 } else {
-                    value.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+                    value
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
                 };
                 depends = Some(items);
             }
@@ -107,7 +123,7 @@ pub fn open_editor(content: &str, suffix: &str) -> io::Result<String> {
 
     if !status.success() {
         fs::remove_file(&path).ok();
-        return Err(io::Error::new(io::ErrorKind::Other, "editor exited with non-zero status"));
+        return Err(io::Error::other("editor exited with non-zero status"));
     }
 
     let edited = fs::read_to_string(&path)?;

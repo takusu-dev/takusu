@@ -78,9 +78,7 @@ enum TaskCommands {
 
     /// Show task detail
     #[command(visible_alias = "get")]
-    Show {
-        id: String,
-    },
+    Show { id: String },
 
     /// Create a task
     Create {
@@ -103,9 +101,7 @@ enum TaskCommands {
     },
 
     /// Edit a task in $EDITOR
-    Edit {
-        id: String,
-    },
+    Edit { id: String },
 
     /// Partially update a task (PATCH)
     Update {
@@ -157,9 +153,7 @@ enum TaskCommands {
 
     /// Delete a task
     #[command(visible_alias = "rm")]
-    Delete {
-        id: String,
-    },
+    Delete { id: String },
 }
 
 #[derive(Subcommand)]
@@ -221,9 +215,7 @@ enum TokenCommands {
     List,
 
     /// Revoke a token
-    Revoke {
-        id: i64,
-    },
+    Revoke { id: i64 },
 }
 
 #[derive(Subcommand)]
@@ -283,7 +275,11 @@ async fn main() {
     }
 }
 
-async fn run(mode: DisplayMode, client: &Client, cmd: Commands) -> Result<(), takusu_client::ClientError> {
+async fn run(
+    mode: DisplayMode,
+    client: &Client,
+    cmd: Commands,
+) -> Result<(), takusu_client::ClientError> {
     match cmd {
         Commands::Health => {
             let resp = client.health().await?;
@@ -363,13 +359,18 @@ async fn run_task(
         TaskCommands::Edit { id } => {
             let task = client.get_task(&id).await?;
             let original = editor::format_task_for_editing(&task);
-            let edited = editor::open_editor(&original, &task.id)
-                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e.to_string() })?;
-            let update = editor::parse_edited_task(&edited)
-                .ok_or_else(|| takusu_client::ClientError::Api {
+            let edited = editor::open_editor(&original, &task.id).map_err(|e| {
+                takusu_client::ClientError::Api {
+                    status: 0,
+                    body: e.to_string(),
+                }
+            })?;
+            let update = editor::parse_edited_task(&edited).ok_or_else(|| {
+                takusu_client::ClientError::Api {
                     status: 0,
                     body: "failed to parse edited task".to_string(),
-                })?;
+                }
+            })?;
             let updated = client.update_task(&id, &update).await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_tasks(&[updated]),

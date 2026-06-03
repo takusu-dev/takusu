@@ -63,7 +63,7 @@ pub async fn list_tasks(
         bindings.push(v.clone());
     }
     sql.push_str(" ORDER BY created_at DESC");
-    let mut q = sqlx::query_as::<_, TaskRow>(&sql);
+    let mut q = sqlx::query_as::<_, TaskRow>(sqlx::AssertSqlSafe(sql.as_str()));
     for b in &bindings {
         q = q.bind(b);
     }

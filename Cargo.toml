@@ -11,23 +11,27 @@ repository = "https://github.com/satler-git/takusu"
 [workspace.dependencies]
 thiserror = "2.0"
 jiff = "0.2.21"
-rand = "0.8"
+rand = "0.10"
 rustc-hash = "2.1"
 rayon = "1.10"
-criterion = "0.5"
+criterion = "0.8"
 
 tokio = { version = "1.52.0", features = ["full"] }
 axum = "0.8"
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v7"] }
-sha2 = "0.10"
+sha2 = "0.11"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1"
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.13", features = [
+  "json",
+  "form",
+  "default-tls",
+], default-features = false }
 takusu-core = { path = "crates/takusu-core" }
 takusu-ical = { path = "crates/takusu-ical" }
 takusu-client = { path = "crates/takusu-client" }

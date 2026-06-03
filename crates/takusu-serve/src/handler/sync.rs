@@ -187,7 +187,7 @@ async fn get_task_infos(
     }
     let placeholders = task_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     let sql = format!("SELECT id, title, description FROM tasks WHERE id IN ({placeholders})");
-    let mut query = sqlx::query(&sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
     for id in task_ids {
         query = query.bind(id);
     }
