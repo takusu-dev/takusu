@@ -85,6 +85,16 @@
             };
           };
 
+          packages = {
+            ci = pkgs.buildEnv {
+              name = "ci";
+              paths = with pkgs; [
+                rust-bin
+                cargo-nextest
+              ];
+            };
+          };
+
           devShells.default = pkgs.mkShell {
             nativeBuildInputs = with pkgs; [
               cargo-expand
