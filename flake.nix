@@ -89,8 +89,16 @@
             ci = pkgs.buildEnv {
               name = "ci";
               paths = with pkgs; [
-                rust-bin
+                cargo-expand
                 cargo-nextest
+                rust-bin
+                pkg-config
+                cmake
+                stdenv.cc
+                mold
+                alsa-lib
+                libpulseaudio
+                libclang
               ];
             };
           };
