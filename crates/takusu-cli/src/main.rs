@@ -3,13 +3,29 @@ mod display_simple;
 mod editor;
 
 use clap::{CommandFactory, Parser, Subcommand};
+use std::io::{self, Write};
 use std::process;
-use std::io;
 use takusu_client::{
     Client, CreateTask, GenerateSchedule, MoveEntry, Reschedule, ScheduleEntry, TaskQuery,
     UpdateSyncSettings,
 };
-use takusu_util::generate_root_token;
+use takusu_util::{generate_root_token, parse_datetime, parse_duration};
+
+fn prompt(label: &str) -> String {
+    print!("{label}: ");
+    io::stdout().flush().unwrap();
+    let mut buf = String::new();
+    io::stdin().read_line(&mut buf).unwrap();
+    buf.trim().to_string()
+}
+
+fn is_interactive() -> bool {
+    atty::is(atty::Stream::Stdin) && atty::is(atty::Stream::Stdout)
+}
+
+fn parse_dt(s: &str) -> Result<String, takusu_client::ClientError> {
+    parse_datetime(s).map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })
+}
 
 #[derive(Parser)]
 #[command(name = "takusu", version, about = "CLI client for takusu scheduler")]
@@ -35,7 +51,7 @@ enum DisplayMode {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Check server health
+    /// Check server health (no token required)
     Health,
 
     /// Generate a root token for takusu-serve
@@ -79,9 +95,12 @@ enum TaskCommands {
     List {
         #[arg(long)]
         status: Option<String>,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Filter by start date (e.g. 2025-06-05, 2025-06-05T14:00)"
+        )]
         from: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "Filter by end date (e.g. 2025-06-05, 2025-06-05T14:00)")]
         until: Option<String>,
         #[arg(long)]
         habit_id: Option<String>,
@@ -91,19 +110,31 @@ enum TaskCommands {
     #[command(visible_alias = "get")]
     Show { id: String },
 
-    /// Create a task
+    /// Create a task (interactive if no args in terminal)
     Create {
-        #[arg(short, long)]
-        title: String,
-        #[arg(short, long)]
-        end_at: String,
-        #[arg(long)]
+        #[arg(short, long, help = "Task title")]
+        title: Option<String>,
+        #[arg(
+            short,
+            long,
+            help = "Deadline (e.g. 2025-06-05, 2025-06-05T23:59, 2025-06-05T23:59:00Z)"
+        )]
+        end_at: Option<String>,
+        #[arg(long, help = "Start time (same format as end_at)")]
         start_at: Option<String>,
-        #[arg(long, default_value_t = 30)]
-        avg_minutes: i64,
-        #[arg(long, default_value_t = 0)]
-        sigma_minutes: i64,
-        #[arg(long, default_value_t = 0.5)]
+        #[arg(
+            long,
+            default_value = "30m",
+            help = "Average duration (e.g. 30m, 1h30m, 6s=6slots(30min))"
+        )]
+        avg_time: String,
+        #[arg(
+            long,
+            default_value = "0",
+            help = "Std dev of duration (same format as avg_time)"
+        )]
+        sigma_time: String,
+        #[arg(long, default_value_t = 0.5, help = "Abandonability 0.0-1.0")]
         abandonability: f64,
         #[arg(long)]
         description: Option<String>,
@@ -121,14 +152,14 @@ enum TaskCommands {
         title: Option<String>,
         #[arg(long)]
         description: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "Start time (e.g. 2025-06-05, 2025-06-05T14:00)")]
         start_at: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "Deadline (e.g. 2025-06-05, 2025-06-05T14:00)")]
         end_at: Option<String>,
-        #[arg(long)]
-        avg_minutes: Option<i64>,
-        #[arg(long)]
-        sigma_minutes: Option<i64>,
+        #[arg(long, help = "Average duration (e.g. 30m, 1h30m, 6s=6slots)")]
+        avg_time: Option<String>,
+        #[arg(long, help = "Std dev of duration (same format as avg_time)")]
+        sigma_time: Option<String>,
         #[arg(long)]
         depends: Option<Vec<String>>,
         #[arg(long)]
@@ -146,14 +177,22 @@ enum TaskCommands {
         id: String,
         #[arg(long)]
         title: String,
-        #[arg(long)]
+        #[arg(long, help = "Deadline (e.g. 2025-06-05, 2025-06-05T23:59Z)")]
         end_at: String,
-        #[arg(long)]
+        #[arg(long, help = "Start time (same format as end_at)")]
         start_at: Option<String>,
-        #[arg(long, default_value_t = 30)]
-        avg_minutes: i64,
-        #[arg(long, default_value_t = 0)]
-        sigma_minutes: i64,
+        #[arg(
+            long,
+            default_value = "30m",
+            help = "Average duration (e.g. 30m, 1h30m, 6s=6slots)"
+        )]
+        avg_time: String,
+        #[arg(
+            long,
+            default_value = "0",
+            help = "Std dev of duration (same format as avg_time)"
+        )]
+        sigma_time: String,
         #[arg(long, default_value_t = 0.5)]
         abandonability: f64,
         #[arg(long)]
@@ -174,9 +213,9 @@ enum ScheduleCommands {
 
     /// Generate a new schedule
     Generate {
-        #[arg(long)]
+        #[arg(long, help = "Start time (e.g. 2025-06-05, 2025-06-05T06:00Z)")]
         from: String,
-        #[arg(long)]
+        #[arg(long, help = "End time (e.g. 2025-06-06, 2025-06-06T06:00Z)")]
         until: String,
         #[arg(long)]
         task_ids: Option<Vec<String>>,
@@ -188,9 +227,9 @@ enum ScheduleCommands {
     Reschedule {
         #[arg(long)]
         mode: String,
-        #[arg(long)]
+        #[arg(long, help = "Start time (e.g. 2025-06-05, 2025-06-05T06:00Z)")]
         from: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "End time (e.g. 2025-06-06, 2025-06-06T06:00Z)")]
         until: Option<String>,
         #[arg(long)]
         task_ids: Option<Vec<String>>,
@@ -203,7 +242,10 @@ enum ScheduleCommands {
     /// Move a schedule entry
     Move {
         task_id: String,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "New start time (e.g. 2025-06-05T14:00, 2025-06-05T14:00:00Z)"
+        )]
         start_at: String,
         #[arg(long, default_value_t = false)]
         force: bool,
@@ -343,8 +385,8 @@ async fn run_task(
         } => {
             let query = TaskQuery {
                 status,
-                from,
-                until,
+                from: from.map(|s| parse_dt(&s)).transpose()?,
+                until: until.map(|s| parse_dt(&s)).transpose()?,
                 habit_id,
             };
             let tasks = client.list_tasks(&query).await?;
@@ -364,16 +406,27 @@ async fn run_task(
             title,
             end_at,
             start_at,
-            avg_minutes,
-            sigma_minutes,
+            avg_time,
+            sigma_time,
             abandonability,
             description,
             depends,
         } => {
+            let (title, end_at) = if is_interactive() && title.is_none() && end_at.is_none() {
+                let t = prompt("Title");
+                let e = prompt("End at (e.g. 2025-06-05 or 2025-06-05T23:59)");
+                (Some(t), Some(e))
+            } else {
+                (title, end_at)
+            };
+            let avg_minutes = parse_duration(&avg_time)
+                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+            let sigma_minutes: i64 = parse_duration(&sigma_time)
+                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
             let body = CreateTask {
-                title,
-                end_at,
-                start_at,
+                title: title.unwrap_or_default(),
+                end_at: parse_dt(&end_at.unwrap_or_default())?,
+                start_at: start_at.map(|s| parse_dt(&s)).transpose()?,
                 avg_minutes,
                 sigma_minutes: if sigma_minutes > 0 {
                     Some(sigma_minutes)
@@ -419,19 +472,29 @@ async fn run_task(
             description,
             start_at,
             end_at,
-            avg_minutes,
-            sigma_minutes,
+            avg_time,
+            sigma_time,
             depends,
             parallelizable,
             allows_parallel,
             abandonability,
             status,
         } => {
+            let avg_minutes = avg_time
+                .as_ref()
+                .map(|s| parse_duration(s))
+                .transpose()
+                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+            let sigma_minutes = sigma_time
+                .as_ref()
+                .map(|s| parse_duration(s))
+                .transpose()
+                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
             let body = takusu_client::UpdateTask {
                 title,
                 description,
-                start_at,
-                end_at,
+                start_at: start_at.map(|s| parse_dt(&s)).transpose()?,
+                end_at: end_at.map(|s| parse_dt(&s)).transpose()?,
                 avg_minutes,
                 sigma_minutes,
                 depends,
@@ -451,16 +514,20 @@ async fn run_task(
             title,
             end_at,
             start_at,
-            avg_minutes,
-            sigma_minutes,
+            avg_time,
+            sigma_time,
             abandonability,
             description,
             depends,
         } => {
+            let avg_minutes = parse_duration(&avg_time)
+                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+            let sigma_minutes: i64 = parse_duration(&sigma_time)
+                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
             let body = CreateTask {
                 title,
-                end_at,
-                start_at,
+                end_at: parse_dt(&end_at)?,
+                start_at: start_at.map(|s| parse_dt(&s)).transpose()?,
                 avg_minutes,
                 sigma_minutes: if sigma_minutes > 0 {
                     Some(sigma_minutes)
@@ -513,8 +580,8 @@ async fn run_schedule(
             sleep,
         } => {
             let body = GenerateSchedule {
-                from,
-                until,
+                from: parse_dt(&from)?,
+                until: parse_dt(&until)?,
                 task_ids,
                 sleep,
             };
@@ -540,8 +607,8 @@ async fn run_schedule(
         } => {
             let body = Reschedule {
                 mode: rmode,
-                from,
-                until,
+                from: from.map(|s| parse_dt(&s)).transpose()?,
+                until: until.map(|s| parse_dt(&s)).transpose()?,
                 task_ids,
                 pinned: pinned.unwrap_or_default(),
                 sleep,
@@ -563,7 +630,10 @@ async fn run_schedule(
             start_at,
             force,
         } => {
-            let body = MoveEntry { start_at, force };
+            let body = MoveEntry {
+                start_at: parse_dt(&start_at)?,
+                force,
+            };
             let result = client.move_entry(&task_id, &body).await?;
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }

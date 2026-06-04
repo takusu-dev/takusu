@@ -7,3 +7,4 @@ repository.workspace = true
 
 [dependencies]
 uuid.workspace = true
+jiff.workspace = true
