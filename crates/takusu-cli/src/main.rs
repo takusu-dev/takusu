@@ -287,12 +287,18 @@ async fn main() {
         return;
     }
 
-    let token = match cli.token {
-        Some(ref t) => t.clone(),
-        None => {
-            eprintln!("Error: token required (--token or TAKUSU_TOKEN)");
-            process::exit(1);
+    let needs_token = !matches!(cli.command, Commands::Health);
+
+    let token = if needs_token {
+        match cli.token {
+            Some(ref t) => t.clone(),
+            None => {
+                eprintln!("Error: token required (--token or TAKUSU_TOKEN)");
+                process::exit(1);
+            }
         }
+    } else {
+        String::new()
     };
 
     let client = Client::new(&cli.url, &token);
