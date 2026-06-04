@@ -42,12 +42,14 @@ takusu/
 │   │   │       ├── task.rs   #   Task CRUD + iCal import
 │   │   │       ├── habit.rs  #   Habit CRUD
 │   │   │       ├── schedule.rs # Schedule generate/reschedule/move/clear
+│   │   │       ├── settings.rs # Settings CRUD (tz, sleep_start, sleep_end)
 │   │   │       ├── sync.rs   #   Google Calendar sync settings/OAuth/trigger
 │   │   │       └── token.rs  #   Token issue/list/revoke
 │   │   ├── migrations/
 │   │   │   ├── 001_init.sql        # DB schema
-│   │   │   └── 002_google_cal.sql  # Google Calendar settings & event mappings
-│   │   └── tests/integration.rs     # 19 integration tests (axum oneshot)
+│   │   │   ├── 002_google_cal.sql  # Google Calendar settings & event mappings
+│   │   │   └── 003_settings.sql   # User settings (tz, sleep_start, sleep_end)
+│   │   └── tests/integration.rs     # 24 integration tests (axum oneshot)
 │   ├── takusu-ical/          # iCalendar parser (pure, no HTTP dependency)
 │   │   └── src/lib.rs        #   parse_ical() → Vec<IcalTask>
 │   ├── takusu-audio/         # Audio processing (recording + Whisper STT)
@@ -172,6 +174,9 @@ This ensures SA gradients guide towards feasibility rather than oscillating.
 - `Point::from_timestamp(ts, 5)` for jiff conversion.
 - `Point::from_raw(n)` for direct slot value.
 - Sleep window: defined in slots relative to `day_start`. Default: 22:00–06:00.
+- `SleepConfig::from_local(per, tz, start_h, start_m, end_h, end_m)`: converts
+  local clock times to slot-based `SleepConfig`, computing `day_start` from timezone
+  offset. Used by `parse_sleep` in the server to make "recommended" timezone-aware.
 
 ## takusu-serve API
 
@@ -191,6 +196,7 @@ See `SPEC.md` for full API specification. Summary:
 - **Task**: CRUD + iCal import (`/api/tasks`, `/api/tasks/import/ical`)
 - **Habit**: CRUD (`/api/habits`)
 - **Schedule**: get/generate/reschedule/move/clear (`/api/schedule/*`)
+- **Settings**: get/update (`/api/settings`) — tz, sleep_start, sleep_end
 - **Token**: issue/list/revoke (`/api/tokens`)
 - **Sync**: Google Calendar settings/OAuth/trigger (`/api/sync/*`)
 

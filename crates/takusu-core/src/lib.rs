@@ -154,6 +154,41 @@ impl SleepConfig {
             end: 2_000_000,
         }
     }
+
+    /// タイムゾーンとローカル時計時刻から SleepConfig を構築。
+    ///
+    /// `per` は 1 スロットの分数 (通常 5)。`tz` は jiff タイムゾーン。
+    /// `start_h`/`start_m` と `end_h`/`end_m` はローカル時刻による睡眠窓。
+    /// 日跨ぎ (例: 22:00–06:00) は自動で処理される。
+    pub fn from_local(
+        per: u16,
+        tz: &jiff::tz::TimeZone,
+        start_h: u8,
+        start_m: u8,
+        end_h: u8,
+        end_m: u8,
+    ) -> Self {
+        let slots_per_hour: i64 = 60 / per as i64;
+        let slots_per_day: i64 = 24 * slots_per_hour;
+
+        let offset_secs: i64 = tz.to_offset(jiff::Timestamp::now()).seconds().into();
+        let offset_slots = offset_secs / (per as i64 * 60);
+
+        let day_start = (slots_per_day - offset_slots).rem_euclid(slots_per_day);
+
+        let start = start_h as i64 * slots_per_hour + start_m as i64 / per as i64;
+        let mut end = end_h as i64 * slots_per_hour + end_m as i64 / per as i64;
+
+        if end <= start {
+            end += slots_per_day;
+        }
+
+        Self {
+            day_start,
+            start,
+            end,
+        }
+    }
 }
 
 impl Default for SleepConfig {

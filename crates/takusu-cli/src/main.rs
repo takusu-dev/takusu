@@ -104,6 +104,15 @@ enum ConfigCommands {
     Show,
     /// Initialize config file with defaults
     Init,
+    /// Set a config value and sync to server
+    Set {
+        #[arg(long)]
+        tz: Option<String>,
+        #[arg(long)]
+        sleep_start: Option<String>,
+        #[arg(long)]
+        sleep_end: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -401,7 +410,7 @@ async fn run(
         Commands::Sync { command } => run_sync(client, command).await?,
         Commands::GenRootToken => unreachable!(),
         Commands::Completion { .. } => unreachable!(),
-        Commands::Config { command } => run_config(command)?,
+        Commands::Config { command } => run_config(command, client).await?,
     }
     Ok(())
 }
@@ -796,10 +805,51 @@ async fn run_sync(client: &Client, cmd: SyncCommands) -> Result<(), takusu_clien
     Ok(())
 }
 
-fn run_config(cmd: ConfigCommands) -> Result<(), takusu_client::ClientError> {
+async fn run_config(
+    cmd: ConfigCommands,
+    client: &takusu_client::Client,
+) -> Result<(), takusu_client::ClientError> {
     match cmd {
         ConfigCommands::Show => config::show(),
         ConfigCommands::Init => config::init(),
+        ConfigCommands::Set {
+            tz,
+            sleep_start,
+            sleep_end,
+        } => {
+            if let Some(ref v) = tz {
+                config::set("tz", v)
+                    .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+            }
+            if let Some(ref v) = sleep_start {
+                config::set("sleep_start", v)
+                    .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+            }
+            if let Some(ref v) = sleep_end {
+                config::set("sleep_end", v)
+                    .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+            }
+            let mut update = takusu_client::UpdateSettings {
+                tz,
+                sleep_start,
+                sleep_end,
+            };
+            let cfg = config::load();
+            if update.tz.is_none() && cfg.tz.is_some() {
+                update.tz = cfg.tz.clone();
+            }
+            if update.sleep_start.is_none() && cfg.sleep_start.is_some() {
+                update.sleep_start = cfg.sleep_start.clone();
+            }
+            if update.sleep_end.is_none() && cfg.sleep_end.is_some() {
+                update.sleep_end = cfg.sleep_end.clone();
+            }
+            let resp = client.update_settings(&update).await?;
+            println!(
+                "Settings updated: tz={}, sleep_start={}, sleep_end={}",
+                resp.tz, resp.sleep_start, resp.sleep_end
+            );
+        }
     }
     Ok(())
 }

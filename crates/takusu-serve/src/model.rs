@@ -213,3 +213,27 @@ pub struct OAuthCallbackRequest {
     pub code: String,
     pub redirect_uri: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct SettingsRow {
+    pub id: String,
+    pub tz: String,
+    pub sleep_start: String,
+    pub sleep_end: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SettingsResponse {
+    pub tz: String,
+    pub sleep_start: String,
+    pub sleep_end: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateSettings {
+    pub tz: Option<String>,
+    pub sleep_start: Option<String>,
+    pub sleep_end: Option<String>,
+}

@@ -6,12 +6,50 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use std::str::FromStr;
 use takusu_core::{NormalDist, Planner, Point, RescheduleRange, SleepConfig, Task as CoreTask};
-fn parse_sleep(s: &str) -> SleepConfig {
+fn parse_hhmm(s: &str) -> (u8, u8) {
+    let parts: Vec<&str> = s.split(':').collect();
+    let h: u8 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let m: u8 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    (h, m)
+}
+
+fn parse_sleep(s: &str, settings: &SettingsRow) -> SleepConfig {
     match s {
-        "recommended" => SleepConfig::recommended(),
+        "recommended" => {
+            let (sh, sm) = parse_hhmm(&settings.sleep_start);
+            let (eh, em) = parse_hhmm(&settings.sleep_end);
+            let tz = jiff::tz::TimeZone::get(&settings.tz).unwrap_or(jiff::tz::TimeZone::UTC);
+            SleepConfig::from_local(5, &tz, sh, sm, eh, em)
+        }
         "disabled" => SleepConfig::disabled(),
-        _ => SleepConfig::recommended(),
+        custom => {
+            let parts: Vec<&str> = custom.splitn(2, '-').collect();
+            if parts.len() == 2 {
+                let (sh, sm) = parse_hhmm(parts[0]);
+                let (eh, em) = parse_hhmm(parts[1]);
+                let tz = jiff::tz::TimeZone::get(&settings.tz).unwrap_or(jiff::tz::TimeZone::UTC);
+                SleepConfig::from_local(5, &tz, sh, sm, eh, em)
+            } else {
+                SleepConfig::disabled()
+            }
+        }
     }
+}
+
+async fn get_settings_or_default(db: &sqlx::SqlitePool) -> SettingsRow {
+    sqlx::query_as::<_, SettingsRow>("SELECT * FROM settings WHERE id = 'active'")
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| SettingsRow {
+            id: "active".to_string(),
+            tz: "UTC".to_string(),
+            sleep_start: "22:00".to_string(),
+            sleep_end: "06:00".to_string(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        })
 }
 fn iso_to_point(iso: &str, per: u16) -> Result<Point, AppError> {
     let ts = if iso.eq_ignore_ascii_case("now") {
@@ -38,8 +76,9 @@ pub async fn generate_schedule(
     State(state): State<AppState>,
     Json(body): Json<GenerateSchedule>,
 ) -> Result<Json<ScheduleRow>, AppError> {
+    let settings = get_settings_or_default(&state.db).await;
     let from_point = Point::from_timestamp(jiff::Timestamp::now(), 5);
-    let sleep = parse_sleep(&body.sleep);
+    let sleep = parse_sleep(&body.sleep, &settings);
     let task_rows = if let Some(ref task_ids) = body.task_ids {
         let placeholders = task_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
@@ -51,11 +90,9 @@ pub async fn generate_schedule(
         }
         q.fetch_all(&state.db).await?
     } else {
-        sqlx::query_as::<_, TaskRow>(
-            "SELECT * FROM tasks WHERE status IN ('pending', 'scheduled')",
-        )
-        .fetch_all(&state.db)
-        .await?
+        sqlx::query_as::<_, TaskRow>("SELECT * FROM tasks WHERE status IN ('pending', 'scheduled')")
+            .fetch_all(&state.db)
+            .await?
     };
     let mut planner = Planner::new(from_point, sleep);
     let mut id_map: Vec<String> = Vec::new();
@@ -124,7 +161,8 @@ pub async fn reschedule(
     State(state): State<AppState>,
     Json(body): Json<Reschedule>,
 ) -> Result<Json<ScheduleRow>, AppError> {
-    let sleep = parse_sleep(&body.sleep);
+    let settings = get_settings_or_default(&state.db).await;
+    let sleep = parse_sleep(&body.sleep, &settings);
     let schedule_row =
         sqlx::query_as::<_, ScheduleRow>("SELECT * FROM schedules WHERE id = 'active'")
             .fetch_optional(&state.db)

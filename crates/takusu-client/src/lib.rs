@@ -379,6 +379,40 @@ impl Client {
         }
         Ok(resp.json().await?)
     }
+
+    // ── Settings ──
+
+    pub async fn get_settings(&self) -> Result<SettingsResponse, ClientError> {
+        let resp = self
+            .request(reqwest::Method::GET, "/api/settings")
+            .await
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn update_settings(
+        &self,
+        body: &UpdateSettings,
+    ) -> Result<SettingsResponse, ClientError> {
+        let resp = self
+            .request(reqwest::Method::PUT, "/api/settings")
+            .await
+            .json(body)
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
 }
 
 // ── Types (mirrors server model.rs) ──
@@ -550,4 +584,23 @@ pub struct UpdateSyncSettings {
     pub client_secret: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
+}
+
+// ── Settings types ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsResponse {
+    pub tz: String,
+    pub sleep_start: String,
+    pub sleep_end: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpdateSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tz: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sleep_start: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sleep_end: Option<String>,
 }

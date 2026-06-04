@@ -40,5 +40,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), Box<dyn std::error:
     sqlx::raw_sql(sql).execute(pool).await?;
     let sql = include_str!("../migrations/002_google_cal.sql");
     sqlx::raw_sql(sql).execute(pool).await?;
+    let sql = include_str!("../migrations/003_settings.sql");
+    sqlx::raw_sql(sql).execute(pool).await?;
     Ok(())
 }

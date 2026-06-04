@@ -48,6 +48,8 @@ pub fn app(state: AppState) -> Router {
         .route("/sync/oauth/url", post(handler::sync::oauth_url))
         .route("/sync/oauth/callback", post(handler::sync::oauth_callback))
         .route("/sync/trigger", post(handler::sync::trigger_sync))
+        .route("/settings", get(handler::settings::get_settings))
+        .route("/settings", put(handler::settings::update_settings))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,

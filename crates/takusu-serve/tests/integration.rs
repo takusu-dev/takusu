@@ -665,14 +665,103 @@ async fn generate_excludes_completed_and_skipped() {
         !task_ids.contains(&"task2"),
         "should exclude completed task"
     );
-    assert!(
-        !task_ids.contains(&"task3"),
-        "should exclude skipped task"
-    );
+    assert!(!task_ids.contains(&"task3"), "should exclude skipped task");
     assert!(
         !task_ids.contains(&"task4"),
         "should exclude in_progress task"
     );
 }
 
+#[tokio::test]
+async fn settings_get_default() {
+    let (state, _) = setup().await;
+    let router = app(state);
 
+    let req = auth_req(Method::GET, "/api/settings");
+    let res = router.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(body["tz"], "UTC");
+    assert_eq!(body["sleep_start"], "22:00");
+    assert_eq!(body["sleep_end"], "06:00");
+}
+
+#[tokio::test]
+async fn settings_update() {
+    let (state, _) = setup().await;
+    let router = app(state);
+
+    let req = auth_req_body(
+        Method::PUT,
+        "/api/settings",
+        json!({
+            "tz": "Asia/Tokyo",
+            "sleep_start": "23:00",
+            "sleep_end": "07:00"
+        }),
+    );
+    let res = router.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(body["tz"], "Asia/Tokyo");
+    assert_eq!(body["sleep_start"], "23:00");
+    assert_eq!(body["sleep_end"], "07:00");
+
+    let get_req = auth_req(Method::GET, "/api/settings");
+    let res = router.oneshot(get_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(body["tz"], "Asia/Tokyo");
+    assert_eq!(body["sleep_start"], "23:00");
+}
+
+#[tokio::test]
+async fn settings_update_partial() {
+    let (state, _) = setup().await;
+    let router = app(state);
+
+    let req = auth_req_body(
+        Method::PUT,
+        "/api/settings",
+        json!({ "tz": "Europe/Berlin" }),
+    );
+    let res = router.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(body["tz"], "Europe/Berlin");
+    assert_eq!(body["sleep_start"], "22:00");
+    assert_eq!(body["sleep_end"], "06:00");
+}
+
+#[tokio::test]
+async fn schedule_generate_with_custom_sleep() {
+    let (state, pool) = setup().await;
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('task1', 'test-task', '2026-06-05T18:00:00+09:00', 60, 0, '[]', 0, 0, 0.5, 'pending')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let router = app(state);
+
+    let set_req = auth_req_body(
+        Method::PUT,
+        "/api/settings",
+        json!({ "tz": "Asia/Tokyo", "sleep_start": "23:00", "sleep_end": "07:00" }),
+    );
+    let res = router.clone().oneshot(set_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let gen_req = auth_req_body(
+        Method::POST,
+        "/api/schedule/generate",
+        json!({
+            "until": "2026-06-05T23:59:59+09:00",
+            "sleep": "recommended"
+        }),
+    );
+    let res = router.oneshot(gen_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}
