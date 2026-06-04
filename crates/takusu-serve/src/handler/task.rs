@@ -5,6 +5,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use serde::Deserialize;
+use sqlx::SqlitePool;
 use uuid::Uuid;
 #[derive(Debug, Deserialize)]
 pub struct TaskQuery {
@@ -13,6 +14,34 @@ pub struct TaskQuery {
     pub until: Option<String>,
     pub habit_id: Option<String>,
 }
+pub(crate) async fn resolve_task_id(db: &SqlitePool, id: &str) -> Result<String, AppError> {
+    if id.contains('-') {
+        let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM tasks WHERE id = ?")
+            .bind(id)
+            .fetch_one(db)
+            .await?;
+        if exists {
+            return Ok(id.to_string());
+        }
+    } else {
+        let matches: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM tasks WHERE id LIKE ? || '%'")
+                .bind(id)
+                .fetch_all(db)
+                .await?;
+        match matches.len() {
+            0 => {}
+            1 => return Ok(matches.into_iter().next().unwrap()),
+            _ => {
+                return Err(AppError::BadRequest(format!(
+                    "ambiguous task id prefix: {id}"
+                )));
+            }
+        }
+    }
+    Err(AppError::NotFound(format!("task {id} not found")))
+}
+
 pub async fn create_task(
     State(state): State<AppState>,
     Json(body): Json<CreateTask>,
@@ -74,11 +103,11 @@ pub async fn get_task(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<TaskRow>, AppError> {
+    let full_id = resolve_task_id(&state.db, &id).await?;
     let row = sqlx::query_as::<_, TaskRow>("SELECT * FROM tasks WHERE id = ?")
-        .bind(&id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("task {id} not found")))?;
+        .bind(&full_id)
+        .fetch_one(&state.db)
+        .await?;
     Ok(Json(row))
 }
 pub async fn update_task(
@@ -86,11 +115,11 @@ pub async fn update_task(
     Path(id): Path<String>,
     Json(body): Json<UpdateTask>,
 ) -> Result<Json<TaskRow>, AppError> {
+    let full_id = resolve_task_id(&state.db, &id).await?;
     let existing = sqlx::query_as::<_, TaskRow>("SELECT * FROM tasks WHERE id = ?")
-        .bind(&id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("task {id} not found")))?;
+        .bind(&full_id)
+        .fetch_one(&state.db)
+        .await?;
     let depends_json = body
         .depends
         .as_ref()
@@ -120,10 +149,10 @@ pub async fn update_task(
     .bind(body.allows_parallel)
     .bind(body.abandonability)
     .bind(status)
-    .bind(&id)
+    .bind(&full_id)
     .execute(&state.db).await?;
     let row = sqlx::query_as::<_, TaskRow>("SELECT * FROM tasks WHERE id = ?")
-        .bind(&id)
+        .bind(&full_id)
         .fetch_one(&state.db)
         .await?;
     Ok(Json(row))
@@ -133,8 +162,9 @@ pub async fn replace_task(
     Path(id): Path<String>,
     Json(body): Json<CreateTask>,
 ) -> Result<Json<TaskRow>, AppError> {
+    let full_id = resolve_task_id(&state.db, &id).await?;
     let depends_json = serde_json::to_string(&body.depends).unwrap_or_else(|_| "[]".into());
-    let result = sqlx::query(
+    sqlx::query(
         "UPDATE tasks SET title=?, description=?, start_at=?, end_at=?, avg_minutes=?, sigma_minutes=?, depends=?, parallelizable=?, allows_parallel=?, abandonability=?, updated_at=datetime('now') WHERE id = ?"
     )
     .bind(&body.title)
@@ -147,13 +177,10 @@ pub async fn replace_task(
     .bind(body.parallelizable)
     .bind(body.allows_parallel)
     .bind(body.abandonability)
-    .bind(&id)
+    .bind(&full_id)
     .execute(&state.db).await?;
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound(format!("task {id} not found")));
-    }
     let row = sqlx::query_as::<_, TaskRow>("SELECT * FROM tasks WHERE id = ?")
-        .bind(&id)
+        .bind(&full_id)
         .fetch_one(&state.db)
         .await?;
     Ok(Json(row))
@@ -162,13 +189,11 @@ pub async fn delete_task(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let result = sqlx::query("DELETE FROM tasks WHERE id = ?")
-        .bind(&id)
+    let full_id = resolve_task_id(&state.db, &id).await?;
+    sqlx::query("DELETE FROM tasks WHERE id = ?")
+        .bind(&full_id)
         .execute(&state.db)
         .await?;
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound(format!("task {id} not found")));
-    }
     Ok(StatusCode::NO_CONTENT)
 }
 pub async fn import_ical(

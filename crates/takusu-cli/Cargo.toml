@@ -18,6 +18,7 @@ tokio = { workspace = true }
 jiff = { workspace = true }
 takusu-client = { workspace = true }
 takusu-util = { workspace = true }
+toml = "0.8"
 
 comfy-table = "7"
 clap_complete = "4"

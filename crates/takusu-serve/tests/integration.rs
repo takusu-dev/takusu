@@ -478,3 +478,67 @@ async fn delete_nonexistent_task() {
     let res = router.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn task_prefix_lookup() {
+    let (state, _) = setup().await;
+    let router = app(state);
+
+    let req = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "prefix-test",
+            "end_at": "2026-06-05T18:00:00+09:00",
+            "avg_minutes": 30,
+            "depends": [],
+            "parallelizable": false,
+            "allows_parallel": false,
+            "abandonability": 0.5
+        }),
+    );
+    let res = router.clone().oneshot(req).await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let full_id = body["id"].as_str().unwrap();
+    assert!(full_id.contains('-'));
+    let short_id = &full_id[..8];
+
+    let get_req = auth_req(Method::GET, &format!("/api/tasks/{short_id}"));
+    let res = router.clone().oneshot(get_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let task: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(task["id"], full_id);
+    assert_eq!(task["title"], "prefix-test");
+
+    let update_req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{short_id}"),
+        json!({ "title": "prefix-updated" }),
+    );
+    let res = router.clone().oneshot(update_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let replace_req = auth_req_body(
+        Method::PUT,
+        &format!("/api/tasks/{short_id}"),
+        json!({
+            "title": "prefix-replaced",
+            "end_at": "2026-06-06T12:00:00+09:00",
+            "avg_minutes": 45,
+            "depends": [],
+            "parallelizable": true,
+            "allows_parallel": false,
+            "abandonability": 0.8
+        }),
+    );
+    let res = router.clone().oneshot(replace_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let not_found_req = auth_req(Method::GET, "/api/tasks/00000000");
+    let res = router.clone().oneshot(not_found_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    let delete_req = auth_req(Method::DELETE, &format!("/api/tasks/{short_id}"));
+    let res = router.oneshot(delete_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+}

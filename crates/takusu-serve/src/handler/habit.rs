@@ -4,7 +4,36 @@ use crate::model::*;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use sqlx::SqlitePool;
 use uuid::Uuid;
+
+async fn resolve_habit_id(db: &SqlitePool, id: &str) -> Result<String, AppError> {
+    if id.contains('-') {
+        let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM habits WHERE id = ?")
+            .bind(id)
+            .fetch_one(db)
+            .await?;
+        if exists {
+            return Ok(id.to_string());
+        }
+    } else {
+        let matches: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM habits WHERE id LIKE ? || '%'")
+                .bind(id)
+                .fetch_all(db)
+                .await?;
+        match matches.len() {
+            0 => {}
+            1 => return Ok(matches.into_iter().next().unwrap()),
+            _ => {
+                return Err(AppError::BadRequest(format!(
+                    "ambiguous habit id prefix: {id}"
+                )));
+            }
+        }
+    }
+    Err(AppError::NotFound(format!("habit {id} not found")))
+}
 pub async fn create_habit(
     State(state): State<AppState>,
     Json(body): Json<CreateHabit>,
@@ -41,11 +70,11 @@ pub async fn get_habit(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<HabitRow>, AppError> {
+    let full_id = resolve_habit_id(&state.db, &id).await?;
     let row = sqlx::query_as::<_, HabitRow>("SELECT * FROM habits WHERE id = ?")
-        .bind(&id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("habit {id} not found")))?;
+        .bind(&full_id)
+        .fetch_one(&state.db)
+        .await?;
     Ok(Json(row))
 }
 pub async fn update_habit(
@@ -53,11 +82,7 @@ pub async fn update_habit(
     Path(id): Path<String>,
     Json(body): Json<UpdateHabit>,
 ) -> Result<Json<HabitRow>, AppError> {
-    let _existing = sqlx::query_as::<_, HabitRow>("SELECT * FROM habits WHERE id = ?")
-        .bind(&id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("habit {id} not found")))?;
+    let full_id = resolve_habit_id(&state.db, &id).await?;
     sqlx::query(
         "UPDATE habits SET title=COALESCE(?,title), description=COALESCE(?,description), recurrence=COALESCE(?,recurrence), start_time=COALESCE(?,start_time), end_time=COALESCE(?,end_time), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), active=COALESCE(?,active), updated_at=datetime('now') WHERE id = ?"
     )
@@ -72,10 +97,10 @@ pub async fn update_habit(
     .bind(body.allows_parallel)
     .bind(body.abandonability)
     .bind(body.active)
-    .bind(&id)
+    .bind(&full_id)
     .execute(&state.db).await?;
     let row = sqlx::query_as::<_, HabitRow>("SELECT * FROM habits WHERE id = ?")
-        .bind(&id)
+        .bind(&full_id)
         .fetch_one(&state.db)
         .await?;
     Ok(Json(row))
@@ -85,7 +110,8 @@ pub async fn replace_habit(
     Path(id): Path<String>,
     Json(body): Json<CreateHabit>,
 ) -> Result<Json<HabitRow>, AppError> {
-    let result = sqlx::query(
+    let full_id = resolve_habit_id(&state.db, &id).await?;
+    sqlx::query(
         "UPDATE habits SET title=?, description=?, recurrence=?, start_time=?, end_time=?, avg_minutes=?, sigma_minutes=?, parallelizable=?, allows_parallel=?, abandonability=?, updated_at=datetime('now') WHERE id = ?"
     )
     .bind(&body.title)
@@ -98,13 +124,10 @@ pub async fn replace_habit(
     .bind(body.parallelizable)
     .bind(body.allows_parallel)
     .bind(body.abandonability)
-    .bind(&id)
+    .bind(&full_id)
     .execute(&state.db).await?;
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound(format!("habit {id} not found")));
-    }
     let row = sqlx::query_as::<_, HabitRow>("SELECT * FROM habits WHERE id = ?")
-        .bind(&id)
+        .bind(&full_id)
         .fetch_one(&state.db)
         .await?;
     Ok(Json(row))
@@ -113,12 +136,10 @@ pub async fn delete_habit(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let result = sqlx::query("DELETE FROM habits WHERE id = ?")
-        .bind(&id)
+    let full_id = resolve_habit_id(&state.db, &id).await?;
+    sqlx::query("DELETE FROM habits WHERE id = ?")
+        .bind(&full_id)
         .execute(&state.db)
         .await?;
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound(format!("habit {id} not found")));
-    }
     Ok(StatusCode::NO_CONTENT)
 }

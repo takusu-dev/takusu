@@ -1,7 +1,43 @@
 use jiff::Timestamp;
 use takusu_client::{ScheduleEntry, TaskRow};
 
-pub fn display_tasks(tasks: &[TaskRow]) {
+pub fn display_task_detail(task: &TaskRow, entry: Option<&ScheduleEntry>, tz: &jiff::tz::TimeZone) {
+    let status_marker = match task.status.as_str() {
+        "pending" => "[ ]",
+        "scheduled" => "[~]",
+        "in_progress" => "[>]",
+        "completed" => "[x]",
+        "skipped" => "[-]",
+        _ => "[?]",
+    };
+    println!("{} {} {}", status_marker, task.id, task.title);
+    println!(
+        "   deadline: {} | est: {}min (+/-{}) | abandon: {:.1} | parallel: {}",
+        fmt_simple(&task.end_at, tz),
+        task.avg_minutes,
+        task.sigma_minutes,
+        task.abandonability,
+        if task.parallelizable { "yes" } else { "no" },
+    );
+    if let Some(ref start) = task.start_at {
+        println!("   start: {}", fmt_simple(start, tz));
+    }
+    if let Some(ref desc) = task.description {
+        println!("   {desc}");
+    }
+
+    if let Some(entry) = entry {
+        println!(
+            "   scheduled: {} -- {} ({})",
+            fmt_simple(&entry.start_at, tz),
+            fmt_simple(&entry.end_at, tz),
+            fmt_duration(&entry.start_at, &entry.end_at)
+        );
+    }
+    println!();
+}
+
+pub fn display_tasks(tasks: &[TaskRow], tz: &jiff::tz::TimeZone) {
     if tasks.is_empty() {
         println!("  (no tasks)");
         return;
@@ -20,7 +56,10 @@ pub fn display_tasks(tasks: &[TaskRow]) {
         println!("{} {} {}", status_marker, short_id, t.title);
         println!(
             "   deadline: {} | est: {}min (+/-{}) | abandon: {:.1}",
-            t.end_at, t.avg_minutes, t.sigma_minutes, t.abandonability
+            fmt_simple(&t.end_at, tz),
+            t.avg_minutes,
+            t.sigma_minutes,
+            t.abandonability
         );
         if let Some(ref desc) = t.description {
             println!("   {desc}");
@@ -29,7 +68,7 @@ pub fn display_tasks(tasks: &[TaskRow]) {
     }
 }
 
-pub fn display_schedule(entries: &[ScheduleEntry], tasks: &[TaskRow]) {
+pub fn display_schedule(entries: &[ScheduleEntry], tasks: &[TaskRow], tz: &jiff::tz::TimeZone) {
     if entries.is_empty() {
         println!("  (no schedule)");
         return;
@@ -47,8 +86,8 @@ pub fn display_schedule(entries: &[ScheduleEntry], tasks: &[TaskRow]) {
             .map(|t| t.title.as_str())
             .unwrap_or("(unknown)");
         let short_id = &e.task_id[..8];
-        let start = fmt_simple(&e.start_at);
-        let end = fmt_simple(&e.end_at);
+        let start = fmt_simple(&e.start_at, tz);
+        let end = fmt_simple(&e.end_at, tz);
         let dur = fmt_duration(&e.start_at, &e.end_at);
         println!("  {:>3}. {} -- {} [{}] {}", i + 1, start, end, dur, title);
         println!("       id: {}", short_id);
@@ -72,12 +111,10 @@ pub fn display_tokens(tokens: &[takusu_client::TokenRow]) {
     }
 }
 
-fn fmt_simple(iso: &str) -> String {
+fn fmt_simple(iso: &str, tz: &jiff::tz::TimeZone) -> String {
     iso.parse::<Timestamp>()
         .map(|ts| {
-            let zdt = ts
-                .in_tz("UTC")
-                .unwrap_or_else(|_| ts.to_zoned(jiff::tz::TimeZone::UTC));
+            let zdt = ts.to_zoned(tz.clone());
             zdt.strftime("%d %H:%M").to_string()
         })
         .unwrap_or_else(|_| iso.to_string())

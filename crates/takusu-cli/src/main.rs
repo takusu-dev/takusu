@@ -1,3 +1,4 @@
+mod config;
 mod display_rich;
 mod display_simple;
 mod editor;
@@ -9,7 +10,7 @@ use takusu_client::{
     Client, CreateTask, GenerateSchedule, MoveEntry, Reschedule, ScheduleEntry, TaskQuery,
     UpdateSyncSettings,
 };
-use takusu_util::{generate_root_token, parse_datetime, parse_duration};
+use takusu_util::{generate_root_token, parse_datetime_tz, parse_duration, parse_range_tz};
 
 fn prompt(label: &str) -> String {
     print!("{label}: ");
@@ -23,18 +24,21 @@ fn is_interactive() -> bool {
     atty::is(atty::Stream::Stdin) && atty::is(atty::Stream::Stdout)
 }
 
-fn parse_dt(s: &str) -> Result<String, takusu_client::ClientError> {
-    parse_datetime(s).map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })
+fn parse_dt(s: &str, tz: &jiff::tz::TimeZone) -> Result<String, takusu_client::ClientError> {
+    parse_datetime_tz(s, tz).map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })
 }
 
 #[derive(Parser)]
 #[command(name = "takusu", version, about = "CLI client for takusu scheduler")]
 struct Cli {
-    #[arg(long, default_value = "http://127.0.0.1:3000", global = true)]
-    url: String,
+    #[arg(long, env = "TAKUSU_URL", global = true)]
+    url: Option<String>,
 
     #[arg(long, env = "TAKUSU_TOKEN", global = true)]
     token: Option<String>,
+
+    #[arg(long, env = "TAKUSU_TIMEZONE", global = true)]
+    tz: Option<String>,
 
     #[arg(long, default_value = "rich", global = true)]
     mode: DisplayMode,
@@ -86,6 +90,20 @@ enum Commands {
         #[command(subcommand)]
         command: SyncCommands,
     },
+
+    /// Show or initialize config file
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigCommands {
+    /// Show config file path and contents
+    Show,
+    /// Initialize config file with defaults
+    Init,
 }
 
 #[derive(Subcommand)]
@@ -213,10 +231,12 @@ enum ScheduleCommands {
 
     /// Generate a new schedule
     Generate {
-        #[arg(long, help = "Start time (e.g. 2025-06-05, 2025-06-05T06:00Z)")]
-        from: String,
-        #[arg(long, help = "End time (e.g. 2025-06-06, 2025-06-06T06:00Z)")]
-        until: String,
+        #[arg(long, help = "Time range (e.g. '1w', '3d', 'now to 2025-06-12')")]
+        range: Option<String>,
+        #[arg(long, help = "Start time (e.g. 2025-06-05, 2025-06-05T06:00Z, now)")]
+        from: Option<String>,
+        #[arg(long, help = "End time (e.g. 2025-06-06, 2025-06-06T06:00Z, now)")]
+        until: Option<String>,
         #[arg(long)]
         task_ids: Option<Vec<String>>,
         #[arg(long, default_value = "recommended")]
@@ -311,6 +331,13 @@ enum SyncCommands {
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
+    let cfg = config::load();
+
+    let url = cli
+        .url
+        .or(cfg.url)
+        .unwrap_or_else(|| "http://127.0.0.1:3000".into());
+    let tz_str = cli.tz.or(cfg.tz).unwrap_or_else(|| "UTC".into());
 
     if matches!(cli.command, Commands::GenRootToken) {
         let token = generate_root_token();
@@ -329,13 +356,13 @@ async fn main() {
         return;
     }
 
-    let needs_token = !matches!(cli.command, Commands::Health);
+    let needs_token = !matches!(cli.command, Commands::Health | Commands::Config { .. });
 
     let token = if needs_token {
-        match cli.token {
-            Some(ref t) => t.clone(),
+        match cli.token.or(cfg.token) {
+            Some(t) => t,
             None => {
-                eprintln!("Error: token required (--token or TAKUSU_TOKEN)");
+                eprintln!("Error: token required (--token, TAKUSU_TOKEN, or config)");
                 process::exit(1);
             }
         }
@@ -343,9 +370,14 @@ async fn main() {
         String::new()
     };
 
-    let client = Client::new(&cli.url, &token);
+    let client = Client::new(&url, &token);
 
-    if let Err(e) = run(cli.mode, &client, cli.command).await {
+    let tz = jiff::tz::TimeZone::get(&tz_str).unwrap_or_else(|_| {
+        eprintln!("Error: invalid timezone '{tz_str}' (e.g. Asia/Tokyo)");
+        process::exit(1);
+    });
+
+    if let Err(e) = run(cli.mode, &client, tz, cli.command).await {
         eprintln!("Error: {e}");
         process::exit(1);
     }
@@ -354,6 +386,7 @@ async fn main() {
 async fn run(
     mode: DisplayMode,
     client: &Client,
+    tz: jiff::tz::TimeZone,
     cmd: Commands,
 ) -> Result<(), takusu_client::ClientError> {
     match cmd {
@@ -361,12 +394,13 @@ async fn run(
             let resp = client.health().await?;
             println!("{resp}");
         }
-        Commands::Task { command } => run_task(mode, client, command).await?,
-        Commands::Schedule { command } => run_schedule(mode, client, command).await?,
+        Commands::Task { command } => run_task(mode, client, &tz, command).await?,
+        Commands::Schedule { command } => run_schedule(mode, client, &tz, command).await?,
         Commands::Token { command } => run_token(mode, client, command).await?,
         Commands::Sync { command } => run_sync(client, command).await?,
         Commands::GenRootToken => unreachable!(),
         Commands::Completion { .. } => unreachable!(),
+        Commands::Config { command } => run_config(command)?,
     }
     Ok(())
 }
@@ -374,6 +408,7 @@ async fn run(
 async fn run_task(
     mode: DisplayMode,
     client: &Client,
+    tz: &jiff::tz::TimeZone,
     cmd: TaskCommands,
 ) -> Result<(), takusu_client::ClientError> {
     match cmd {
@@ -385,21 +420,31 @@ async fn run_task(
         } => {
             let query = TaskQuery {
                 status,
-                from: from.map(|s| parse_dt(&s)).transpose()?,
-                until: until.map(|s| parse_dt(&s)).transpose()?,
+                from: from.map(|s| parse_dt(&s, tz)).transpose()?,
+                until: until.map(|s| parse_dt(&s, tz)).transpose()?,
                 habit_id,
             };
             let tasks = client.list_tasks(&query).await?;
             match mode {
-                DisplayMode::Rich => display_rich::display_tasks(&tasks),
-                DisplayMode::Simple => display_simple::display_tasks(&tasks),
+                DisplayMode::Rich => display_rich::display_tasks(&tasks, tz),
+                DisplayMode::Simple => display_simple::display_tasks(&tasks, tz),
             }
         }
         TaskCommands::Show { id } => {
             let task = client.get_task(&id).await?;
+            let entry = match client.get_schedule().await {
+                Ok(schedule) => {
+                    let entries: Vec<ScheduleEntry> =
+                        serde_json::from_str(&schedule.schedule).unwrap_or_default();
+                    entries.into_iter().find(|e| e.task_id == task.id)
+                }
+                Err(_) => None,
+            };
             match mode {
-                DisplayMode::Rich => display_rich::display_tasks(&[task]),
-                DisplayMode::Simple => display_simple::display_tasks(&[task]),
+                DisplayMode::Rich => display_rich::display_task_detail(&task, entry.as_ref(), tz),
+                DisplayMode::Simple => {
+                    display_simple::display_task_detail(&task, entry.as_ref(), tz)
+                }
             }
         }
         TaskCommands::Create {
@@ -425,8 +470,8 @@ async fn run_task(
                 .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
             let body = CreateTask {
                 title: title.unwrap_or_default(),
-                end_at: parse_dt(&end_at.unwrap_or_default())?,
-                start_at: start_at.map(|s| parse_dt(&s)).transpose()?,
+                end_at: parse_dt(&end_at.unwrap_or_default(), tz)?,
+                start_at: start_at.map(|s| parse_dt(&s, tz)).transpose()?,
                 avg_minutes,
                 sigma_minutes: if sigma_minutes > 0 {
                     Some(sigma_minutes)
@@ -441,8 +486,8 @@ async fn run_task(
             };
             let task = client.create_task(&body).await?;
             match mode {
-                DisplayMode::Rich => display_rich::display_tasks(&[task]),
-                DisplayMode::Simple => display_simple::display_tasks(&[task]),
+                DisplayMode::Rich => display_rich::display_tasks(&[task], tz),
+                DisplayMode::Simple => display_simple::display_tasks(&[task], tz),
             }
         }
         TaskCommands::Edit { id } => {
@@ -462,8 +507,8 @@ async fn run_task(
             })?;
             let updated = client.update_task(&id, &update).await?;
             match mode {
-                DisplayMode::Rich => display_rich::display_tasks(&[updated]),
-                DisplayMode::Simple => display_simple::display_tasks(&[updated]),
+                DisplayMode::Rich => display_rich::display_tasks(&[updated], tz),
+                DisplayMode::Simple => display_simple::display_tasks(&[updated], tz),
             }
         }
         TaskCommands::Update {
@@ -493,8 +538,8 @@ async fn run_task(
             let body = takusu_client::UpdateTask {
                 title,
                 description,
-                start_at: start_at.map(|s| parse_dt(&s)).transpose()?,
-                end_at: end_at.map(|s| parse_dt(&s)).transpose()?,
+                start_at: start_at.map(|s| parse_dt(&s, tz)).transpose()?,
+                end_at: end_at.map(|s| parse_dt(&s, tz)).transpose()?,
                 avg_minutes,
                 sigma_minutes,
                 depends,
@@ -505,8 +550,8 @@ async fn run_task(
             };
             let task = client.update_task(&id, &body).await?;
             match mode {
-                DisplayMode::Rich => display_rich::display_tasks(&[task]),
-                DisplayMode::Simple => display_simple::display_tasks(&[task]),
+                DisplayMode::Rich => display_rich::display_tasks(&[task], tz),
+                DisplayMode::Simple => display_simple::display_tasks(&[task], tz),
             }
         }
         TaskCommands::Replace {
@@ -526,8 +571,8 @@ async fn run_task(
                 .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
             let body = CreateTask {
                 title,
-                end_at: parse_dt(&end_at)?,
-                start_at: start_at.map(|s| parse_dt(&s)).transpose()?,
+                end_at: parse_dt(&end_at, tz)?,
+                start_at: start_at.map(|s| parse_dt(&s, tz)).transpose()?,
                 avg_minutes,
                 sigma_minutes: if sigma_minutes > 0 {
                     Some(sigma_minutes)
@@ -542,8 +587,8 @@ async fn run_task(
             };
             let task = client.replace_task(&id, &body).await?;
             match mode {
-                DisplayMode::Rich => display_rich::display_tasks(&[task]),
-                DisplayMode::Simple => display_simple::display_tasks(&[task]),
+                DisplayMode::Rich => display_rich::display_tasks(&[task], tz),
+                DisplayMode::Simple => display_simple::display_tasks(&[task], tz),
             }
         }
         TaskCommands::Delete { id } => {
@@ -557,6 +602,7 @@ async fn run_task(
 async fn run_schedule(
     mode: DisplayMode,
     client: &Client,
+    tz: &jiff::tz::TimeZone,
     cmd: ScheduleCommands,
 ) -> Result<(), takusu_client::ClientError> {
     match cmd {
@@ -569,19 +615,40 @@ async fn run_schedule(
                 .await
                 .unwrap_or_default();
             match mode {
-                DisplayMode::Rich => display_rich::display_schedule(&entries, &tasks),
-                DisplayMode::Simple => display_simple::display_schedule(&entries, &tasks),
+                DisplayMode::Rich => display_rich::display_schedule(&entries, &tasks, tz),
+                DisplayMode::Simple => display_simple::display_schedule(&entries, &tasks, tz),
             }
         }
         ScheduleCommands::Generate {
+            range,
             from,
             until,
             task_ids,
             sleep,
         } => {
+            let (from, until) = if let Some(range) = range {
+                parse_range_tz(&range, tz)
+                    .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?
+            } else {
+                let from = match from {
+                    Some(s) => parse_dt(&s, tz)?,
+                    None => jiff::Timestamp::now().to_string(),
+                };
+                let until = match until {
+                    Some(s) => parse_dt(&s, tz)?,
+                    None => {
+                        let now = jiff::Timestamp::now();
+                        let until_secs = now.as_second().saturating_add(7 * 86400);
+                        jiff::Timestamp::from_second(until_secs)
+                            .unwrap_or(now)
+                            .to_string()
+                    }
+                };
+                (from, until)
+            };
             let body = GenerateSchedule {
-                from: parse_dt(&from)?,
-                until: parse_dt(&until)?,
+                from: parse_dt(&from, tz)?,
+                until: parse_dt(&until, tz)?,
                 task_ids,
                 sleep,
             };
@@ -593,8 +660,8 @@ async fn run_schedule(
                 .await
                 .unwrap_or_default();
             match mode {
-                DisplayMode::Rich => display_rich::display_schedule(&entries, &tasks),
-                DisplayMode::Simple => display_simple::display_schedule(&entries, &tasks),
+                DisplayMode::Rich => display_rich::display_schedule(&entries, &tasks, tz),
+                DisplayMode::Simple => display_simple::display_schedule(&entries, &tasks, tz),
             }
         }
         ScheduleCommands::Reschedule {
@@ -607,8 +674,8 @@ async fn run_schedule(
         } => {
             let body = Reschedule {
                 mode: rmode,
-                from: from.map(|s| parse_dt(&s)).transpose()?,
-                until: until.map(|s| parse_dt(&s)).transpose()?,
+                from: from.map(|s| parse_dt(&s, tz)).transpose()?,
+                until: until.map(|s| parse_dt(&s, tz)).transpose()?,
                 task_ids,
                 pinned: pinned.unwrap_or_default(),
                 sleep,
@@ -621,8 +688,8 @@ async fn run_schedule(
                 .await
                 .unwrap_or_default();
             match mode {
-                DisplayMode::Rich => display_rich::display_schedule(&entries, &tasks),
-                DisplayMode::Simple => display_simple::display_schedule(&entries, &tasks),
+                DisplayMode::Rich => display_rich::display_schedule(&entries, &tasks, tz),
+                DisplayMode::Simple => display_simple::display_schedule(&entries, &tasks, tz),
             }
         }
         ScheduleCommands::Move {
@@ -631,7 +698,7 @@ async fn run_schedule(
             force,
         } => {
             let body = MoveEntry {
-                start_at: parse_dt(&start_at)?,
+                start_at: parse_dt(&start_at, tz)?,
                 force,
             };
             let result = client.move_entry(&task_id, &body).await?;
@@ -719,6 +786,14 @@ async fn run_sync(client: &Client, cmd: SyncCommands) -> Result<(), takusu_clien
             let result = client.trigger_sync().await?;
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
+    }
+    Ok(())
+}
+
+fn run_config(cmd: ConfigCommands) -> Result<(), takusu_client::ClientError> {
+    match cmd {
+        ConfigCommands::Show => config::show(),
+        ConfigCommands::Init => config::init(),
     }
     Ok(())
 }

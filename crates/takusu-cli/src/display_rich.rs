@@ -2,7 +2,68 @@ use comfy_table::{Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 use jiff::Timestamp;
 use takusu_client::{ScheduleEntry, TaskRow};
 
-pub fn display_tasks(tasks: &[TaskRow]) {
+pub fn display_task_detail(task: &TaskRow, entry: Option<&ScheduleEntry>, tz: &jiff::tz::TimeZone) {
+    let status_color = match task.status.as_str() {
+        "pending" => Color::Yellow,
+        "scheduled" => Color::Green,
+        "completed" => Color::DarkCyan,
+        "skipped" => Color::DarkGrey,
+        _ => Color::White,
+    };
+
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .set_content_arrangement(ContentArrangement::Dynamic);
+    table.set_header(vec![
+        Cell::new("ID").fg(Color::Cyan),
+        Cell::new("Title").fg(Color::Cyan),
+        Cell::new("Status").fg(Color::Cyan),
+        Cell::new("Start").fg(Color::Cyan),
+        Cell::new("Deadline").fg(Color::Cyan),
+        Cell::new("Avg (min)").fg(Color::Cyan),
+        Cell::new("σ (min)").fg(Color::Cyan),
+        Cell::new("Parallel").fg(Color::Cyan),
+        Cell::new("Abandon").fg(Color::Cyan),
+    ]);
+    table.add_row(vec![
+        Cell::new(task.id.as_str()),
+        Cell::new(&task.title),
+        Cell::new(&task.status).fg(status_color),
+        Cell::new(
+            task.start_at
+                .as_deref()
+                .map(|s| format_datetime(s, tz))
+                .unwrap_or_else(|| "—".into()),
+        ),
+        Cell::new(format_datetime(&task.end_at, tz)),
+        Cell::new(task.avg_minutes),
+        Cell::new(task.sigma_minutes),
+        Cell::new(if task.parallelizable { "✓" } else { "✗" }),
+        Cell::new(format!("{:.1}", task.abandonability)),
+    ]);
+    println!("{table}");
+
+    if let Some(entry) = entry {
+        println!();
+        let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .set_content_arrangement(ContentArrangement::Dynamic);
+        table.set_header(vec![
+            Cell::new("Start").fg(Color::Cyan),
+            Cell::new("End").fg(Color::Cyan),
+            Cell::new("Duration").fg(Color::Cyan),
+        ]);
+        let start = format_datetime(&entry.start_at, tz);
+        let end = format_datetime(&entry.end_at, tz);
+        let dur = format_duration(&entry.start_at, &entry.end_at);
+        table.add_row(vec![Cell::new(start), Cell::new(end), Cell::new(dur)]);
+        println!("{table}");
+    }
+}
+
+pub fn display_tasks(tasks: &[TaskRow], tz: &jiff::tz::TimeZone) {
     if tasks.is_empty() {
         println!("No tasks found.");
         return;
@@ -37,8 +98,13 @@ pub fn display_tasks(tasks: &[TaskRow]) {
             Cell::new(short_id),
             Cell::new(&t.title),
             Cell::new(&t.status).fg(status_color),
-            Cell::new(t.start_at.as_deref().unwrap_or("—")),
-            Cell::new(&t.end_at),
+            Cell::new(
+                t.start_at
+                    .as_deref()
+                    .map(|s| format_datetime(s, tz))
+                    .unwrap_or_else(|| "—".into()),
+            ),
+            Cell::new(format_datetime(&t.end_at, tz)),
             Cell::new(t.avg_minutes),
             Cell::new(t.sigma_minutes),
             Cell::new(if t.parallelizable { "✓" } else { "✗" }),
@@ -48,7 +114,7 @@ pub fn display_tasks(tasks: &[TaskRow]) {
     println!("{table}");
 }
 
-pub fn display_schedule(entries: &[ScheduleEntry], tasks: &[TaskRow]) {
+pub fn display_schedule(entries: &[ScheduleEntry], tasks: &[TaskRow], tz: &jiff::tz::TimeZone) {
     if entries.is_empty() {
         println!("No schedule found.");
         return;
@@ -79,8 +145,8 @@ pub fn display_schedule(entries: &[ScheduleEntry], tasks: &[TaskRow]) {
             .map(|t| t.title.as_str())
             .unwrap_or("(unknown)");
         let short_id = &e.task_id[..8];
-        let start = format_datetime(&e.start_at);
-        let end = format_datetime(&e.end_at);
+        let start = format_datetime(&e.start_at, tz);
+        let end = format_datetime(&e.end_at, tz);
         let dur = format_duration(&e.start_at, &e.end_at);
         table.add_row(vec![
             Cell::new(i + 1),
@@ -94,12 +160,10 @@ pub fn display_schedule(entries: &[ScheduleEntry], tasks: &[TaskRow]) {
     println!("{table}");
 }
 
-fn format_datetime(iso: &str) -> String {
+fn format_datetime(iso: &str, tz: &jiff::tz::TimeZone) -> String {
     iso.parse::<Timestamp>()
         .map(|ts| {
-            let zdt = ts
-                .in_tz("UTC")
-                .unwrap_or_else(|_| ts.to_zoned(jiff::tz::TimeZone::UTC));
+            let zdt = ts.to_zoned(tz.clone());
             zdt.strftime("%m/%d %H:%M").to_string()
         })
         .unwrap_or_else(|_| iso.to_string())

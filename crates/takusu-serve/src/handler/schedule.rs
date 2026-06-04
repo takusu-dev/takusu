@@ -14,8 +14,12 @@ fn parse_sleep(s: &str) -> SleepConfig {
     }
 }
 fn iso_to_point(iso: &str, per: u16) -> Result<Point, AppError> {
-    let ts = jiff::Timestamp::from_str(iso)
-        .map_err(|e| AppError::BadRequest(format!("invalid datetime: {e}")))?;
+    let ts = if iso.eq_ignore_ascii_case("now") {
+        jiff::Timestamp::now()
+    } else {
+        jiff::Timestamp::from_str(iso)
+            .map_err(|e| AppError::BadRequest(format!("invalid datetime: {e}")))?
+    };
     Ok(Point::from_timestamp(ts, per))
 }
 fn point_to_iso(slot: i64) -> String {
@@ -247,6 +251,7 @@ pub async fn move_entry(
     Path(task_id): Path<String>,
     Json(body): Json<MoveEntry>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let full_task_id = super::task::resolve_task_id(&state.db, &task_id).await?;
     let schedule_row =
         sqlx::query_as::<_, ScheduleRow>("SELECT * FROM schedules WHERE id = 'active'")
             .fetch_optional(&state.db)
@@ -256,11 +261,11 @@ pub async fn move_entry(
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let idx = entries
         .iter()
-        .position(|e| e.task_id == task_id)
+        .position(|e| e.task_id == full_task_id)
         .ok_or_else(|| AppError::NotFound(format!("task {task_id} not in schedule")))?;
     let new_start = iso_to_point(&body.start_at, 5)?;
     let task_row = sqlx::query_as::<_, TaskRow>("SELECT * FROM tasks WHERE id = ?")
-        .bind(&task_id)
+        .bind(&full_task_id)
         .fetch_optional(&state.db)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("task {task_id} not found")))?;
@@ -269,7 +274,7 @@ pub async fn move_entry(
     let duration = Point::delta(old_end, old_start);
     let new_end = Point(new_start.0 + duration);
     let new_entry = ScheduleEntry {
-        task_id: task_id.clone(),
+        task_id: full_task_id.clone(),
         start_at: point_to_iso(new_start.0),
         end_at: point_to_iso(new_end.0),
     };

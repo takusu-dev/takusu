@@ -384,7 +384,6 @@ impl Client {
 // ── Types (mirrors server model.rs) ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TaskRow {
     pub id: String,
     pub title: String,
@@ -405,7 +404,6 @@ pub struct TaskRow {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CreateTask {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -427,7 +425,6 @@ pub struct CreateTask {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct UpdateTask {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -470,7 +467,6 @@ pub struct ScheduleRow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ScheduleEntry {
     pub task_id: String,
     pub start_at: String,
@@ -478,7 +474,6 @@ pub struct ScheduleEntry {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct GenerateSchedule {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_ids: Option<Vec<String>>,
@@ -494,7 +489,6 @@ fn default_sleep() -> String {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Reschedule {
     pub mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -510,7 +504,6 @@ pub struct Reschedule {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct MoveEntry {
     pub start_at: String,
     #[serde(default)]
@@ -528,7 +521,6 @@ pub struct TokenRow {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TokenCreateResponse {
     pub id: i64,
     pub token: String,
@@ -539,7 +531,6 @@ pub struct TokenCreateResponse {
 // ── Sync types ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SyncSettingsResponse {
     pub enabled: bool,
     pub calendar_id: String,
@@ -549,7 +540,6 @@ pub struct SyncSettingsResponse {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct UpdateSyncSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,

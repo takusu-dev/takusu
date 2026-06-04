@@ -59,9 +59,17 @@ pub fn parse_duration(s: &str) -> Result<i64, String> {
 }
 
 pub fn parse_datetime(s: &str) -> Result<String, String> {
+    parse_datetime_tz(s, &jiff::tz::TimeZone::UTC)
+}
+
+pub fn parse_datetime_tz(s: &str, tz: &jiff::tz::TimeZone) -> Result<String, String> {
     let s = s.trim();
-    let now = jiff::Zoned::now();
-    let today = now.date();
+
+    if s.eq_ignore_ascii_case("now") {
+        return Ok(jiff::Timestamp::now().to_string());
+    }
+
+    let today = jiff::Timestamp::now().to_zoned(tz.clone()).date();
 
     // Full ISO 8601 timestamp
     if let Ok(ts) = jiff::Timestamp::from_str(s) {
@@ -87,12 +95,11 @@ pub fn parse_datetime(s: &str) -> Result<String, String> {
         }
     }
 
-    // "06-15" → this year June 15th end-of-day
-    // "-06" → this year this month day 6 end-of-day
-    // "06-15T14:00" → this year June 15 14:00 UTC
-    // "-06T14:00" → this year this month day 6 14:00 UTC
+    // "06-15" → this year June 15th end-of-day (in configured tz)
+    // "-06" → this year this month day 6 end-of-day (in configured tz)
+    // "06-15T14:00" → this year June 15 14:00 (in configured tz)
+    // "-06T14:00" → this year this month day 6 14:00 (in configured tz)
     if s.starts_with('-') && !s.starts_with("--") {
-        // "-DD" → today's year & month, given day
         let rest = &s[1..];
         let (day_str, time_part) = rest
             .split_once('T')
@@ -102,15 +109,13 @@ pub fn parse_datetime(s: &str) -> Result<String, String> {
             .parse()
             .map_err(|_| format!("invalid day: {day_str}"))?;
         let dt = try_build_datetime(today.year(), today.month(), day, time_part)?;
-        return dt_to_iso(dt);
+        return dt_to_iso(dt, tz);
     }
 
     if let Some(idx) = s.find('-') {
         let prefix = &s[..idx];
         let rest = &s[idx + 1..];
-        // Check if prefix is a 2-digit month (not a 4-digit year)
         if prefix.len() == 2 && prefix.chars().all(|c| c.is_ascii_digit()) {
-            // "MM-DD" or "MM-DDThh:mm"
             let month: i8 = prefix
                 .parse()
                 .map_err(|_| format!("invalid month: {prefix}"))?;
@@ -119,7 +124,6 @@ pub fn parse_datetime(s: &str) -> Result<String, String> {
                 .or_else(|| rest.split_once(' '))
                 .unwrap_or((rest, ""));
             let (day_str, time_part) = if day_str.contains('-') {
-                // "MM-DD-..." is ambiguous, bail out
                 return Err(format!("ambiguous date format: {s}"));
             } else {
                 (day_str, time_part)
@@ -128,30 +132,91 @@ pub fn parse_datetime(s: &str) -> Result<String, String> {
                 .parse()
                 .map_err(|_| format!("invalid day: {day_str}"))?;
             let dt = try_build_datetime(today.year(), month, day, time_part)?;
-            return dt_to_iso(dt);
+            return dt_to_iso(dt, tz);
         }
     }
 
     // Full date without timezone: "2025-06-05"
     if let Ok(d) = jiff::civil::Date::from_str(s) {
-        let dt = d
+        let zdt = d
             .at(23, 59, 59, 0)
-            .to_zoned(jiff::tz::TimeZone::UTC)
-            .map_err(|e| format!("could not convert date to UTC: {e}"))?;
-        return Ok(dt.timestamp().to_string());
+            .to_zoned(tz.clone())
+            .map_err(|e| format!("could not convert date: {e}"))?;
+        return Ok(zdt.timestamp().to_string());
     }
 
     // Full datetime without timezone: "2025-06-05T14:00"
     if let Ok(dt) = jiff::civil::DateTime::from_str(&normalized) {
-        let ts = dt
-            .to_zoned(jiff::tz::TimeZone::UTC)
-            .map_err(|e| format!("could not convert to UTC: {e}"))?;
-        return Ok(ts.timestamp().to_string());
+        let zdt = dt
+            .to_zoned(tz.clone())
+            .map_err(|e| format!("could not convert datetime: {e}"))?;
+        return Ok(zdt.timestamp().to_string());
     }
 
     Err(format!(
         "could not parse datetime: {s} (e.g. 2025-06-05, 06-15, -06, 06-15T14:00)"
     ))
+}
+
+pub fn parse_range(s: &str) -> Result<(String, String), String> {
+    parse_range_tz(s, &jiff::tz::TimeZone::UTC)
+}
+
+pub fn parse_range_tz(s: &str, tz: &jiff::tz::TimeZone) -> Result<(String, String), String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err("empty range".to_string());
+    }
+
+    if let Some(idx) = s.find(" to ") {
+        let from_str = s[..idx].trim();
+        let until_str = s[idx + 4..].trim();
+        let from = parse_datetime_tz(from_str, tz)?;
+        let until = parse_datetime_tz(until_str, tz)?;
+        return Ok((from, until));
+    }
+
+    if let Ok(secs) = parse_range_duration(s) {
+        let now = jiff::Timestamp::now();
+        let until_secs = now.as_second().saturating_add(secs);
+        let until = jiff::Timestamp::from_second(until_secs).unwrap_or(now);
+        return Ok((now.to_string(), until.to_string()));
+    }
+
+    let until = parse_datetime_tz(s, tz)?;
+    let now = jiff::Timestamp::now().to_string();
+    Ok((now, until))
+}
+
+fn parse_range_duration(s: &str) -> Result<i64, String> {
+    let s = s.trim().to_lowercase();
+
+    let (num_str, unit) = if let Some(pos) = s.find(|c: char| !c.is_ascii_digit() && c != '.') {
+        let ns = &s[..pos];
+        if ns.is_empty() {
+            return Err(format!("could not parse duration: {s}"));
+        }
+        (ns, s[pos..].trim())
+    } else {
+        return Err(format!("could not parse duration: {s}"));
+    };
+
+    let num: f64 = num_str
+        .parse()
+        .map_err(|_| format!("invalid number in duration: {num_str}"))?;
+
+    let secs = match unit {
+        "m" | "min" | "mins" | "minute" | "minutes" => num * 60.0,
+        "h" | "hr" | "hrs" | "hour" | "hours" => num * 3600.0,
+        "d" | "day" | "days" => num * 86400.0,
+        "w" | "wk" | "wks" | "week" | "weeks" => num * 604800.0,
+        _ => return Err(format!("unknown duration unit: {unit} (use m, h, d, w)")),
+    };
+
+    if secs < 0.0 {
+        return Err("negative duration".to_string());
+    }
+    Ok(secs as i64)
 }
 
 fn try_build_datetime(
@@ -173,11 +238,11 @@ fn try_build_datetime(
     Ok(dt)
 }
 
-fn dt_to_iso(dt: jiff::civil::DateTime) -> Result<String, String> {
-    let ts = dt
-        .to_zoned(jiff::tz::TimeZone::UTC)
-        .map_err(|e| format!("could not convert to UTC: {e}"))?;
-    Ok(ts.timestamp().to_string())
+fn dt_to_iso(dt: jiff::civil::DateTime, tz: &jiff::tz::TimeZone) -> Result<String, String> {
+    let zdt = dt
+        .to_zoned(tz.clone())
+        .map_err(|e| format!("could not convert to timezone: {e}"))?;
+    Ok(zdt.timestamp().to_string())
 }
 
 #[cfg(test)]

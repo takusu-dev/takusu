@@ -210,6 +210,7 @@ CREATE TABLE google_cal_events (
 ```
 
 `task_ids` 省略時は `status=pending` の全タスクを対象。
+`from` / `until` に `"now"` を指定すると現在時刻が使われる。
 
 #### POST /api/schedule/reschedule
 
@@ -220,6 +221,8 @@ CREATE TABLE google_cal_events (
   "mode": "range",
   "from": "2026-06-05T00:00:00+09:00",
   "until": "2026-06-05T23:59:59+09:00",
+
+`from` / `until` に `"now"` を指定すると現在時刻が使われる。
   "pinned": ["0196d5a0-..."],
   "sleep": "recommended"
 }
