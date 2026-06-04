@@ -1,4 +1,5 @@
 use takusu_serve::app::AppState;
+use takusu_serve::config;
 use takusu_serve::db;
 
 #[tokio::main]
@@ -10,14 +11,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
-    let db_url = std::env::var("TAKUSU_DB").unwrap_or_else(|_| "sqlite:./takusu.db".to_string());
-    let root_token = std::env::var("TAKUSU_ROOT_TOKEN").expect("TAKUSU_ROOT_TOKEN is required");
-    let bind_addr = std::env::var("TAKUSU_BIND").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+    let serve_config = config::load_config()?;
+    let root_token = config::load_root_token();
 
-    let pool = db::init_pool(&db_url).await?;
+    let pool = db::init_pool(&serve_config.db_url).await?;
     db::run_migrations(&pool).await?;
 
-    tracing::info!("database initialized: {db_url}");
+    tracing::info!("database initialized: {}", serve_config.db_url);
 
     let state = AppState {
         db: pool,
@@ -27,8 +27,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = takusu_serve::app::app(state);
 
-    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
-    tracing::info!("listening on {bind_addr}");
+    let listener = tokio::net::TcpListener::bind(&serve_config.bind_addr).await?;
+    tracing::info!("listening on {}", serve_config.bind_addr);
 
     axum::serve(listener, app).await?;
 

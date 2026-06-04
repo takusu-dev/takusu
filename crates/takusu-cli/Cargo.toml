@@ -17,5 +17,6 @@ serde_json = { workspace = true }
 tokio = { workspace = true }
 jiff = { workspace = true }
 takusu-client = { workspace = true }
+takusu-util = { workspace = true }
 
 comfy-table = "7"

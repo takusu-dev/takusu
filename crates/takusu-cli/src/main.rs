@@ -8,6 +8,7 @@ use takusu_client::{
     Client, CreateTask, GenerateSchedule, MoveEntry, Reschedule, ScheduleEntry, TaskQuery,
     UpdateSyncSettings,
 };
+use takusu_util::generate_root_token;
 
 #[derive(Parser)]
 #[command(name = "takusu", version, about = "CLI client for takusu scheduler")]
@@ -35,6 +36,9 @@ enum DisplayMode {
 enum Commands {
     /// Check server health
     Health,
+
+    /// Generate a root token for takusu-serve
+    GenRootToken,
 
     /// Task management
     Task {
@@ -259,6 +263,13 @@ enum SyncCommands {
 async fn main() {
     let cli = Cli::parse();
 
+    if matches!(cli.command, Commands::GenRootToken) {
+        let token = generate_root_token();
+        println!("{token}");
+        eprintln!("\nSet this as TAKUSU_ROOT_TOKEN env var for takusu-serve.");
+        return;
+    }
+
     let token = match cli.token {
         Some(ref t) => t.clone(),
         None => {
@@ -289,6 +300,7 @@ async fn run(
         Commands::Schedule { command } => run_schedule(mode, client, command).await?,
         Commands::Token { command } => run_token(mode, client, command).await?,
         Commands::Sync { command } => run_sync(client, command).await?,
+        Commands::GenRootToken => unreachable!(),
     }
     Ok(())
 }
