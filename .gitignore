@@ -4,3 +4,4 @@ result/
 .env
 result*
 opencode.json
+*.db
