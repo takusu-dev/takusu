@@ -2,8 +2,9 @@ mod display_rich;
 mod display_simple;
 mod editor;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use std::process;
+use std::io;
 use takusu_client::{
     Client, CreateTask, GenerateSchedule, MoveEntry, Reschedule, ScheduleEntry, TaskQuery,
     UpdateSyncSettings,
@@ -56,6 +57,12 @@ enum Commands {
     Token {
         #[command(subcommand)]
         command: TokenCommands,
+    },
+
+    /// Generate shell completions
+    Completion {
+        #[arg(value_name = "SHELL")]
+        shell: clap_complete::Shell,
     },
 
     /// Google Calendar sync
@@ -270,6 +277,16 @@ async fn main() {
         return;
     }
 
+    if matches!(cli.command, Commands::Completion { .. }) {
+        let shell = match cli.command {
+            Commands::Completion { shell } => shell,
+            _ => unreachable!(),
+        };
+        let mut cmd = Cli::command();
+        clap_complete::generate(shell, &mut cmd, "takusu", &mut io::stdout());
+        return;
+    }
+
     let token = match cli.token {
         Some(ref t) => t.clone(),
         None => {
@@ -301,6 +318,7 @@ async fn run(
         Commands::Token { command } => run_token(mode, client, command).await?,
         Commands::Sync { command } => run_sync(client, command).await?,
         Commands::GenRootToken => unreachable!(),
+        Commands::Completion { .. } => unreachable!(),
     }
     Ok(())
 }
