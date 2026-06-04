@@ -146,7 +146,7 @@ CREATE TABLE google_cal_events (
 
 | パラメータ | 型 | 説明 |
 |---|---|---|
-| `status` | string | ステータスフィルタ |
+| `status` | string | ステータスフィルタ (pending, scheduled, in_progress, completed, skipped) |
 | `from` | ISO 8601 | `end_at >= from` |
 | `until` | ISO 8601 | `start_at <= until` |
 | `habit_id` | UUID | 習慣由来のみ |
@@ -203,14 +203,13 @@ CREATE TABLE google_cal_events (
 
 ```json
 {
-  "from": "2026-06-05T00:00:00+09:00",
   "until": "2026-06-06T23:59:59+09:00",
   "sleep": "recommended"
 }
 ```
 
-`task_ids` 省略時は `status=pending` の全タスクを対象。
-`from` / `until` に `"now"` を指定すると現在時刻が使われる。
+`task_ids` 省略時は `status IN ('pending', 'scheduled')` のタスクを対象。
+開始時刻は常に現在時刻 (`now`) が使用される。
 
 #### POST /api/schedule/reschedule
 

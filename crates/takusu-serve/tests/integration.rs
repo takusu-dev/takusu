@@ -414,7 +414,6 @@ async fn schedule_generate_and_get() {
         Method::POST,
         "/api/schedule/generate",
         json!({
-            "from": "2026-06-05T00:00:00+09:00",
             "until": "2026-06-05T23:59:59+09:00",
             "sleep": "disabled"
         }),
@@ -542,3 +541,138 @@ async fn task_prefix_lookup() {
     let res = router.oneshot(delete_req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NO_CONTENT);
 }
+
+#[tokio::test]
+async fn task_update_status() {
+    let (state, _) = setup().await;
+    let router = app(state);
+
+    let req = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "status-test",
+            "end_at": "2026-06-05T18:00:00+09:00",
+            "avg_minutes": 30,
+            "depends": [],
+            "parallelizable": false,
+            "allows_parallel": false,
+            "abandonability": 0.5
+        }),
+    );
+    let res = router.clone().oneshot(req).await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let task_id = body["id"].as_str().unwrap();
+
+    for status in &["in_progress", "completed", "skipped"] {
+        let update_req = auth_req_body(
+            Method::PATCH,
+            &format!("/api/tasks/{task_id}"),
+            json!({ "status": status }),
+        );
+        let res = router.clone().oneshot(update_req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let updated: serde_json::Value =
+            serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+        assert_eq!(updated["status"], *status);
+    }
+
+    let bad_req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{task_id}"),
+        json!({ "status": "invalid" }),
+    );
+    let res = router.oneshot(bad_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn generate_excludes_in_progress() {
+    let (state, pool) = setup().await;
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('task1', 'pending-task', '2026-06-05T18:00:00+09:00', 60, 0, '[]', 0, 0, 0.5, 'pending')"
+    ).execute(&pool).await.unwrap();
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('task2', 'in-progress-task', '2026-06-05T18:00:00+09:00', 30, 0, '[]', 0, 0, 0.5, 'in_progress')"
+    ).execute(&pool).await.unwrap();
+
+    let router = app(state);
+
+    let gen_req = auth_req_body(
+        Method::POST,
+        "/api/schedule/generate",
+        json!({
+            "until": "2026-06-05T23:59:59+09:00",
+            "sleep": "disabled"
+        }),
+    );
+    let res = router.oneshot(gen_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let schedule: Vec<serde_json::Value> =
+        serde_json::from_str(body["schedule"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        schedule.len(),
+        1,
+        "should include pending but exclude in_progress tasks"
+    );
+    assert_eq!(schedule[0]["task_id"], "task1");
+}
+
+#[tokio::test]
+async fn generate_excludes_completed_and_skipped() {
+    let (state, pool) = setup().await;
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('task1', 'pending-task', '2026-06-05T18:00:00+09:00', 60, 0, '[]', 0, 0, 0.5, 'pending')"
+    ).execute(&pool).await.unwrap();
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('task2', 'completed-task', '2020-01-01T12:00:00Z', 30, 0, '[]', 0, 0, 0.5, 'completed')"
+    ).execute(&pool).await.unwrap();
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('task3', 'skipped-task', '2026-06-05T18:00:00+09:00', 30, 0, '[]', 0, 0, 0.5, 'skipped')"
+    ).execute(&pool).await.unwrap();
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('task4', 'in-progress-task', '2026-06-05T18:00:00+09:00', 30, 0, '[]', 0, 0, 0.5, 'in_progress')"
+    ).execute(&pool).await.unwrap();
+
+    let router = app(state);
+
+    let gen_req = auth_req_body(
+        Method::POST,
+        "/api/schedule/generate",
+        json!({
+            "until": "2026-06-05T23:59:59+09:00",
+            "sleep": "disabled"
+        }),
+    );
+    let res = router.oneshot(gen_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let schedule: Vec<serde_json::Value> =
+        serde_json::from_str(body["schedule"].as_str().unwrap()).unwrap();
+    let task_ids: Vec<&str> = schedule
+        .iter()
+        .map(|e| e["task_id"].as_str().unwrap())
+        .collect();
+    assert!(task_ids.contains(&"task1"), "should include pending task");
+    assert!(
+        !task_ids.contains(&"task2"),
+        "should exclude completed task"
+    );
+    assert!(
+        !task_ids.contains(&"task3"),
+        "should exclude skipped task"
+    );
+    assert!(
+        !task_ids.contains(&"task4"),
+        "should exclude in_progress task"
+    );
+}
+
+

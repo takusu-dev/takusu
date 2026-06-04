@@ -424,7 +424,7 @@ pub struct CreateTask {
     pub abandonability: Option<f64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub struct UpdateTask {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -477,7 +477,6 @@ pub struct ScheduleEntry {
 pub struct GenerateSchedule {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_ids: Option<Vec<String>>,
-    pub from: String,
     pub until: String,
     #[serde(default = "default_sleep")]
     pub sleep: String,

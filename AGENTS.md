@@ -47,7 +47,7 @@ takusu/
 │   │   ├── migrations/
 │   │   │   ├── 001_init.sql        # DB schema
 │   │   │   └── 002_google_cal.sql  # Google Calendar settings & event mappings
-│   │   └── tests/integration.rs     # 16 integration tests (axum oneshot)
+│   │   └── tests/integration.rs     # 19 integration tests (axum oneshot)
 │   ├── takusu-ical/          # iCalendar parser (pure, no HTTP dependency)
 │   │   └── src/lib.rs        #   parse_ical() → Vec<IcalTask>
 │   ├── takusu-audio/         # Audio processing (recording + Whisper STT)
@@ -84,9 +84,9 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `cargo check` | Type-check all crates |
 | `cargo fmt` / `treefmt` | Format code |
 | `cargo clippy` | Lint |
-| `cargo nextest run --workspace` | Run all 68 tests |
+| `cargo nextest run --workspace` | Run all 86 tests |
 | `cargo nextest run -p takusu-core` | Run core planner tests |
-| `cargo nextest run -p takusu-serve` | Run integration tests (16) |
+| `cargo nextest run -p takusu-serve` | Run integration tests (19) |
 | `cargo nextest run -p takusu-ical` | Run iCal parser tests (5) |
 | `cargo bench -p takusu-core` | Run benchmark (~148ms for 25 tasks) |
 | `cargo run --example daily` | Run daily schedule example |
@@ -216,6 +216,17 @@ No external HTTP server needed. Run with `cargo nextest run -p takusu-serve`.
   removes all events. OAuth2 flow: `oauth_url()` → user authorize → `exchange_code()`.
 - **AppState has sync_lock**: `Arc<Mutex<()>>` serialized via the lock inside the retry loop
   (lock acquired per attempt, released before sleep).
+- **Generate uses `now` as start**: `POST /api/schedule/generate` no longer accepts `from`;
+  the start time is always the current time. Only `until` is required.
+- **Task status tracking**: tasks have a `status` column with 5 states:
+  `pending` (not yet scheduled), `scheduled` (in current schedule), `in_progress` (being worked on),
+  `completed` (done), `skipped` (explicitly skipped). Status is changeable via `task status <id> <value>`
+  or `task update --status <value>`.
+  - **Generate includes pending/scheduled only**: query is `status IN ('pending', 'scheduled')`.
+    `in_progress`, `completed`, and `skipped` tasks are excluded from schedule generation.
+  - **Generate sets scheduled**: all tasks included in a generate become `status='scheduled'`.
+  - **Reschedule**: queries tasks with `status IN ('pending', 'scheduled')`.
+  - **Clear schedule**: does NOT reset task status (tasks stay `scheduled`; must be manually set to `pending`).
 
 ## Key Design Decisions (from main.typ)
 
@@ -236,10 +247,14 @@ CLI client using clap derive with nested subcommands: `task`, `schedule`, `token
 
 - **Display modes**: `--mode rich` (comfy-table) / `--mode simple` (plain text)
 - **Auth**: `--token` flag or `TAKUSU_TOKEN` env var
+- **Status display**: colored in rich mode (Yellow=pending, Green=scheduled, DarkYellow=in_progress,
+  DarkCyan=completed, DarkGrey=skipped); simple mode uses markers ([ ], [~], [>], [x], [-])
+- **Status update**: `task update --status <value>` or `task edit` includes status field
+- **Task list filter**: `task list --status <value>
 - **Editor-based editing**: `task edit <ID>` writes task fields to a temp file,
   opens `$EDITOR` (default `vi`), then parses the saved file and sends PATCH.
   Lines starting with `#` are comments. Empty values are not updated.
-- **Subcommands**: `task {list,show,create,edit,update,replace,delete}`,
+- **Subcommands**: `task {list,show,create,edit,update,replace,delete,status}`,
   `schedule {get,generate,reschedule,move,clear}`,
   `token {create,list,revoke}`, `sync {settings,setup,oauth-url,oauth-callback,trigger}`
 

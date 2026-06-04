@@ -222,6 +222,9 @@ enum TaskCommands {
     /// Delete a task
     #[command(visible_alias = "rm")]
     Delete { id: String },
+
+    /// Change task status (pending, scheduled, in_progress, completed, skipped)
+    Status { id: String, status: String },
 }
 
 #[derive(Subcommand)]
@@ -233,8 +236,6 @@ enum ScheduleCommands {
     Generate {
         #[arg(long, help = "Time range (e.g. '1w', '3d', 'now to 2025-06-12')")]
         range: Option<String>,
-        #[arg(long, help = "Start time (e.g. 2025-06-05, 2025-06-05T06:00Z, now)")]
-        from: Option<String>,
         #[arg(long, help = "End time (e.g. 2025-06-06, 2025-06-06T06:00Z, now)")]
         until: Option<String>,
         #[arg(long)]
@@ -595,6 +596,17 @@ async fn run_task(
             client.delete_task(&id).await?;
             println!("Task {id} deleted.");
         }
+        TaskCommands::Status { id, status } => {
+            let body = takusu_client::UpdateTask {
+                status: Some(status.clone()),
+                ..Default::default()
+            };
+            let task = client.update_task(&id, &body).await?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_tasks(&[task], tz),
+                DisplayMode::Simple => display_simple::display_tasks(&[task], tz),
+            }
+        }
     }
     Ok(())
 }
@@ -621,20 +633,16 @@ async fn run_schedule(
         }
         ScheduleCommands::Generate {
             range,
-            from,
             until,
             task_ids,
             sleep,
         } => {
-            let (from, until) = if let Some(range) = range {
-                parse_range_tz(&range, tz)
-                    .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?
+            let until = if let Some(range) = range {
+                let (_from, u) = parse_range_tz(&range, tz)
+                    .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+                u
             } else {
-                let from = match from {
-                    Some(s) => parse_dt(&s, tz)?,
-                    None => jiff::Timestamp::now().to_string(),
-                };
-                let until = match until {
+                match until {
                     Some(s) => parse_dt(&s, tz)?,
                     None => {
                         let now = jiff::Timestamp::now();
@@ -643,11 +651,9 @@ async fn run_schedule(
                             .unwrap_or(now)
                             .to_string()
                     }
-                };
-                (from, until)
+                }
             };
             let body = GenerateSchedule {
-                from: parse_dt(&from, tz)?,
                 until: parse_dt(&until, tz)?,
                 task_ids,
                 sleep,

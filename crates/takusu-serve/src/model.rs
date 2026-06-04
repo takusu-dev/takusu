@@ -128,7 +128,6 @@ pub struct ScheduleEntry {
 pub struct GenerateSchedule {
     #[serde(default)]
     pub task_ids: Option<Vec<String>>,
-    pub from: String,
     pub until: String,
     #[serde(default = "default_sleep")]
     pub sleep: String,

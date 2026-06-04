@@ -6,6 +6,7 @@ pub fn display_task_detail(task: &TaskRow, entry: Option<&ScheduleEntry>, tz: &j
     let status_color = match task.status.as_str() {
         "pending" => Color::Yellow,
         "scheduled" => Color::Green,
+        "in_progress" => Color::DarkYellow,
         "completed" => Color::DarkCyan,
         "skipped" => Color::DarkGrey,
         _ => Color::White,
@@ -89,6 +90,7 @@ pub fn display_tasks(tasks: &[TaskRow], tz: &jiff::tz::TimeZone) {
         let status_color = match t.status.as_str() {
             "pending" => Color::Yellow,
             "scheduled" => Color::Green,
+            "in_progress" => Color::DarkYellow,
             "completed" => Color::DarkCyan,
             "skipped" => Color::DarkGrey,
             _ => Color::White,

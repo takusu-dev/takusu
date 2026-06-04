@@ -38,22 +38,24 @@ pub async fn generate_schedule(
     State(state): State<AppState>,
     Json(body): Json<GenerateSchedule>,
 ) -> Result<Json<ScheduleRow>, AppError> {
-    let from_point = iso_to_point(&body.from, 5)?;
-    let _until_point = iso_to_point(&body.until, 5)?;
+    let from_point = Point::from_timestamp(jiff::Timestamp::now(), 5);
     let sleep = parse_sleep(&body.sleep);
     let task_rows = if let Some(ref task_ids) = body.task_ids {
         let placeholders = task_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql =
-            format!("SELECT * FROM tasks WHERE id IN ({placeholders}) AND status = 'pending'");
+        let sql = format!(
+            "SELECT * FROM tasks WHERE id IN ({placeholders}) AND status IN ('pending','scheduled')"
+        );
         let mut q = sqlx::query_as::<_, TaskRow>(sqlx::AssertSqlSafe(sql.as_str()));
         for id in task_ids {
             q = q.bind(id);
         }
         q.fetch_all(&state.db).await?
     } else {
-        sqlx::query_as::<_, TaskRow>("SELECT * FROM tasks WHERE status = 'pending'")
-            .fetch_all(&state.db)
-            .await?
+        sqlx::query_as::<_, TaskRow>(
+            "SELECT * FROM tasks WHERE status IN ('pending', 'scheduled')",
+        )
+        .fetch_all(&state.db)
+        .await?
     };
     let mut planner = Planner::new(from_point, sleep);
     let mut id_map: Vec<String> = Vec::new();
