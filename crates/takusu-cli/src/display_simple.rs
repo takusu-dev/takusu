@@ -1,5 +1,5 @@
 use jiff::Timestamp;
-use takusu_client::{ScheduleEntry, TaskRow};
+use takusu_client::{HabitRow, ScheduleEntry, TaskRow};
 
 pub fn display_task_detail(task: &TaskRow, entry: Option<&ScheduleEntry>, tz: &jiff::tz::TimeZone) {
     let status_marker = match task.status.as_str() {
@@ -135,4 +135,55 @@ fn fmt_duration(start_iso: &str, end_iso: &str) -> String {
         }
         _ => "?".to_string(),
     }
+}
+
+pub fn display_habits(habits: &[HabitRow]) {
+    if habits.is_empty() {
+        println!("  (no habits)");
+        return;
+    }
+
+    for h in habits {
+        let active = if h.active { "active" } else { "inactive" };
+        let short_id = &h.id[..8];
+        println!(
+            "  {} {} [{}] {}–{} {}",
+            short_id, h.title, h.recurrence, h.start_time, h.end_time, active
+        );
+        println!(
+            "   est: {}min (+/-{}) | abandon: {:.1} | parallel: {}",
+            h.avg_minutes,
+            h.sigma_minutes,
+            h.abandonability,
+            if h.parallelizable { "yes" } else { "no" },
+        );
+        if let Some(ref desc) = h.description {
+            if !desc.is_empty() {
+                println!("   {desc}");
+            }
+        }
+        println!();
+    }
+}
+
+pub fn display_habit_detail(habit: &HabitRow) {
+    let active = if habit.active { "active" } else { "inactive" };
+    println!(
+        "{} {} [{}] {}–{} {}",
+        habit.id, habit.title, habit.recurrence, habit.start_time, habit.end_time, active
+    );
+    println!(
+        "   est: {}min (+/-{}) | abandon: {:.1} | parallel: {} | allows_parallel: {}",
+        habit.avg_minutes,
+        habit.sigma_minutes,
+        habit.abandonability,
+        if habit.parallelizable { "yes" } else { "no" },
+        if habit.allows_parallel { "yes" } else { "no" },
+    );
+    if let Some(ref desc) = habit.description {
+        if !desc.is_empty() {
+            println!("   {desc}");
+        }
+    }
+    println!();
 }

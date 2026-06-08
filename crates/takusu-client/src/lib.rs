@@ -159,6 +159,103 @@ impl Client {
         Ok(())
     }
 
+    // ── Habit ──
+
+    pub async fn list_habits(&self) -> Result<Vec<HabitRow>, ClientError> {
+        let resp = self
+            .request(reqwest::Method::GET, "/api/habits")
+            .await
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn get_habit(&self, id: &str) -> Result<HabitRow, ClientError> {
+        let resp = self
+            .request(reqwest::Method::GET, &format!("/api/habits/{id}"))
+            .await
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn create_habit(&self, body: &CreateHabit) -> Result<HabitRow, ClientError> {
+        let resp = self
+            .request(reqwest::Method::POST, "/api/habits")
+            .await
+            .json(body)
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn update_habit(
+        &self,
+        id: &str,
+        body: &UpdateHabit,
+    ) -> Result<HabitRow, ClientError> {
+        let resp = self
+            .request(reqwest::Method::PATCH, &format!("/api/habits/{id}"))
+            .await
+            .json(body)
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn replace_habit(
+        &self,
+        id: &str,
+        body: &CreateHabit,
+    ) -> Result<HabitRow, ClientError> {
+        let resp = self
+            .request(reqwest::Method::PUT, &format!("/api/habits/{id}"))
+            .await
+            .json(body)
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn delete_habit(&self, id: &str) -> Result<(), ClientError> {
+        let resp = self
+            .request(reqwest::Method::DELETE, &format!("/api/habits/{id}"))
+            .await
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(())
+    }
+
     // ── Schedule ──
 
     pub async fn get_schedule(&self) -> Result<ScheduleRow, ClientError> {
@@ -490,6 +587,69 @@ pub struct TaskQuery {
     pub from: Option<String>,
     pub until: Option<String>,
     pub habit_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitRow {
+    pub id: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub recurrence: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub avg_minutes: i64,
+    pub sigma_minutes: i64,
+    pub parallelizable: bool,
+    pub allows_parallel: bool,
+    pub abandonability: f64,
+    pub active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateHabit {
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub recurrence: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub avg_minutes: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sigma_minutes: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parallelizable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allows_parallel: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub abandonability: Option<f64>,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct UpdateHabit {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recurrence: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_time: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_time: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_minutes: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sigma_minutes: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parallelizable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allows_parallel: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub abandonability: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

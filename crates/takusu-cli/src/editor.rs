@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::io;
 use std::process::Command;
-use takusu_client::{TaskRow, UpdateTask};
+use takusu_client::{HabitRow, TaskRow, UpdateHabit, UpdateTask};
 
 pub fn format_task_for_editing(task: &TaskRow) -> String {
     let depends: String = serde_json::from_str::<Vec<String>>(&task.depends)
@@ -107,6 +107,93 @@ pub fn parse_edited_task(content: &str) -> Option<UpdateTask> {
         allows_parallel,
         abandonability,
         status,
+    })
+}
+
+pub fn format_habit_for_editing(habit: &HabitRow) -> String {
+    format!(
+        r#"# Edit habit. Lines starting with '#' are comments.
+# Empty fields will not be updated. Save and quit to apply changes.
+title: {title}
+description: {desc}
+recurrence: {recurrence}
+start_time: {start}
+end_time: {end}
+avg_minutes: {avg}
+sigma_minutes: {sigma}
+parallelizable: {par}
+allows_parallel: {apar}
+abandonability: {abandon}
+active: {active}"#,
+        title = habit.title,
+        desc = habit.description.as_deref().unwrap_or(""),
+        recurrence = habit.recurrence,
+        start = habit.start_time,
+        end = habit.end_time,
+        avg = habit.avg_minutes,
+        sigma = habit.sigma_minutes,
+        par = habit.parallelizable,
+        apar = habit.allows_parallel,
+        abandon = habit.abandonability,
+        active = habit.active,
+    )
+}
+
+pub fn parse_edited_habit(content: &str) -> Option<UpdateHabit> {
+    let mut title = None;
+    let mut description = None;
+    let mut recurrence = None;
+    let mut start_time = None;
+    let mut end_time = None;
+    let mut avg_minutes = None;
+    let mut sigma_minutes = None;
+    let mut parallelizable = None;
+    let mut allows_parallel = None;
+    let mut abandonability = None;
+    let mut active = None;
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (key, value) = line.split_once(':')?;
+        let key = key.trim();
+        let value = value.trim();
+        match key {
+            "title" => title = Some(value.to_string()),
+            "description" => {
+                description = if value.is_empty() {
+                    Some(None)
+                } else {
+                    Some(Some(value.to_string()))
+                }
+            }
+            "recurrence" => recurrence = Some(value.to_string()),
+            "start_time" => start_time = Some(value.to_string()),
+            "end_time" => end_time = Some(value.to_string()),
+            "avg_minutes" => avg_minutes = Some(value.parse().ok()?),
+            "sigma_minutes" => sigma_minutes = Some(value.parse().ok()?),
+            "parallelizable" => parallelizable = Some(value.parse().ok()?),
+            "allows_parallel" => allows_parallel = Some(value.parse().ok()?),
+            "abandonability" => abandonability = Some(value.parse().ok()?),
+            "active" => active = Some(value.parse().ok()?),
+            _ => {}
+        }
+    }
+
+    Some(UpdateHabit {
+        title,
+        description: description.flatten(),
+        recurrence,
+        start_time,
+        end_time,
+        avg_minutes,
+        sigma_minutes,
+        parallelizable,
+        allows_parallel,
+        abandonability,
+        active,
     })
 }
 

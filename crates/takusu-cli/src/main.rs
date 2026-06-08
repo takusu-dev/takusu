@@ -7,8 +7,8 @@ use clap::{CommandFactory, Parser, Subcommand};
 use std::io::{self, Write};
 use std::process;
 use takusu_client::{
-    Client, CreateTask, GenerateSchedule, MoveEntry, Reschedule, ScheduleEntry, TaskQuery,
-    UpdateSyncSettings,
+    Client, CreateHabit, CreateTask, GenerateSchedule, MoveEntry, Reschedule, ScheduleEntry,
+    TaskQuery, UpdateHabit, UpdateSyncSettings,
 };
 use takusu_util::{generate_root_token, parse_datetime_tz, parse_duration, parse_range_tz};
 
@@ -95,6 +95,12 @@ enum Commands {
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
+    },
+
+    /// Habit management
+    Habit {
+        #[command(subcommand)]
+        command: HabitCommands,
     },
 }
 
@@ -234,6 +240,116 @@ enum TaskCommands {
 
     /// Change task status (pending, scheduled, in_progress, completed, skipped)
     Status { id: String, status: String },
+}
+
+#[derive(Subcommand)]
+enum HabitCommands {
+    /// List habits
+    #[command(visible_alias = "ls")]
+    List,
+
+    /// Show habit detail
+    #[command(visible_alias = "get")]
+    Show { id: String },
+
+    /// Create a habit (interactive if no args in terminal)
+    Create {
+        #[arg(short, long, help = "Habit title")]
+        title: Option<String>,
+        #[arg(long, short, help = "Recurrence (daily, weekdays, Mon,Wed,Fri)")]
+        recurrence: Option<String>,
+        #[arg(long, help = "Start time (HH:MM)")]
+        start_time: Option<String>,
+        #[arg(long, help = "End time (HH:MM)")]
+        end_time: Option<String>,
+        #[arg(
+            long,
+            default_value = "30m",
+            help = "Average duration (e.g. 30m, 1h30m)"
+        )]
+        avg_time: String,
+        #[arg(
+            long,
+            default_value = "0",
+            help = "Std dev of duration (same format as avg_time)"
+        )]
+        sigma_time: String,
+        #[arg(long, default_value_t = 0.5, help = "Abandonability 0.0-1.0")]
+        abandonability: f64,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        parallelizable: bool,
+        #[arg(long)]
+        allows_parallel: bool,
+    },
+
+    /// Edit a habit in $EDITOR
+    Edit { id: String },
+
+    /// Partially update a habit (PATCH)
+    Update {
+        id: String,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        recurrence: Option<String>,
+        #[arg(long, help = "Start time (HH:MM)")]
+        start_time: Option<String>,
+        #[arg(long, help = "End time (HH:MM)")]
+        end_time: Option<String>,
+        #[arg(long, help = "Average duration (e.g. 30m, 1h30m)")]
+        avg_time: Option<String>,
+        #[arg(long, help = "Std dev of duration (same format as avg_time)")]
+        sigma_time: Option<String>,
+        #[arg(long)]
+        parallelizable: Option<bool>,
+        #[arg(long)]
+        allows_parallel: Option<bool>,
+        #[arg(long)]
+        abandonability: Option<f64>,
+        #[arg(long)]
+        active: Option<bool>,
+    },
+
+    /// Full replace a habit (PUT)
+    Replace {
+        id: String,
+        #[arg(long)]
+        title: String,
+        #[arg(long)]
+        recurrence: String,
+        #[arg(long, help = "Start time (HH:MM)")]
+        start_time: String,
+        #[arg(long, help = "End time (HH:MM)")]
+        end_time: String,
+        #[arg(
+            long,
+            default_value = "30m",
+            help = "Average duration (e.g. 30m, 1h30m)"
+        )]
+        avg_time: String,
+        #[arg(
+            long,
+            default_value = "0",
+            help = "Std dev of duration (same format as avg_time)"
+        )]
+        sigma_time: String,
+        #[arg(long, default_value_t = 0.5)]
+        abandonability: f64,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        parallelizable: bool,
+        #[arg(long)]
+        allows_parallel: bool,
+    },
+
+    /// Delete a habit
+    #[command(visible_alias = "rm")]
+    Delete { id: String },
 }
 
 #[derive(Subcommand)]
@@ -408,6 +524,7 @@ async fn run(
         Commands::Schedule { command } => run_schedule(mode, client, &tz, command).await?,
         Commands::Token { command } => run_token(mode, client, command).await?,
         Commands::Sync { command } => run_sync(client, command).await?,
+        Commands::Habit { command } => run_habit(mode, client, command).await?,
         Commands::GenRootToken => unreachable!(),
         Commands::Completion { .. } => unreachable!(),
         Commands::Config { command } => run_config(command, client).await?,
@@ -615,6 +732,190 @@ async fn run_task(
                 DisplayMode::Rich => display_rich::display_tasks(&[task], tz),
                 DisplayMode::Simple => display_simple::display_tasks(&[task], tz),
             }
+        }
+    }
+    Ok(())
+}
+
+async fn run_habit(
+    mode: DisplayMode,
+    client: &Client,
+    cmd: HabitCommands,
+) -> Result<(), takusu_client::ClientError> {
+    match cmd {
+        HabitCommands::List => {
+            let habits = client.list_habits().await?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_habits(&habits),
+                DisplayMode::Simple => display_simple::display_habits(&habits),
+            }
+        }
+        HabitCommands::Show { id } => {
+            let habit = client.get_habit(&id).await?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_habit_detail(&habit),
+                DisplayMode::Simple => display_simple::display_habit_detail(&habit),
+            }
+        }
+        HabitCommands::Create {
+            title,
+            recurrence,
+            start_time,
+            end_time,
+            avg_time,
+            sigma_time,
+            abandonability,
+            description,
+            parallelizable,
+            allows_parallel,
+        } => {
+            let (title, recurrence, start_time, end_time) =
+                if is_interactive()
+                    && title.is_none()
+                    && recurrence.is_none()
+                    && start_time.is_none()
+                    && end_time.is_none()
+                {
+                    let t = prompt("Title");
+                    let r = prompt("Recurrence (e.g. daily, weekdays, Mon,Wed,Fri)");
+                    let s = prompt("Start time (HH:MM)");
+                    let e = prompt("End time (HH:MM)");
+                    (Some(t), Some(r), Some(s), Some(e))
+                } else {
+                    (title, recurrence, start_time, end_time)
+                };
+            let avg_minutes = parse_duration(&avg_time)
+                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+            let sigma_minutes: i64 = parse_duration(&sigma_time)
+                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+            let body = CreateHabit {
+                title: title.unwrap_or_default(),
+                recurrence: recurrence.unwrap_or_default(),
+                start_time: start_time.unwrap_or_default(),
+                end_time: end_time.unwrap_or_default(),
+                avg_minutes,
+                sigma_minutes: if sigma_minutes > 0 {
+                    Some(sigma_minutes)
+                } else {
+                    None
+                },
+                parallelizable: if parallelizable { Some(true) } else { None },
+                allows_parallel: if allows_parallel { Some(true) } else { None },
+                abandonability: Some(abandonability),
+                description,
+            };
+            let habit = client.create_habit(&body).await?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_habit_detail(&habit),
+                DisplayMode::Simple => display_simple::display_habit_detail(&habit),
+            }
+        }
+        HabitCommands::Edit { id } => {
+            let habit = client.get_habit(&id).await?;
+            let original = editor::format_habit_for_editing(&habit);
+            let edited = editor::open_editor(&original, &habit.id).map_err(|e| {
+                takusu_client::ClientError::Api {
+                    status: 0,
+                    body: e.to_string(),
+                }
+            })?;
+            let update = editor::parse_edited_habit(&edited).ok_or_else(|| {
+                takusu_client::ClientError::Api {
+                    status: 0,
+                    body: "failed to parse edited habit".to_string(),
+                }
+            })?;
+            let updated = client.update_habit(&id, &update).await?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_habit_detail(&updated),
+                DisplayMode::Simple => display_simple::display_habit_detail(&updated),
+            }
+        }
+        HabitCommands::Update {
+            id,
+            title,
+            description,
+            recurrence,
+            start_time,
+            end_time,
+            avg_time,
+            sigma_time,
+            parallelizable,
+            allows_parallel,
+            abandonability,
+            active,
+        } => {
+            let avg_minutes = avg_time
+                .as_ref()
+                .map(|s| parse_duration(s))
+                .transpose()
+                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+            let sigma_minutes = sigma_time
+                .as_ref()
+                .map(|s| parse_duration(s))
+                .transpose()
+                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+            let body = UpdateHabit {
+                title,
+                description,
+                recurrence,
+                start_time,
+                end_time,
+                avg_minutes,
+                sigma_minutes,
+                parallelizable,
+                allows_parallel,
+                abandonability,
+                active,
+            };
+            let habit = client.update_habit(&id, &body).await?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_habit_detail(&habit),
+                DisplayMode::Simple => display_simple::display_habit_detail(&habit),
+            }
+        }
+        HabitCommands::Replace {
+            id,
+            title,
+            recurrence,
+            start_time,
+            end_time,
+            avg_time,
+            sigma_time,
+            abandonability,
+            description,
+            parallelizable,
+            allows_parallel,
+        } => {
+            let avg_minutes = parse_duration(&avg_time)
+                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+            let sigma_minutes: i64 = parse_duration(&sigma_time)
+                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+            let body = CreateHabit {
+                title,
+                recurrence,
+                start_time,
+                end_time,
+                avg_minutes,
+                sigma_minutes: if sigma_minutes > 0 {
+                    Some(sigma_minutes)
+                } else {
+                    None
+                },
+                parallelizable: if parallelizable { Some(true) } else { None },
+                allows_parallel: if allows_parallel { Some(true) } else { None },
+                abandonability: Some(abandonability),
+                description,
+            };
+            let habit = client.replace_habit(&id, &body).await?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_habit_detail(&habit),
+                DisplayMode::Simple => display_simple::display_habit_detail(&habit),
+            }
+        }
+        HabitCommands::Delete { id } => {
+            client.delete_habit(&id).await?;
+            println!("Habit {id} deleted.");
         }
     }
     Ok(())

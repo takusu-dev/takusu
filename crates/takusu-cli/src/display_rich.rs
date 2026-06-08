@@ -1,6 +1,6 @@
 use comfy_table::{Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 use jiff::Timestamp;
-use takusu_client::{ScheduleEntry, TaskRow};
+use takusu_client::{HabitRow, ScheduleEntry, TaskRow};
 
 pub fn display_task_detail(task: &TaskRow, entry: Option<&ScheduleEntry>, tz: &jiff::tz::TimeZone) {
     let status_color = match task.status.as_str() {
@@ -61,6 +61,88 @@ pub fn display_task_detail(task: &TaskRow, entry: Option<&ScheduleEntry>, tz: &j
         let dur = format_duration(&entry.start_at, &entry.end_at);
         table.add_row(vec![Cell::new(start), Cell::new(end), Cell::new(dur)]);
         println!("{table}");
+    }
+}
+
+pub fn display_habits(habits: &[HabitRow]) {
+    if habits.is_empty() {
+        println!("No habits found.");
+        return;
+    }
+
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_header(vec![
+            Cell::new("ID").fg(Color::Cyan),
+            Cell::new("Title").fg(Color::Cyan),
+            Cell::new("Recurrence").fg(Color::Cyan),
+            Cell::new("Time").fg(Color::Cyan),
+            Cell::new("Avg (min)").fg(Color::Cyan),
+            Cell::new("σ (min)").fg(Color::Cyan),
+            Cell::new("Parallel").fg(Color::Cyan),
+            Cell::new("Abandon").fg(Color::Cyan),
+            Cell::new("Active").fg(Color::Cyan),
+        ]);
+
+    for h in habits {
+        let short_id = &h.id[..8];
+        let time = format!("{}–{}", h.start_time, h.end_time);
+        let active_color = if h.active { Color::Green } else { Color::DarkGrey };
+        let active_text = if h.active { "yes" } else { "no" };
+        table.add_row(vec![
+            Cell::new(short_id),
+            Cell::new(&h.title),
+            Cell::new(&h.recurrence),
+            Cell::new(time),
+            Cell::new(h.avg_minutes),
+            Cell::new(h.sigma_minutes),
+            Cell::new(if h.parallelizable { "✓" } else { "✗" }),
+            Cell::new(format!("{:.1}", h.abandonability)),
+            Cell::new(active_text).fg(active_color),
+        ]);
+    }
+    println!("{table}");
+}
+
+pub fn display_habit_detail(habit: &HabitRow) {
+    let active_color = if habit.active { Color::Green } else { Color::DarkGrey };
+    let active_text = if habit.active { "yes" } else { "no" };
+
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .set_content_arrangement(ContentArrangement::Dynamic);
+    table.set_header(vec![
+        Cell::new("ID").fg(Color::Cyan),
+        Cell::new("Title").fg(Color::Cyan),
+        Cell::new("Recurrence").fg(Color::Cyan),
+        Cell::new("Time").fg(Color::Cyan),
+        Cell::new("Avg (min)").fg(Color::Cyan),
+        Cell::new("σ (min)").fg(Color::Cyan),
+        Cell::new("Parallel").fg(Color::Cyan),
+        Cell::new("Abandon").fg(Color::Cyan),
+        Cell::new("Active").fg(Color::Cyan),
+    ]);
+    let time = format!("{}–{}", habit.start_time, habit.end_time);
+    table.add_row(vec![
+        Cell::new(habit.id.as_str()),
+        Cell::new(&habit.title),
+        Cell::new(&habit.recurrence),
+        Cell::new(time),
+        Cell::new(habit.avg_minutes),
+        Cell::new(habit.sigma_minutes),
+        Cell::new(if habit.parallelizable { "✓" } else { "✗" }),
+        Cell::new(format!("{:.1}", habit.abandonability)),
+        Cell::new(active_text).fg(active_color),
+    ]);
+    println!("{table}");
+
+    if let Some(ref desc) = habit.description {
+        if !desc.is_empty() {
+            println!("\nDescription: {desc}");
+        }
     }
 }
 
