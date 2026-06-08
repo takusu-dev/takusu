@@ -41,7 +41,7 @@
 //! `SleepConfig::disabled()` で睡眠制約なし。
 
 mod anneal;
-mod evaluate;
+pub mod evaluate;
 mod solver;
 
 use jiff::Timestamp;
@@ -707,11 +707,7 @@ mod tests {
         };
         let replanned = p.plan_in_range(&range, &current_schedule, &[]);
         assert_eq!(replanned.schedules.len(), 3);
-        let ids: Vec<usize> = replanned
-            .schedules
-            .iter()
-            .map(|(_, _, id)| *id)
-            .collect();
+        let ids: Vec<usize> = replanned.schedules.iter().map(|(_, _, id)| *id).collect();
         assert!(ids.contains(&0), "task 0 should be preserved");
         assert!(ids.contains(&1), "task 1 should be preserved");
         assert!(ids.contains(&2), "task 2 should be preserved");
@@ -735,5 +731,195 @@ mod tests {
             Point(55),
             "pinned task 2 end should be unchanged"
         );
+    }
+
+    #[test]
+    fn point_arithmetic() {
+        let p = Point(10);
+        assert_eq!((p + 5).0, 15);
+        assert_eq!((p - 3).0, 7);
+        assert_eq!(Point::diff(Point(10), Point(20)), 10);
+        assert_eq!(Point::delta(Point(20), Point(10)), 10);
+    }
+
+    #[test]
+    fn point_from_raw() {
+        let p = Point::from_raw(42);
+        assert_eq!(p.0, 42);
+    }
+
+    #[test]
+    fn normal_dist_new() {
+        let nd = NormalDist::new(10, 3);
+        assert_eq!(nd.avg, 10);
+        assert_eq!(nd.sigma, 3);
+    }
+
+    #[test]
+    fn normal_dist_sigma_can_exceed_avg() {
+        let nd = NormalDist::new(5, 8);
+        assert_eq!(nd.avg, 5);
+        assert_eq!(nd.sigma, 8);
+    }
+
+    #[test]
+    fn normal_dist_zero_avg() {
+        let nd = NormalDist::new(0, 0);
+        assert_eq!(nd.avg, 0);
+        assert_eq!(nd.sigma, 0);
+    }
+
+    #[test]
+    fn sleep_config_disabled() {
+        let sc = SleepConfig::disabled();
+        assert!(!sc.enabled);
+    }
+
+    #[test]
+    fn sleep_config_recommended() {
+        let sc = SleepConfig::recommended();
+        assert!(sc.enabled);
+    }
+
+    #[test]
+    fn task_add_assigns_id() {
+        let mut planner = Planner::new(Point(0), SleepConfig::disabled());
+        let id1 = planner
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(100),
+                cost_estimate: NormalDist::new(10, 2),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+        let id2 = planner
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(200),
+                cost_estimate: NormalDist::new(5, 1),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+        assert_eq!(id1, 0);
+        assert_eq!(id2, 1);
+    }
+
+    #[test]
+    fn task_add_updates_depend_indices() {
+        let mut planner = Planner::new(Point(0), SleepConfig::disabled());
+        planner
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(100),
+                cost_estimate: NormalDist::new(5, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+        planner
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(200),
+                cost_estimate: NormalDist::new(5, 0),
+                depends: vec![0],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+        assert_eq!(planner.tasks()[1].depends, vec![0]);
+    }
+
+    #[test]
+    fn freeness_returns_valid_range() {
+        let mut planner = Planner::new(Point(0), SleepConfig::disabled());
+        planner
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(48),
+                cost_estimate: NormalDist::new(6, 2),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.0,
+            })
+            .unwrap();
+        let f = planner.freeness(0);
+        assert!(f >= 0.0 && f <= 1.0);
+    }
+
+    #[test]
+    fn plan_is_scheduled() {
+        let planner = simple_two_task_planner();
+        let plan = planner.plan();
+        assert!(plan.is_scheduled(0));
+        assert!(plan.is_scheduled(1));
+    }
+
+    #[test]
+    fn plan_task_start_end_not_scheduled() {
+        let plan = Plan { schedules: vec![] };
+        assert!(plan.task_start(0).is_none());
+        assert!(plan.task_end(0).is_none());
+        assert!(!plan.is_scheduled(0));
+    }
+
+    #[test]
+    fn point_from_timestamp_and_now() {
+        let ts = jiff::Timestamp::from_second(0).unwrap();
+        let p = Point::from_timestamp(ts, 5);
+        assert_eq!(p.0, 0);
+    }
+
+    #[test]
+    fn evaluate_empty_schedule_is_inclusion_loss() {
+        let planner = simple_two_task_planner();
+        let plan = Plan { schedules: vec![] };
+        let score = evaluate::evaluate(&planner, &plan, 0.0, 1.0);
+        let full_plan = planner.plan();
+        let full_score = evaluate::evaluate(&planner, &full_plan, 0.0, 1.0);
+        assert!(full_score > score);
+    }
+
+    fn simple_two_task_planner() -> Planner {
+        let mut planner = Planner::new(Point(0), SleepConfig::disabled());
+        planner
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(100),
+                cost_estimate: NormalDist::new(10, 2),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+        planner
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(200),
+                cost_estimate: NormalDist::new(10, 2),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+        planner
     }
 }

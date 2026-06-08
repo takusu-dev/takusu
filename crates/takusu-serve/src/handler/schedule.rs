@@ -319,7 +319,8 @@ pub async fn move_entry(
         end_at: point_to_iso(new_end.0),
     };
     let mut warnings = Vec::new();
-    if task_row.end_at.as_str() < new_end.0.to_string().as_str() {
+    let task_deadline = iso_to_point(&task_row.end_at, 5)?;
+    if new_end.0 > task_deadline.0 {
         warnings.push("deadline_violation".to_string());
     }
     if !warnings.is_empty() && !body.force {

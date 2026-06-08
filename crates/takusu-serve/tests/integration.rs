@@ -765,3 +765,257 @@ async fn schedule_generate_with_custom_sleep() {
     let res = router.oneshot(gen_req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn move_entry_with_force_overrides_warnings() {
+    let (state, pool) = setup().await;
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('t1', 'Task1', '2026-06-10T12:00:00Z', 60, 0, '[]', 0, 0, 0.5, 'scheduled')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO schedules (id, schedule, created_at, updated_at) VALUES ('active', '[{\"task_id\":\"t1\",\"start_at\":\"2026-06-10T10:00:00Z\",\"end_at\":\"2026-06-10T11:00:00Z\"}]', datetime('now'), datetime('now'))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let router = app(state);
+
+    let req = auth_req_body(
+        Method::PATCH,
+        "/api/schedule/entries/t1",
+        json!({
+            "start_at": "2026-06-10T13:00:00Z",
+            "force": true
+        }),
+    );
+    let res = router.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(body["task_id"], "t1");
+    assert!(
+        body["warnings"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("deadline_violation"))
+    );
+}
+
+#[tokio::test]
+async fn move_entry_without_force_rejects_violations() {
+    let (state, pool) = setup().await;
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('t1', 'Task1', '2026-06-10T12:00:00Z', 60, 0, '[]', 0, 0, 0.5, 'scheduled')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO schedules (id, schedule, created_at, updated_at) VALUES ('active', '[{\"task_id\":\"t1\",\"start_at\":\"2026-06-10T10:00:00Z\",\"end_at\":\"2026-06-10T11:00:00Z\"}]', datetime('now'), datetime('now'))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let router = app(state);
+
+    let req = auth_req_body(
+        Method::PATCH,
+        "/api/schedule/entries/t1",
+        json!({
+            "start_at": "2026-06-10T13:00:00Z",
+            "force": false
+        }),
+    );
+    let res = router.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn move_entry_no_violation_succeeds() {
+    let (state, pool) = setup().await;
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('t1', 'Task1', '2026-06-10T14:00:00Z', 60, 0, '[]', 0, 0, 0.5, 'scheduled')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO schedules (id, schedule, created_at, updated_at) VALUES ('active', '[{\"task_id\":\"t1\",\"start_at\":\"2026-06-10T10:00:00Z\",\"end_at\":\"2026-06-10T11:00:00Z\"}]', datetime('now'), datetime('now'))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let router = app(state);
+
+    let req = auth_req_body(
+        Method::PATCH,
+        "/api/schedule/entries/t1",
+        json!({
+            "start_at": "2026-06-10T12:00:00Z",
+            "force": false
+        }),
+    );
+    let res = router.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(body["task_id"], "t1");
+}
+
+#[tokio::test]
+async fn move_entry_task_not_in_schedule_errors() {
+    let (state, pool) = setup().await;
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('t1', 'Task1', '2026-06-10T14:00:00Z', 60, 0, '[]', 0, 0, 0.5, 'scheduled')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO schedules (id, schedule, created_at, updated_at) VALUES ('active', '[]', datetime('now'), datetime('now'))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let router = app(state);
+
+    let req = auth_req_body(
+        Method::PATCH,
+        "/api/schedule/entries/t1",
+        json!({ "start_at": "2026-06-10T12:00:00Z" }),
+    );
+    let res = router.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn clear_schedule_when_empty_is_noop() {
+    let (state, _) = setup().await;
+    let router = app(state);
+
+    let req = auth_req(Method::DELETE, "/api/schedule");
+    let res = router.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn reschedule_range_mode() {
+    let (state, pool) = setup().await;
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('t1', 'Task1', '2026-06-10T14:00:00Z', 60, 0, '[]', 0, 0, 0.5, 'scheduled')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO schedules (id, schedule, created_at, updated_at) VALUES ('active', '[{\"task_id\":\"t1\",\"start_at\":\"2026-06-10T10:00:00Z\",\"end_at\":\"2026-06-10T11:00:00Z\"}]', datetime('now'), datetime('now'))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let router = app(state);
+
+    let req = auth_req_body(
+        Method::POST,
+        "/api/schedule/reschedule",
+        json!({
+            "mode": "range",
+            "from": "2026-06-10T08:00:00Z",
+            "until": "2026-06-10T18:00:00Z",
+            "sleep": "disabled"
+        }),
+    );
+    let res = router.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn sync_settings_flow() {
+    let (state, _) = setup().await;
+    let router = app(state);
+
+    let get_req = auth_req(Method::GET, "/api/sync/settings");
+    let res = router.clone().oneshot(get_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(body["enabled"], false);
+
+    let put_req = auth_req_body(
+        Method::PUT,
+        "/api/sync/settings",
+        json!({
+            "enabled": true,
+            "calendar_id": "test@calendar.com",
+            "client_id": "fake-client-id",
+            "client_secret": "fake-secret"
+        }),
+    );
+    let res = router.clone().oneshot(put_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(body["enabled"], true);
+    assert_eq!(body["has_client_secret"], true);
+}
+
+#[tokio::test]
+async fn generate_schedule_excludes_completed_in_progress_skipped() {
+    let (state, pool) = setup().await;
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('p1', 'Pending', '2026-06-10T18:00:00Z', 30, 0, '[]', 0, 0, 0.5, 'pending')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('s1', 'Scheduled', '2026-06-10T18:00:00Z', 30, 0, '[]', 0, 0, 0.5, 'scheduled')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('c1', 'Completed', '2026-06-10T18:00:00Z', 30, 0, '[]', 0, 0, 0.5, 'completed')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let router = app(state);
+
+    let gen_req = auth_req_body(
+        Method::POST,
+        "/api/schedule/generate",
+        json!({
+            "until": "2026-06-10T23:59:59Z",
+            "sleep": "disabled"
+        }),
+    );
+    let res = router.clone().oneshot(gen_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let schedule: Vec<serde_json::Value> =
+        serde_json::from_str(body["schedule"].as_str().unwrap()).unwrap();
+    let task_ids: Vec<&str> = schedule
+        .iter()
+        .map(|e| e["task_id"].as_str().unwrap())
+        .collect();
+    assert!(task_ids.contains(&"p1"));
+    assert!(task_ids.contains(&"s1"));
+    assert!(!task_ids.contains(&"c1"));
+}

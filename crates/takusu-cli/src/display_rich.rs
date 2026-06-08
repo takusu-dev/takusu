@@ -89,7 +89,11 @@ pub fn display_habits(habits: &[HabitRow]) {
     for h in habits {
         let short_id = &h.id[..8];
         let time = format!("{}–{}", h.start_time, h.end_time);
-        let active_color = if h.active { Color::Green } else { Color::DarkGrey };
+        let active_color = if h.active {
+            Color::Green
+        } else {
+            Color::DarkGrey
+        };
         let active_text = if h.active { "yes" } else { "no" };
         table.add_row(vec![
             Cell::new(short_id),
@@ -107,7 +111,11 @@ pub fn display_habits(habits: &[HabitRow]) {
 }
 
 pub fn display_habit_detail(habit: &HabitRow) {
-    let active_color = if habit.active { Color::Green } else { Color::DarkGrey };
+    let active_color = if habit.active {
+        Color::Green
+    } else {
+        Color::DarkGrey
+    };
     let active_text = if habit.active { "yes" } else { "no" };
 
     let mut table = Table::new();

@@ -769,21 +769,20 @@ async fn run_habit(
             parallelizable,
             allows_parallel,
         } => {
-            let (title, recurrence, start_time, end_time) =
-                if is_interactive()
-                    && title.is_none()
-                    && recurrence.is_none()
-                    && start_time.is_none()
-                    && end_time.is_none()
-                {
-                    let t = prompt("Title");
-                    let r = prompt("Recurrence (e.g. daily, weekdays, Mon,Wed,Fri)");
-                    let s = prompt("Start time (HH:MM)");
-                    let e = prompt("End time (HH:MM)");
-                    (Some(t), Some(r), Some(s), Some(e))
-                } else {
-                    (title, recurrence, start_time, end_time)
-                };
+            let (title, recurrence, start_time, end_time) = if is_interactive()
+                && title.is_none()
+                && recurrence.is_none()
+                && start_time.is_none()
+                && end_time.is_none()
+            {
+                let t = prompt("Title");
+                let r = prompt("Recurrence (e.g. daily, weekdays, Mon,Wed,Fri)");
+                let s = prompt("Start time (HH:MM)");
+                let e = prompt("End time (HH:MM)");
+                (Some(t), Some(r), Some(s), Some(e))
+            } else {
+                (title, recurrence, start_time, end_time)
+            };
             let avg_minutes = parse_duration(&avg_time)
                 .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
             let sigma_minutes: i64 = parse_duration(&sigma_time)

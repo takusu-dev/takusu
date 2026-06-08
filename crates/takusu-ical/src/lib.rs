@@ -290,4 +290,83 @@ END:VCALENDAR";
         let result = parse_ical(ical);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn parse_empty_input_returns_empty_vec() {
+        let result = parse_ical("");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_only_whitespace_returns_empty() {
+        let ical = "  \r\n  \r\n";
+        let result = parse_ical(ical);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_missing_end_vevent_drops_that_vevent() {
+        let ical = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:test\r\nDTSTART:20250101T000000Z\r\nDTEND:20250101T010000Z\r\nEND:VCALENDAR\r\n";
+        let result = parse_ical(ical).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn parse_missing_end_vcalendar_still_parses_events() {
+        let ical = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:test\r\nDTSTART:20250101T000000Z\r\nDTEND:20250101T010000Z\r\nEND:VEVENT\r\n";
+        // Parser is lenient: END:VCALENDAR not required
+        let result = parse_ical(ical).unwrap();
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn parse_malformed_property_no_colon_skipped_dtstart() {
+        // Line without colon is skipped, then DTSTART is missing → error
+        let ical =
+            "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART20250101\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        assert!(parse_ical(ical).is_err());
+    }
+
+    #[test]
+    fn skip_non_vevent_components() {
+        let ical = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:todo1\r\nDTSTART:20250101T000000Z\r\nEND:VTODO\r\nBEGIN:VEVENT\r\nUID:event1\r\nDTSTART:20250101T120000Z\r\nDTEND:20250101T130000Z\r\nSUMMARY:Test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let result = parse_ical(ical).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].uid.as_deref(), Some("event1"));
+    }
+
+    #[test]
+    fn parse_with_description() {
+        let ical = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:desc-test\r\nDTSTART:20250101T090000Z\r\nDTEND:20250101T100000Z\r\nSUMMARY:Meeting\r\nDESCRIPTION:Discuss project details\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let result = parse_ical(ical).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].description.as_deref(),
+            Some("Discuss project details")
+        );
+    }
+
+    #[test]
+    fn parse_event_without_description() {
+        let ical = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:no-desc\r\nDTSTART:20250101T100000Z\r\nDTEND:20250101T110000Z\r\nSUMMARY:Standup\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let result = parse_ical(ical).unwrap();
+        assert_eq!(result[0].description, None);
+    }
+
+    #[test]
+    fn parse_dtstamp_ignored() {
+        let ical = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:stamp-test\r\nDTSTAMP:20250101T000000Z\r\nDTSTART:20250101T140000Z\r\nDTEND:20250101T150000Z\r\nSUMMARY:Test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let result = parse_ical(ical).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].uid.as_deref(), Some("stamp-test"));
+    }
+
+    #[test]
+    fn parse_multiline_folding_with_newline() {
+        let ical = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:long\r\nDTSTART:20250101T\r\n 000000Z\r\nDTEND:20250101T120000Z\r\nSUMMARY:Test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let result = parse_ical(ical).unwrap();
+        assert_eq!(result.len(), 1);
+    }
 }
