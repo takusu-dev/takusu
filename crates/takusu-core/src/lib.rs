@@ -134,6 +134,8 @@ pub struct SleepConfig {
     pub start: i64,
     /// 睡眠終了 (基点からの相対スロット)。end > start。
     pub end: i64,
+    /// 睡眠制約が有効かどうか。
+    pub enabled: bool,
 }
 
 impl SleepConfig {
@@ -143,15 +145,17 @@ impl SleepConfig {
             day_start: 0,
             start: 264, // 22 * 12
             end: 360,   // 30 * 12 = 6:00 next day
+            enabled: true,
         }
     }
 
-    /// 睡眠制約なし (遠い未来に睡眠を置くことで実質無効化)。
+    /// 睡眠制約なし。
     pub fn disabled() -> Self {
         Self {
             day_start: 0,
-            start: 1_000_000,
-            end: 2_000_000,
+            start: 0,
+            end: 0,
+            enabled: false,
         }
     }
 
@@ -187,6 +191,7 @@ impl SleepConfig {
             day_start,
             start,
             end,
+            enabled: true,
         }
     }
 }
@@ -394,11 +399,11 @@ impl Planner {
         }
 
         let mut sub_planner = Planner::new(self.now, self.sleep);
+        let mut sub_to_orig: Vec<usize> = Vec::new();
         for task in &self.tasks {
             if !pinned_ids.contains(&task.id) {
-                let mut t = task.clone();
-                t.id = sub_planner.tasks.len();
-                sub_planner.add(t).ok();
+                sub_to_orig.push(task.id);
+                sub_planner.add(task.clone()).ok();
             }
         }
 
@@ -406,7 +411,7 @@ impl Planner {
 
         let mut schedules = pinned;
         for (s, e, sub_id) in &sub_plan.schedules {
-            let orig_id = sub_planner.tasks[*sub_id].id;
+            let orig_id = sub_to_orig[*sub_id];
             schedules.push((*s, *e, orig_id));
         }
         Plan { schedules }
@@ -418,11 +423,14 @@ impl Planner {
     }
 
     pub(crate) fn freeness(&self, id: usize) -> f64 {
-        1. - (self.tasks[id].cost_estimate.avg as f64
-            / Point::diff(
-                self.tasks[id].start.unwrap_or(Point(0)).max(self.now),
-                self.tasks[id].end,
-            ) as f64)
+        let slack = Point::diff(
+            self.tasks[id].start.unwrap_or(Point(0)).max(self.now),
+            self.tasks[id].end,
+        );
+        if slack == 0 {
+            return 0.;
+        }
+        1. - (self.tasks[id].cost_estimate.avg as f64 / slack as f64)
     }
 }
 
@@ -477,6 +485,7 @@ mod tests {
                 day_start: 0,
                 start: 0,
                 end: 96,
+                enabled: true,
             },
         );
         p.add(Task {
@@ -644,6 +653,87 @@ mod tests {
             replanned.schedules.len(),
             2,
             "all tasks should be scheduled"
+        );
+    }
+
+    #[test]
+    fn plan_in_range_preserves_task_ids_with_pinned_middle() {
+        let mut p = Planner::default();
+        let _a = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(100),
+                cost_estimate: NormalDist::new(5, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+        let _b = p
+            .add(Task {
+                id: 1,
+                start: Some(Point(0)),
+                end: Point(100),
+                cost_estimate: NormalDist::new(5, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+        let _c = p
+            .add(Task {
+                id: 2,
+                start: Some(Point(0)),
+                end: Point(100),
+                cost_estimate: NormalDist::new(5, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+
+        let current_schedule = vec![
+            (Point(0), Point(5), 0),
+            (Point(10), Point(15), 1),
+            (Point(50), Point(55), 2),
+        ];
+        let range = RescheduleRange {
+            from: Point(5),
+            until: Point(50),
+        };
+        let replanned = p.plan_in_range(&range, &current_schedule, &[]);
+        assert_eq!(replanned.schedules.len(), 3);
+        let ids: Vec<usize> = replanned
+            .schedules
+            .iter()
+            .map(|(_, _, id)| *id)
+            .collect();
+        assert!(ids.contains(&0), "task 0 should be preserved");
+        assert!(ids.contains(&1), "task 1 should be preserved");
+        assert!(ids.contains(&2), "task 2 should be preserved");
+        assert_eq!(
+            replanned.task_start(0).unwrap(),
+            Point(0),
+            "pinned task 0 start should be unchanged"
+        );
+        assert_eq!(
+            replanned.task_end(0).unwrap(),
+            Point(5),
+            "pinned task 0 end should be unchanged"
+        );
+        assert_eq!(
+            replanned.task_start(2).unwrap(),
+            Point(50),
+            "pinned task 2 start should be unchanged"
+        );
+        assert_eq!(
+            replanned.task_end(2).unwrap(),
+            Point(55),
+            "pinned task 2 end should be unchanged"
         );
     }
 }

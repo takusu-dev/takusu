@@ -19,6 +19,8 @@
 //! | 15%  | reorder       |
 //! | 15%  | lns (destroy+rebuild) |
 
+use std::collections::VecDeque;
+
 use rand::{Rng, RngExt};
 use rustc_hash::FxHashSet;
 
@@ -26,23 +28,23 @@ use super::*;
 use evaluate::evaluate;
 
 struct TabuList {
-    entries: Vec<(usize, i64, i64)>,
+    entries: VecDeque<(usize, i64, i64)>,
     capacity: usize,
 }
 
 impl TabuList {
     fn new(capacity: usize) -> Self {
         Self {
-            entries: Vec::new(),
+            entries: VecDeque::new(),
             capacity,
         }
     }
 
     fn push(&mut self, task_id: usize, start: Point, duration: i64) {
         if self.entries.len() >= self.capacity {
-            self.entries.remove(0);
+            self.entries.pop_front();
         }
-        self.entries.push((task_id, start.0, duration));
+        self.entries.push_back((task_id, start.0, duration));
     }
 
     fn contains(&self, task_id: usize, start: Point, duration: i64) -> bool {
@@ -645,11 +647,7 @@ mod tests {
             tasks,
             now: Point(0),
             per: 5,
-            sleep: SleepConfig {
-                day_start: 0,
-                start: 10000,
-                end: 20000,
-            },
+            sleep: SleepConfig::disabled(),
         }
     }
 

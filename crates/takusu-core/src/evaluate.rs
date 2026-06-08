@@ -180,6 +180,9 @@ fn duration_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64
 }
 
 fn sleep_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
+    if !planner.sleep.enabled {
+        return 0.0;
+    }
     let slots_per_day: i64 = (24 * 60) / planner.per as i64;
     let (day_start_epoch, sleep_start_rel, sleep_end_rel) = (
         planner.sleep.day_start,
@@ -406,6 +409,7 @@ mod tests {
             day_start: 0,
             start: 0,
             end: 96,
+            enabled: true,
         };
 
         let task_id = add_simple_task(&mut p, 24, 0, 200);
