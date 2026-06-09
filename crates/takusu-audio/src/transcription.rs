@@ -8,8 +8,8 @@ use thiserror::Error;
 pub use hf_hub::Repo;
 pub use whisper_rs::WhisperContextParameters as TranscriberParams;
 
-pub const DEFAULT_MODEL_REPO: &str = "kotoba-tech/kotoba-whisper-v2.0-ggml";
-pub const DEFAULT_MODEL_FILE: &str = "ggml-kotoba-whisper-v2.0-q5_0.bin";
+pub const DEFAULT_MODEL_REPO: &str = "ggerganov/whisper.cpp";
+pub const DEFAULT_MODEL_FILE: &str = "ggml-base.bin";
 
 #[derive(Debug, Error)]
 pub enum STTError {
@@ -23,6 +23,7 @@ pub enum STTError {
 
 pub struct Transcriber {
     ctx: WhisperContext,
+    n_threads: u32,
 }
 
 impl Transcriber {
@@ -34,21 +35,31 @@ impl Transcriber {
     }
 
     pub fn new(model_path: &Path) -> Result<Self, STTError> {
-        let ctx = WhisperContext::new_with_params(model_path, WhisperContextParameters::default())?;
-        Ok(Self { ctx })
+        Self::with_threads(model_path, std::thread::available_parallelism()
+            .map(|n| n.get() as u32)
+            .unwrap_or(4))
+    }
+
+    pub fn with_threads(model_path: &Path, n_threads: u32) -> Result<Self, STTError> {
+        let mut params = WhisperContextParameters::default();
+        params.flash_attn(true);
+        let ctx = WhisperContext::new_with_params(model_path, params)?;
+        Ok(Self { ctx, n_threads })
     }
 
     pub fn transcribe(&self, audio: &[f32], language: Option<&str>) -> Result<String, STTError> {
         let mut state = self.ctx.create_state()?;
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
 
-        if let Some(lang) = language {
-            params.set_language(Some(lang));
-        }
+        params.set_n_threads(self.n_threads as i32);
+        params.set_language(Some(language.unwrap_or("ja")));
         params.set_print_progress(false);
         params.set_print_special(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
+        params.set_single_segment(true);
+        params.set_no_timestamps(true);
+        
 
         state.full(params, audio)?;
 

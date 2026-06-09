@@ -37,4 +37,5 @@ takusu-core = { path = "crates/takusu-core" }
 takusu-ical = { path = "crates/takusu-ical" }
 takusu-client = { path = "crates/takusu-client" }
 takusu-util = { path = "crates/takusu-util" }
+takusu-audio = { path = "crates/takusu-audio" }
 google-cal = { path = "crates/google-cal" }

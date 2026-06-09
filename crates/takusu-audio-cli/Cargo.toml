@@ -1,0 +1,17 @@
+[package]
+name = "takusu-audio-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "takusu-audio"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+takusu-audio = { workspace = true }
+
+clap = { version = "4", features = ["derive"] }
+hound = "3.5"

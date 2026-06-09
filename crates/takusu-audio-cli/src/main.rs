@@ -1,0 +1,284 @@
+use std::path::PathBuf;
+use std::time::Duration;
+
+use clap::{Parser, Subcommand};
+use takusu_audio::{
+    RecordConfig, Transcriber, record,
+    transcription::{DEFAULT_MODEL_FILE, DEFAULT_MODEL_REPO},
+};
+
+#[derive(Parser)]
+#[command(name = "takusu-audio", version, about = "Audio recording and speech-to-text CLI")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Record audio from the microphone (Press Enter to stop)
+    Record {
+        /// Output WAV file
+        #[arg(short, long, default_value = "record.wav")]
+        output: PathBuf,
+
+        /// Maximum recording duration in seconds
+        #[arg(long, default_value_t = 300.0)]
+        max_duration: f64,
+    },
+
+    /// Transcribe a WAV audio file
+    Transcribe {
+        /// Path to WAV audio file
+        audio: PathBuf,
+
+        /// Path to Whisper model file (auto-downloads if not found)
+        #[arg(short, long)]
+        model: Option<PathBuf>,
+
+        /// HuggingFace model repo
+        #[arg(long, default_value = DEFAULT_MODEL_REPO)]
+        repo: String,
+
+        /// Model filename in the repo
+        #[arg(long, default_value = DEFAULT_MODEL_FILE)]
+        file: String,
+
+        /// Language code hint (e.g. ja, en)
+        #[arg(short, long)]
+        language: Option<String>,
+
+        /// Number of threads for transcription (default: all CPU cores)
+        #[arg(long)]
+        threads: Option<u32>,
+    },
+
+    /// Record from microphone and transcribe (Press Enter to stop)
+    Listen {
+        /// Output WAV file (saved even after transcription)
+        #[arg(short, long, default_value = "record.wav")]
+        output: PathBuf,
+
+        /// Maximum recording duration in seconds
+        #[arg(long, default_value_t = 120.0)]
+        max_duration: f64,
+
+        /// Path to Whisper model file
+        #[arg(short, long)]
+        model: Option<PathBuf>,
+
+        /// HuggingFace model repo
+        #[arg(long, default_value = DEFAULT_MODEL_REPO)]
+        repo: String,
+
+        /// Model filename in the repo
+        #[arg(long, default_value = DEFAULT_MODEL_FILE)]
+        file: String,
+
+        /// Language code hint (e.g. ja, en)
+        #[arg(short, long)]
+        language: Option<String>,
+
+        /// Number of threads for transcription (default: all cpu cores)
+        #[arg(long)]
+        threads: Option<u32>,
+    },
+}
+
+#[tokio::main]
+async fn main() {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Record {
+            output,
+            max_duration,
+        } => {
+            let config = RecordConfig {
+                max_duration: Duration::from_secs_f64(max_duration),
+            };
+
+            let samples = match record(&config) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Recording error: {e}");
+                    std::process::exit(1);
+                }
+            };
+
+            eprintln!("Recorded {} samples ({:.1}s)", samples.len(), samples.len() as f64 / 16000.0);
+            write_wav(&output, &samples, 16000);
+            eprintln!("Saved to {}", output.display());
+        }
+
+        Commands::Transcribe {
+            audio,
+            model,
+            repo,
+            file,
+            language,
+            threads,
+        } => {
+            let model_path = resolve_model(model, &repo, &file).await;
+            let transcriber = make_transcriber(&model_path, threads).unwrap_or_else(|e| {
+                eprintln!("Failed to load model: {e}");
+                std::process::exit(1);
+            });
+
+            let samples = read_wav(&audio);
+            eprintln!("Loaded {} samples from {}", samples.len(), audio.display());
+
+            eprintln!("Transcribing ({} samples, {:.1}s)...", samples.len(), samples.len() as f64 / 16000.0);
+            let start = std::time::Instant::now();
+            let text = transcriber.transcribe(&samples, language.as_deref()).unwrap_or_else(|e| {
+                eprintln!("Transcription error: {e}");
+                std::process::exit(1);
+            });
+            eprintln!("Done in {:.1}s.", start.elapsed().as_secs_f64());
+
+            println!("{text}");
+        }
+
+        Commands::Listen {
+            output,
+            max_duration,
+            model,
+            repo,
+            file,
+            language,
+            threads,
+        } => {
+            let config = RecordConfig {
+                max_duration: Duration::from_secs_f64(max_duration),
+            };
+
+            let samples = match record(&config) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Recording error: {e}");
+                    std::process::exit(1);
+                }
+            };
+
+            if samples.is_empty() {
+                eprintln!("No audio recorded.");
+                std::process::exit(1);
+            }
+
+            eprintln!("Recorded {} samples ({:.1}s)", samples.len(), samples.len() as f64 / 16000.0);
+            write_wav(&output, &samples, 16000);
+            eprintln!("Saved to {}", output.display());
+
+            eprintln!("Loading model...");
+            let model_path = resolve_model(model, &repo, &file).await;
+            let transcriber = make_transcriber(&model_path, threads).unwrap_or_else(|e| {
+                eprintln!("Failed to load model: {e}");
+                std::process::exit(1);
+            });
+
+            eprintln!("Transcribing...");
+            let start = std::time::Instant::now();
+            let text = transcriber.transcribe(&samples, language.as_deref()).unwrap_or_else(|e| {
+                eprintln!("Transcription error: {e}");
+                std::process::exit(1);
+            });
+            eprintln!("Done in {:.1}s.", start.elapsed().as_secs_f64());
+
+            println!("{text}");
+        }
+    }
+}
+
+fn make_transcriber(model_path: &std::path::Path, threads: Option<u32>) -> Result<takusu_audio::Transcriber, takusu_audio::STTError> {
+    match threads {
+        Some(n) => Transcriber::with_threads(model_path, n),
+        None => Transcriber::new(model_path),
+    }
+}
+
+async fn resolve_model(model: Option<PathBuf>, repo: &str, file: &str) -> PathBuf {
+    if let Some(ref path) = model
+        && path.exists()
+    {
+        return path.clone();
+    }
+    if let Some(ref path) = model {
+        eprintln!("Model not found at {}, downloading...", path.display());
+    } else {
+        eprintln!("No model specified, downloading {} from {}...", file, repo);
+    }
+
+    let path = Transcriber::download(repo, file).await.unwrap_or_else(|e| {
+        eprintln!("Failed to download model: {e}");
+        std::process::exit(1);
+    });
+
+    eprintln!("Model downloaded to {}", path.display());
+    path
+}
+
+fn write_wav(path: &std::path::Path, samples: &[f32], sample_rate: u32) {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+
+    let mut writer = hound::WavWriter::create(path, spec).unwrap_or_else(|e| {
+        eprintln!("Failed to create WAV file: {e}");
+        std::process::exit(1);
+    });
+
+    let max = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+    let scale = if max > 1.0 { 32767.0 / max } else { 32767.0 };
+
+    for &s in samples {
+        let clamped = (s * scale).clamp(-32768.0, 32767.0);
+        writer.write_sample(clamped as i16).unwrap_or_else(|e| {
+            eprintln!("Failed to write sample: {e}");
+            std::process::exit(1);
+        });
+    }
+
+    writer.finalize().unwrap_or_else(|e| {
+        eprintln!("Failed to finalize WAV: {e}");
+        std::process::exit(1);
+    });
+}
+
+fn read_wav(path: &std::path::Path) -> Vec<f32> {
+    let mut reader = hound::WavReader::open(path).unwrap_or_else(|e| {
+        eprintln!("Failed to open WAV file: {e}");
+        std::process::exit(1);
+    });
+
+    let spec = reader.spec();
+    let samples: Vec<f32> = match spec.sample_format {
+        hound::SampleFormat::Int => {
+            let max_val = 2u32.pow(spec.bits_per_sample as u32 - 1) as f32;
+            reader
+                .samples::<i16>()
+                .map(|s| s.unwrap() as f32 / max_val)
+                .collect()
+        }
+        hound::SampleFormat::Float => reader.samples::<f32>().map(|s| s.unwrap()).collect(),
+    };
+
+    if spec.sample_rate != 16000 {
+        let ratio = 16000.0 / spec.sample_rate as f64;
+        let output_len = ((samples.len() as f64) * ratio).ceil() as usize;
+        let mut resampled = Vec::with_capacity(output_len);
+        for i in 0..output_len {
+            let src = i as f64 / ratio;
+            let idx = src.floor() as usize;
+            let frac = src - idx as f64;
+            let s0 = samples.get(idx).copied().unwrap_or(0.0);
+            let s1 = samples.get(idx + 1).copied().unwrap_or(s0);
+            resampled.push((s0 as f64 + (s1 as f64 - s0 as f64) * frac) as f32);
+        }
+        return resampled;
+    }
+
+    samples
+}

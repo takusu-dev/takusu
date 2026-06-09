@@ -65,11 +65,14 @@
               cmake
               libclang
             ];
-            buildInputs = with pkgs; [
+buildInputs = with pkgs; [
               alsa-lib
               libpulseaudio
+              openblas
             ];
             LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
+            OPENBLAS_PATH = "${pkgs.openblas}/lib";
+            BLAS_INCLUDE_DIRS = "${pkgs.openblas.dev}/include";
           };
 
           takusu-cli = craneLib.buildPackage {
@@ -77,7 +80,11 @@
             strictDeps = true;
             pname = "takusu-cli";
             cargoExtraArgs = "-p takusu-cli";
-            meta.mainProgram = "takusu";
+            nativeBuildInputs = with pkgs; [ pkg-config cmake libclang ];
+            buildInputs = with pkgs; [ alsa-lib libpulseaudio openblas ];
+            LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
+            OPENBLAS_PATH = "${pkgs.openblas}/lib";
+            BLAS_INCLUDE_DIRS = "${pkgs.openblas.dev}/include";
           };
 
           takusu-serve = craneLib.buildPackage {
@@ -85,7 +92,9 @@
             strictDeps = true;
             pname = "takusu-serve";
             cargoExtraArgs = "-p takusu-serve";
-            meta.mainProgram = "takusu-serve";
+            nativeBuildInputs = with pkgs; [ pkg-config cmake libclang ];
+            buildInputs = with pkgs; [ alsa-lib libpulseaudio ];
+            LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
           };
 
           mcp-servers = import inputs.mcp-servers-nix { inherit pkgs; };
@@ -143,6 +152,7 @@
                 alsa-lib
                 libpulseaudio
                 libclang
+                openblas
               ];
             };
           };
@@ -162,10 +172,13 @@
               alsa-lib
               libpulseaudio
               libclang
+              openblas
             ];
 
             shellHook = ''
               export LIBCLANG_PATH=${pkgs.libclang.lib}/lib
+              export OPENBLAS_PATH=${pkgs.openblas}/lib
+              export BLAS_INCLUDE_DIRS=${pkgs.openblas.dev}/include
               export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${pkgs.stdenv.cc}/bin/cc
               if [ -L opencode.json ]; then
                 unlink opencode.json

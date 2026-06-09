@@ -1,6 +1,7 @@
+use std::io::BufRead;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
 
@@ -38,16 +39,12 @@ impl From<cpal::PlayStreamError> for RecorderError {
 
 #[derive(Debug, Clone)]
 pub struct RecordConfig {
-    pub silence_threshold: f32,
-    pub silence_duration: Duration,
     pub max_duration: Duration,
 }
 
 impl Default for RecordConfig {
     fn default() -> Self {
         Self {
-            silence_threshold: 0.02,
-            silence_duration: Duration::from_secs(2),
             max_duration: Duration::from_secs(300),
         }
     }
@@ -66,8 +63,6 @@ pub fn record(config: &RecordConfig) -> Result<Vec<f32>, RecorderError> {
 
     let samples: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
     let stopped = Arc::new(AtomicBool::new(false));
-    let speech_started = Arc::new(AtomicBool::new(false));
-    let last_speech_idx = Arc::new(AtomicU64::new(0));
 
     let error_fn = |err: cpal::StreamError| {
         eprintln!("audio stream error: {err}");
@@ -77,9 +72,6 @@ pub fn record(config: &RecordConfig) -> Result<Vec<f32>, RecorderError> {
         cpal::SampleFormat::F32 => {
             let samples_c = samples.clone();
             let stopped_c = stopped.clone();
-            let speech_started_c = speech_started.clone();
-            let last_speech_idx_c = last_speech_idx.clone();
-            let threshold = config.silence_threshold;
 
             device.build_input_stream(
                 &stream_config,
@@ -88,12 +80,7 @@ pub fn record(config: &RecordConfig) -> Result<Vec<f32>, RecorderError> {
                         return;
                     }
                     if let Ok(mut buf) = samples_c.try_lock() {
-                        let start = buf.len();
                         buf.extend_from_slice(data);
-                        if rms(data) > threshold {
-                            speech_started_c.store(true, Ordering::Relaxed);
-                            last_speech_idx_c.store((start + data.len()) as u64, Ordering::Relaxed);
-                        }
                     }
                 },
                 error_fn,
@@ -103,9 +90,6 @@ pub fn record(config: &RecordConfig) -> Result<Vec<f32>, RecorderError> {
         cpal::SampleFormat::I16 => {
             let samples_c = samples.clone();
             let stopped_c = stopped.clone();
-            let speech_started_c = speech_started.clone();
-            let last_speech_idx_c = last_speech_idx.clone();
-            let threshold = config.silence_threshold;
 
             device.build_input_stream(
                 &stream_config,
@@ -114,22 +98,18 @@ pub fn record(config: &RecordConfig) -> Result<Vec<f32>, RecorderError> {
                         return;
                     }
                     if let Ok(mut buf) = samples_c.try_lock() {
-                        let start = buf.len();
                         let buf_slice = buf.spare_capacity_mut();
                         let spare = buf_slice.get_mut(..data.len());
                         if let Some(spare) = spare {
                             for (dst, &src) in spare.iter_mut().zip(data.iter()) {
                                 dst.write(src as f32 / 32768.0);
                             }
-                            unsafe { buf.set_len(start + data.len()) };
+                            let new_len = buf.len() + data.len();
+                            unsafe { buf.set_len(new_len) };
                         } else {
                             for &s in data {
                                 buf.push(s as f32 / 32768.0);
                             }
-                        }
-                        if rms_slice(&buf[start..]) > threshold {
-                            speech_started_c.store(true, Ordering::Relaxed);
-                            last_speech_idx_c.store((start + data.len()) as u64, Ordering::Relaxed);
                         }
                     }
                 },
@@ -142,35 +122,32 @@ pub fn record(config: &RecordConfig) -> Result<Vec<f32>, RecorderError> {
 
     stream.play()?;
 
+    let stopped_t = stopped.clone();
+    let _waiter = std::thread::spawn(move || {
+        let stdin = std::io::stdin();
+        let mut line = String::new();
+        let _ = stdin.lock().read_line(&mut line);
+        stopped_t.store(true, Ordering::Relaxed);
+    });
+
+    eprintln!("Recording... Press Enter to stop.");
+
     let start = std::time::Instant::now();
     loop {
         std::thread::sleep(Duration::from_millis(100));
 
+        if stopped.load(Ordering::Relaxed) {
+            break;
+        }
         if start.elapsed() >= config.max_duration {
             stopped.store(true, Ordering::Relaxed);
             break;
-        }
-
-        if speech_started.load(Ordering::Relaxed) {
-            let total = samples.lock().unwrap().len() as u64;
-            let last = last_speech_idx.load(Ordering::Relaxed);
-            let silent = total.saturating_sub(last);
-            let silent_secs = silent as f64 / device_sample_rate as f64;
-            if silent_secs >= config.silence_duration.as_secs_f64() {
-                stopped.store(true, Ordering::Relaxed);
-                break;
-            }
         }
     }
 
     drop(stream);
 
     let mut raw = samples.lock().unwrap().clone();
-
-    let last = last_speech_idx.load(Ordering::Relaxed) as usize;
-    if last > 0 && last < raw.len() {
-        raw.truncate(last);
-    }
 
     if channels > 1 {
         raw = mix_to_mono(&raw, channels);
@@ -180,19 +157,9 @@ pub fn record(config: &RecordConfig) -> Result<Vec<f32>, RecorderError> {
         raw = resample(&raw, device_sample_rate, 16000);
     }
 
+    raw = normalize(&raw, 0.1);
+
     Ok(raw)
-}
-
-fn rms(data: &[f32]) -> f32 {
-    if data.is_empty() {
-        return 0.0;
-    }
-    let sum_sq: f32 = data.iter().map(|&x| x * x).sum();
-    (sum_sq / data.len() as f32).sqrt()
-}
-
-fn rms_slice(data: &[f32]) -> f32 {
-    rms(data)
 }
 
 fn mix_to_mono(input: &[f32], channels: usize) -> Vec<f32> {
@@ -224,4 +191,19 @@ fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
         output.push((s0 as f64 + (s1 as f64 - s0 as f64) * frac) as f32);
     }
     output
+}
+
+fn normalize(input: &[f32], target_rms: f32) -> Vec<f32> {
+    if input.is_empty() {
+        return input.to_vec();
+    }
+    let rms = {
+        let sum_sq: f32 = input.iter().map(|&x| x * x).sum();
+        (sum_sq / input.len() as f32).sqrt()
+    };
+    if rms < 1e-10 {
+        return input.to_vec();
+    }
+    let scale = target_rms / rms;
+    input.iter().map(|&x| x * scale).collect()
 }
