@@ -147,10 +147,10 @@ pub fn display_habit_detail(habit: &HabitRow) {
     ]);
     println!("{table}");
 
-    if let Some(ref desc) = habit.description {
-        if !desc.is_empty() {
-            println!("\nDescription: {desc}");
-        }
+    if let Some(ref desc) = habit.description
+        && !desc.is_empty()
+    {
+        println!("\nDescription: {desc}");
     }
 }
 

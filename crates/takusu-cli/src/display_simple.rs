@@ -157,10 +157,10 @@ pub fn display_habits(habits: &[HabitRow]) {
             h.abandonability,
             if h.parallelizable { "yes" } else { "no" },
         );
-        if let Some(ref desc) = h.description {
-            if !desc.is_empty() {
-                println!("   {desc}");
-            }
+        if let Some(ref desc) = h.description
+            && !desc.is_empty()
+        {
+            println!("   {desc}");
         }
         println!();
     }
@@ -180,10 +180,10 @@ pub fn display_habit_detail(habit: &HabitRow) {
         if habit.parallelizable { "yes" } else { "no" },
         if habit.allows_parallel { "yes" } else { "no" },
     );
-    if let Some(ref desc) = habit.description {
-        if !desc.is_empty() {
-            println!("   {desc}");
-        }
+    if let Some(ref desc) = habit.description
+        && !desc.is_empty()
+    {
+        println!("   {desc}");
     }
     println!();
 }

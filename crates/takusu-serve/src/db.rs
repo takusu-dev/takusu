@@ -4,10 +4,10 @@ use sqlx::sqlite::SqlitePoolOptions;
 pub async fn init_pool(db_url: &str) -> Result<SqlitePool, sqlx::Error> {
     let db_url = ensure_create_mode(db_url);
 
-    if let Some(path) = extract_db_path(&db_url) {
-        if let Some(parent) = std::path::Path::new(&path).parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
+    if let Some(path) = extract_db_path(&db_url)
+        && let Some(parent) = std::path::Path::new(&path).parent()
+    {
+        std::fs::create_dir_all(parent).ok();
     }
 
     let pool = SqlitePoolOptions::new()

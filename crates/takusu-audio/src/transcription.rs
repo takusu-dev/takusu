@@ -35,9 +35,12 @@ impl Transcriber {
     }
 
     pub fn new(model_path: &Path) -> Result<Self, STTError> {
-        Self::with_threads(model_path, std::thread::available_parallelism()
-            .map(|n| n.get() as u32)
-            .unwrap_or(4))
+        Self::with_threads(
+            model_path,
+            std::thread::available_parallelism()
+                .map(|n| n.get() as u32)
+                .unwrap_or(4),
+        )
     }
 
     pub fn with_threads(model_path: &Path, n_threads: u32) -> Result<Self, STTError> {
@@ -59,7 +62,6 @@ impl Transcriber {
         params.set_print_timestamps(false);
         params.set_single_segment(true);
         params.set_no_timestamps(true);
-        
 
         state.full(params, audio)?;
 

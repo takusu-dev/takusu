@@ -3,12 +3,16 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use takusu_audio::{
-    RecordConfig, Transcriber, record,
+    FunASRClient, FunASRConfig, FunASRMode, RecordConfig, Transcriber, default_hotwords, record,
     transcription::{DEFAULT_MODEL_FILE, DEFAULT_MODEL_REPO},
 };
 
 #[derive(Parser)]
-#[command(name = "takusu-audio", version, about = "Audio recording and speech-to-text CLI")]
+#[command(
+    name = "takusu-audio",
+    version,
+    about = "Audio recording and speech-to-text CLI"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -32,6 +36,11 @@ enum Commands {
         /// Path to WAV audio file
         audio: PathBuf,
 
+        /// STT backend: whisper (local) or funasr (WebSocket server)
+        #[arg(short, long, default_value = "whisper")]
+        backend: String,
+
+        // --- Whisper options ---
         /// Path to Whisper model file (auto-downloads if not found)
         #[arg(short, long)]
         model: Option<PathBuf>,
@@ -48,9 +57,22 @@ enum Commands {
         #[arg(short, long)]
         language: Option<String>,
 
-        /// Number of threads for transcription (default: all CPU cores)
+        /// Number of threads for Whisper transcription (default: all cpu cores)
         #[arg(long)]
         threads: Option<u32>,
+
+        // --- FunASR options ---
+        /// FunASR server URL
+        #[arg(long, default_value = "ws://127.0.0.1:10095")]
+        funasr_url: String,
+
+        /// Comma-separated hotwords for FunASR
+        #[arg(long)]
+        hotwords: Option<String>,
+
+        /// FunASR mode: offline or 2pass
+        #[arg(long, default_value = "offline")]
+        funasr_mode: String,
     },
 
     /// Record from microphone and transcribe (Press Enter to stop)
@@ -63,8 +85,13 @@ enum Commands {
         #[arg(long, default_value_t = 120.0)]
         max_duration: f64,
 
+        /// STT backend: whisper (local) or funasr (WebSocket server)
+        #[arg(short, long, default_value = "whisper")]
+        backend: String,
+
+        // --- Whisper options ---
         /// Path to Whisper model file
-        #[arg(short, long)]
+        #[arg(short = 'm', long)]
         model: Option<PathBuf>,
 
         /// HuggingFace model repo
@@ -79,9 +106,22 @@ enum Commands {
         #[arg(short, long)]
         language: Option<String>,
 
-        /// Number of threads for transcription (default: all cpu cores)
+        /// Number of threads for Whisper transcription (default: all cpu cores)
         #[arg(long)]
         threads: Option<u32>,
+
+        // --- FunASR options ---
+        /// FunASR server URL
+        #[arg(long, default_value = "ws://127.0.0.1:10095")]
+        funasr_url: String,
+
+        /// Comma-separated hotwords for FunASR
+        #[arg(long)]
+        hotwords: Option<String>,
+
+        /// FunASR mode: offline or 2pass
+        #[arg(long, default_value = "offline")]
+        funasr_mode: String,
     },
 }
 
@@ -106,47 +146,58 @@ async fn main() {
                 }
             };
 
-            eprintln!("Recorded {} samples ({:.1}s)", samples.len(), samples.len() as f64 / 16000.0);
+            eprintln!(
+                "Recorded {} samples ({:.1}s)",
+                samples.len(),
+                samples.len() as f64 / 16000.0
+            );
             write_wav(&output, &samples, 16000);
             eprintln!("Saved to {}", output.display());
         }
 
         Commands::Transcribe {
             audio,
+            backend,
             model,
             repo,
             file,
             language,
             threads,
+            funasr_url,
+            hotwords,
+            funasr_mode,
         } => {
-            let model_path = resolve_model(model, &repo, &file).await;
-            let transcriber = make_transcriber(&model_path, threads).unwrap_or_else(|e| {
-                eprintln!("Failed to load model: {e}");
-                std::process::exit(1);
-            });
-
             let samples = read_wav(&audio);
             eprintln!("Loaded {} samples from {}", samples.len(), audio.display());
 
-            eprintln!("Transcribing ({} samples, {:.1}s)...", samples.len(), samples.len() as f64 / 16000.0);
-            let start = std::time::Instant::now();
-            let text = transcriber.transcribe(&samples, language.as_deref()).unwrap_or_else(|e| {
-                eprintln!("Transcription error: {e}");
-                std::process::exit(1);
-            });
-            eprintln!("Done in {:.1}s.", start.elapsed().as_secs_f64());
-
+            let text = transcribe(
+                &backend,
+                &samples,
+                language.as_deref(),
+                model,
+                &repo,
+                &file,
+                threads,
+                &funasr_url,
+                hotwords.as_deref(),
+                &funasr_mode,
+            )
+            .await;
             println!("{text}");
         }
 
         Commands::Listen {
             output,
             max_duration,
+            backend,
             model,
             repo,
             file,
             language,
             threads,
+            funasr_url,
+            hotwords,
+            funasr_mode,
         } => {
             let config = RecordConfig {
                 max_duration: Duration::from_secs_f64(max_duration),
@@ -165,31 +216,127 @@ async fn main() {
                 std::process::exit(1);
             }
 
-            eprintln!("Recorded {} samples ({:.1}s)", samples.len(), samples.len() as f64 / 16000.0);
+            eprintln!(
+                "Recorded {} samples ({:.1}s)",
+                samples.len(),
+                samples.len() as f64 / 16000.0
+            );
             write_wav(&output, &samples, 16000);
             eprintln!("Saved to {}", output.display());
 
-            eprintln!("Loading model...");
-            let model_path = resolve_model(model, &repo, &file).await;
-            let transcriber = make_transcriber(&model_path, threads).unwrap_or_else(|e| {
-                eprintln!("Failed to load model: {e}");
-                std::process::exit(1);
-            });
-
-            eprintln!("Transcribing...");
-            let start = std::time::Instant::now();
-            let text = transcriber.transcribe(&samples, language.as_deref()).unwrap_or_else(|e| {
-                eprintln!("Transcription error: {e}");
-                std::process::exit(1);
-            });
-            eprintln!("Done in {:.1}s.", start.elapsed().as_secs_f64());
-
+            let text = transcribe(
+                &backend,
+                &samples,
+                language.as_deref(),
+                model,
+                &repo,
+                &file,
+                threads,
+                &funasr_url,
+                hotwords.as_deref(),
+                &funasr_mode,
+            )
+            .await;
             println!("{text}");
         }
     }
 }
 
-fn make_transcriber(model_path: &std::path::Path, threads: Option<u32>) -> Result<takusu_audio::Transcriber, takusu_audio::STTError> {
+async fn transcribe(
+    backend: &str,
+    samples: &[f32],
+    language: Option<&str>,
+    model: Option<PathBuf>,
+    repo: &str,
+    file: &str,
+    threads: Option<u32>,
+    funasr_url: &str,
+    hotwords: Option<&str>,
+    funasr_mode: &str,
+) -> String {
+    match backend {
+        "funasr" => transcribe_funasr(samples, language, funasr_url, hotwords, funasr_mode).await,
+        _ => transcribe_whisper(samples, language, model, repo, file, threads).await,
+    }
+}
+
+async fn transcribe_whisper(
+    samples: &[f32],
+    language: Option<&str>,
+    model: Option<PathBuf>,
+    repo: &str,
+    file: &str,
+    threads: Option<u32>,
+) -> String {
+    let model_path = resolve_model(model, repo, file).await;
+    let transcriber = make_transcriber(&model_path, threads).unwrap_or_else(|e| {
+        eprintln!("Failed to load model: {e}");
+        std::process::exit(1);
+    });
+
+    eprintln!(
+        "Transcribing ({} samples, {:.1}s) with Whisper...",
+        samples.len(),
+        samples.len() as f64 / 16000.0
+    );
+    let start = std::time::Instant::now();
+    let text = transcriber
+        .transcribe(samples, language)
+        .unwrap_or_else(|e| {
+            eprintln!("Transcription error: {e}");
+            std::process::exit(1);
+        });
+    eprintln!("Done in {:.1}s.", start.elapsed().as_secs_f64());
+    text
+}
+
+async fn transcribe_funasr(
+    samples: &[f32],
+    language: Option<&str>,
+    url: &str,
+    hotwords: Option<&str>,
+    mode: &str,
+) -> String {
+    let hw = match hotwords {
+        Some(h) => h.split(',').map(|s| s.trim().to_string()).collect(),
+        None => default_hotwords()
+            .get(language.unwrap_or("ja"))
+            .cloned()
+            .unwrap_or_default(),
+    };
+
+    let funasr_mode = match mode {
+        "2pass" => FunASRMode::TwoPass,
+        _ => FunASRMode::Offline,
+    };
+
+    let config = FunASRConfig {
+        url: url.to_string(),
+        language: language.unwrap_or("ja").to_string(),
+        hotwords: hw,
+        mode: funasr_mode,
+    };
+
+    let client = FunASRClient::new(config);
+
+    eprintln!(
+        "Transcribing ({} samples, {:.1}s) with FunASR ({mode})...",
+        samples.len(),
+        samples.len() as f64 / 16000.0
+    );
+    let start = std::time::Instant::now();
+    let text = client.transcribe(samples).await.unwrap_or_else(|e| {
+        eprintln!("FunASR error: {e}");
+        std::process::exit(1);
+    });
+    eprintln!("Done in {:.1}s.", start.elapsed().as_secs_f64());
+    text
+}
+
+fn make_transcriber(
+    model_path: &std::path::Path,
+    threads: Option<u32>,
+) -> Result<takusu_audio::Transcriber, takusu_audio::STTError> {
     match threads {
         Some(n) => Transcriber::with_threads(model_path, n),
         None => Transcriber::new(model_path),

@@ -6,3 +6,4 @@ result*
 opencode.json
 *.db
 *.wav
+**/__pycache__/**

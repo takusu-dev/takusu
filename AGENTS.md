@@ -10,7 +10,7 @@ takusu is a planner that automatically builds user schedules and a voice assista
 ## Tech Stack
 
 - **Language**: Rust (edition 2024, stable toolchain)
-- **Python**: Planned for audio processing (models exported via ONNX, no Python runtime needed)
+- **Python**: FunASR server for STT (SenseVoice-Small model, managed via `uv`)
 - **Kotlin**: Planned for Android app
 - **Version Control**: Jujutsu (`jj`) + Git (GitHub)
 - **Nix**: `flake.nix` provides the dev shell (direnv with `use flake`)
@@ -52,11 +52,21 @@ takusu/
 │   │   └── tests/integration.rs     # 24 integration tests (axum oneshot)
 │   ├── takusu-ical/          # iCalendar parser (pure, no HTTP dependency)
 │   │   └── src/lib.rs        #   parse_ical() → Vec<IcalTask>
-│   ├── takusu-audio/         # Audio processing (recording + Whisper STT)
+│   ├── takusu-audio/         # Audio processing (recording + STT backends)
 │   │   └── src/
 │   │       ├── lib.rs
-│   │       ├── record.rs     #   (empty)
-│   │       └── transcription.rs
+│   │       ├── record.rs     #   Microphone recording (cpal)
+│   │       ├── transcription.rs # Whisper.cpp backend (local, offline)
+│   │       └── funasr.rs    #   FunASR WebSocket client (SenseVoice backend)
+│   ├── takusu-audio-cli/     # CLI for audio recording and transcription
+│   │   └── src/main.rs      #   Supports --backend whisper|funasr
+│   ├── funasr_server/        # Python WebSocket server for FunASR STT
+│   │   ├── pyproject.toml
+│   │   └── src/funasr_server/
+│   │       ├── __init__.py
+│   │       ├── __main__.py
+│   │       ├── config.py    #   Server configuration
+│   │       └── server.py    #   WebSocket server (SenseVoice-Small model)
 │   ├── takusu-client/         # HTTP client library for takusu-serve API
 │   │   └── src/lib.rs         #   Client, all request/response types
 │   ├── takusu-cli/            # CLI client (clap derive, editor-based task editing)
@@ -93,6 +103,9 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `cargo bench -p takusu-core` | Run benchmark (~148ms for 25 tasks) |
 | `cargo run --example daily` | Run daily schedule example |
 | `cargo run -p takusu-cli -- --help` | Run CLI client |
+| `cd funasr_server && uv run python -m funasr_server` | Start FunASR STT server |
+| `cd funasr_server && ruff check src/` | Lint Python code |
+| `cd funasr_server && ruff format --check src/` | Check Python formatting |
 
 ## Workspace Dependencies
 
@@ -119,8 +132,10 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `jiff` | 0.2.21 | takusu-core, takusu-serve, takusu-cli | Date/time handling |
 | `serde` / `serde_json` | 1 / 1 | takusu-serve, takusu-ical, takusu-client | Serialization |
 | `cpal` | 0.17.3 | takusu-audio | Audio input |
-| `whisper-rs` | 0.16.0 | takusu-audio | Whisper STT |
+| `whisper-rs` | 0.16.0 (+openblas) | takusu-audio | Whisper STT (local, offline) |
 | `hf-hub` | 0.5.0 | takusu-audio | HuggingFace model download |
+| `tokio-tungstenite` | 0.26 | takusu-audio | WebSocket client (FunASR) |
+| `futures-util` | 0.3 | takusu-audio | Async stream utilities |
 
 ## Core Planner Design (takusu-core)
 
@@ -239,9 +254,10 @@ No external HTTP server needed. Run with `cargo nextest run -p takusu-serve`.
 - **Planner**: Uses heuristic algorithms (simulated annealing) with an evaluation
   function, not exact SAT solving despite z3 being in the dev shell.
   Tasks are discretized into 5-minute slots.
-- **Voice Assistant**: Android `VoiceInteractionService` + server for Whisper/LLM
-  processing. LLM fills in missing information (estimates, etc.) using memory
-  of past similar tasks.
+- **Voice Assistant**: Android `VoiceInteractionService` + server for FunASR/LLM
+  processing. FunASR (SenseVoice-Small) provides fast, accurate Japanese STT via
+  WebSocket (~0.35s for 6s audio on CPU). Whisper.cpp available as offline fallback.
+  LLM fills in missing information (estimates, etc.) using memory of past similar tasks.
 - **Task model**: Includes start time, deadline, cost estimate (normal distribution),
   dependencies, parallelizability, and `abandonability` (deadline flexibility).
 - **No existing README** — the design document (`main.typ`) and this file serve

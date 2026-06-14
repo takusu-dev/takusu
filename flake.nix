@@ -55,6 +55,15 @@
           craneLib = (crane.mkLib pkgs).overrideToolchain rust-bin;
 
           src = lib.cleanSource ./.;
+          funasrSrc = lib.cleanSourceWith {
+            src = ./funasr_server;
+            filter =
+              name: type:
+              let
+                bname = baseNameOf name;
+              in
+              bname != ".venv" && bname != "__pycache__" && bname != "opencode.json";
+          };
           inherit (craneLib.crateNameFromCargoToml { inherit src; }) version;
           cargoArtifacts = craneLib.buildDepsOnly {
             inherit src;
@@ -65,7 +74,7 @@
               cmake
               libclang
             ];
-buildInputs = with pkgs; [
+            buildInputs = with pkgs; [
               alsa-lib
               libpulseaudio
               openblas
@@ -80,8 +89,16 @@ buildInputs = with pkgs; [
             strictDeps = true;
             pname = "takusu-cli";
             cargoExtraArgs = "-p takusu-cli";
-            nativeBuildInputs = with pkgs; [ pkg-config cmake libclang ];
-            buildInputs = with pkgs; [ alsa-lib libpulseaudio openblas ];
+            nativeBuildInputs = with pkgs; [
+              pkg-config
+              cmake
+              libclang
+            ];
+            buildInputs = with pkgs; [
+              alsa-lib
+              libpulseaudio
+              openblas
+            ];
             LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
             OPENBLAS_PATH = "${pkgs.openblas}/lib";
             BLAS_INCLUDE_DIRS = "${pkgs.openblas.dev}/include";
@@ -92,8 +109,15 @@ buildInputs = with pkgs; [
             strictDeps = true;
             pname = "takusu-serve";
             cargoExtraArgs = "-p takusu-serve";
-            nativeBuildInputs = with pkgs; [ pkg-config cmake libclang ];
-            buildInputs = with pkgs; [ alsa-lib libpulseaudio ];
+            nativeBuildInputs = with pkgs; [
+              pkg-config
+              cmake
+              libclang
+            ];
+            buildInputs = with pkgs; [
+              alsa-lib
+              libpulseaudio
+            ];
             LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
           };
 
@@ -132,12 +156,27 @@ buildInputs = with pkgs; [
                 package = rust-bin;
               };
               actionlint.enable = true;
+              ruff-format.enable = true;
+              ruff-check.enable = true;
             };
           };
 
           packages = {
             inherit takusu-cli takusu-serve;
             default = takusu-cli;
+
+            funasr-server = pkgs.writeShellApplication {
+              name = "funasr-server";
+              runtimeInputs = with pkgs; [
+                uv
+                python3
+              ];
+              text = ''
+                export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.zlib}/lib:${pkgs.openblas}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+                export UV_PROJECT_ENVIRONMENT="''${XDG_CACHE_HOME:-$HOME/.cache}/funasr-server/venv"
+                exec uv run --frozen --directory "${funasrSrc}" --python "${pkgs.python3}/bin/python3" python -m funasr_server "$@"
+              '';
+            };
 
             ci = pkgs.buildEnv {
               name = "ci";
@@ -153,32 +192,45 @@ buildInputs = with pkgs; [
                 libpulseaudio
                 libclang
                 openblas
+                uv
+                ruff
+                python3
+                zlib
               ];
             };
           };
 
           devShells.default = pkgs.mkShell {
-            nativeBuildInputs = with pkgs; [
-              cargo-expand
-              cargo-nextest
-              rust-bin
-              pkg-config
-              cmake
-              stdenv.cc
-              mold
-            ];
+            nativeBuildInputs =
+              with pkgs;
+              [
+                cargo-expand
+                cargo-nextest
+                rust-bin
+                pkg-config
+                cmake
+                stdenv.cc
+                mold
+                uv
+                ruff
+                python3
+              ]
+              ++ [ config.packages.funasr-server ];
 
             buildInputs = with pkgs; [
               alsa-lib
               libpulseaudio
               libclang
               openblas
+              stdenv.cc.cc.lib
+              zlib
             ];
 
             shellHook = ''
               export LIBCLANG_PATH=${pkgs.libclang.lib}/lib
               export OPENBLAS_PATH=${pkgs.openblas}/lib
               export BLAS_INCLUDE_DIRS=${pkgs.openblas.dev}/include
+              export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.openssl.out}/lib:${pkgs.openblas}/lib:${pkgs.zlib}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
               export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${pkgs.stdenv.cc}/bin/cc
               if [ -L opencode.json ]; then
                 unlink opencode.json
