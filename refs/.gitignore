@@ -1,0 +1,5 @@
+# Reference audio files for TTS voice cloning.
+# Keep the directory but ignore user-provided audio.
+*
+!.gitkeep
+!.gitignore

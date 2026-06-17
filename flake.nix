@@ -25,6 +25,34 @@
 
     treefmt-nix.url = "github:numtide/treefmt-nix";
     systems.url = "github:nix-systems/default";
+
+    irodori-tts-server = {
+      url = "github:Aratako/Irodori-TTS-Server";
+      flake = false;
+    };
+
+    fish-speech = {
+      url = "github:fishaudio/fish-speech";
+      flake = false;
+    };
+
+    pyproject-nix = {
+      url = "github:pyproject-nix/pyproject.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    uv2nix = {
+      url = "github:pyproject-nix/uv2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+    };
+
+    pyproject-build-systems = {
+      url = "github:pyproject-nix/build-system-pkgs";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+      inputs.uv2nix.follows = "uv2nix";
+    };
   };
 
   outputs =
@@ -64,6 +92,7 @@
               in
               bname != ".venv" && bname != "__pycache__" && bname != "opencode.json";
           };
+
           inherit (craneLib.crateNameFromCargoToml { inherit src; }) version;
           cargoArtifacts = craneLib.buildDepsOnly {
             inherit src;
@@ -122,6 +151,7 @@
           };
 
           mcp-servers = import inputs.mcp-servers-nix { inherit pkgs; };
+
           mcp-config = mcp-servers.lib.mkConfig pkgs {
             flavor = "opencode";
             fileName = "opencode.json";
@@ -178,6 +208,32 @@
               '';
             };
 
+            irodori-tts-server = pkgs.writeShellApplication {
+              name = "irodori-tts-server";
+              runtimeInputs = with pkgs; [
+                git
+                uv
+                ffmpeg
+              ];
+              text = ''
+                exec ${./scripts/irodori-tts-server.sh} "$@"
+              '';
+            };
+
+            fish-speech = pkgs.writeShellApplication {
+              name = "fish-speech";
+              runtimeInputs = with pkgs; [
+                git
+                uv
+                pkg-config
+                portaudio
+              ];
+              text = ''
+                export PKG_CONFIG_PATH="${pkgs.portaudio}/lib/pkgconfig''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+                exec ${./scripts/fish-speech.sh} "$@"
+              '';
+            };
+
             ci = pkgs.buildEnv {
               name = "ci";
               paths = with pkgs; [
@@ -215,13 +271,18 @@
                 ruff
                 python3
               ]
-              ++ [ config.packages.funasr-server ];
+              ++ [
+                config.packages.funasr-server
+                config.packages.irodori-tts-server
+                config.packages.fish-speech
+              ];
 
             buildInputs = with pkgs; [
               alsa-lib
               libpulseaudio
               libclang
               openblas
+              portaudio
               stdenv.cc.cc.lib
               zlib
             ];

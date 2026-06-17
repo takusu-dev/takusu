@@ -3,7 +3,8 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use takusu_audio::{
-    FunASRClient, FunASRConfig, FunASRMode, RecordConfig, Transcriber, default_hotwords, record,
+    FunASRClient, FunASRConfig, FunASRMode, RecordConfig, Transcriber, TtsBackend, TtsClient,
+    TtsConfig, TtsOptions, TtsRequest, default_hotwords, pick_reference_voice, record,
     transcription::{DEFAULT_MODEL_FILE, DEFAULT_MODEL_REPO},
 };
 
@@ -123,6 +124,77 @@ enum Commands {
         #[arg(long, default_value = "offline")]
         funasr_mode: String,
     },
+
+    /// Synthesize speech from text (Irodori-TTS or fish-speech)
+    Speak {
+        /// Text to synthesize
+        #[arg(short, long)]
+        text: String,
+
+        /// TTS backend: irodori or fish
+        #[arg(short, long, default_value = "irodori")]
+        backend: String,
+
+        /// TTS server URL
+        #[arg(short, long)]
+        url: Option<String>,
+
+        /// Output audio file
+        #[arg(short, long, default_value = "speech.wav")]
+        output: PathBuf,
+
+        /// Directory containing reference audio files
+        #[arg(long, default_value = "./refs")]
+        refs_dir: PathBuf,
+
+        /// Reference audio file (overrides refs_dir auto-pick)
+        #[arg(long)]
+        reference: Option<PathBuf>,
+
+        /// Reference text for the reference audio (fish-speech)
+        #[arg(long)]
+        reference_text: Option<String>,
+
+        /// Voice ID for Irodori-TTS (default: first refs file stem)
+        #[arg(long)]
+        voice: Option<String>,
+
+        /// Reference ID for fish-speech
+        #[arg(long)]
+        reference_id: Option<String>,
+
+        /// Response audio format: wav, mp3, flac, pcm, opus
+        #[arg(long, default_value = "wav")]
+        format: String,
+
+        /// Speaking speed (Irodori only)
+        #[arg(long)]
+        speed: Option<f32>,
+
+        /// Chunk length (fish-speech only)
+        #[arg(long)]
+        chunk_length: Option<usize>,
+
+        /// Top-p sampling (fish-speech only)
+        #[arg(long)]
+        top_p: Option<f32>,
+
+        /// Temperature (fish-speech only)
+        #[arg(long)]
+        temperature: Option<f32>,
+
+        /// Repetition penalty (fish-speech only)
+        #[arg(long)]
+        repetition_penalty: Option<f32>,
+
+        /// Max new tokens (fish-speech only)
+        #[arg(long)]
+        max_new_tokens: Option<usize>,
+
+        /// Random seed
+        #[arg(long)]
+        seed: Option<i64>,
+    },
 }
 
 #[tokio::main]
@@ -239,9 +311,97 @@ async fn main() {
             .await;
             println!("{text}");
         }
+
+        Commands::Speak {
+            text,
+            backend,
+            url,
+            output,
+            refs_dir,
+            reference,
+            reference_text,
+            voice,
+            reference_id,
+            format,
+            speed,
+            chunk_length,
+            top_p,
+            temperature,
+            repetition_penalty,
+            max_new_tokens,
+            seed,
+        } => {
+            let backend: TtsBackend = backend.parse().unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(1);
+            });
+
+            let default_url = match backend {
+                TtsBackend::Irodori => "http://127.0.0.1:8088",
+                TtsBackend::FishSpeech => "http://127.0.0.1:8080",
+            };
+            let url = url.unwrap_or_else(|| default_url.to_string());
+
+            let reference_path = reference.or_else(|| {
+                pick_reference_voice(&refs_dir)
+                    .ok()
+                    .flatten()
+                    .map(|(path, _)| path)
+            });
+
+            if let Some(path) = &reference_path {
+                eprintln!("Using reference audio: {}", path.display());
+            }
+
+            let resolved_voice = voice.or_else(|| {
+                reference_path
+                    .as_ref()
+                    .and_then(|path| path.file_stem().map(|s| s.to_string_lossy().to_string()))
+            });
+
+            let config = TtsConfig {
+                backend,
+                url,
+                api_key: None,
+            };
+            let client = TtsClient::new(config);
+
+            let request = TtsRequest {
+                text,
+                voice: resolved_voice,
+                reference_id,
+                reference_audio_path: reference_path,
+                reference_text,
+                options: TtsOptions {
+                    response_format: Some(format),
+                    speed,
+                    chunk_length,
+                    top_p,
+                    temperature,
+                    repetition_penalty,
+                    max_new_tokens,
+                    seed,
+                },
+            };
+
+            eprintln!("Synthesizing with {backend}...");
+            let start = std::time::Instant::now();
+            let audio = client.synthesize(&request).await.unwrap_or_else(|e| {
+                eprintln!("TTS error: {e}");
+                std::process::exit(1);
+            });
+            eprintln!("Done in {:.1}s.", start.elapsed().as_secs_f64());
+
+            std::fs::write(&output, &audio).unwrap_or_else(|e| {
+                eprintln!("Failed to write {output}: {e}", output = output.display());
+                std::process::exit(1);
+            });
+            eprintln!("Saved to {}", output.display());
+        }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn transcribe(
     backend: &str,
     samples: &[f32],
