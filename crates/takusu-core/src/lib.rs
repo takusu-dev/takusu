@@ -858,7 +858,7 @@ mod tests {
             })
             .unwrap();
         let f = planner.freeness(0);
-        assert!(f >= 0.0 && f <= 1.0);
+        assert!((0.0..=1.0).contains(&f));
     }
 
     #[test]

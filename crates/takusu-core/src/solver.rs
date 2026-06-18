@@ -39,6 +39,24 @@ pub fn solve(planner: &Planner) -> Plan {
         .unwrap_or_else(|| Plan { schedules: vec![] })
 }
 
+pub fn solve_partial(planner: &Planner, pinned: &[(Point, Point, usize)]) -> Plan {
+    if pinned.is_empty() {
+        return solve(planner);
+    }
+
+    let num_chains = rayon::current_num_threads().clamp(1, MAX_CHAINS);
+
+    (0..num_chains)
+        .into_par_iter()
+        .map(|seed| sa_lns_partial(planner, pinned, &mut StdRng::seed_from_u64(seed as u64)))
+        .max_by(|a, b| {
+            evaluate(planner, a, 0.0, 1.0)
+                .partial_cmp(&evaluate(planner, b, 0.0, 1.0))
+                .unwrap_or(Ordering::Equal)
+        })
+        .unwrap_or_else(|| Plan { schedules: vec![] })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,22 +141,4 @@ mod tests {
             assert!(e.0 <= 10000);
         }
     }
-}
-
-pub fn solve_partial(planner: &Planner, pinned: &[(Point, Point, usize)]) -> Plan {
-    if pinned.is_empty() {
-        return solve(planner);
-    }
-
-    let num_chains = rayon::current_num_threads().clamp(1, MAX_CHAINS);
-
-    (0..num_chains)
-        .into_par_iter()
-        .map(|seed| sa_lns_partial(planner, pinned, &mut StdRng::seed_from_u64(seed as u64)))
-        .max_by(|a, b| {
-            evaluate(planner, a, 0.0, 1.0)
-                .partial_cmp(&evaluate(planner, b, 0.0, 1.0))
-                .unwrap_or(Ordering::Equal)
-        })
-        .unwrap_or_else(|| Plan { schedules: vec![] })
 }

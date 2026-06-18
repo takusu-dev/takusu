@@ -58,9 +58,9 @@ takusu/
 │   │       ├── record.rs     #   Microphone recording (cpal)
 │   │       ├── transcription.rs # Whisper.cpp backend (local, offline)
 │   │       ├── funasr.rs    #   FunASR WebSocket client (SenseVoice backend)
-│   │       └── tts.rs       #   TTS clients (Irodori-TTS + fish-speech)
+│   │       └── tts.rs       #   TTS client (Irodori-TTS)
 │   ├── takusu-audio-cli/     # CLI for audio recording, transcription, and TTS
-│   │   └── src/main.rs      #   Supports --backend whisper|funasr, speak --backend irodori|fish
+│   │   └── src/main.rs      #   Supports --backend whisper|funasr, speak --text for Irodori-TTS
 │   ├── funasr_server/        # Python WebSocket server for FunASR STT
 │   │   ├── pyproject.toml
 │   │   └── src/funasr_server/
@@ -108,11 +108,8 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `cd funasr_server && ruff check src/` | Lint Python code |
 | `cd funasr_server && ruff format --check src/` | Check Python formatting |
 | `cargo run -p takusu-audio-cli -- speak --text "..."` | Synthesize speech with Irodori-TTS |
-| `cargo run -p takusu-audio-cli -- speak --backend fish --text "..."` | Synthesize speech with fish-speech |
 | `./scripts/irodori-tts-server.sh` | Start Irodori-TTS inference server (clones to `$XDG_CACHE_HOME`) |
-| `./scripts/fish-speech.sh` | Start fish-speech inference server (clones to `$XDG_CACHE_HOME`) |
 | `nix run .#irodori-tts-server` | Same as above, via Nix |
-| `nix run .#fish-speech` | Same as above, via Nix |
 
 ## Workspace Dependencies
 
@@ -134,8 +131,6 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `tracing` / `tracing-subscriber` | 0.1 / 0.3 | takusu-serve | Logging |
 | `async-trait` | 0.1 | takusu-serve | Async trait |
 | `reqwest` | 0.13 (rustls) | google-cal, takusu-serve, takusu-client, takusu-audio | HTTP client |
-| `rmp-serde` | 1.3 | takusu-audio | MessagePack serialization for fish-speech API |
-| `base64` | 0.22 | takusu-audio | Base64 utilities |
 | `clap` | 4 (derive,env) | takusu-cli | CLI argument parsing |
 | `comfy-table` | 7 | takusu-cli | Rich table display |
 | `jiff` | 0.2.21 | takusu-core, takusu-serve, takusu-cli | Date/time handling |
@@ -204,14 +199,13 @@ This ensures SA gradients guide towards feasibility rather than oscillating.
 
 ## Text-to-Speech (takusu-audio)
 
-### Backends
+### Backend
 
 - **Irodori-TTS**: OpenAI-compatible `POST /v1/audio/speech`. Reference voices are loaded from `IRODORI_VOICES_DIR` (default `./refs`). Uses the base `Aratako/Irodori-TTS-500M-v3` model; VoiceDesign/caption control is not exposed.
-- **fish-speech**: Local `POST /v1/tts` with MessagePack request body. Reference audio is sent per-request in `references`.
 
 ### Client API
 
-- `TtsBackend::Irodori` / `TtsBackend::FishSpeech`
+- `TtsBackend::Irodori`
 - `TtsClient::new(config)` + `synthesize(request)` returns `Vec<u8>` audio bytes
 - `pick_reference_voice(refs_dir)` selects the first audio file under `./refs/`
 
@@ -219,18 +213,15 @@ This ensures SA gradients guide towards feasibility rather than oscillating.
 
 ```sh
 cargo run -p takusu-audio-cli -- speak --text "こんにちは"
-cargo run -p takusu-audio-cli -- speak --backend fish --text "こんにちは"
 ```
 
 Default reference audio directory is `./refs/`. Place a WAV/MP3/FLAC/etc. file there and the CLI auto-picks it; use `--reference` to override.
 
-### TTS servers
+### TTS server
 
 - `scripts/irodori-tts-server.sh` — clones `Aratako/Irodori-TTS-Server` to `$XDG_CACHE_HOME/takusu/irodori-tts-server` and runs it via `uv run --extra cpu --python 3.11`.
-- `scripts/fish-speech.sh` — clones `fishaudio/fish-speech` to `$XDG_CACHE_HOME/takusu/fish-speech` and runs `tools.api_server` via `uv run --extra cpu --python 3.11`.
-- Both scripts require `git` and `uv` on `PATH`.
-- `fish-speech` additionally needs `portaudio` development files (for building `pyaudio`).
-- `nix run .#irodori-tts-server` / `nix run .#fish-speech` provide the same scripts with `git`, `uv`, `ffmpeg`, and `portaudio` bundled.
+- Requires `git` and `uv` on `PATH`.
+- `nix run .#irodori-tts-server` provides the same script with `git`, `uv`, and `ffmpeg` bundled.
 - `IRODORI_VOICES_DIR` defaults to `./refs` for Irodori-TTS.
 
 ## takusu-serve API

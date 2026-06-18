@@ -15,22 +15,6 @@
         "type": "github"
       }
     },
-    "fish-speech": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1780999423,
-        "narHash": "sha256-NuxMAau26WWBrqtcUIfB70qoKp3TsgpvK2QTs3ChsUg=",
-        "owner": "fishaudio",
-        "repo": "fish-speech",
-        "rev": "e5e292632cb11e7a27b2b7487f58f612bc101e13",
-        "type": "github"
-      },
-      "original": {
-        "owner": "fishaudio",
-        "repo": "fish-speech",
-        "type": "github"
-      }
-    },
     "flake-parts": {
       "inputs": {
         "nixpkgs-lib": [
@@ -168,7 +152,6 @@
     "root": {
       "inputs": {
         "crane": "crane",
-        "fish-speech": "fish-speech",
         "flake-parts": "flake-parts",
         "irodori-tts-server": "irodori-tts-server",
         "mcp-servers-nix": "mcp-servers-nix",

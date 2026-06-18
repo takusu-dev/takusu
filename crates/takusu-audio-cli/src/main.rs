@@ -125,17 +125,13 @@ enum Commands {
         funasr_mode: String,
     },
 
-    /// Synthesize speech from text (Irodori-TTS or fish-speech)
+    /// Synthesize speech from text (Irodori-TTS)
     Speak {
         /// Text to synthesize
         #[arg(short, long)]
         text: String,
 
-        /// TTS backend: irodori or fish
-        #[arg(short, long, default_value = "irodori")]
-        backend: String,
-
-        /// TTS server URL
+        /// Irodori-TTS server URL
         #[arg(short, long)]
         url: Option<String>,
 
@@ -151,49 +147,17 @@ enum Commands {
         #[arg(long)]
         reference: Option<PathBuf>,
 
-        /// Reference text for the reference audio (fish-speech)
-        #[arg(long)]
-        reference_text: Option<String>,
-
-        /// Voice ID for Irodori-TTS (default: first refs file stem)
+        /// Voice ID (default: first refs file stem)
         #[arg(long)]
         voice: Option<String>,
-
-        /// Reference ID for fish-speech
-        #[arg(long)]
-        reference_id: Option<String>,
 
         /// Response audio format: wav, mp3, flac, pcm, opus
         #[arg(long, default_value = "wav")]
         format: String,
 
-        /// Speaking speed (Irodori only)
+        /// Speaking speed
         #[arg(long)]
         speed: Option<f32>,
-
-        /// Chunk length (fish-speech only)
-        #[arg(long)]
-        chunk_length: Option<usize>,
-
-        /// Top-p sampling (fish-speech only)
-        #[arg(long)]
-        top_p: Option<f32>,
-
-        /// Temperature (fish-speech only)
-        #[arg(long)]
-        temperature: Option<f32>,
-
-        /// Repetition penalty (fish-speech only)
-        #[arg(long)]
-        repetition_penalty: Option<f32>,
-
-        /// Max new tokens (fish-speech only)
-        #[arg(long)]
-        max_new_tokens: Option<usize>,
-
-        /// Random seed
-        #[arg(long)]
-        seed: Option<i64>,
     },
 }
 
@@ -314,33 +278,15 @@ async fn main() {
 
         Commands::Speak {
             text,
-            backend,
             url,
             output,
             refs_dir,
             reference,
-            reference_text,
             voice,
-            reference_id,
             format,
             speed,
-            chunk_length,
-            top_p,
-            temperature,
-            repetition_penalty,
-            max_new_tokens,
-            seed,
         } => {
-            let backend: TtsBackend = backend.parse().unwrap_or_else(|e| {
-                eprintln!("{e}");
-                std::process::exit(1);
-            });
-
-            let default_url = match backend {
-                TtsBackend::Irodori => "http://127.0.0.1:8088",
-                TtsBackend::FishSpeech => "http://127.0.0.1:8080",
-            };
-            let url = url.unwrap_or_else(|| default_url.to_string());
+            let url = url.unwrap_or_else(|| "http://127.0.0.1:8088".to_string());
 
             let reference_path = reference.or_else(|| {
                 pick_reference_voice(&refs_dir)
@@ -360,7 +306,7 @@ async fn main() {
             });
 
             let config = TtsConfig {
-                backend,
+                backend: TtsBackend::Irodori,
                 url,
                 api_key: None,
             };
@@ -369,22 +315,14 @@ async fn main() {
             let request = TtsRequest {
                 text,
                 voice: resolved_voice,
-                reference_id,
                 reference_audio_path: reference_path,
-                reference_text,
                 options: TtsOptions {
                     response_format: Some(format),
                     speed,
-                    chunk_length,
-                    top_p,
-                    temperature,
-                    repetition_penalty,
-                    max_new_tokens,
-                    seed,
                 },
             };
 
-            eprintln!("Synthesizing with {backend}...");
+            eprintln!("Synthesizing with Irodori-TTS...");
             let start = std::time::Instant::now();
             let audio = client.synthesize(&request).await.unwrap_or_else(|e| {
                 eprintln!("TTS error: {e}");

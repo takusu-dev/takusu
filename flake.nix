@@ -31,11 +31,6 @@
       flake = false;
     };
 
-    fish-speech = {
-      url = "github:fishaudio/fish-speech";
-      flake = false;
-    };
-
     pyproject-nix = {
       url = "github:pyproject-nix/pyproject.nix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -220,20 +215,6 @@
               '';
             };
 
-            fish-speech = pkgs.writeShellApplication {
-              name = "fish-speech";
-              runtimeInputs = with pkgs; [
-                git
-                uv
-                pkg-config
-                portaudio
-              ];
-              text = ''
-                export PKG_CONFIG_PATH="${pkgs.portaudio}/lib/pkgconfig''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-                exec ${./scripts/fish-speech.sh} "$@"
-              '';
-            };
-
             ci = pkgs.buildEnv {
               name = "ci";
               paths = with pkgs; [
@@ -274,7 +255,6 @@
               ++ [
                 config.packages.funasr-server
                 config.packages.irodori-tts-server
-                config.packages.fish-speech
               ];
 
             buildInputs = with pkgs; [
@@ -282,7 +262,6 @@
               libpulseaudio
               libclang
               openblas
-              portaudio
               stdenv.cc.cc.lib
               zlib
             ];
