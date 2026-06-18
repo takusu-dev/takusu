@@ -154,6 +154,7 @@ async def _run(config: ServerConfig) -> None:
         _handle,
         config.host,
         config.port,
+        max_size=None,
     )
     logger.info("FunASR server listening on ws://%s:%d", config.host, config.port)
 

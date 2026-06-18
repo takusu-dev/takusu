@@ -56,11 +56,10 @@ takusu/
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── record.rs     #   Microphone recording (cpal)
-│   │       ├── transcription.rs # Whisper.cpp backend (local, offline)
 │   │       ├── funasr.rs    #   FunASR WebSocket client (SenseVoice backend)
 │   │       └── tts.rs       #   TTS client (Irodori-TTS)
 │   ├── takusu-audio-cli/     # CLI for audio recording, transcription, and TTS
-│   │   └── src/main.rs      #   Supports --backend whisper|funasr, speak --text for Irodori-TTS
+│   │   └── src/main.rs      #   STT via FunASR, TTS via Irodori-TTS
 │   ├── funasr_server/        # Python WebSocket server for FunASR STT
 │   │   ├── pyproject.toml
 │   │   └── src/funasr_server/
@@ -136,8 +135,7 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `jiff` | 0.2.21 | takusu-core, takusu-serve, takusu-cli | Date/time handling |
 | `serde` / `serde_json` | 1 / 1 | takusu-serve, takusu-ical, takusu-client | Serialization |
 | `cpal` | 0.17.3 | takusu-audio | Audio input |
-| `whisper-rs` | 0.16.0 (+openblas) | takusu-audio | Whisper STT (local, offline) |
-| `hf-hub` | 0.5.0 | takusu-audio | HuggingFace model download |
+
 | `tokio-tungstenite` | 0.26 | takusu-audio | WebSocket client (FunASR) |
 | `futures-util` | 0.3 | takusu-audio | Async stream utilities |
 

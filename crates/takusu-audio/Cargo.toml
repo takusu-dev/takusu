@@ -6,8 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["whisper", "funasr"]
-whisper = ["whisper-rs", "hf-hub"]
+default = ["funasr"]
 funasr = ["tokio-tungstenite", "futures-util"]
 
 [dependencies]
@@ -18,9 +17,6 @@ serde_json = { workspace = true }
 reqwest = { version = "0.13", features = ["json", "rustls"], default-features = false }
 
 cpal = "0.17.3"
-
-whisper-rs = { version = "0.16.0", features = ["openblas"], optional = true }
-hf-hub = { version = "0.5.0", features = ["rustls-tls", "tokio"], default-features = false, optional = true }
 
 tokio-tungstenite = { version = "0.26", optional = true }
 futures-util = { version = "0.3", optional = true }
