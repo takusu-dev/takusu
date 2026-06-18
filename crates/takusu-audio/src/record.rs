@@ -19,20 +19,8 @@ pub enum RecorderError {
     UnsupportedFormat,
 }
 
-impl From<cpal::DefaultStreamConfigError> for RecorderError {
-    fn from(e: cpal::DefaultStreamConfigError) -> Self {
-        Self::Cpal(e.to_string())
-    }
-}
-
-impl From<cpal::BuildStreamError> for RecorderError {
-    fn from(e: cpal::BuildStreamError) -> Self {
-        Self::Cpal(e.to_string())
-    }
-}
-
-impl From<cpal::PlayStreamError> for RecorderError {
-    fn from(e: cpal::PlayStreamError) -> Self {
+impl From<cpal::Error> for RecorderError {
+    fn from(e: cpal::Error) -> Self {
         Self::Cpal(e.to_string())
     }
 }
@@ -64,7 +52,7 @@ pub fn record(config: &RecordConfig) -> Result<Vec<f32>, RecorderError> {
     let samples: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
     let stopped = Arc::new(AtomicBool::new(false));
 
-    let error_fn = |err: cpal::StreamError| {
+    let error_fn = |err: cpal::Error| {
         eprintln!("audio stream error: {err}");
     };
 
@@ -74,7 +62,7 @@ pub fn record(config: &RecordConfig) -> Result<Vec<f32>, RecorderError> {
             let stopped_c = stopped.clone();
 
             device.build_input_stream(
-                &stream_config,
+                stream_config,
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
                     if stopped_c.load(Ordering::Relaxed) {
                         return;
@@ -92,7 +80,7 @@ pub fn record(config: &RecordConfig) -> Result<Vec<f32>, RecorderError> {
             let stopped_c = stopped.clone();
 
             device.build_input_stream(
-                &stream_config,
+                stream_config,
                 move |data: &[i16], _: &cpal::InputCallbackInfo| {
                     if stopped_c.load(Ordering::Relaxed) {
                         return;

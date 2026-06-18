@@ -23,7 +23,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v7"] }
 sha2 = "0.11"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.7", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 config = "0.15"
@@ -40,5 +40,5 @@ takusu-util = { path = "crates/takusu-util" }
 takusu-audio = { path = "crates/takusu-audio" }
 google-cal = { path = "crates/google-cal" }
 
-tokio-tungstenite = "0.26"
+tokio-tungstenite = "0.29"
 futures-util = "0.3"
