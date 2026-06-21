@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -193,7 +192,9 @@ pub async fn generate_schedule(
         })
         .await
         .map_err(storage_to_app)?;
-    spawn_sync(state.clone());
+    if let Err(e) = do_sync(&state).await {
+        tracing::warn!("google calendar sync failed: {e}");
+    }
     Ok(Json(result))
 }
 
@@ -328,7 +329,9 @@ pub async fn reschedule(
         })
         .await
         .map_err(storage_to_app)?;
-    spawn_sync(state.clone());
+    if let Err(e) = do_sync(&state).await {
+        tracing::warn!("google calendar sync failed: {e}");
+    }
     Ok(Json(result))
 }
 
@@ -389,7 +392,9 @@ pub async fn move_entry(
         })
         .await
         .map_err(storage_to_app)?;
-    spawn_sync(state.clone());
+    if let Err(e) = do_sync(&state).await {
+        tracing::warn!("google calendar sync failed: {e}");
+    }
     let entry = &task_row;
     if warnings.is_empty() {
         Ok(Json(serde_json::json!({
@@ -413,39 +418,13 @@ pub async fn clear_schedule(State(state): State<AppState>) -> Result<StatusCode,
         .clear_schedule()
         .await
         .map_err(storage_to_app)?;
-    spawn_sync(state.clone());
+    if let Err(e) = do_sync(&state).await {
+        tracing::warn!("google calendar sync failed: {e}");
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub(crate) fn spawn_sync(state: AppState) {
-    let lock = state.sync_lock.clone();
-    tokio::spawn(async move {
-        run_sync_with_retry(&state, &lock).await;
-    });
-}
-
-async fn run_sync_with_retry(state: &AppState, lock: &Arc<tokio::sync::Mutex<()>>) {
-    const MAX_RETRIES: u32 = 3;
-    let mut delay = std::time::Duration::from_secs(5);
-    for attempt in 0..=MAX_RETRIES {
-        let _guard = lock.lock().await;
-        match do_sync(state).await {
-            Ok(()) => return,
-            Err(e) => {
-                tracing::warn!("sync attempt {}/{MAX_RETRIES} failed: {e}", attempt + 1);
-                drop(_guard);
-                if attempt < MAX_RETRIES {
-                    tokio::time::sleep(delay).await;
-                    delay *= 2;
-                } else {
-                    tracing::error!("google calendar sync failed after {MAX_RETRIES} retries");
-                }
-            }
-        }
-    }
-}
-
-async fn do_sync(state: &AppState) -> Result<(), String> {
+pub(crate) async fn do_sync(state: &AppState) -> Result<(), String> {
     let settings = state
         .storage
         .get_gcal_settings()

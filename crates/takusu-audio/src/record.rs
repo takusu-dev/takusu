@@ -86,18 +86,8 @@ pub fn record(config: &RecordConfig) -> Result<Vec<f32>, RecorderError> {
                         return;
                     }
                     if let Ok(mut buf) = samples_c.try_lock() {
-                        let buf_slice = buf.spare_capacity_mut();
-                        let spare = buf_slice.get_mut(..data.len());
-                        if let Some(spare) = spare {
-                            for (dst, &src) in spare.iter_mut().zip(data.iter()) {
-                                dst.write(src as f32 / 32768.0);
-                            }
-                            let new_len = buf.len() + data.len();
-                            unsafe { buf.set_len(new_len) };
-                        } else {
-                            for &s in data {
-                                buf.push(s as f32 / 32768.0);
-                            }
+                        for &s in data {
+                            buf.push(s as f32 / 32768.0);
                         }
                     }
                 },

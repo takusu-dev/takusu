@@ -16,7 +16,7 @@ fn select_habits() -> String {
 pub async fn list(_req: worker::Request, env: Env) -> Result<Response, WorkerError> {
     let database = db(&env)?;
     let result = database
-        .prepare(&format!(
+        .prepare(format!(
             "{select} ORDER BY created_at DESC",
             select = select_habits()
         ))
@@ -172,7 +172,7 @@ pub async fn delete(_req: worker::Request, env: Env, id: &str) -> Result<Respons
 }
 
 pub async fn select_one(database: &worker::D1Database, id: &str) -> Result<HabitRow, WorkerError> {
-    let stmt = database.prepare(&format!("{select} WHERE id = ?1", select = select_habits()));
+    let stmt = database.prepare(format!("{select} WHERE id = ?1", select = select_habits()));
     let row: Option<HabitRow> = stmt
         .bind(&[JsValue::from_str(id)])?
         .first(None)

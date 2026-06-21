@@ -10,7 +10,6 @@ pub struct AppState {
     pub storage: Arc<dyn Storage>,
     pub root_token: String,
     pub config: LocalConfig,
-    pub sync_lock: Arc<tokio::sync::Mutex<()>>,
     pub token_cache: Arc<TokenCache>,
 }
 
@@ -20,7 +19,6 @@ impl AppState {
             storage,
             root_token,
             config,
-            sync_lock: Arc::new(tokio::sync::Mutex::new(())),
             token_cache: Arc::new(TokenCache::with_default_ttl()),
         }
     }

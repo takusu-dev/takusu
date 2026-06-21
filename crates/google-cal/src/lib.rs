@@ -240,7 +240,9 @@ impl Client {
         let url = self.event_url(event_id);
         let resp = self.http.delete(&url).bearer_auth(token).send().await?;
 
-        if !resp.status().is_success() && resp.status().as_u16() != 410 {
+        // Google returns 410 Gone when the event was already deleted on their side
+        const ALREADY_DELETED: u16 = 410;
+        if !resp.status().is_success() && resp.status().as_u16() != ALREADY_DELETED {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
             return Err(Error::Api(format!("delete event ({status}): {text}")));

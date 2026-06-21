@@ -22,7 +22,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState {
         db: pool,
         root_token,
-        sync_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
     };
 
     let app = takusu_serve::app::app(state);

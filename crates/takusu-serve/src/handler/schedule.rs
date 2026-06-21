@@ -36,20 +36,18 @@ fn parse_sleep(s: &str, settings: &SettingsRow) -> SleepConfig {
     }
 }
 
-async fn get_settings_or_default(db: &sqlx::SqlitePool) -> SettingsRow {
-    sqlx::query_as::<_, SettingsRow>("SELECT * FROM settings WHERE id = 'active'")
+async fn get_settings_or_default(db: &sqlx::SqlitePool) -> Result<SettingsRow, AppError> {
+    let row = sqlx::query_as::<_, SettingsRow>("SELECT * FROM settings WHERE id = 'active'")
         .fetch_optional(db)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| SettingsRow {
-            id: "active".to_string(),
-            tz: "UTC".to_string(),
-            sleep_start: "22:00".to_string(),
-            sleep_end: "06:00".to_string(),
-            created_at: String::new(),
-            updated_at: String::new(),
-        })
+        .await?;
+    Ok(row.unwrap_or_else(|| SettingsRow {
+        id: "active".to_string(),
+        tz: "UTC".to_string(),
+        sleep_start: "22:00".to_string(),
+        sleep_end: "06:00".to_string(),
+        created_at: String::new(),
+        updated_at: String::new(),
+    }))
 }
 fn iso_to_point(iso: &str, per: u16) -> Result<Point, AppError> {
     let ts = if iso.eq_ignore_ascii_case("now") {
@@ -76,7 +74,7 @@ pub async fn generate_schedule(
     State(state): State<AppState>,
     Json(body): Json<GenerateSchedule>,
 ) -> Result<Json<ScheduleRow>, AppError> {
-    let settings = get_settings_or_default(&state.db).await;
+    let settings = get_settings_or_default(&state.db).await?;
     let from_point = Point::from_timestamp(jiff::Timestamp::now(), 5);
     let sleep = parse_sleep(&body.sleep, &settings);
     let task_rows = if let Some(ref task_ids) = body.task_ids {
@@ -150,18 +148,16 @@ pub async fn generate_schedule(
     let result = sqlx::query_as::<_, ScheduleRow>("SELECT * FROM schedules WHERE id = 'active'")
         .fetch_one(&state.db)
         .await?;
-    let db = state.db.clone();
-    let lock = state.sync_lock.clone();
-    tokio::spawn(async move {
-        crate::handler::sync::run_sync_with_retry(&db, &lock).await;
-    });
+    if let Err(e) = crate::handler::sync::do_sync(&state.db).await {
+        tracing::warn!("google calendar sync failed: {e}");
+    }
     Ok(Json(result))
 }
 pub async fn reschedule(
     State(state): State<AppState>,
     Json(body): Json<Reschedule>,
 ) -> Result<Json<ScheduleRow>, AppError> {
-    let settings = get_settings_or_default(&state.db).await;
+    let settings = get_settings_or_default(&state.db).await?;
     let sleep = parse_sleep(&body.sleep, &settings);
     let schedule_row =
         sqlx::query_as::<_, ScheduleRow>("SELECT * FROM schedules WHERE id = 'active'")
@@ -279,11 +275,9 @@ async fn save_schedule(
     let result = sqlx::query_as::<_, ScheduleRow>("SELECT * FROM schedules WHERE id = 'active'")
         .fetch_one(&state.db)
         .await?;
-    let db = state.db.clone();
-    let lock = state.sync_lock.clone();
-    tokio::spawn(async move {
-        crate::handler::sync::run_sync_with_retry(&db, &lock).await;
-    });
+    if let Err(e) = crate::handler::sync::do_sync(&state.db).await {
+        tracing::warn!("google calendar sync failed: {e}");
+    }
     Ok(Json(result))
 }
 pub async fn move_entry(
@@ -339,11 +333,9 @@ pub async fn move_entry(
     .execute(&state.db)
     .await?;
     let entry = &entries[idx];
-    let db = state.db.clone();
-    let lock = state.sync_lock.clone();
-    tokio::spawn(async move {
-        crate::handler::sync::run_sync_with_retry(&db, &lock).await;
-    });
+    if let Err(e) = crate::handler::sync::do_sync(&state.db).await {
+        tracing::warn!("google calendar sync failed: {e}");
+    }
     if warnings.is_empty() {
         Ok(Json(serde_json::json!({
             "task_id": entry.task_id,
@@ -363,10 +355,8 @@ pub async fn clear_schedule(State(state): State<AppState>) -> Result<StatusCode,
     sqlx::query("DELETE FROM schedules WHERE id = 'active'")
         .execute(&state.db)
         .await?;
-    let db = state.db.clone();
-    let lock = state.sync_lock.clone();
-    tokio::spawn(async move {
-        crate::handler::sync::run_sync_with_retry(&db, &lock).await;
-    });
+    if let Err(e) = crate::handler::sync::do_sync(&state.db).await {
+        tracing::warn!("google calendar sync failed: {e}");
+    }
     Ok(StatusCode::NO_CONTENT)
 }

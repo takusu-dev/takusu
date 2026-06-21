@@ -23,7 +23,7 @@ pub async fn create_task(
         .storage
         .create_task(&body)
         .await
-        .map_err(|e| storage_to_app(e))?;
+        .map_err(storage_to_app)?;
     Ok((StatusCode::CREATED, Json(task)))
 }
 

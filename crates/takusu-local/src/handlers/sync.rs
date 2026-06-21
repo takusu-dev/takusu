@@ -119,7 +119,9 @@ pub async fn oauth_callback(
 pub async fn trigger_sync(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    crate::handlers::schedule::spawn_sync(state);
+    if let Err(e) = crate::handlers::schedule::do_sync(&state).await {
+        tracing::error!("google calendar sync failed: {e}");
+    }
     Ok(Json(serde_json::json!({ "status": "sync_triggered" })))
 }
 

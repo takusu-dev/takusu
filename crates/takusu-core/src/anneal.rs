@@ -382,73 +382,160 @@ fn generate_neighbor_partial(
         return current.clone();
     }
 
-    let r = rng.random_range(0..100u32) as i32;
-    let idx = rng.random_range(0..unpinned.len());
-    let target_id = unpinned[idx];
-
-    let pos = current
+    let unpinned_positions: Vec<usize> = current
         .schedules
         .iter()
-        .position(|(_, _, id)| *id == target_id)
-        .unwrap();
+        .enumerate()
+        .filter(|(_, (_, _, id))| !pinned_ids.contains(id))
+        .map(|(i, _)| i)
+        .collect();
 
-    let (start, end, task_id) = current.schedules[pos];
-    let dur = end.0 - start.0;
+    let r = rng.random_range(0..100u32) as i32;
 
-    match r {
-        0..=49 => {
-            let range = (dur / 2).max(1);
-            let k = rand_range(rng, -range, range + 1);
-            let new_start_0 = (start.0 + k).max(planner.now.0);
-            let mut new_scheds = current.schedules.to_vec();
-            new_scheds[pos] = (Point(new_start_0), Point(new_start_0 + dur), task_id);
-            Plan {
-                schedules: new_scheds,
-            }
+    let result = match r {
+        0..=24 => {
+            let idx = rng.random_range(0..unpinned_positions.len());
+            let pos = unpinned_positions[idx];
+            neighbor_shift_at(planner, current, pos, rng)
         }
-        50..=69 => {
-            if dur <= 1 {
-                return current.clone();
-            }
-            let delta: i64 = if rng.random::<bool>() { 1 } else { -1 };
-            let new_dur = dur + delta;
-            if new_dur < 1 {
-                return current.clone();
-            }
-            let mut new_scheds = current.schedules.to_vec();
-            new_scheds[pos] = (start, Point(start.0 + new_dur), task_id);
-            Plan {
-                schedules: new_scheds,
-            }
-        }
-        _ => {
+        25..=49 => {
             if unpinned.len() < 2 {
                 return current.clone();
             }
-            let other_idx = rng.random_range(0..unpinned.len());
-            if other_idx == idx {
+            let a_idx = rng.random_range(0..unpinned_positions.len());
+            let a_pos = unpinned_positions[a_idx];
+            let mut b_idx = rng.random_range(0..unpinned_positions.len());
+            if b_idx == a_idx {
+                b_idx = (a_idx + 1) % unpinned_positions.len();
+            }
+            let b_pos = unpinned_positions[b_idx];
+            neighbor_swap_at(current, a_pos, b_pos)
+        }
+        50..=69 => {
+            let idx = rng.random_range(0..unpinned_positions.len());
+            let pos = unpinned_positions[idx];
+            neighbor_duration_at(current, pos, rng)
+        }
+        70..=84 => {
+            if unpinned.len() < 2 {
                 return current.clone();
             }
-            let other_id = unpinned[other_idx];
-            let other_pos = current
-                .schedules
-                .iter()
-                .position(|(_, _, id)| *id == other_id)
-                .unwrap();
+            neighbor_reorder_partial(current, &unpinned_positions, rng)
+        }
+        _ => neighbor_lns_partial(planner, current, rng, pinned_ids),
+    };
 
-            let (a_s, a_e, a_id) = current.schedules[pos];
-            let (b_s, b_e, b_id) = current.schedules[other_pos];
-            let a_dur = a_e.0 - a_s.0;
-            let b_dur = b_e.0 - b_s.0;
+    result.unwrap_or_else(|| current.clone())
+}
 
-            let mut new_scheds = current.schedules.to_vec();
-            new_scheds[pos] = (b_s, Point(b_s.0 + a_dur), a_id);
-            new_scheds[other_pos] = (a_s, Point(a_s.0 + b_dur), b_id);
-            Plan {
-                schedules: new_scheds,
-            }
+fn neighbor_shift_at(planner: &Planner, current: &Plan, idx: usize, rng: &mut impl Rng) -> Option<Plan> {
+    let (start, end, task_id) = current.schedules[idx];
+    let dur = end.0 - start.0;
+    let range = (dur / 2).max(1);
+    let k = rand_range(rng, -range, range + 1);
+    let new_start_0 = (start.0 + k).max(planner.now.0);
+    let mut new_scheds = current.schedules.to_vec();
+    new_scheds[idx] = (Point(new_start_0), Point(new_start_0 + dur), task_id);
+    Some(Plan { schedules: new_scheds })
+}
+
+fn neighbor_swap_at(current: &Plan, a: usize, b: usize) -> Option<Plan> {
+    if a == b {
+        return None;
+    }
+    let (a_s, a_e, a_id) = current.schedules[a];
+    let (b_s, b_e, b_id) = current.schedules[b];
+    let a_dur = a_e.0 - a_s.0;
+    let b_dur = b_e.0 - b_s.0;
+    let mut new_scheds = current.schedules.to_vec();
+    new_scheds[a] = (b_s, Point(b_s.0 + a_dur), a_id);
+    new_scheds[b] = (a_s, Point(a_s.0 + b_dur), b_id);
+    Some(Plan { schedules: new_scheds })
+}
+
+fn neighbor_duration_at(current: &Plan, idx: usize, rng: &mut impl Rng) -> Option<Plan> {
+    let (start, end, task_id) = current.schedules[idx];
+    let dur = end.0 - start.0;
+    if dur <= 1 {
+        return None;
+    }
+    let delta: i64 = if rng.random::<bool>() { 1 } else { -1 };
+    let new_dur = dur + delta;
+    if new_dur < 1 {
+        return None;
+    }
+    let mut new_scheds = current.schedules.to_vec();
+    new_scheds[idx] = (start, Point(start.0 + new_dur), task_id);
+    Some(Plan { schedules: new_scheds })
+}
+
+fn neighbor_reorder_partial(current: &Plan, unpinned_positions: &[usize], rng: &mut impl Rng) -> Option<Plan> {
+    let schedules = &current.schedules;
+    let a_idx = rng.random_range(0..unpinned_positions.len());
+    let a = unpinned_positions[a_idx];
+    let mut b_idx = rng.random_range(0..unpinned_positions.len());
+    if b_idx == a_idx {
+        b_idx = (a_idx + 1) % unpinned_positions.len();
+    }
+    let b = unpinned_positions[b_idx];
+
+    let (a_s, _a_e, _a_id) = schedules[a];
+    let (b_s, _b_e, _b_id) = schedules[b];
+
+    let (first, second) = if a_s.0 <= b_s.0 { (a, b) } else { (b, a) };
+    let f_s = schedules[first].0;
+    let f_e = schedules[first].1;
+    let f_dur = f_e.0 - f_s.0;
+    let s_s = schedules[second].0;
+    let s_e = schedules[second].1;
+    let s_dur = s_e.0 - s_s.0;
+
+    let mut new_scheds = schedules.to_vec();
+    new_scheds[first] = (s_s, Point(s_s.0 + f_dur), schedules[first].2);
+    new_scheds[second] = (f_s, Point(f_s.0 + s_dur), schedules[second].2);
+
+    Some(Plan { schedules: new_scheds })
+}
+
+fn neighbor_lns_partial(planner: &Planner, current: &Plan, rng: &mut impl Rng, pinned_ids: &FxHashSet<usize>) -> Option<Plan> {
+    let schedules = &current.schedules;
+    if schedules.is_empty() {
+        return None;
+    }
+
+    let unpinned: Vec<(usize, Point, Point)> = schedules
+        .iter()
+        .filter(|(_, _, id)| !pinned_ids.contains(id))
+        .map(|(s, e, id)| (*id, *s, *e))
+        .collect();
+
+    if unpinned.is_empty() {
+        return None;
+    }
+
+    let pivot_idx = rng.random_range(0..schedules.len());
+    let (pivot_start, pivot_end, _) = schedules[pivot_idx];
+
+    let window_size = ((pivot_end.0 - pivot_start.0) * 2)
+        .max(4)
+        .min(schedules.iter().map(|(s, e, _)| e.0 - s.0).sum::<i64>() / 3 + 1);
+
+    let window_start = pivot_start.0 - rand_range(rng, 0, window_size / 2 + 1);
+    let window_end = window_start + window_size;
+
+    let mut destroyed_ids = Vec::new();
+    let mut remaining = Vec::new();
+    for sched in schedules {
+        if !pinned_ids.contains(&sched.2) && sched.0.0 >= window_start && sched.0.0 < window_end {
+            destroyed_ids.push(sched.2);
+        } else {
+            remaining.push(*sched);
         }
     }
+
+    let rebuilt = greedy_rebuild(planner, &remaining, &destroyed_ids);
+
+    Some(Plan { schedules: rebuilt })
 }
 
 fn is_tabu(tabu: &TabuList, plan: &Plan) -> bool {

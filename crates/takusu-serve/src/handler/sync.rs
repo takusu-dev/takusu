@@ -5,8 +5,6 @@ use axum::Json;
 use axum::extract::State;
 use sqlx::Row;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 pub async fn get_settings(
     State(state): State<AppState>,
@@ -151,11 +149,9 @@ pub async fn oauth_callback(
 pub async fn trigger_sync(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db = state.db.clone();
-    let lock = state.sync_lock.clone();
-    tokio::spawn(async move {
-        run_sync_with_retry(&db, &lock).await;
-    });
+    if let Err(e) = do_sync(&state.db).await {
+        tracing::error!("google calendar sync failed: {e}");
+    }
     Ok(Json(serde_json::json!({ "status": "sync_triggered" })))
 }
 
@@ -181,9 +177,9 @@ async fn get_schedule_entries(pool: &sqlx::SqlitePool) -> Option<Vec<ScheduleEnt
 async fn get_task_infos(
     pool: &sqlx::SqlitePool,
     task_ids: &[String],
-) -> HashMap<String, (String, Option<String>)> {
+) -> Result<HashMap<String, (String, Option<String>)>, String> {
     if task_ids.is_empty() {
-        return HashMap::new();
+        return Ok(HashMap::new());
     }
     let placeholders = task_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     let sql = format!("SELECT id, title, description FROM tasks WHERE id IN ({placeholders})");
@@ -191,25 +187,26 @@ async fn get_task_infos(
     for id in task_ids {
         query = query.bind(id);
     }
-    let rows = query.fetch_all(pool).await.unwrap_or_default();
-    rows.iter()
+    let rows = query.fetch_all(pool).await.map_err(|e| e.to_string())?;
+    Ok(rows
+        .iter()
         .filter_map(|row| {
             let id: String = row.try_get("id").ok()?;
             let title: String = row.try_get("title").ok()?;
             let description: Option<String> = row.try_get("description").ok()?;
             Some((id, (title, description)))
         })
-        .collect()
+        .collect())
 }
 
-async fn get_existing_mappings(pool: &sqlx::SqlitePool) -> Vec<GoogleCalEventRow> {
+async fn get_existing_mappings(pool: &sqlx::SqlitePool) -> Result<Vec<GoogleCalEventRow>, String> {
     sqlx::query_as::<_, GoogleCalEventRow>("SELECT * FROM google_cal_events")
         .fetch_all(pool)
         .await
-        .unwrap_or_default()
+        .map_err(|e| e.to_string())
 }
 
-async fn upsert_mappings(pool: &sqlx::SqlitePool, mappings: &[(String, String)]) {
+async fn upsert_mappings(pool: &sqlx::SqlitePool, mappings: &[(String, String)]) -> Result<(), String> {
     for (task_id, event_id) in mappings {
         sqlx::query(
             "INSERT INTO google_cal_events (task_id, google_event_id) VALUES (?, ?) \
@@ -219,28 +216,31 @@ async fn upsert_mappings(pool: &sqlx::SqlitePool, mappings: &[(String, String)])
         .bind(event_id)
         .execute(pool)
         .await
-        .ok();
+        .map_err(|e| format!("failed to upsert mapping for {task_id}: {e}"))?;
     }
+    Ok(())
 }
 
-async fn delete_mappings_by_task_ids(pool: &sqlx::SqlitePool, task_ids: &[String]) {
+async fn delete_mappings_by_task_ids(pool: &sqlx::SqlitePool, task_ids: &[String]) -> Result<(), String> {
     for task_id in task_ids {
         sqlx::query("DELETE FROM google_cal_events WHERE task_id = ?")
             .bind(task_id)
             .execute(pool)
             .await
-            .ok();
+            .map_err(|e| format!("failed to delete mapping for {task_id}: {e}"))?;
     }
+    Ok(())
 }
 
-async fn delete_all_mappings(pool: &sqlx::SqlitePool) {
+async fn delete_all_mappings(pool: &sqlx::SqlitePool) -> Result<(), String> {
     sqlx::query("DELETE FROM google_cal_events")
         .execute(pool)
         .await
-        .ok();
+        .map_err(|e| format!("failed to clear mappings: {e}"))?;
+    Ok(())
 }
 
-async fn do_sync(pool: &sqlx::SqlitePool) -> Result<(), String> {
+pub async fn do_sync(pool: &sqlx::SqlitePool) -> Result<(), String> {
     let settings = get_settings_row(pool).await;
     let settings = match settings {
         Some(s) if s.enabled && s.refresh_token.is_some() => s,
@@ -264,8 +264,8 @@ async fn do_sync(pool: &sqlx::SqlitePool) -> Result<(), String> {
     match entries {
         Some(entries) => {
             let task_ids: Vec<String> = entries.iter().map(|e| e.task_id.clone()).collect();
-            let titles = get_task_infos(pool, &task_ids).await;
-            let db_mappings = get_existing_mappings(pool).await;
+            let titles = get_task_infos(pool, &task_ids).await?;
+            let db_mappings = get_existing_mappings(pool).await?;
             let existing: HashMap<String, String> = db_mappings
                 .iter()
                 .map(|m| (m.task_id.clone(), m.google_event_id.clone()))
@@ -304,8 +304,8 @@ async fn do_sync(pool: &sqlx::SqlitePool) -> Result<(), String> {
                 })
                 .collect();
 
-            upsert_mappings(pool, &result.mappings).await;
-            delete_mappings_by_task_ids(pool, &deleted_task_ids).await;
+            upsert_mappings(pool, &result.mappings).await?;
+            delete_mappings_by_task_ids(pool, &deleted_task_ids).await?;
 
             tracing::info!(
                 "google calendar sync: created/updated {}, deleted {}",
@@ -316,7 +316,7 @@ async fn do_sync(pool: &sqlx::SqlitePool) -> Result<(), String> {
         }
         None => {
             tracing::info!("no active schedule, clearing google calendar events");
-            let mappings = get_existing_mappings(pool).await;
+            let mappings = get_existing_mappings(pool).await?;
             if mappings.is_empty() {
                 return Ok(());
             }
@@ -328,38 +328,9 @@ async fn do_sync(pool: &sqlx::SqlitePool) -> Result<(), String> {
                 .delete_all(&event_ids)
                 .await
                 .map_err(|e| e.to_string())?;
-            delete_all_mappings(pool).await;
+            delete_all_mappings(pool).await?;
             tracing::info!("cleared {} google calendar events", event_ids.len());
             Ok(())
-        }
-    }
-}
-
-pub async fn run_sync(pool: &sqlx::SqlitePool, lock: &Arc<Mutex<()>>) {
-    let _guard = lock.lock().await;
-    if let Err(e) = do_sync(pool).await {
-        tracing::error!("google calendar sync failed: {e}");
-    }
-}
-
-pub async fn run_sync_with_retry(pool: &sqlx::SqlitePool, lock: &Arc<Mutex<()>>) {
-    const MAX_RETRIES: u32 = 3;
-    let mut delay = std::time::Duration::from_secs(5);
-
-    for attempt in 0..=MAX_RETRIES {
-        let _guard = lock.lock().await;
-        match do_sync(pool).await {
-            Ok(()) => return,
-            Err(e) => {
-                tracing::warn!("sync attempt {}/{MAX_RETRIES} failed: {e}", attempt + 1);
-                drop(_guard);
-                if attempt < MAX_RETRIES {
-                    tokio::time::sleep(delay).await;
-                    delay *= 2;
-                } else {
-                    tracing::error!("google calendar sync failed after {MAX_RETRIES} retries");
-                }
-            }
         }
     }
 }

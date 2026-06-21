@@ -1,4 +1,3 @@
-use wasm_bindgen::JsValue;
 use worker::{Env, Request, Response};
 
 use crate::auth;
@@ -103,5 +102,3 @@ pub fn json_created<T: serde::Serialize>(value: &T) -> Result<Response, WorkerEr
     Ok(resp)
 }
 
-#[allow(dead_code)]
-pub fn _unused_jsvalue_marker(_: JsValue) {}

@@ -227,7 +227,7 @@ pub async fn delete(_req: Request, env: Env, id: &str) -> Result<Response, Worke
 }
 
 pub async fn select_one(database: &worker::D1Database, id: &str) -> Result<TaskRow, WorkerError> {
-    let stmt = database.prepare(&format!("{select} WHERE id = ?1", select = select_tasks()));
+    let stmt = database.prepare(format!("{select} WHERE id = ?1", select = select_tasks()));
     let row: Option<TaskRow> = stmt
         .bind(&[JsValue::from_str(id)])?
         .first(None)

@@ -1,3 +1,6 @@
+// NOTE: This file is duplicated in crates/takusu-local/tests/integration.rs with different
+// imports and setup. Keep both files in sync when adding or modifying tests.
+
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;
@@ -15,7 +18,6 @@ async fn setup() -> (AppState, SqlitePool) {
     let state = AppState {
         db: pool.clone(),
         root_token: ROOT_TOKEN.to_string(),
-        sync_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
     };
     (state, pool)
 }

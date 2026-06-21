@@ -1,3 +1,6 @@
+// NOTE: This file is duplicated from crates/takusu-serve/tests/integration.rs with different
+// imports and setup. Keep both files in sync when adding or modifying tests.
+
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;
@@ -5,7 +8,7 @@ use serde_json::json;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use takusu_local::config::LocalConfig;
-use takusu_local::router::router;
+use takusu_local::router::router as build_router;
 use takusu_local::state::AppState;
 use takusu_local::storage_sqlite::SqliteStorage;
 use tower::ServiceExt;
@@ -50,7 +53,7 @@ async fn body_str(body: Body) -> String {
 #[tokio::test]
 async fn health_check() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
     let req = Request::builder()
         .uri("/health")
         .body(Body::empty())
@@ -63,7 +66,7 @@ async fn health_check() {
 #[tokio::test]
 async fn unauthorized_without_token() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
     let req = Request::builder()
         .uri("/api/tasks")
         .body(Body::empty())
@@ -75,7 +78,7 @@ async fn unauthorized_without_token() {
 #[tokio::test]
 async fn unauthorized_with_wrong_token() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
     let req = Request::builder()
         .uri("/api/tasks")
         .header("authorization", "Bearer wrong_token")
@@ -88,7 +91,7 @@ async fn unauthorized_with_wrong_token() {
 #[tokio::test]
 async fn authorized_with_root_token() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
     let req = auth_req(Method::GET, "/api/tasks");
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
@@ -97,7 +100,7 @@ async fn authorized_with_root_token() {
 #[tokio::test]
 async fn token_crud() {
     let (state, pool) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
 
     let req = auth_req_body(
         Method::POST,
@@ -125,7 +128,7 @@ async fn token_crud() {
         .execute(&pool2)
         .await
         .unwrap();
-    let app2 = router(state2);
+    let app2 = build_router(state2);
     let req = Request::builder()
         .uri("/api/tasks")
         .header("authorization", format!("Bearer {new_token}"))
@@ -144,7 +147,7 @@ async fn token_crud() {
 #[tokio::test]
 async fn task_create_and_list() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
 
     let req = auth_req_body(
         Method::POST,
@@ -178,7 +181,7 @@ async fn task_create_and_list() {
 #[tokio::test]
 async fn task_get_update_delete() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
 
     let req = auth_req_body(
         Method::POST,
@@ -224,7 +227,7 @@ async fn task_get_update_delete() {
 #[tokio::test]
 async fn task_replace() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
 
     let req = auth_req_body(
         Method::POST,
@@ -268,7 +271,7 @@ async fn task_replace() {
 #[tokio::test]
 async fn task_list_filter_by_status() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
 
     for i in 0..3 {
         let req = auth_req_body(
@@ -296,7 +299,7 @@ async fn task_list_filter_by_status() {
 #[tokio::test]
 async fn habit_crud() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
 
     let req = auth_req_body(
         Method::POST,
@@ -350,7 +353,7 @@ async fn habit_crud() {
 #[tokio::test]
 async fn ical_import() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
 
     let ical = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART:20260605T090000Z\r\nDTEND:20260605T110000Z\r\nSUMMARY:会議\r\nUID:meeting-001@example.com\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nDTSTART:20260606T140000Z\r\nDTEND:20260606T150000Z\r\nSUMMARY:レビュー\r\nUID:review-001@example.com\r\nEND:VEVENT\r\nEND:VCALENDAR";
 
@@ -375,7 +378,7 @@ async fn ical_import_skips_duplicate() {
         .execute(&pool)
         .await.unwrap();
 
-    let app = router(state);
+    let app = build_router(state);
     let ical = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART:20260605T090000Z\r\nDTEND:20260605T110000Z\r\nSUMMARY:会議\r\nUID:meeting-001@example.com\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nDTSTART:20260606T140000Z\r\nDTEND:20260606T150000Z\r\nSUMMARY:レビュー\r\nUID:review-001@example.com\r\nEND:VEVENT\r\nEND:VCALENDAR";
 
     let req = Request::builder()
@@ -394,7 +397,7 @@ async fn ical_import_skips_duplicate() {
 #[tokio::test]
 async fn schedule_generate_and_get() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
 
     let create_req = auth_req_body(
         Method::POST,
@@ -442,7 +445,7 @@ async fn schedule_generate_and_get() {
 #[tokio::test]
 async fn schedule_not_found_initially() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
     let req = auth_req(Method::GET, "/api/schedule");
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
@@ -466,7 +469,7 @@ async fn token_revoke() {
         .await
         .unwrap();
 
-    let app = router(state);
+    let app = build_router(state);
     let revoke_req = auth_req(Method::DELETE, &format!("/api/tokens/{token_id}"));
     let res = app.oneshot(revoke_req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NO_CONTENT);
@@ -475,7 +478,7 @@ async fn token_revoke() {
 #[tokio::test]
 async fn delete_nonexistent_task() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
     let req = auth_req(Method::DELETE, "/api/tasks/nonexistent-id");
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
@@ -484,7 +487,7 @@ async fn delete_nonexistent_task() {
 #[tokio::test]
 async fn task_prefix_lookup() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
 
     let req = auth_req_body(
         Method::POST,
@@ -548,7 +551,7 @@ async fn task_prefix_lookup() {
 #[tokio::test]
 async fn task_update_status() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
 
     let req = auth_req_body(
         Method::POST,
@@ -601,7 +604,7 @@ async fn generate_excludes_in_progress() {
         "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('task2', 'in-progress-task', '2026-06-05T18:00:00+09:00', 30, 0, '[]', 0, 0, 0.5, 'in_progress')"
     ).execute(&pool).await.unwrap();
 
-    let app = router(state);
+    let app = build_router(state);
 
     let gen_req = auth_req_body(
         Method::POST,
@@ -644,7 +647,7 @@ async fn generate_excludes_completed_and_skipped() {
         "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('task4', 'in-progress-task', '2026-06-05T18:00:00+09:00', 30, 0, '[]', 0, 0, 0.5, 'in_progress')"
     ).execute(&pool).await.unwrap();
 
-    let app = router(state);
+    let app = build_router(state);
 
     let gen_req = auth_req_body(
         Method::POST,
@@ -678,7 +681,7 @@ async fn generate_excludes_completed_and_skipped() {
 #[tokio::test]
 async fn settings_get_default() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
 
     let req = auth_req(Method::GET, "/api/settings");
     let res = app.oneshot(req).await.unwrap();
@@ -692,7 +695,7 @@ async fn settings_get_default() {
 #[tokio::test]
 async fn settings_update() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
 
     let req = auth_req_body(
         Method::PUT,
@@ -721,7 +724,7 @@ async fn settings_update() {
 #[tokio::test]
 async fn settings_update_partial() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
 
     let req = auth_req_body(
         Method::PUT,
@@ -747,7 +750,7 @@ async fn schedule_generate_with_custom_sleep() {
     .await
     .unwrap();
 
-    let app = router(state);
+    let app = build_router(state);
 
     let set_req = auth_req_body(
         Method::PUT,
@@ -787,7 +790,7 @@ async fn move_entry_with_force_overrides_warnings() {
     .await
     .unwrap();
 
-    let app = router(state);
+    let app = build_router(state);
 
     let req = auth_req_body(
         Method::PATCH,
@@ -827,7 +830,7 @@ async fn move_entry_without_force_rejects_violations() {
     .await
     .unwrap();
 
-    let app = router(state);
+    let app = build_router(state);
 
     let req = auth_req_body(
         Method::PATCH,
@@ -859,7 +862,7 @@ async fn move_entry_no_violation_succeeds() {
     .await
     .unwrap();
 
-    let app = router(state);
+    let app = build_router(state);
 
     let req = auth_req_body(
         Method::PATCH,
@@ -893,7 +896,7 @@ async fn move_entry_task_not_in_schedule_errors() {
     .await
     .unwrap();
 
-    let app = router(state);
+    let app = build_router(state);
 
     let req = auth_req_body(
         Method::PATCH,
@@ -907,7 +910,7 @@ async fn move_entry_task_not_in_schedule_errors() {
 #[tokio::test]
 async fn clear_schedule_when_empty_is_noop() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
 
     let req = auth_req(Method::DELETE, "/api/schedule");
     let res = app.oneshot(req).await.unwrap();
@@ -932,7 +935,7 @@ async fn reschedule_range_mode() {
     .await
     .unwrap();
 
-    let app = router(state);
+    let app = build_router(state);
 
     let req = auth_req_body(
         Method::POST,
@@ -951,7 +954,7 @@ async fn reschedule_range_mode() {
 #[tokio::test]
 async fn sync_settings_flow() {
     let (state, _) = setup().await;
-    let app = router(state);
+    let app = build_router(state);
 
     let get_req = auth_req(Method::GET, "/api/sync/settings");
     let res = app.clone().oneshot(get_req).await.unwrap();
@@ -999,7 +1002,7 @@ async fn generate_schedule_excludes_completed_in_progress_skipped() {
     .await
     .unwrap();
 
-    let app = router(state);
+    let app = build_router(state);
 
     let gen_req = auth_req_body(
         Method::POST,

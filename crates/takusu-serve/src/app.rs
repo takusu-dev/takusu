@@ -2,7 +2,6 @@ use axum::Router;
 use axum::middleware;
 use axum::routing::{delete, get, patch, post, put};
 use sqlx::SqlitePool;
-use std::sync::Arc;
 
 use crate::auth;
 use crate::handler;
@@ -11,7 +10,6 @@ use crate::handler;
 pub struct AppState {
     pub db: SqlitePool,
     pub root_token: String,
-    pub sync_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 pub fn app(state: AppState) -> Router {
