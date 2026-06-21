@@ -233,6 +233,8 @@
                 ruff
                 python3
                 zlib
+                nodejs
+                wrangler
               ];
             };
           };
@@ -251,6 +253,8 @@
                 uv
                 ruff
                 python3
+                nodejs
+                wrangler
               ]
               ++ [
                 config.packages.funasr-server
@@ -264,6 +268,7 @@
               openblas
               stdenv.cc.cc.lib
               zlib
+              worker-build
             ];
 
             shellHook = ''

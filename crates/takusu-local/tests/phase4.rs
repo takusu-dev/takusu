@@ -1,0 +1,389 @@
+//! Phase 4 hardening tests:
+//! - Token verify caching: verify_token is called once, then cached.
+//! - Cache invalidation on token create/revoke.
+//! - Retry/backoff: transient 503 is retried.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use async_trait::async_trait;
+use axum::Router;
+use axum::extract::State;
+use axum::http::Method;
+use axum::http::Request;
+use axum::http::StatusCode;
+use axum::routing::get;
+use http_body_util::BodyExt;
+use serde_json::json;
+use takusu_local::config::LocalConfig;
+use takusu_local::router::router;
+use takusu_local::state::AppState;
+use takusu_local::storage_workers::WorkersStorage;
+use takusu_storage::{
+    CreateHabit, CreateTask, GoogleCalEventRow, GoogleCalSettingsRow, HabitRow,
+    SaveScheduleRequest, ScheduleRow, SettingsRow, Storage, StorageError, TaskQuery, TaskRow,
+    TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateSettings,
+    UpdateTask, storage::StorageResult,
+};
+use tokio::net::TcpListener;
+use tower::ServiceExt;
+
+const ROOT_TOKEN: &str = "tsk_test_root_token_phase4";
+
+#[derive(Default)]
+struct Counters {
+    verify: AtomicUsize,
+    issue: AtomicUsize,
+    revoke: AtomicUsize,
+}
+
+impl Counters {
+    fn verify_get(&self) -> usize {
+        self.verify.load(Ordering::SeqCst)
+    }
+}
+
+fn make_state(storage: Arc<dyn Storage>) -> AppState {
+    let cfg = LocalConfig {
+        db: "sqlite::memory:".into(),
+        ..LocalConfig::default()
+    };
+    AppState::new(storage, ROOT_TOKEN.to_string(), cfg)
+}
+
+fn req(method: Method, uri: &str, token: Option<&str>) -> Request<axum::body::Body> {
+    let mut b = Request::builder().method(method).uri(uri);
+    if let Some(t) = token {
+        b = b.header("authorization", format!("Bearer {t}"));
+    }
+    b.body(axum::body::Body::empty()).unwrap()
+}
+
+async fn body_str(body: axum::body::Body) -> String {
+    let bytes = body.collect().await.unwrap().to_bytes();
+    String::from_utf8(bytes.to_vec()).unwrap()
+}
+
+struct CountingStorage {
+    counters: Arc<Counters>,
+}
+
+#[async_trait]
+impl Storage for CountingStorage {
+    async fn verify_token(&self, _t: &str) -> StorageResult<bool> {
+        self.counters.verify.fetch_add(1, Ordering::SeqCst);
+        Ok(true)
+    }
+    async fn list_tasks(&self, _q: &TaskQuery) -> StorageResult<Vec<TaskRow>> {
+        Ok(vec![])
+    }
+    async fn get_task(&self, _id: &str) -> StorageResult<TaskRow> {
+        Err(StorageError::NotFound("n/a".into()))
+    }
+    async fn create_task(&self, _b: &CreateTask) -> StorageResult<TaskRow> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn update_task(&self, _id: &str, _b: &UpdateTask) -> StorageResult<TaskRow> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn replace_task(&self, _id: &str, _b: &CreateTask) -> StorageResult<TaskRow> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn delete_task(&self, _id: &str) -> StorageResult<()> {
+        Ok(())
+    }
+    async fn list_habits(&self) -> StorageResult<Vec<HabitRow>> {
+        Ok(vec![])
+    }
+    async fn get_habit(&self, _id: &str) -> StorageResult<HabitRow> {
+        Err(StorageError::NotFound("n/a".into()))
+    }
+    async fn create_habit(&self, _b: &CreateHabit) -> StorageResult<HabitRow> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn update_habit(&self, _id: &str, _b: &UpdateHabit) -> StorageResult<HabitRow> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn replace_habit(&self, _id: &str, _b: &CreateHabit) -> StorageResult<HabitRow> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn delete_habit(&self, _id: &str) -> StorageResult<()> {
+        Ok(())
+    }
+    async fn get_schedule(&self) -> StorageResult<Option<ScheduleRow>> {
+        Ok(None)
+    }
+    async fn save_schedule(&self, _r: &SaveScheduleRequest) -> StorageResult<ScheduleRow> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn clear_schedule(&self) -> StorageResult<()> {
+        Ok(())
+    }
+    async fn create_token(&self, _l: Option<&str>) -> StorageResult<TokenCreateResponse> {
+        self.counters.issue.fetch_add(1, Ordering::SeqCst);
+        Ok(TokenCreateResponse {
+            id: 1,
+            token: "tsk_new".into(),
+            label: None,
+            created_at: "2026-06-22T00:00:00Z".into(),
+        })
+    }
+    async fn list_tokens(&self) -> StorageResult<Vec<TokenRow>> {
+        Ok(vec![])
+    }
+    async fn revoke_token(&self, _id: i64) -> StorageResult<()> {
+        self.counters.revoke.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+    async fn get_settings(&self) -> StorageResult<SettingsRow> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn update_settings(&self, _b: &UpdateSettings) -> StorageResult<SettingsRow> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn get_gcal_settings(&self) -> StorageResult<GoogleCalSettingsRow> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn update_gcal_settings(
+        &self,
+        _b: &UpdateGoogleCalSettings,
+    ) -> StorageResult<GoogleCalSettingsRow> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn list_gcal_mappings(&self) -> StorageResult<Vec<GoogleCalEventRow>> {
+        Ok(vec![])
+    }
+    async fn upsert_gcal_mappings(&self, _m: &[(String, String)]) -> StorageResult<()> {
+        Ok(())
+    }
+    async fn delete_gcal_mappings(&self, _t: &[String]) -> StorageResult<()> {
+        Ok(())
+    }
+    async fn clear_gcal_mappings(&self) -> StorageResult<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn token_cache_hits_on_repeated_requests() {
+    let counters = Arc::new(Counters::default());
+    let storage: Arc<dyn Storage> = Arc::new(CountingStorage {
+        counters: counters.clone(),
+    });
+    let state = make_state(storage);
+    let app = router(state);
+    let token = "tsk_user_xyz";
+
+    let r1 = app
+        .clone()
+        .oneshot(req(Method::GET, "/api/tasks", Some(token)))
+        .await
+        .unwrap();
+    let _ = body_str(r1.into_body()).await;
+    assert_eq!(counters.verify_get(), 1, "first call should hit storage");
+
+    for _ in 0..5 {
+        let r = app
+            .clone()
+            .oneshot(req(Method::GET, "/api/tasks", Some(token)))
+            .await
+            .unwrap();
+        let _ = body_str(r.into_body()).await;
+    }
+    assert_eq!(
+        counters.verify_get(),
+        1,
+        "subsequent calls should be cached"
+    );
+}
+
+#[tokio::test]
+async fn token_cache_caches_invalid_responses() {
+    let counters = Arc::new(Counters::default());
+    let storage: Arc<dyn Storage> = Arc::new(CountingStorage {
+        counters: counters.clone(),
+    });
+    let state = make_state(storage);
+    let app = router(state);
+
+    let r1 = app
+        .clone()
+        .oneshot(req(Method::GET, "/api/tasks", Some("tsk_garbage")))
+        .await
+        .unwrap();
+    let _ = body_str(r1.into_body()).await;
+    assert_eq!(counters.verify_get(), 1);
+
+    for _ in 0..3 {
+        let r = app
+            .clone()
+            .oneshot(req(Method::GET, "/api/tasks", Some("tsk_garbage")))
+            .await
+            .unwrap();
+        let _ = body_str(r.into_body()).await;
+    }
+    assert_eq!(
+        counters.verify_get(),
+        1,
+        "invalid token should also be cached"
+    );
+}
+
+#[tokio::test]
+async fn token_create_invalidates_cache() {
+    let counters = Arc::new(Counters::default());
+    let storage: Arc<dyn Storage> = Arc::new(CountingStorage {
+        counters: counters.clone(),
+    });
+    let state = make_state(storage);
+    let app = router(state);
+    let token = "tsk_user_a";
+
+    let r1 = app
+        .clone()
+        .oneshot(req(Method::GET, "/api/tasks", Some(token)))
+        .await
+        .unwrap();
+    let _ = body_str(r1.into_body()).await;
+    assert_eq!(counters.verify_get(), 1);
+
+    for _ in 0..3 {
+        let r = app
+            .clone()
+            .oneshot(req(Method::GET, "/api/tasks", Some(token)))
+            .await
+            .unwrap();
+        let _ = body_str(r.into_body()).await;
+    }
+    assert_eq!(counters.verify_get(), 1, "cached before create");
+
+    let create_req = Request::builder()
+        .method(Method::POST)
+        .uri("/api/tokens")
+        .header("authorization", format!("Bearer {ROOT_TOKEN}"))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            json!({ "label": "test" }).to_string(),
+        ))
+        .unwrap();
+    let cr = app.clone().oneshot(create_req).await.unwrap();
+    assert_eq!(cr.status(), StatusCode::CREATED);
+
+    let r2 = app
+        .clone()
+        .oneshot(req(Method::GET, "/api/tasks", Some(token)))
+        .await
+        .unwrap();
+    let _ = body_str(r2.into_body()).await;
+    assert_eq!(
+        counters.verify_get(),
+        2,
+        "cache should be invalidated after token create"
+    );
+}
+
+#[tokio::test]
+async fn token_revoke_invalidates_cache() {
+    let counters = Arc::new(Counters::default());
+    let storage: Arc<dyn Storage> = Arc::new(CountingStorage {
+        counters: counters.clone(),
+    });
+    let state = make_state(storage);
+    let app = router(state);
+    let token = "tsk_user_b";
+
+    let r1 = app
+        .clone()
+        .oneshot(req(Method::GET, "/api/tasks", Some(token)))
+        .await
+        .unwrap();
+    let _ = body_str(r1.into_body()).await;
+    assert_eq!(counters.verify_get(), 1);
+
+    let revoke_req = Request::builder()
+        .method(Method::DELETE)
+        .uri("/api/tokens/1")
+        .header("authorization", format!("Bearer {ROOT_TOKEN}"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let rr = app.clone().oneshot(revoke_req).await.unwrap();
+    assert_eq!(rr.status(), StatusCode::NO_CONTENT);
+
+    let r2 = app
+        .clone()
+        .oneshot(req(Method::GET, "/api/tasks", Some(token)))
+        .await
+        .unwrap();
+    let _ = body_str(r2.into_body()).await;
+    assert_eq!(
+        counters.verify_get(),
+        2,
+        "cache should be invalidated after token revoke"
+    );
+}
+
+#[derive(Clone)]
+struct RetryMockState {
+    call_count: Arc<AtomicUsize>,
+    fail_first_n: usize,
+}
+
+async fn spawn_retry_mock(state: RetryMockState) -> String {
+    async fn verify(State(s): State<RetryMockState>) -> StatusCode {
+        let n = s.call_count.fetch_add(1, Ordering::SeqCst);
+        if n < s.fail_first_n {
+            StatusCode::SERVICE_UNAVAILABLE
+        } else {
+            StatusCode::OK
+        }
+    }
+
+    let app = Router::new()
+        .route("/api/auth/verify", get(verify))
+        .with_state(state);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.ok();
+    });
+    format!("http://{addr}")
+}
+
+#[tokio::test]
+async fn workers_storage_retries_503() {
+    let state = RetryMockState {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        fail_first_n: 2,
+    };
+    let url = spawn_retry_mock(state.clone()).await;
+    let storage = WorkersStorage::new_with(url, ROOT_TOKEN.to_string());
+
+    let valid = storage.verify_token("tsk_anything").await.unwrap();
+    assert!(valid);
+    assert_eq!(
+        state.call_count.load(Ordering::SeqCst),
+        3,
+        "should be called 1 initial + 2 retries"
+    );
+}
+
+#[tokio::test]
+async fn workers_storage_no_retry_on_404() {
+    async fn verify() -> StatusCode {
+        StatusCode::NOT_FOUND
+    }
+
+    let app = Router::new().route("/api/auth/verify", get(verify));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.ok();
+    });
+    let url = format!("http://{addr}");
+
+    let storage = WorkersStorage::new_with(url, "tsk_anything".into());
+    let result = storage
+        .get_task("00000000-0000-0000-0000-000000000000")
+        .await;
+    assert!(matches!(result, Err(StorageError::NotFound(_))));
+}

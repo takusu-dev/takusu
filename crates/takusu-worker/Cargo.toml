@@ -1,0 +1,19 @@
+[package]
+name = "takusu-worker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+worker = { version = "0.8", features = ["d1"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2.workspace = true
+uuid = { version = "1", features = ["v7", "js"] }
+thiserror.workspace = true
+getrandom = { version = "0.4", features = ["wasm_js"] }
+wasm-bindgen = "0.2"

@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use takusu_audio::{
-    FunASRClient, FunASRConfig, FunASRMode, RecordConfig, TtsBackend, TtsClient,
-    TtsConfig, TtsOptions, TtsRequest, default_hotwords, pick_reference_voice, record,
+    FunASRClient, FunASRConfig, FunASRMode, RecordConfig, TtsBackend, TtsClient, TtsConfig,
+    TtsOptions, TtsRequest, default_hotwords, pick_reference_voice, record,
 };
 
 #[derive(Parser)]
@@ -306,7 +306,6 @@ async fn transcribe_funasr(
     eprintln!("Done in {:.1}s.", start.elapsed().as_secs_f64());
     text
 }
-
 
 fn write_wav(path: &std::path::Path, samples: &[f32], sample_rate: u32) {
     let spec = hound::WavSpec {
