@@ -428,7 +428,12 @@ fn generate_neighbor_partial(
     result.unwrap_or_else(|| current.clone())
 }
 
-fn neighbor_shift_at(planner: &Planner, current: &Plan, idx: usize, rng: &mut impl Rng) -> Option<Plan> {
+fn neighbor_shift_at(
+    planner: &Planner,
+    current: &Plan,
+    idx: usize,
+    rng: &mut impl Rng,
+) -> Option<Plan> {
     let (start, end, task_id) = current.schedules[idx];
     let dur = end.0 - start.0;
     let range = (dur / 2).max(1);
@@ -436,7 +441,9 @@ fn neighbor_shift_at(planner: &Planner, current: &Plan, idx: usize, rng: &mut im
     let new_start_0 = (start.0 + k).max(planner.now.0);
     let mut new_scheds = current.schedules.to_vec();
     new_scheds[idx] = (Point(new_start_0), Point(new_start_0 + dur), task_id);
-    Some(Plan { schedules: new_scheds })
+    Some(Plan {
+        schedules: new_scheds,
+    })
 }
 
 fn neighbor_swap_at(current: &Plan, a: usize, b: usize) -> Option<Plan> {
@@ -450,7 +457,9 @@ fn neighbor_swap_at(current: &Plan, a: usize, b: usize) -> Option<Plan> {
     let mut new_scheds = current.schedules.to_vec();
     new_scheds[a] = (b_s, Point(b_s.0 + a_dur), a_id);
     new_scheds[b] = (a_s, Point(a_s.0 + b_dur), b_id);
-    Some(Plan { schedules: new_scheds })
+    Some(Plan {
+        schedules: new_scheds,
+    })
 }
 
 fn neighbor_duration_at(current: &Plan, idx: usize, rng: &mut impl Rng) -> Option<Plan> {
@@ -466,10 +475,16 @@ fn neighbor_duration_at(current: &Plan, idx: usize, rng: &mut impl Rng) -> Optio
     }
     let mut new_scheds = current.schedules.to_vec();
     new_scheds[idx] = (start, Point(start.0 + new_dur), task_id);
-    Some(Plan { schedules: new_scheds })
+    Some(Plan {
+        schedules: new_scheds,
+    })
 }
 
-fn neighbor_reorder_partial(current: &Plan, unpinned_positions: &[usize], rng: &mut impl Rng) -> Option<Plan> {
+fn neighbor_reorder_partial(
+    current: &Plan,
+    unpinned_positions: &[usize],
+    rng: &mut impl Rng,
+) -> Option<Plan> {
     let schedules = &current.schedules;
     let a_idx = rng.random_range(0..unpinned_positions.len());
     let a = unpinned_positions[a_idx];
@@ -494,10 +509,17 @@ fn neighbor_reorder_partial(current: &Plan, unpinned_positions: &[usize], rng: &
     new_scheds[first] = (s_s, Point(s_s.0 + f_dur), schedules[first].2);
     new_scheds[second] = (f_s, Point(f_s.0 + s_dur), schedules[second].2);
 
-    Some(Plan { schedules: new_scheds })
+    Some(Plan {
+        schedules: new_scheds,
+    })
 }
 
-fn neighbor_lns_partial(planner: &Planner, current: &Plan, rng: &mut impl Rng, pinned_ids: &FxHashSet<usize>) -> Option<Plan> {
+fn neighbor_lns_partial(
+    planner: &Planner,
+    current: &Plan,
+    rng: &mut impl Rng,
+    pinned_ids: &FxHashSet<usize>,
+) -> Option<Plan> {
     let schedules = &current.schedules;
     if schedules.is_empty() {
         return None;

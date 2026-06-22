@@ -38,5 +38,3 @@ pub fn error_response(err: WorkerError) -> worker::Result<Response> {
         .with_status(err.status())
         .ok(err.body().to_string())
 }
-
-pub type WorkerResult<T> = Result<T, WorkerError>;

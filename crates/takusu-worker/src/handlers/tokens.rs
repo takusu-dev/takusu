@@ -101,4 +101,3 @@ pub fn json_created<T: serde::Serialize>(value: &T) -> Result<Response, WorkerEr
         .map_err(WorkerError::Worker)?;
     Ok(resp)
 }
-

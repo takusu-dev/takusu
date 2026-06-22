@@ -66,6 +66,10 @@ async fn dispatch(req: Request, env: Env) -> Result<Response, crate::error::Work
     let api = path.strip_prefix("/api/").unwrap_or(path);
     let segs: Vec<&str> = api.split('/').filter(|s| !s.is_empty()).collect();
 
+    if segs != ["auth", "verify"] {
+        handlers::auth::require_auth(&req, &env).await?;
+    }
+
     match (method.clone(), segs.as_slice()) {
         (Method::Get, ["auth", "verify"]) => handlers::auth::verify(req, env).await,
         (Method::Post, ["tokens"]) => handlers::tokens::create(req, env).await,

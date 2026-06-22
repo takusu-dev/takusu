@@ -206,7 +206,10 @@ async fn get_existing_mappings(pool: &sqlx::SqlitePool) -> Result<Vec<GoogleCalE
         .map_err(|e| e.to_string())
 }
 
-async fn upsert_mappings(pool: &sqlx::SqlitePool, mappings: &[(String, String)]) -> Result<(), String> {
+async fn upsert_mappings(
+    pool: &sqlx::SqlitePool,
+    mappings: &[(String, String)],
+) -> Result<(), String> {
     for (task_id, event_id) in mappings {
         sqlx::query(
             "INSERT INTO google_cal_events (task_id, google_event_id) VALUES (?, ?) \
@@ -221,7 +224,10 @@ async fn upsert_mappings(pool: &sqlx::SqlitePool, mappings: &[(String, String)])
     Ok(())
 }
 
-async fn delete_mappings_by_task_ids(pool: &sqlx::SqlitePool, task_ids: &[String]) -> Result<(), String> {
+async fn delete_mappings_by_task_ids(
+    pool: &sqlx::SqlitePool,
+    task_ids: &[String],
+) -> Result<(), String> {
     for task_id in task_ids {
         sqlx::query("DELETE FROM google_cal_events WHERE task_id = ?")
             .bind(task_id)

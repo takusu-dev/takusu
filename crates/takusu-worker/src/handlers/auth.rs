@@ -3,7 +3,7 @@ use worker::{D1Database, Env, Request, Response};
 use crate::auth;
 use crate::error::WorkerError;
 
-pub async fn verify(req: Request, env: Env) -> Result<Response, WorkerError> {
+pub async fn require_auth(req: &Request, env: &Env) -> Result<(), WorkerError> {
     let header = req
         .headers()
         .get("authorization")
@@ -13,10 +13,10 @@ pub async fn verify(req: Request, env: Env) -> Result<Response, WorkerError> {
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or(WorkerError::Unauthorized)?;
 
-    if verify_root(token, &env) {
-        return ok();
+    if verify_root(token, env) {
+        return Ok(());
     }
-    let db = db(&env)?;
+    let db = db(env)?;
     let hash = auth::hash_token(token);
     let stmt = worker::query!(
         &db,
@@ -25,10 +25,15 @@ pub async fn verify(req: Request, env: Env) -> Result<Response, WorkerError> {
     )?;
     let row: Option<CountRow> = stmt.first(None).await.map_err(WorkerError::Worker)?;
     if row.map(|r| r.c > 0).unwrap_or(false) {
-        ok()
+        Ok(())
     } else {
         Err(WorkerError::Unauthorized)
     }
+}
+
+pub async fn verify(req: Request, env: Env) -> Result<Response, WorkerError> {
+    require_auth(&req, &env).await?;
+    ok()
 }
 
 fn verify_root(token: &str, env: &Env) -> bool {
@@ -56,3 +61,5 @@ struct CountRow {
     #[serde(rename = "c")]
     c: i64,
 }
+
+

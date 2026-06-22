@@ -235,6 +235,7 @@
                 zlib
                 nodejs
                 wrangler
+                worker-build
               ];
             };
           };

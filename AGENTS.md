@@ -101,6 +101,8 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `cargo nextest run -p takusu-serve` | Run integration tests (19) |
 | `cargo nextest run -p takusu-ical` | Run iCal parser tests (5) |
 | `cargo bench -p takusu-core` | Run benchmark (~148ms for 25 tasks) |
+| `cargo test -p takusu-worker` | Run takusu-worker unit tests (6 auth tests) |
+| `cargo test -p takusu-worker --test auth -- --ignored` | Run takusu-worker auth integration tests (requires `wrangler`) |
 | `cargo run --example daily` | Run daily schedule example |
 | `cargo run -p takusu-cli -- --help` | Run CLI client |
 | `cd funasr_server && uv run python -m funasr_server` | Start FunASR STT server |
@@ -409,6 +411,11 @@ Replaced with simple `buf.push()` loop. The unsafe optimization was unnecessary 
 **File:** `takusu-core/src/anneal.rs:398-451`
 
 Added `neighbor_reorder_partial` and `neighbor_lns_partial` operators. The partial variant now uses the same 5 neighbor types with identical probability distribution as the full variant (shift 25%/swap 25%/duration 20%/reorder 15%/lns 15%).
+
+### ~~Auth middleware not applied to CRUD endpoints~~ FIXED
+**File:** `takusu-worker/src/router.rs:69-71`
+
+`require_auth()` is now called for every `/api/*` route except `/api/auth/verify` in the `dispatch` function. Tokens (`tasks`, `habits`, `schedule`, `settings`, `sync`, `tokens`) all require `Authorization: Bearer <token>`.
 
 ### `freeness()` name is counterintuitive
 **File:** `takusu-core/src/lib.rs:425-434`
