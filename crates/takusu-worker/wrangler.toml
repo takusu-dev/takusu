@@ -8,7 +8,7 @@ command = "worker-build --release"
 [[d1_databases]]
 binding = "DB"
 database_name = "takusu"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "cd59bcb7-e766-4edf-8baa-7fc403f1e86f"
 migrations_dir = "migrations"
 
 [vars]

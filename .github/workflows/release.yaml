@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
     inputs:
       apply_migrations:
@@ -36,11 +36,6 @@ jobs:
       - run: nix profile install .#ci
 
       - uses: Swatinem/rust-cache@v2
-
-      - name: Set D1 database ID
-        run: |
-          sed -i "s/database_id = \"00000000-0000-0000-0000-000000000000\"/database_id = \"${{ secrets.D1_DATABASE_ID }}\"/" \
-            "$WORKER_DIR/wrangler.toml"
 
       - name: Build worker
         run: |
