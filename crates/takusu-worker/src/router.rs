@@ -4,8 +4,14 @@ use crate::error::error_response;
 use crate::handlers;
 
 pub async fn handle(req: Request, env: Env) -> worker::Result<Response> {
+    let start = worker::Date::now().as_millis();
     let method = req.method();
+    let path = req.url()?.path().to_string();
+
+    log::info!("=> {} {}", method, path);
+
     if method == Method::Options {
+        log::info!("<= {} {} -> 204 ({}ms)", method, path, worker::Date::now().as_millis() - start);
         return preflight(&req, &env);
     }
     let result = dispatch(req, env.clone()).await;
@@ -13,7 +19,10 @@ pub async fn handle(req: Request, env: Env) -> worker::Result<Response> {
         Ok(resp) => resp,
         Err(e) => error_response(e)?,
     };
-    apply_cors(&env, resp)
+    let status = resp.status_code();
+    let resp = apply_cors(&env, resp);
+    log::info!("<= {} {} -> {} ({}ms)", method, path, status, worker::Date::now().as_millis() - start);
+    resp
 }
 
 fn preflight(req: &Request, env: &Env) -> worker::Result<Response> {

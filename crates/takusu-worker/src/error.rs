@@ -34,6 +34,17 @@ impl WorkerError {
 }
 
 pub fn error_response(err: WorkerError) -> worker::Result<Response> {
+    match &err {
+        WorkerError::Internal(_) | WorkerError::Worker(_) => {
+            log::error!("{}", err);
+        }
+        WorkerError::Unauthorized => {
+            log::warn!("{}", err);
+        }
+        _ => {
+            log::info!("{}", err);
+        }
+    }
     ResponseBuilder::new()
         .with_status(err.status())
         .ok(err.body().to_string())
