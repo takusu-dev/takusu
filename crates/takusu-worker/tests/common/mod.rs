@@ -45,11 +45,10 @@ fn wait_for_port_free() {
             .to_socket_addrs()
             .ok()
             .and_then(|mut a| a.next());
-        if let Some(addr) = addr {
-            if TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_err() {
+        if let Some(addr) = addr
+            && TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_err() {
                 return;
             }
-        }
         sleep(Duration::from_millis(200));
     }
 }
@@ -67,11 +66,8 @@ fn wait_for_ready() {
 
 pub fn http_get(path: &str, auth_token: Option<&str>) -> Result<(u16, String), String> {
     let host = "127.0.0.1";
-    let mut stream =
-        TcpStream::connect((host, PORT)).map_err(|e| format!("connect: {e}"))?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .ok();
+    let mut stream = TcpStream::connect((host, PORT)).map_err(|e| format!("connect: {e}"))?;
+    stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
 
     let auth_line = auth_token
         .map(|t| format!("Authorization: Bearer {t}\r\n"))

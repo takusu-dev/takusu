@@ -23,15 +23,13 @@ fn auth_integration() {
 
     // /api/auth/verify — root token → 200
     {
-        let (status, _body) =
-            http_get("/api/auth/verify", Some("tsk_test_root_dev")).unwrap();
+        let (status, _body) = http_get("/api/auth/verify", Some("tsk_test_root_dev")).unwrap();
         assert_eq!(status, 200);
     }
 
     // /api/auth/verify — bad token → 401
     {
-        let (status, body) =
-            http_get("/api/auth/verify", Some("tsk_invalid_token")).unwrap();
+        let (status, body) = http_get("/api/auth/verify", Some("tsk_invalid_token")).unwrap();
         assert_eq!(status, 401, "body: {body}");
         assert!(body.contains("unauthorized"), "body: {body}");
     }
@@ -52,8 +50,7 @@ fn auth_integration() {
 
     // /api/tasks — root token → 200
     {
-        let (status, _body) =
-            http_get("/api/tasks", Some("tsk_test_root_dev")).unwrap();
+        let (status, _body) = http_get("/api/tasks", Some("tsk_test_root_dev")).unwrap();
         assert_eq!(status, 200);
     }
 

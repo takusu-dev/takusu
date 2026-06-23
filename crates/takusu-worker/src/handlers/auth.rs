@@ -61,5 +61,3 @@ struct CountRow {
     #[serde(rename = "c")]
     c: i64,
 }
-
-

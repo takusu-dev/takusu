@@ -16,8 +16,10 @@ use tower::ServiceExt;
 const ROOT_TOKEN: &str = "tsk_test_root_token_0000000000000000000000000001";
 
 async fn setup() -> (AppState, SqlitePool) {
-    let mut cfg = LocalConfig::default();
-    cfg.db = "sqlite::memory:".into();
+    let cfg = LocalConfig {
+        db: "sqlite::memory:".into(),
+        ..Default::default()
+    };
     let storage = SqliteStorage::init(&cfg, ROOT_TOKEN.to_string())
         .await
         .unwrap();

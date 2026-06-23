@@ -11,7 +11,12 @@ pub async fn handle(req: Request, env: Env) -> worker::Result<Response> {
     log::info!("=> {} {}", method, path);
 
     if method == Method::Options {
-        log::info!("<= {} {} -> 204 ({}ms)", method, path, worker::Date::now().as_millis() - start);
+        log::info!(
+            "<= {} {} -> 204 ({}ms)",
+            method,
+            path,
+            worker::Date::now().as_millis() - start
+        );
         return preflight(&req, &env);
     }
     let result = dispatch(req, env.clone()).await;
@@ -21,7 +26,13 @@ pub async fn handle(req: Request, env: Env) -> worker::Result<Response> {
     };
     let status = resp.status_code();
     let resp = apply_cors(&env, resp);
-    log::info!("<= {} {} -> {} ({}ms)", method, path, status, worker::Date::now().as_millis() - start);
+    log::info!(
+        "<= {} {} -> {} ({}ms)",
+        method,
+        path,
+        status,
+        worker::Date::now().as_millis() - start
+    );
     resp
 }
 

@@ -10,6 +10,7 @@ pub enum WorkerError {
     #[error("unauthorized")]
     Unauthorized,
     #[error("conflict: {0}")]
+    #[allow(dead_code)]
     Conflict(String),
     #[error("internal: {0}")]
     Internal(String),

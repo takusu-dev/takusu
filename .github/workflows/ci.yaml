@@ -38,5 +38,5 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: nix develop --command bash -c "cargo nextest run --all --run-ignored all"
+      - run: nix develop --command bash -c "cargo nextest run --all"
       - run: nix develop --command bash -c "cargo test --doc --all-features -- --nocapture"
