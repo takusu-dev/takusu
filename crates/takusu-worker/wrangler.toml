@@ -1,6 +1,6 @@
 name = "takusu"
 main = "build/worker/shim.mjs"
-compatibility_date = "2025-01-01"
+compatibility_date = "2026-06-16"
 
 [build]
 command = "worker-build --release"
@@ -14,3 +14,10 @@ migrations_dir = "migrations"
 [vars]
 TAKUSU_LOG = "info"
 # TAKUSU_ALLOWED_ORIGIN = "https://my-app.example.com https://other.example.com"
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+
+[observability.traces]
+enabled = true
