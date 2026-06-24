@@ -20,9 +20,7 @@ pub async fn create_token(
     Ok((StatusCode::CREATED, Json(resp)))
 }
 
-pub async fn list_tokens(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<TokenRow>>, HttpError> {
+pub async fn list_tokens(State(state): State<AppState>) -> Result<Json<Vec<TokenRow>>, HttpError> {
     let tokens = state.app.list_tokens().await?;
     Ok(Json(tokens))
 }

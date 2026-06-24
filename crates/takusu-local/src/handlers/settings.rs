@@ -5,9 +5,7 @@ use takusu_storage::{SettingsRow, UpdateSettings};
 use crate::error::HttpError;
 use crate::state::AppState;
 
-pub async fn get_settings(
-    State(state): State<AppState>,
-) -> Result<Json<SettingsRow>, HttpError> {
+pub async fn get_settings(State(state): State<AppState>) -> Result<Json<SettingsRow>, HttpError> {
     let row = state.app.get_settings().await?;
     Ok(Json(row))
 }

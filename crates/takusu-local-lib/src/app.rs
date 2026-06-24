@@ -6,10 +6,9 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use takusu_core::{NormalDist, Planner, Point, RescheduleRange, SleepConfig, Task as CoreTask};
 use takusu_storage::{
-    CreateHabit, CreateTask, GoogleCalEventRow, HabitRow,
-    SaveScheduleRequest, ScheduleEntry, ScheduleRow, SettingsRow, Storage, TaskQuery, TaskRow,
-    TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateSettings,
-    UpdateTask,
+    CreateHabit, CreateTask, GoogleCalEventRow, HabitRow, SaveScheduleRequest, ScheduleEntry,
+    ScheduleRow, SettingsRow, Storage, TaskQuery, TaskRow, TokenCreateResponse, TokenRow,
+    UpdateGoogleCalSettings, UpdateHabit, UpdateSettings, UpdateTask,
 };
 
 use crate::error::AppError;
@@ -119,7 +118,11 @@ pub struct TakusuApp {
 }
 
 impl TakusuApp {
-    pub fn new(storage: Arc<dyn Storage>, root_token: String, token_cache: Arc<TokenCache>) -> Self {
+    pub fn new(
+        storage: Arc<dyn Storage>,
+        root_token: String,
+        token_cache: Arc<TokenCache>,
+    ) -> Self {
         Self {
             storage,
             root_token,
@@ -144,10 +147,7 @@ impl TakusuApp {
     }
 
     pub async fn get_settings(&self) -> Result<SettingsRow, AppError> {
-        self.storage
-            .get_settings()
-            .await
-            .map_err(storage_to_app)
+        self.storage.get_settings().await.map_err(storage_to_app)
     }
 
     pub async fn update_settings(&self, body: &UpdateSettings) -> Result<SettingsRow, AppError> {
@@ -160,24 +160,15 @@ impl TakusuApp {
     // ── Tasks ─────────────────────────────────────────────
 
     pub async fn create_task(&self, body: &CreateTask) -> Result<TaskRow, AppError> {
-        self.storage
-            .create_task(body)
-            .await
-            .map_err(storage_to_app)
+        self.storage.create_task(body).await.map_err(storage_to_app)
     }
 
     pub async fn list_tasks(&self, query: &TaskQuery) -> Result<Vec<TaskRow>, AppError> {
-        self.storage
-            .list_tasks(query)
-            .await
-            .map_err(storage_to_app)
+        self.storage.list_tasks(query).await.map_err(storage_to_app)
     }
 
     pub async fn get_task(&self, id: &str) -> Result<TaskRow, AppError> {
-        self.storage
-            .get_task(id)
-            .await
-            .map_err(storage_to_app)
+        self.storage.get_task(id).await.map_err(storage_to_app)
     }
 
     pub async fn update_task(&self, id: &str, body: &UpdateTask) -> Result<TaskRow, AppError> {
@@ -195,10 +186,7 @@ impl TakusuApp {
     }
 
     pub async fn delete_task(&self, id: &str) -> Result<(), AppError> {
-        self.storage
-            .delete_task(id)
-            .await
-            .map_err(storage_to_app)
+        self.storage.delete_task(id).await.map_err(storage_to_app)
     }
 
     pub async fn import_ical(&self, ical_body: &str) -> Result<IcalImportResult, AppError> {
@@ -232,10 +220,7 @@ impl TakusuApp {
             imported += 1;
             task_ids.push(task.id);
         }
-        Ok(IcalImportResult {
-            imported,
-            task_ids,
-        })
+        Ok(IcalImportResult { imported, task_ids })
     }
 
     async fn task_exists_by_ical_uid(&self, uid: &str) -> Result<bool, AppError> {
@@ -257,17 +242,11 @@ impl TakusuApp {
     }
 
     pub async fn list_habits(&self) -> Result<Vec<HabitRow>, AppError> {
-        self.storage
-            .list_habits()
-            .await
-            .map_err(storage_to_app)
+        self.storage.list_habits().await.map_err(storage_to_app)
     }
 
     pub async fn get_habit(&self, id: &str) -> Result<HabitRow, AppError> {
-        self.storage
-            .get_habit(id)
-            .await
-            .map_err(storage_to_app)
+        self.storage.get_habit(id).await.map_err(storage_to_app)
     }
 
     pub async fn update_habit(&self, id: &str, body: &UpdateHabit) -> Result<HabitRow, AppError> {
@@ -285,10 +264,7 @@ impl TakusuApp {
     }
 
     pub async fn delete_habit(&self, id: &str) -> Result<(), AppError> {
-        self.storage
-            .delete_habit(id)
-            .await
-            .map_err(storage_to_app)
+        self.storage.delete_habit(id).await.map_err(storage_to_app)
     }
 
     // ── Schedule ──────────────────────────────────────────
@@ -401,7 +377,12 @@ impl TakusuApp {
                     .collect();
                 planner.plan_partial(&pinned_entries)
             }
-            _ => return Err(AppError::BadRequest(format!("unknown mode: {}", input.mode))),
+            _ => {
+                return Err(AppError::BadRequest(format!(
+                    "unknown mode: {}",
+                    input.mode
+                )));
+            }
         };
 
         let final_entries = self.plan_to_entries(&plan, &id_map);
@@ -506,10 +487,7 @@ impl TakusuApp {
 
     // ── Tokens ────────────────────────────────────────────
 
-    pub async fn create_token(
-        &self,
-        label: Option<&str>,
-    ) -> Result<TokenCreateResponse, AppError> {
+    pub async fn create_token(&self, label: Option<&str>) -> Result<TokenCreateResponse, AppError> {
         let resp = self
             .storage
             .create_token(label)
@@ -520,10 +498,7 @@ impl TakusuApp {
     }
 
     pub async fn list_tokens(&self) -> Result<Vec<TokenRow>, AppError> {
-        self.storage
-            .list_tokens()
-            .await
-            .map_err(storage_to_app)
+        self.storage.list_tokens().await.map_err(storage_to_app)
     }
 
     pub async fn revoke_token(&self, id: i64) -> Result<(), AppError> {
@@ -584,11 +559,7 @@ impl TakusuApp {
         Ok(google_cal::oauth_url(&row.client_id, redirect_uri))
     }
 
-    pub async fn oauth_callback(
-        &self,
-        code: &str,
-        redirect_uri: &str,
-    ) -> Result<(), AppError> {
+    pub async fn oauth_callback(&self, code: &str, redirect_uri: &str) -> Result<(), AppError> {
         let row = self
             .storage
             .get_gcal_settings()
@@ -599,14 +570,10 @@ impl TakusuApp {
                 "google calendar settings not configured".into(),
             ));
         }
-        let tokens = google_cal::exchange_code(
-            &row.client_id,
-            &row.client_secret,
-            code,
-            redirect_uri,
-        )
-        .await
-        .map_err(|e| AppError::Internal(format!("oauth exchange failed: {e}")))?;
+        let tokens =
+            google_cal::exchange_code(&row.client_id, &row.client_secret, code, redirect_uri)
+                .await
+                .map_err(|e| AppError::Internal(format!("oauth exchange failed: {e}")))?;
         self.storage
             .update_gcal_settings(&UpdateGoogleCalSettings {
                 enabled: None,
@@ -658,8 +625,7 @@ impl TakusuApp {
             None => None,
         };
 
-        let client =
-            google_cal::Client::new(client_id, client_secret, refresh_token, calendar_id);
+        let client = google_cal::Client::new(client_id, client_secret, refresh_token, calendar_id);
 
         match entries {
             Some(entries) => {
@@ -784,7 +750,7 @@ impl TakusuApp {
         }
     }
 
-        #[allow(clippy::type_complexity)]
+    #[allow(clippy::type_complexity)]
     fn build_planner(
         &self,
         start: Point,
@@ -819,11 +785,7 @@ impl TakusuApp {
         Ok((planner, id_map, id_to_idx))
     }
 
-    fn plan_to_entries(
-        &self,
-        plan: &takusu_core::Plan,
-        id_map: &[String],
-    ) -> Vec<ScheduleEntry> {
+    fn plan_to_entries(&self, plan: &takusu_core::Plan, id_map: &[String]) -> Vec<ScheduleEntry> {
         plan.schedules
             .iter()
             .map(|(s, e, idx)| ScheduleEntry {

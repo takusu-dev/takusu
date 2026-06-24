@@ -14,9 +14,7 @@ pub async fn create_habit(
     Ok((StatusCode::CREATED, Json(habit)))
 }
 
-pub async fn list_habits(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<HabitRow>>, HttpError> {
+pub async fn list_habits(State(state): State<AppState>) -> Result<Json<Vec<HabitRow>>, HttpError> {
     let habits = state.app.list_habits().await?;
     Ok(Json(habits))
 }

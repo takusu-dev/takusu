@@ -46,9 +46,10 @@ fn wait_for_port_free() {
             .ok()
             .and_then(|mut a| a.next());
         if let Some(addr) = addr
-            && TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_err() {
-                return;
-            }
+            && TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_err()
+        {
+            return;
+        }
         sleep(Duration::from_millis(200));
     }
 }

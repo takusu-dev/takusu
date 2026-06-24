@@ -7,12 +7,12 @@ use http_body_util::BodyExt;
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::sync::Arc;
+use takusu_local::router::router as build_router;
+use takusu_local::state::AppState;
 use takusu_local_lib::app::TakusuApp;
 use takusu_local_lib::config::LocalConfig;
 use takusu_local_lib::storage_sqlite::SqliteStorage;
 use takusu_local_lib::token_cache::TokenCache;
-use takusu_local::router::router as build_router;
-use takusu_local::state::AppState;
 use tower::ServiceExt;
 
 const ROOT_TOKEN: &str = "tsk_test_root_token_0000000000000000000000000001";

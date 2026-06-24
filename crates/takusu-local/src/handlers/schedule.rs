@@ -40,9 +40,7 @@ pub struct MoveEntry {
     pub force: bool,
 }
 
-pub async fn get_schedule(
-    State(state): State<AppState>,
-) -> Result<Json<ScheduleRow>, HttpError> {
+pub async fn get_schedule(State(state): State<AppState>) -> Result<Json<ScheduleRow>, HttpError> {
     let row = state.app.get_schedule().await?;
     Ok(Json(row))
 }
@@ -95,13 +93,13 @@ pub async fn move_entry(
             serde_json::json!({ "task_id": task_id, "start_at": start_at, "end_at": end_at }),
         ))
     } else {
-        Ok(Json(serde_json::json!({ "task_id": task_id, "start_at": start_at, "end_at": end_at, "warnings": warnings })))
+        Ok(Json(
+            serde_json::json!({ "task_id": task_id, "start_at": start_at, "end_at": end_at, "warnings": warnings }),
+        ))
     }
 }
 
-pub async fn clear_schedule(
-    State(state): State<AppState>,
-) -> Result<StatusCode, HttpError> {
+pub async fn clear_schedule(State(state): State<AppState>) -> Result<StatusCode, HttpError> {
     state.app.clear_schedule().await?;
     Ok(StatusCode::NO_CONTENT)
 }
