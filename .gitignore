@@ -7,3 +7,5 @@ opencode.json
 *.db
 *.wav
 **/__pycache__/**
+.wrangler/
+.dev.vars
