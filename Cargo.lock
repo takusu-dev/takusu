@@ -3077,10 +3077,30 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
- "config",
- "google-cal",
  "http",
  "http-body-util",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sqlx",
+ "takusu-local-lib",
+ "takusu-storage",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tower-http 0.7.0",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "takusu-local-lib"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "config",
+ "google-cal",
  "jiff",
  "reqwest",
  "serde",
@@ -3092,10 +3112,7 @@ dependencies = [
  "takusu-storage",
  "thiserror 2.0.18",
  "tokio",
- "tower",
- "tower-http 0.7.0",
  "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 

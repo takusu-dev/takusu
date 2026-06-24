@@ -1,10 +1,3 @@
-//! SQLite-backed `Storage` implementation.
-//!
-//! Lifts the SQL out of `takusu-serve`'s handlers into the shared
-//! `Storage` trait. Used by `takusu-local` when `TAKUSU_STORAGE=sqlite`
-//! (the default). Schema is the same three migrations as the Cloudflare
-//! Worker (`001_init`, `002_google_cal`, `003_settings`).
-
 use async_trait::async_trait;
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -51,7 +44,6 @@ impl SqliteStorage {
         Ok(Self { pool, root_token })
     }
 
-    #[allow(dead_code)]
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
     }

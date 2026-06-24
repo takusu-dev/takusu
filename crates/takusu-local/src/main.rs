@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
-use takusu_local::config::LocalConfig;
 use takusu_local::router::router;
 use takusu_local::state::AppState;
-use takusu_local::storage_sqlite::SqliteStorage;
-use takusu_local::storage_workers::WorkersStorage;
+use takusu_local_lib::app::TakusuApp;
+use takusu_local_lib::config::LocalConfig;
+use takusu_local_lib::config::StorageKind;
+use takusu_local_lib::storage_sqlite::SqliteStorage;
+use takusu_local_lib::storage_workers::WorkersStorage;
+use takusu_local_lib::token_cache::TokenCache;
 use takusu_storage::Storage;
 
 #[tokio::main]
@@ -20,15 +23,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root_token = LocalConfig::load_root_token();
 
     let storage: Arc<dyn Storage> = match cfg.storage_kind() {
-        takusu_local::config::StorageKind::Sqlite => {
+        StorageKind::Sqlite => {
             tracing::info!("storage backend: sqlite ({})", cfg.db_url());
             Arc::new(SqliteStorage::init(&cfg, root_token.clone()).await?)
         }
-        takusu_local::config::StorageKind::Workers => {
-            // `TAKUSU_WORKERS_URL` is read directly because the config crate
-            // splits env var names on `_` (so `TAKUSU_WORKERS_URL` would
-            // nest as `workers.url`). Reading the env var directly keeps
-            // the natural name available to users.
+        StorageKind::Workers => {
             let url = std::env::var("TAKUSU_WORKERS_URL")
                 .ok()
                 .filter(|s| !s.is_empty())
@@ -44,14 +43,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let state = AppState::new(storage, root_token, cfg);
-    let bind_addr = state.config.bind_addr().to_string();
-    let app = router(state);
+    let token_cache = Arc::new(TokenCache::with_default_ttl());
+    let app = Arc::new(TakusuApp::new(storage, root_token, token_cache));
+    let state = AppState::new(app);
+    let bind_addr = cfg.bind_addr().to_string();
+    let app_router = router(state);
 
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     tracing::info!("listening on {bind_addr}");
 
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app_router).await?;
 
     Ok(())
 }

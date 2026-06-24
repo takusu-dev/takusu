@@ -1,24 +1,13 @@
-use thiserror::Error;
+use takusu_local_lib::error::AppError;
 
-#[derive(Debug, Error)]
-pub enum AppError {
-    #[error("not found: {0}")]
-    NotFound(String),
-    #[error("bad request: {0}")]
-    BadRequest(String),
-    #[error("unauthorized")]
-    Unauthorized,
-    #[error("conflict: {message}")]
-    Conflict { message: String },
-    #[error("internal: {0}")]
-    Internal(String),
-}
+#[derive(Debug)]
+pub struct HttpError(pub AppError);
 
-impl axum::response::IntoResponse for AppError {
+impl axum::response::IntoResponse for HttpError {
     fn into_response(self) -> axum::response::Response {
         use axum::Json;
         use axum::http::StatusCode;
-        let (status, body) = match &self {
+        let (status, body) = match &self.0 {
             AppError::NotFound(m) => (StatusCode::NOT_FOUND, serde_json::json!({ "message": m })),
             AppError::BadRequest(m) => {
                 (StatusCode::BAD_REQUEST, serde_json::json!({ "message": m }))
@@ -37,5 +26,11 @@ impl axum::response::IntoResponse for AppError {
             ),
         };
         (status, Json(body)).into_response()
+    }
+}
+
+impl From<AppError> for HttpError {
+    fn from(e: AppError) -> Self {
+        HttpError(e)
     }
 }

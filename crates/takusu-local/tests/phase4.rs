@@ -15,10 +15,11 @@ use axum::http::StatusCode;
 use axum::routing::get;
 use http_body_util::BodyExt;
 use serde_json::json;
-use takusu_local::config::LocalConfig;
+use takusu_local_lib::app::TakusuApp;
+use takusu_local_lib::storage_workers::WorkersStorage;
+use takusu_local_lib::token_cache::TokenCache;
 use takusu_local::router::router;
 use takusu_local::state::AppState;
-use takusu_local::storage_workers::WorkersStorage;
 use takusu_storage::{
     CreateHabit, CreateTask, GoogleCalEventRow, GoogleCalSettingsRow, HabitRow,
     SaveScheduleRequest, ScheduleRow, SettingsRow, Storage, StorageError, TaskQuery, TaskRow,
@@ -44,11 +45,13 @@ impl Counters {
 }
 
 fn make_state(storage: Arc<dyn Storage>) -> AppState {
-    let cfg = LocalConfig {
-        db: "sqlite::memory:".into(),
-        ..LocalConfig::default()
-    };
-    AppState::new(storage, ROOT_TOKEN.to_string(), cfg)
+    let token_cache = Arc::new(TokenCache::with_default_ttl());
+    let app = Arc::new(TakusuApp::new(
+        storage,
+        ROOT_TOKEN.to_string(),
+        token_cache,
+    ));
+    AppState::new(app)
 }
 
 fn req(method: Method, uri: &str, token: Option<&str>) -> Request<axum::body::Body> {

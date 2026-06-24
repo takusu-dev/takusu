@@ -7,10 +7,12 @@ use http_body_util::BodyExt;
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use takusu_local::config::LocalConfig;
+use takusu_local_lib::app::TakusuApp;
+use takusu_local_lib::config::LocalConfig;
+use takusu_local_lib::storage_sqlite::SqliteStorage;
+use takusu_local_lib::token_cache::TokenCache;
 use takusu_local::router::router as build_router;
 use takusu_local::state::AppState;
-use takusu_local::storage_sqlite::SqliteStorage;
 use tower::ServiceExt;
 
 const ROOT_TOKEN: &str = "tsk_test_root_token_0000000000000000000000000001";
@@ -24,7 +26,13 @@ async fn setup() -> (AppState, SqlitePool) {
         .await
         .unwrap();
     let pool = storage.pool().clone();
-    let state = AppState::new(Arc::new(storage), ROOT_TOKEN.to_string(), cfg);
+    let token_cache = Arc::new(TokenCache::with_default_ttl());
+    let app = Arc::new(TakusuApp::new(
+        Arc::new(storage),
+        ROOT_TOKEN.to_string(),
+        token_cache,
+    ));
+    let state = AppState::new(app);
     (state, pool)
 }
 
@@ -115,7 +123,7 @@ async fn token_crud() {
     let new_token = body["token"].as_str().unwrap();
     assert!(new_token.starts_with("tsk_"));
 
-    let hash = takusu_local::auth::hash_token(new_token);
+    let hash = takusu_local_lib::auth::hash_token(new_token);
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tokens WHERE token_hash = ?")
         .bind(&hash)
         .fetch_one(&pool)
@@ -457,7 +465,7 @@ async fn schedule_not_found_initially() {
 async fn token_revoke() {
     let (state, pool) = setup().await;
 
-    let hash = takusu_local::auth::hash_token("tsk_test_revoke_token");
+    let hash = takusu_local_lib::auth::hash_token("tsk_test_revoke_token");
     sqlx::query(
         "INSERT INTO tokens (token_hash, label, created_by) VALUES (?, 'to-revoke', 'root')",
     )

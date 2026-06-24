@@ -11,7 +11,7 @@ use axum::routing::{delete, get};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
-use takusu_local::storage_workers::WorkersStorage;
+use takusu_local_lib::storage_workers::WorkersStorage;
 use takusu_storage::{
     CreateTask, Storage, TaskQuery, TaskRow, TokenCreateResponse, TokenRow, UpdateTask,
 };

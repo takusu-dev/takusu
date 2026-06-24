@@ -39,6 +39,7 @@ takusu-client = { path = "crates/takusu-client" }
 takusu-util = { path = "crates/takusu-util" }
 takusu-audio = { path = "crates/takusu-audio" }
 takusu-storage = { path = "crates/takusu-storage" }
+takusu-local-lib = { path = "crates/takusu-local-lib" }
 google-cal = { path = "crates/google-cal" }
 
 tokio-tungstenite = "0.29"
