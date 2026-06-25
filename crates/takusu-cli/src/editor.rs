@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::io;
 use std::process::Command;
-use takusu_client::{HabitRow, TaskRow, UpdateHabit, UpdateTask};
+use takusu_storage::{HabitRow, TaskRow, UpdateHabit, UpdateTask};
 
 pub fn format_task_for_editing(task: &TaskRow) -> String {
     let depends: String = serde_json::from_str::<Vec<String>>(&task.depends)

@@ -1,6 +1,6 @@
 use comfy_table::{Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 use jiff::Timestamp;
-use takusu_client::{HabitRow, ScheduleEntry, TaskRow};
+use takusu_storage::{HabitRow, ScheduleEntry, TaskRow, TokenRow};
 
 pub fn display_task_detail(task: &TaskRow, entry: Option<&ScheduleEntry>, tz: &jiff::tz::TimeZone) {
     let status_color = match task.status.as_str() {
@@ -278,7 +278,7 @@ fn format_duration(start_iso: &str, end_iso: &str) -> String {
     }
 }
 
-pub fn display_tokens(tokens: &[takusu_client::TokenRow]) {
+pub fn display_tokens(tokens: &[TokenRow]) {
     if tokens.is_empty() {
         println!("No tokens found.");
         return;

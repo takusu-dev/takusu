@@ -6,10 +6,16 @@ mod editor;
 use clap::{CommandFactory, Parser, Subcommand};
 use std::io::{self, Write};
 use std::process;
-use takusu_client::{
-    Client, CreateHabit, CreateTask, GenerateSchedule, MoveEntry, Reschedule, ScheduleEntry,
-    TaskQuery, UpdateHabit, UpdateSyncSettings,
+use std::sync::Arc;
+use takusu_local_lib::{
+    app::TakusuApp,
+    config::{LocalConfig, StorageKind},
+    error::AppError,
+    storage_sqlite::SqliteStorage,
+    storage_workers::WorkersStorage,
+    token_cache::TokenCache,
 };
+use takusu_storage::{CreateHabit, CreateTask, ScheduleEntry, TaskQuery, UpdateHabit, UpdateSettings};
 use takusu_util::{generate_root_token, parse_datetime_tz, parse_duration, parse_range_tz};
 
 fn prompt(label: &str) -> String {
@@ -24,19 +30,13 @@ fn is_interactive() -> bool {
     atty::is(atty::Stream::Stdin) && atty::is(atty::Stream::Stdout)
 }
 
-fn parse_dt(s: &str, tz: &jiff::tz::TimeZone) -> Result<String, takusu_client::ClientError> {
-    parse_datetime_tz(s, tz).map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })
+fn parse_dt(s: &str, tz: &jiff::tz::TimeZone) -> Result<String, AppError> {
+    parse_datetime_tz(s, tz).map_err(|e| AppError::BadRequest(e))
 }
 
 #[derive(Parser)]
 #[command(name = "takusu", version, about = "CLI client for takusu scheduler")]
 struct Cli {
-    #[arg(long, env = "TAKUSU_URL", global = true)]
-    url: Option<String>,
-
-    #[arg(long, env = "TAKUSU_TOKEN", global = true)]
-    token: Option<String>,
-
     #[arg(long, env = "TAKUSU_TIMEZONE", global = true)]
     tz: Option<String>,
 
@@ -459,16 +459,12 @@ async fn main() {
     let cli = Cli::parse();
     let cfg = config::load();
 
-    let url = cli
-        .url
-        .or(cfg.url)
-        .unwrap_or_else(|| "http://127.0.0.1:3000".into());
     let tz_str = cli.tz.or(cfg.tz).unwrap_or_else(|| "UTC".into());
 
     if matches!(cli.command, Commands::GenRootToken) {
         let token = generate_root_token();
         println!("{token}");
-        eprintln!("\nSet this as TAKUSU_ROOT_TOKEN env var for takusu-serve.");
+        eprintln!("\nSet this as TAKUSU_ROOT_TOKEN env var for takusu.");
         return;
     }
 
@@ -482,28 +478,42 @@ async fn main() {
         return;
     }
 
-    let needs_token = !matches!(cli.command, Commands::Health | Commands::Config { .. });
+    // Initialize local storage and app
+    let local_cfg = LocalConfig::load().unwrap_or_else(|e| {
+        eprintln!("Error loading config: {e}");
+        process::exit(1);
+    });
 
-    let token = if needs_token {
-        match cli.token.or(cfg.token) {
-            Some(t) => t,
-            None => {
-                eprintln!("Error: token required (--token, TAKUSU_TOKEN, or config)");
+    let storage: Arc<dyn takusu_storage::Storage> = match local_cfg.storage_kind() {
+        StorageKind::Workers => {
+            WorkersStorage::shared(&local_cfg).unwrap_or_else(|e| {
+                eprintln!("Error initializing workers storage: {e}");
                 process::exit(1);
-            }
+            })
         }
-    } else {
-        String::new()
+        StorageKind::Sqlite => {
+            let root_token = LocalConfig::load_root_token();
+            let storage = SqliteStorage::init(&local_cfg, root_token)
+                .await
+                .unwrap_or_else(|e| {
+                    eprintln!("Error initializing sqlite storage: {e}");
+                    process::exit(1);
+                });
+            Arc::new(storage)
+        }
     };
 
-    let client = Client::new(&url, &token);
+    let root_token = LocalConfig::load_root_token();
+
+    let token_cache = Arc::new(TokenCache::with_default_ttl());
+    let app = TakusuApp::new(storage, root_token, token_cache);
 
     let tz = jiff::tz::TimeZone::get(&tz_str).unwrap_or_else(|_| {
         eprintln!("Error: invalid timezone '{tz_str}' (e.g. Asia/Tokyo)");
         process::exit(1);
     });
 
-    if let Err(e) = run(cli.mode, &client, tz, cli.command).await {
+    if let Err(e) = run(cli.mode, &app, tz, cli.command).await {
         eprintln!("Error: {e}");
         process::exit(1);
     }
@@ -511,33 +521,32 @@ async fn main() {
 
 async fn run(
     mode: DisplayMode,
-    client: &Client,
+    app: &TakusuApp,
     tz: jiff::tz::TimeZone,
     cmd: Commands,
-) -> Result<(), takusu_client::ClientError> {
+) -> Result<(), AppError> {
     match cmd {
         Commands::Health => {
-            let resp = client.health().await?;
-            println!("{resp}");
+            println!("OK (local mode)");
         }
-        Commands::Task { command } => run_task(mode, client, &tz, command).await?,
-        Commands::Schedule { command } => run_schedule(mode, client, &tz, command).await?,
-        Commands::Token { command } => run_token(mode, client, command).await?,
-        Commands::Sync { command } => run_sync(client, command).await?,
-        Commands::Habit { command } => run_habit(mode, client, command).await?,
+        Commands::Task { command } => run_task(mode, app, &tz, command).await?,
+        Commands::Schedule { command } => run_schedule(mode, app, &tz, command).await?,
+        Commands::Token { command } => run_token(mode, app, command).await?,
+        Commands::Sync { command } => run_sync(app, command).await?,
+        Commands::Habit { command } => run_habit(mode, app, command).await?,
         Commands::GenRootToken => unreachable!(),
         Commands::Completion { .. } => unreachable!(),
-        Commands::Config { command } => run_config(command, client).await?,
+        Commands::Config { command } => run_config(command, app).await?,
     }
     Ok(())
 }
 
 async fn run_task(
     mode: DisplayMode,
-    client: &Client,
+    app: &TakusuApp,
     tz: &jiff::tz::TimeZone,
     cmd: TaskCommands,
-) -> Result<(), takusu_client::ClientError> {
+) -> Result<(), AppError> {
     match cmd {
         TaskCommands::List {
             status,
@@ -551,15 +560,15 @@ async fn run_task(
                 until: until.map(|s| parse_dt(&s, tz)).transpose()?,
                 habit_id,
             };
-            let tasks = client.list_tasks(&query).await?;
+            let tasks = app.list_tasks(&query).await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_tasks(&tasks, tz),
                 DisplayMode::Simple => display_simple::display_tasks(&tasks, tz),
             }
         }
         TaskCommands::Show { id } => {
-            let task = client.get_task(&id).await?;
-            let entry = match client.get_schedule().await {
+            let task = app.get_task(&id).await?;
+            let entry = match app.get_schedule().await {
                 Ok(schedule) => {
                     let entries: Vec<ScheduleEntry> =
                         serde_json::from_str(&schedule.schedule).unwrap_or_default();
@@ -592,9 +601,9 @@ async fn run_task(
                 (title, end_at)
             };
             let avg_minutes = parse_duration(&avg_time)
-                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+                .map_err(|e| AppError::BadRequest(e))?;
             let sigma_minutes: i64 = parse_duration(&sigma_time)
-                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+                .map_err(|e| AppError::BadRequest(e))?;
             let body = CreateTask {
                 title: title.unwrap_or_default(),
                 end_at: parse_dt(&end_at.unwrap_or_default(), tz)?,
@@ -610,29 +619,24 @@ async fn run_task(
                 allows_parallel: None,
                 abandonability: Some(abandonability),
                 description,
+                ical_uid: None,
             };
-            let task = client.create_task(&body).await?;
+            let task = app.create_task(&body).await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_tasks(&[task], tz),
                 DisplayMode::Simple => display_simple::display_tasks(&[task], tz),
             }
         }
         TaskCommands::Edit { id } => {
-            let task = client.get_task(&id).await?;
+            let task = app.get_task(&id).await?;
             let original = editor::format_task_for_editing(&task);
             let edited = editor::open_editor(&original, &task.id).map_err(|e| {
-                takusu_client::ClientError::Api {
-                    status: 0,
-                    body: e.to_string(),
-                }
+                AppError::BadRequest(e.to_string())
             })?;
             let update = editor::parse_edited_task(&edited).ok_or_else(|| {
-                takusu_client::ClientError::Api {
-                    status: 0,
-                    body: "failed to parse edited task".to_string(),
-                }
+                AppError::BadRequest("failed to parse edited task".to_string())
             })?;
-            let updated = client.update_task(&id, &update).await?;
+            let updated = app.update_task(&id, &update).await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_tasks(&[updated], tz),
                 DisplayMode::Simple => display_simple::display_tasks(&[updated], tz),
@@ -656,13 +660,13 @@ async fn run_task(
                 .as_ref()
                 .map(|s| parse_duration(s))
                 .transpose()
-                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+                .map_err(|e| AppError::BadRequest(e))?;
             let sigma_minutes = sigma_time
                 .as_ref()
                 .map(|s| parse_duration(s))
                 .transpose()
-                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
-            let body = takusu_client::UpdateTask {
+                .map_err(|e| AppError::BadRequest(e))?;
+            let body = takusu_storage::UpdateTask {
                 title,
                 description,
                 start_at: start_at.map(|s| parse_dt(&s, tz)).transpose()?,
@@ -675,7 +679,7 @@ async fn run_task(
                 abandonability,
                 status,
             };
-            let task = client.update_task(&id, &body).await?;
+            let task = app.update_task(&id, &body).await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_tasks(&[task], tz),
                 DisplayMode::Simple => display_simple::display_tasks(&[task], tz),
@@ -693,9 +697,9 @@ async fn run_task(
             depends,
         } => {
             let avg_minutes = parse_duration(&avg_time)
-                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+                .map_err(|e| AppError::BadRequest(e))?;
             let sigma_minutes: i64 = parse_duration(&sigma_time)
-                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+                .map_err(|e| AppError::BadRequest(e))?;
             let body = CreateTask {
                 title,
                 end_at: parse_dt(&end_at, tz)?,
@@ -711,23 +715,24 @@ async fn run_task(
                 allows_parallel: None,
                 abandonability: Some(abandonability),
                 description,
+                ical_uid: None,
             };
-            let task = client.replace_task(&id, &body).await?;
+            let task = app.replace_task(&id, &body).await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_tasks(&[task], tz),
                 DisplayMode::Simple => display_simple::display_tasks(&[task], tz),
             }
         }
         TaskCommands::Delete { id } => {
-            client.delete_task(&id).await?;
+            app.delete_task(&id).await?;
             println!("Task {id} deleted.");
         }
         TaskCommands::Status { id, status } => {
-            let body = takusu_client::UpdateTask {
+            let body = takusu_storage::UpdateTask {
                 status: Some(status.clone()),
                 ..Default::default()
             };
-            let task = client.update_task(&id, &body).await?;
+            let task = app.update_task(&id, &body).await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_tasks(&[task], tz),
                 DisplayMode::Simple => display_simple::display_tasks(&[task], tz),
@@ -739,19 +744,19 @@ async fn run_task(
 
 async fn run_habit(
     mode: DisplayMode,
-    client: &Client,
+    app: &TakusuApp,
     cmd: HabitCommands,
-) -> Result<(), takusu_client::ClientError> {
+) -> Result<(), AppError> {
     match cmd {
         HabitCommands::List => {
-            let habits = client.list_habits().await?;
+            let habits = app.list_habits().await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_habits(&habits),
                 DisplayMode::Simple => display_simple::display_habits(&habits),
             }
         }
         HabitCommands::Show { id } => {
-            let habit = client.get_habit(&id).await?;
+            let habit = app.get_habit(&id).await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_habit_detail(&habit),
                 DisplayMode::Simple => display_simple::display_habit_detail(&habit),
@@ -784,9 +789,9 @@ async fn run_habit(
                 (title, recurrence, start_time, end_time)
             };
             let avg_minutes = parse_duration(&avg_time)
-                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+                .map_err(|e| AppError::BadRequest(e))?;
             let sigma_minutes: i64 = parse_duration(&sigma_time)
-                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+                .map_err(|e| AppError::BadRequest(e))?;
             let body = CreateHabit {
                 title: title.unwrap_or_default(),
                 recurrence: recurrence.unwrap_or_default(),
@@ -803,28 +808,22 @@ async fn run_habit(
                 abandonability: Some(abandonability),
                 description,
             };
-            let habit = client.create_habit(&body).await?;
+            let habit = app.create_habit(&body).await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_habit_detail(&habit),
                 DisplayMode::Simple => display_simple::display_habit_detail(&habit),
             }
         }
         HabitCommands::Edit { id } => {
-            let habit = client.get_habit(&id).await?;
+            let habit = app.get_habit(&id).await?;
             let original = editor::format_habit_for_editing(&habit);
             let edited = editor::open_editor(&original, &habit.id).map_err(|e| {
-                takusu_client::ClientError::Api {
-                    status: 0,
-                    body: e.to_string(),
-                }
+                AppError::BadRequest(e.to_string())
             })?;
             let update = editor::parse_edited_habit(&edited).ok_or_else(|| {
-                takusu_client::ClientError::Api {
-                    status: 0,
-                    body: "failed to parse edited habit".to_string(),
-                }
+                AppError::BadRequest("failed to parse edited habit".to_string())
             })?;
-            let updated = client.update_habit(&id, &update).await?;
+            let updated = app.update_habit(&id, &update).await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_habit_detail(&updated),
                 DisplayMode::Simple => display_simple::display_habit_detail(&updated),
@@ -848,12 +847,12 @@ async fn run_habit(
                 .as_ref()
                 .map(|s| parse_duration(s))
                 .transpose()
-                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+                .map_err(|e| AppError::BadRequest(e))?;
             let sigma_minutes = sigma_time
                 .as_ref()
                 .map(|s| parse_duration(s))
                 .transpose()
-                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+                .map_err(|e| AppError::BadRequest(e))?;
             let body = UpdateHabit {
                 title,
                 description,
@@ -867,7 +866,7 @@ async fn run_habit(
                 abandonability,
                 active,
             };
-            let habit = client.update_habit(&id, &body).await?;
+            let habit = app.update_habit(&id, &body).await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_habit_detail(&habit),
                 DisplayMode::Simple => display_simple::display_habit_detail(&habit),
@@ -887,9 +886,9 @@ async fn run_habit(
             allows_parallel,
         } => {
             let avg_minutes = parse_duration(&avg_time)
-                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+                .map_err(|e| AppError::BadRequest(e))?;
             let sigma_minutes: i64 = parse_duration(&sigma_time)
-                .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+                .map_err(|e| AppError::BadRequest(e))?;
             let body = CreateHabit {
                 title,
                 recurrence,
@@ -906,14 +905,14 @@ async fn run_habit(
                 abandonability: Some(abandonability),
                 description,
             };
-            let habit = client.replace_habit(&id, &body).await?;
+            let habit = app.replace_habit(&id, &body).await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_habit_detail(&habit),
                 DisplayMode::Simple => display_simple::display_habit_detail(&habit),
             }
         }
         HabitCommands::Delete { id } => {
-            client.delete_habit(&id).await?;
+            app.delete_habit(&id).await?;
             println!("Habit {id} deleted.");
         }
     }
@@ -922,16 +921,16 @@ async fn run_habit(
 
 async fn run_schedule(
     mode: DisplayMode,
-    client: &Client,
+    app: &TakusuApp,
     tz: &jiff::tz::TimeZone,
     cmd: ScheduleCommands,
-) -> Result<(), takusu_client::ClientError> {
+) -> Result<(), AppError> {
     match cmd {
         ScheduleCommands::Get => {
-            let schedule = client.get_schedule().await?;
+            let schedule = app.get_schedule().await?;
             let entries: Vec<ScheduleEntry> =
                 serde_json::from_str(&schedule.schedule).unwrap_or_default();
-            let tasks = client
+            let tasks = app
                 .list_tasks(&TaskQuery::default())
                 .await
                 .unwrap_or_default();
@@ -946,9 +945,9 @@ async fn run_schedule(
             task_ids,
             sleep,
         } => {
-            let until = if let Some(range) = range {
+            let _until = if let Some(range) = range {
                 let (_from, u) = parse_range_tz(&range, tz)
-                    .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+                    .map_err(|e| AppError::BadRequest(e))?;
                 u
             } else {
                 match until {
@@ -962,15 +961,14 @@ async fn run_schedule(
                     }
                 }
             };
-            let body = GenerateSchedule {
-                until: parse_dt(&until, tz)?,
+            let body = takusu_local_lib::app::GenerateScheduleInput {
                 task_ids,
                 sleep,
             };
-            let schedule = client.generate_schedule(&body).await?;
+            let schedule = app.generate_schedule(&body).await?;
             let entries: Vec<ScheduleEntry> =
                 serde_json::from_str(&schedule.schedule).unwrap_or_default();
-            let tasks = client
+            let tasks = app
                 .list_tasks(&TaskQuery::default())
                 .await
                 .unwrap_or_default();
@@ -987,7 +985,7 @@ async fn run_schedule(
             pinned,
             sleep,
         } => {
-            let body = Reschedule {
+            let body = takusu_local_lib::app::RescheduleInput {
                 mode: rmode,
                 from: from.map(|s| parse_dt(&s, tz)).transpose()?,
                 until: until.map(|s| parse_dt(&s, tz)).transpose()?,
@@ -995,10 +993,10 @@ async fn run_schedule(
                 pinned: pinned.unwrap_or_default(),
                 sleep,
             };
-            let schedule = client.reschedule(&body).await?;
+            let schedule = app.reschedule(&body).await?;
             let entries: Vec<ScheduleEntry> =
                 serde_json::from_str(&schedule.schedule).unwrap_or_default();
-            let tasks = client
+            let tasks = app
                 .list_tasks(&TaskQuery::default())
                 .await
                 .unwrap_or_default();
@@ -1012,15 +1010,11 @@ async fn run_schedule(
             start_at,
             force,
         } => {
-            let body = MoveEntry {
-                start_at: parse_dt(&start_at, tz)?,
-                force,
-            };
-            let result = client.move_entry(&task_id, &body).await?;
+            let result = app.move_entry(&task_id, &parse_dt(&start_at, tz)?, force).await?;
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         ScheduleCommands::Clear => {
-            client.clear_schedule().await?;
+            app.clear_schedule().await?;
             println!("Schedule cleared.");
         }
     }
@@ -1029,12 +1023,12 @@ async fn run_schedule(
 
 async fn run_token(
     mode: DisplayMode,
-    client: &Client,
+    app: &TakusuApp,
     cmd: TokenCommands,
-) -> Result<(), takusu_client::ClientError> {
+) -> Result<(), AppError> {
     match cmd {
         TokenCommands::Create { label } => {
-            let resp = client.create_token(label.as_deref()).await?;
+            let resp = app.create_token(label.as_deref()).await?;
             println!("Token issued:");
             println!("  ID:    {}", resp.id);
             println!("  Token: {}", resp.token);
@@ -1043,24 +1037,24 @@ async fn run_token(
             eprintln!("\n⚠ Save the token value; it won't be shown again.");
         }
         TokenCommands::List => {
-            let tokens = client.list_tokens().await?;
+            let tokens = app.list_tokens().await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_tokens(&tokens),
                 DisplayMode::Simple => display_simple::display_tokens(&tokens),
             }
         }
         TokenCommands::Revoke { id } => {
-            client.revoke_token(id).await?;
+            app.revoke_token(id).await?;
             println!("Token {id} revoked.");
         }
     }
     Ok(())
 }
 
-async fn run_sync(client: &Client, cmd: SyncCommands) -> Result<(), takusu_client::ClientError> {
+async fn run_sync(app: &TakusuApp, cmd: SyncCommands) -> Result<(), AppError> {
     match cmd {
         SyncCommands::Settings => {
-            let settings = client.get_sync_settings().await?;
+            let settings = app.get_gcal_settings().await?;
             println!("Google Calendar sync settings:");
             println!("  enabled:          {}", settings.enabled);
             println!("  calendar_id:      {}", settings.calendar_id);
@@ -1075,14 +1069,14 @@ async fn run_sync(client: &Client, cmd: SyncCommands) -> Result<(), takusu_clien
             client_secret,
             refresh_token,
         } => {
-            let body = UpdateSyncSettings {
+            let body = takusu_storage::UpdateGoogleCalSettings {
                 enabled,
                 calendar_id,
                 client_id,
                 client_secret,
                 refresh_token,
             };
-            let settings = client.update_sync_settings(&body).await?;
+            let settings = app.update_gcal_settings(&body).await?;
             println!("Sync settings updated:");
             println!("  enabled:           {}", settings.enabled);
             println!("  calendar_id:      {}", settings.calendar_id);
@@ -1090,25 +1084,22 @@ async fn run_sync(client: &Client, cmd: SyncCommands) -> Result<(), takusu_clien
             println!("  has_refresh_token:  {}", settings.has_refresh_token);
         }
         SyncCommands::OauthUrl { redirect_uri } => {
-            let result = client.get_oauth_url(&redirect_uri).await?;
+            let result = app.oauth_url(&redirect_uri).await?;
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         SyncCommands::OauthCallback { code, redirect_uri } => {
-            let result = client.oauth_callback(&code, &redirect_uri).await?;
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            app.oauth_callback(&code, &redirect_uri).await?;
+            println!("OAuth callback completed successfully.");
         }
         SyncCommands::Trigger => {
-            let result = client.trigger_sync().await?;
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            app.do_sync().await.map_err(|e| AppError::Internal(e))?;
+            println!("Sync triggered.");
         }
     }
     Ok(())
 }
 
-async fn run_config(
-    cmd: ConfigCommands,
-    client: &takusu_client::Client,
-) -> Result<(), takusu_client::ClientError> {
+async fn run_config(cmd: ConfigCommands, app: &TakusuApp) -> Result<(), AppError> {
     match cmd {
         ConfigCommands::Show => config::show(),
         ConfigCommands::Init => config::init(),
@@ -1118,18 +1109,15 @@ async fn run_config(
             sleep_end,
         } => {
             if let Some(ref v) = tz {
-                config::set("tz", v)
-                    .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+                config::set("tz", v).map_err(|e| AppError::BadRequest(e))?;
             }
             if let Some(ref v) = sleep_start {
-                config::set("sleep_start", v)
-                    .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+                config::set("sleep_start", v).map_err(|e| AppError::BadRequest(e))?;
             }
             if let Some(ref v) = sleep_end {
-                config::set("sleep_end", v)
-                    .map_err(|e| takusu_client::ClientError::Api { status: 0, body: e })?;
+                config::set("sleep_end", v).map_err(|e| AppError::BadRequest(e))?;
             }
-            let mut update = takusu_client::UpdateSettings {
+            let mut update = UpdateSettings {
                 tz,
                 sleep_start,
                 sleep_end,
@@ -1144,7 +1132,7 @@ async fn run_config(
             if update.sleep_end.is_none() && cfg.sleep_end.is_some() {
                 update.sleep_end = cfg.sleep_end.clone();
             }
-            let resp = client.update_settings(&update).await?;
+            let resp = app.update_settings(&update).await?;
             println!(
                 "Settings updated: tz={}, sleep_start={}, sleep_end={}",
                 resp.tz, resp.sleep_start, resp.sleep_end

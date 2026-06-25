@@ -1,5 +1,5 @@
 use jiff::Timestamp;
-use takusu_client::{HabitRow, ScheduleEntry, TaskRow};
+use takusu_storage::{HabitRow, ScheduleEntry, TaskRow, TokenRow};
 
 pub fn display_task_detail(task: &TaskRow, entry: Option<&ScheduleEntry>, tz: &jiff::tz::TimeZone) {
     let status_marker = match task.status.as_str() {
@@ -94,7 +94,7 @@ pub fn display_schedule(entries: &[ScheduleEntry], tasks: &[TaskRow], tz: &jiff:
     }
 }
 
-pub fn display_tokens(tokens: &[takusu_client::TokenRow]) {
+pub fn display_tokens(tokens: &[TokenRow]) {
     if tokens.is_empty() {
         println!("  (no tokens)");
         return;
