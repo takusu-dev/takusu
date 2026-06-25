@@ -3117,31 +3117,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "takusu-serve"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "config",
- "google-cal",
- "http-body-util",
- "jiff",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "sqlx",
- "takusu-core",
- "takusu-ical",
- "thiserror 2.0.18",
- "tokio",
- "tower",
- "tower-http 0.7.0",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "takusu-storage"
 version = "0.1.0"
 dependencies = [

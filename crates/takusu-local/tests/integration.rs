@@ -1,6 +1,3 @@
-// NOTE: This file is duplicated from crates/takusu-serve/tests/integration.rs with different
-// imports and setup. Keep both files in sync when adding or modifying tests.
-
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;

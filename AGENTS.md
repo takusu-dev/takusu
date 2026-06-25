@@ -29,29 +29,30 @@ takusu/
 │   │   ├── src/solver.rs     #   Parallel restart + solve/solve_partial entry points
 │   │   ├── benches/plan.rs   #   Criterion benchmark (25 tasks)
 │   │   └── examples/daily.rs #   Example: 1-day schedule with 9 tasks
-│   ├── takusu-serve/         # REST API server (axum + SQLite)
-│   │   ├── SPEC.md           #   API仕様書
+│   ├── takusu-local/         # Local server (axum + SQLite, uses takusu-local-lib)
+│   ├── takusu-local-lib/     # Business logic library (shared by takusu-local and takusu-cli)
 │   │   ├── src/
-│   │   │   ├── main.rs       #   Entry point, server startup
-│   │   │   ├── app.rs        #   Router & AppState definition
-│   │   │   ├── auth.rs       #   Bearer token auth middleware + SHA-256 hashing
-│   │   │   ├── db.rs         #   SQLite pool init & migrations
-│   │   │   ├── error.rs      #   AppError enum (NotFound/BadRequest/Unauthorized/Conflict/Internal)
-│   │   │   ├── model.rs      #   DB row structs & request/response types
-│   │   │   └── handler/
-│   │   │       ├── task.rs   #   Task CRUD + iCal import
-│   │   │       ├── habit.rs  #   Habit CRUD
-│   │   │       ├── schedule.rs # Schedule generate/reschedule/move/clear
-│   │   │       ├── settings.rs # Settings CRUD (tz, sleep_start, sleep_end)
-│   │   │       ├── sync.rs   #   Google Calendar sync settings/OAuth/trigger
-│   │   │       └── token.rs  #   Token issue/list/revoke
-│   │   ├── migrations/
-│   │   │   ├── 001_init.sql        # DB schema
-│   │   │   ├── 002_google_cal.sql  # Google Calendar settings & event mappings
-│   │   │   └── 003_settings.sql   # User settings (tz, sleep_start, sleep_end)
-│   │   └── tests/integration.rs     # 24 integration tests (axum oneshot)
+│   │   │   ├── app.rs        #   TakusuApp: all business logic + two storage backends
+│   │   │   ├── config.rs     #   LocalConfig (env-based, TAKUSU_* prefix)
+│   │   │   ├── error.rs      #   AppError enum
+│   │   │   ├── storage_sqlite.rs  # SqliteStorage (direct sqlx)
+│   │   │   ├── storage_workers.rs # WorkersStorage (HTTP → Cloudflare Worker)
+│   │   │   ├── token_cache.rs     # TTL-based token verification cache
+│   │   │   └── auth.rs       #   SHA-256 token hashing
+│   │   └── migrations/
+│   │       ├── 001_init.sql        # DB schema
+│   │       ├── 002_google_cal.sql  # Google Calendar settings & event mappings
+│   │       ├── 003_settings.sql   # User settings (tz, sleep_start, sleep_end)
+│   │       └── 004_indexes.sql
+│   ├── takusu-storage/       # Pluggable storage trait + shared types
+│   │   └── src/
+│   │       ├── storage.rs    #   Async Storage trait
+│   │       ├── model.rs      #   Shared types (TaskRow, HabitRow, ScheduleEntry, etc.)
+│   │       └── error.rs      #   StorageError enum
 │   ├── takusu-ical/          # iCalendar parser (pure, no HTTP dependency)
 │   │   └── src/lib.rs        #   parse_ical() → Vec<IcalTask>
+│   ├── takusu-habit/         # Recurrence rule engine (RRULE expansion)
+│   │   └── src/lib.rs
 │   ├── takusu-audio/         # Audio processing (recording + STT/TTS backends)
 │   │   └── src/
 │   │       ├── lib.rs
@@ -67,7 +68,7 @@ takusu/
 │   │       ├── __main__.py
 │   │       ├── config.py    #   Server configuration
 │   │       └── server.py    #   WebSocket server (SenseVoice-Small model)
-│   ├── takusu-client/         # HTTP client library for takusu-serve API
+│   ├── takusu-client/         # HTTP client library for takusu REST API
 │   │   └── src/lib.rs         #   Client, all request/response types
 │   ├── takusu-cli/            # CLI client (clap derive, editor-based task editing)
 │   │   └── src/
@@ -75,6 +76,10 @@ takusu/
 │   │       ├── editor.rs      #   $EDITOR-based task editing (format/parse/open)
 │   │       ├── display_rich.rs#   Table display (comfy-table + colored)
 │   │       └── display_simple.rs # Plain-text display
+│   ├── takusu-worker/         # Cloudflare Worker (Rust/WASM + D1)
+│   │   └── src/
+│   ├── takusu-util/           # Shared utilities (duration parsing, datetime parsing, token generation)
+│   │   └── src/lib.rs
 │   └── google-cal/            # Google Calendar API client (reqwest + OAuth2)
 │       └── src/lib.rs         #   Client, sync(), delete_all(), OAuth2 helpers
 ├── flake.nix                 # Nix development environment
@@ -96,15 +101,16 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `cargo check` | Type-check all crates |
 | `cargo fmt` / `treefmt` | Format code |
 | `cargo clippy` | Lint |
-| `cargo nextest run --workspace` | Run all 86 tests |
+| `cargo nextest run --workspace` | Run all 200 tests |
 | `cargo nextest run -p takusu-core` | Run core planner tests |
-| `cargo nextest run -p takusu-serve` | Run integration tests (19) |
-| `cargo nextest run -p takusu-ical` | Run iCal parser tests (5) |
+| `cargo nextest run -p takusu-local` | Run local server integration tests (24) |
+| `cargo nextest run -p takusu-ical` | Run iCal parser tests (17) |
 | `cargo bench -p takusu-core` | Run benchmark (~148ms for 25 tasks) |
 | `cargo test -p takusu-worker` | Run takusu-worker unit tests (6 auth tests) |
 | `cargo test -p takusu-worker --test auth -- --ignored` | Run takusu-worker auth integration tests (requires `wrangler`) |
 | `cargo run --example daily` | Run daily schedule example |
 | `cargo run -p takusu-cli -- --help` | Run CLI client |
+| `cargo run -p takusu-local` | Start local server |
 | `cd funasr_server && uv run python -m funasr_server` | Start FunASR STT server |
 | `cd funasr_server && ruff check src/` | Lint Python code |
 | `cd funasr_server && ruff format --check src/` | Check Python formatting |
@@ -117,27 +123,24 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | Crate | Version | Used by | Notes |
 |-------|---------|---------|-------|
 | `thiserror` | 2.0 | workspace | Error derive macro |
-| `jiff` | 0.2.21 | takusu-core, takusu-serve | Date/time handling |
+| `jiff` | 0.2.21 | takusu-core, takusu-local, takusu-cli | Date/time handling |
 | `rand` | 0.8 | takusu-core | RNG for SA |
 | `rustc-hash` | 2.1 | takusu-core | `FxHashSet` (faster than std) |
 | `rayon` | 1.10 | takusu-core | Parallel SA restarts |
 | `criterion` | 0.5 | takusu-core (dev) | Benchmarking |
 | `tokio` | 1.52.0 | workspace | Async runtime (full features) |
-| `axum` | 0.8 | takusu-serve | HTTP framework |
-| `sqlx` | 0.8 (sqlite) | takusu-serve | SQLite async driver |
-| `serde` / `serde_json` | 1 / 1 | takusu-serve, takusu-ical | Serialization |
-| `uuid` | 1 (v7) | takusu-serve | ID generation |
-| `sha2` | 0.10 | takusu-serve | Token hashing |
-| `tower-http` | 0.6 (cors,trace) | takusu-serve | HTTP middleware |
-| `tracing` / `tracing-subscriber` | 0.1 / 0.3 | takusu-serve | Logging |
-| `async-trait` | 0.1 | takusu-serve | Async trait |
-| `reqwest` | 0.13 (rustls) | google-cal, takusu-serve, takusu-client, takusu-audio | HTTP client |
+| `axum` | 0.8 | takusu-local | HTTP framework |
+| `sqlx` | 0.8 (sqlite) | takusu-local, takusu-local-lib | SQLite async driver |
+| `serde` / `serde_json` | 1 / 1 | takusu-local, takusu-ical, takusu-client | Serialization |
+| `uuid` | 1 (v7) | takusu-local, takusu-local-lib | ID generation |
+| `sha2` | 0.10 | takusu-local-lib | Token hashing |
+| `tower-http` | 0.6 (cors,trace) | takusu-local | HTTP middleware |
+| `tracing` / `tracing-subscriber` | 0.1 / 0.3 | takusu-local, takusu-local-lib | Logging |
+| `async-trait` | 0.1 | takusu-local-lib | Async trait |
+| `reqwest` | 0.13 (rustls) | google-cal, takusu-local-lib, takusu-client, takusu-audio | HTTP client |
 | `clap` | 4 (derive,env) | takusu-cli | CLI argument parsing |
 | `comfy-table` | 7 | takusu-cli | Rich table display |
-| `jiff` | 0.2.21 | takusu-core, takusu-serve, takusu-cli | Date/time handling |
-| `serde` / `serde_json` | 1 / 1 | takusu-serve, takusu-ical, takusu-client | Serialization |
 | `cpal` | 0.17.3 | takusu-audio | Audio input |
-
 | `tokio-tungstenite` | 0.26 | takusu-audio | WebSocket client (FunASR) |
 | `futures-util` | 0.3 | takusu-audio | Async stream utilities |
 
@@ -224,7 +227,7 @@ Default reference audio directory is `./refs/`. Place a WAV/MP3/FLAC/etc. file t
 - `nix run .#irodori-tts-server` provides the same script with `git`, `uv`, and `ffmpeg` bundled.
 - `IRODORI_VOICES_DIR` defaults to `./refs` for Irodori-TTS.
 
-## takusu-serve API
+## takusu-local API
 
 ### Authentication
 
@@ -237,8 +240,6 @@ Default reference audio directory is `./refs/`. Place a WAV/MP3/FLAC/etc. file t
 
 ### Endpoints
 
-See `SPEC.md` for full API specification. Summary:
-
 - **Task**: CRUD + iCal import (`/api/tasks`, `/api/tasks/import/ical`)
 - **Habit**: CRUD (`/api/habits`)
 - **Schedule**: get/generate/reschedule/move/clear (`/api/schedule/*`)
@@ -249,25 +250,21 @@ See `SPEC.md` for full API specification. Summary:
 ### Testing
 
 Integration tests use `axum::Router::oneshot()` with in-memory SQLite.
-No external HTTP server needed. Run with `cargo nextest run -p takusu-serve`.
+No external HTTP server needed. Run with `cargo nextest run -p takusu-local`.
 
 ### Key Architecture Decisions
 
+- **takusu-local-lib** is the core business logic, used by both `takusu-local` (server) and `takusu-cli` (client).
+- **Pluggable storage**: `takusu-storage` provides the `Storage` trait. Two implementations: `SqliteStorage` (direct sqlx) and `WorkersStorage` (HTTP → Cloudflare Worker).
+- **CLI uses takusu-local-lib directly**: No network round-trip; `takusu-cli` initializes `TakusuApp` with a storage backend (`TAKUSU_STORAGE=sqlite|workers`).
 - **Single active schedule**: `schedules` table has one row (`id = 'active'`), UPSERT on generate
 - **Task CRUD does not auto-reschedule**: responses include `unscheduled_count`
 - **Move entry with validation**: `PATCH /api/schedule/entries/:task_id` returns 409
   with warnings on violations; `force: true` overrides
 - **iCal import skips duplicates**: by `ical_uid` column (unique index)
 - **Token hashing**: tokens stored as SHA-256, full token only returned on creation
-- **Google Calendar sync is fire-and-forget**: schedule generate/reschedule/move/clear
-  triggers background sync via `tokio::spawn`. Response is returned before sync completes.
-  Sync uses a `tokio::sync::Mutex` lock to prevent concurrent runs. Failed syncs retry
-  up to 3 times with exponential backoff (5s, 10s, 20s).
-- **google-cal crate**: standalone Google Calendar API client. `Client::sync()` does
-  diff-based sync (create/update/delete against existing mappings). `Client::delete_all()`
-  removes all events. OAuth2 flow: `oauth_url()` → user authorize → `exchange_code()`.
-- **AppState has sync_lock**: `Arc<Mutex<()>>` serialized via the lock inside the retry loop
-  (lock acquired per attempt, released before sleep).
+- **Google Calendar sync**: schedule generate/reschedule/move/clear triggers sync
+  inline (no fire-and-forget). `google-cal` crate does diff-based sync.
 - **Generate uses `now` as start**: `POST /api/schedule/generate` no longer accepts `from`;
   the start time is always the current time. Only `until` is required.
 - **Task status tracking**: tasks have a `status` column with 5 states:
@@ -298,24 +295,26 @@ No external HTTP server needed. Run with `cargo nextest run -p takusu-serve`.
 
 CLI client using clap derive with nested subcommands: `task`, `schedule`, `token`, `sync`.
 
+- **Uses takusu-local-lib directly**: no network round-trip
+- **Storage backends**: `TAKUSU_STORAGE=sqlite` (default) or `TAKUSU_STORAGE=workers`
 - **Display modes**: `--mode rich` (comfy-table) / `--mode simple` (plain text)
-- **Auth**: `--token` flag or `TAKUSU_TOKEN` env var
 - **Status display**: colored in rich mode (Yellow=pending, Green=scheduled, DarkYellow=in_progress,
   DarkCyan=completed, DarkGrey=skipped); simple mode uses markers ([ ], [~], [>], [x], [-])
 - **Status update**: `task update --status <value>` or `task edit` includes status field
-- **Task list filter**: `task list --status <value>
+- **Task list filter**: `task list --status <value>`
 - **Editor-based editing**: `task edit <ID>` writes task fields to a temp file,
   opens `$EDITOR` (default `vi`), then parses the saved file and sends PATCH.
   Lines starting with `#` are comments. Empty values are not updated.
 - **Subcommands**: `task {list,show,create,edit,update,replace,delete,status}`,
   `schedule {get,generate,reschedule,move,clear}`,
-  `token {create,list,revoke}`, `sync {settings,setup,oauth-url,oauth-callback,trigger}`
+  `token {create,list,revoke}`, `sync {settings,setup,oauth-url,oauth-callback,trigger}`,
+  `habit {list,show,create,edit,update,replace,delete}`
 
 ## takusu-client
 
-Standalone HTTP client library for takusu-serve. Reused by takusu-cli and any future client (Android Kotlin, etc.).
+Standalone HTTP client library for the takusu REST API. Reused by any future client (Android Kotlin, etc.).
 
-- Types mirror server `model.rs` request/response structs (`TaskRow`, `CreateTask`, `UpdateTask`, etc.)
+- Types mirror `takusu-storage` model.rs request/response structs (`TaskRow`, `CreateTask`, `UpdateTask`, etc.)
 - `Client` struct holds `base_url` + `token`, all methods are async
 - Error type: `ClientError { Http, Api { status, body } }` — no `thiserror` dependency
 
@@ -325,7 +324,7 @@ Standalone HTTP client library for takusu-serve. Reused by takusu-cli and any fu
 - **But: add a comment whenever the reason for writing code a certain way is non-obvious.** If a future reader might ask "why is this done this way?", add a comment explaining the rationale. This is especially important for performance optimizations, workarounds for external library quirks, safety invariants that aren't type-checked, and cases where the seemingly "cleaner" approach would be wrong.
 - Uses `thiserror` for error types
 - Module-level docs (`//!`) in each source file describe algorithm details
-- Modules organized by domain (core, serve, audio, google-cal)
+- Modules organized by domain (core, local, audio, google-cal)
 - Workspace-level dependency versions defined in root `Cargo.toml`
 - `FxHashSet` over `HashSet` for performance-critical collections
 - Edition 2024: `gen` is a reserved keyword → use `r#gen` for rand trait methods
@@ -336,7 +335,7 @@ Standalone HTTP client library for takusu-serve. Reused by takusu-cli and any fu
 These patterns look suspicious but exist for real reasons. If you need to change them, understand the context first:
 
 ### `sqlx::AssertSqlSafe` in dynamic SQL
-**Files:** `takusu-serve/src/handler/task.rs`, `schedule.rs`, `sync.rs`; `takusu-local/src/handlers/task.rs`, etc.
+**Files:** `takusu-local/src/handlers/task.rs`, `schedule.rs`, `sync.rs`; `takusu-local-lib/src/storage_sqlite.rs`, etc.
 
 Dynamic SQL with parameterized `?` placeholders suppresses sqlx's compile-time verification. Safe today because all user values go through `?` bindings, but removes sqlx's guard against future accidental string interpolation. If refactoring, replace with `sqlx::query_builder` or array binding.
 
@@ -350,9 +349,9 @@ cfg.workers_url().split('|').next()
 The config crate's env separator collides with `TAKUSU_WORKERS_URL` containing `://`. The `|` split is a fragile workaround. The second segment (after `|`) is unused/undocumented.
 
 ### ~~Fire-and-forget Google Calendar sync~~ FIXED
-**Files:** `takusu-serve/src/handler/schedule.rs`, `sync.rs`; `takusu-local/src/handlers/schedule.rs`, `sync.rs`
+**Files:** `takusu-local/src/handlers/schedule.rs`, `sync.rs`; `takusu-local-lib/src/app.rs`
 
-`tokio::spawn` was replaced with awaited `do_sync()` calls. `sync_lock` removed from AppState. Sync now runs inline during the request.
+`tokio::spawn` was replaced with awaited `do_sync()` calls. Sync now runs inline during the request.
 
 ### `COALESCE` prevents clearing fields to NULL
 **File:** `takusu-worker/src/handlers/tasks.rs:130`, `habits.rs:76`
@@ -364,7 +363,7 @@ UPDATE tasks SET title=COALESCE(?1,title), ...
 `Option::None` (from `serde_json::Value::Null` → `Option::None`) binds as `JsValue::NULL`, so `COALESCE(NULL, title)` keeps the old value. There is no way to clear a field. Fixing this requires distinguishing "not provided" from "explicitly set to null".
 
 ### `LIKE` prefix matching for short IDs
-**Files:** `takusu-serve/src/handler/task.rs:28`, `habit.rs:21`; `takusu-local/src/storage_sqlite.rs:628`
+**Files:** `takusu-local/src/handlers/task.rs:28`, `habit.rs:21`; `takusu-local-lib/src/storage_sqlite.rs:628`
 
 ```sql
 SELECT id FROM tasks WHERE id LIKE ? || '%'
@@ -373,14 +372,14 @@ SELECT id FROM tasks WHERE id LIKE ? || '%'
 Forces a full table scan and is vulnerable to `_`/`%` pattern injection. The entire short-ID UX depends on this pattern.
 
 ### `point_to_iso` hardcoded 5-minute slots
-**Files:** `takusu-serve/src/handler/schedule.rs:63-66` and ~8 other locations
+**Files:** `takusu-local-lib/src/app.rs:58-62` and ~8 other locations
 
 Magic number `5` (slot length in minutes) is duplicated across crates with no shared constant. Changing slot granularity requires updating every site.
 
 ### ~~Duplicated 1024-line integration test~~ NOTED
-**Files:** `takusu-serve/tests/integration.rs` and `takusu-local/tests/integration.rs`
+**Files:** `takusu-local/tests/integration.rs`
 
-Nearly identical test files. Both now have a comment at the top warning they must be kept in sync. Full deduplication would require a shared test-utils crate.
+Integration tests share code patterns with the old `takusu-serve/tests/integration.rs` (now deleted). Full deduplication into a shared test-utils crate is planned.
 
 ### ~~`_unused_jsvalue_marker` dead code~~ REMOVED
 **File:** `takusu-worker/src/handlers/tokens.rs`
@@ -393,14 +392,14 @@ Removed the dead code function and unused `JsValue` import.
 Magic number `410` is now a named constant `ALREADY_DELETED`.
 
 ### ~~`get_settings_or_default` swallows DB errors~~ FIXED
-**Files:** `takusu-serve/src/handler/schedule.rs:39-53`; `takusu-local/src/handlers/schedule.rs:114-128`
+**Files:** `takusu-local-lib/src/app.rs:135-147`
 
 Now returns `Result<SettingsRow, AppError>`. DB errors propagate correctly; `NotFound` still falls back to defaults.
 
 ### ~~Sync `.ok()` silently drops DB errors~~ FIXED
-**File:** `takusu-serve/src/handler/sync.rs:222,232,194`
+**Files:** `takusu-local-lib/src/app.rs:597-721`
 
-All DB operations (`upsert_mappings`, `delete_mappings_by_task_ids`, `delete_all_mappings`, `get_task_infos`, `get_existing_mappings`) now propagate errors via `?` with `.map_err()`.
+All DB operations propagate errors via `?` with `.map_err()`.
 
 ### ~~Unsafe `set_len` in audio recording~~ REMOVED
 **File:** `takusu-audio/src/record.rs:88-101`

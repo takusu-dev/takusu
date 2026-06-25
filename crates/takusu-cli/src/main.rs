@@ -58,7 +58,7 @@ enum Commands {
     /// Check server health (no token required)
     Health,
 
-    /// Generate a root token for takusu-serve
+    /// Generate a root token
     GenRootToken,
 
     /// Task management

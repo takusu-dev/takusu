@@ -1,6 +1,6 @@
-//! # takusu-client — HTTP client for takusu-serve
+//! # takusu-client — HTTP client for takusu REST API
 //!
-//! Provides types and a `Client` for interacting with the takusu-serve REST API.
+//! Provides types and a `Client` for interacting with the takusu REST API.
 
 use serde::{Deserialize, Serialize};
 

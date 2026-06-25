@@ -128,11 +128,11 @@
             BLAS_INCLUDE_DIRS = "${pkgs.openblas.dev}/include";
           };
 
-          takusu-serve = craneLib.buildPackage {
+          takusu-local = craneLib.buildPackage {
             inherit src cargoArtifacts;
             strictDeps = true;
-            pname = "takusu-serve";
-            cargoExtraArgs = "-p takusu-serve";
+            pname = "takusu-local";
+            cargoExtraArgs = "-p takusu-local";
             nativeBuildInputs = with pkgs; [
               pkg-config
               cmake
@@ -141,8 +141,11 @@
             buildInputs = with pkgs; [
               alsa-lib
               libpulseaudio
+              openblas
             ];
             LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
+            OPENBLAS_PATH = "${pkgs.openblas}/lib";
+            BLAS_INCLUDE_DIRS = "${pkgs.openblas.dev}/include";
           };
 
           mcp-servers = import inputs.mcp-servers-nix { inherit pkgs; };
@@ -187,7 +190,7 @@
           };
 
           packages = {
-            inherit takusu-cli takusu-serve;
+            inherit takusu-cli takusu-local;
             default = takusu-cli;
 
             funasr-server = pkgs.writeShellApplication {

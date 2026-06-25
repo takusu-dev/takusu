@@ -32,9 +32,9 @@ async fn setup_mock_db() -> SqlitePool {
         .await
         .unwrap();
     let sqls: &[&str] = &[
-        include_str!("../../takusu-serve/migrations/001_init.sql"),
-        include_str!("../../takusu-serve/migrations/002_google_cal.sql"),
-        include_str!("../../takusu-serve/migrations/003_settings.sql"),
+        include_str!("../migrations/001_init.sql"),
+        include_str!("../migrations/002_google_cal.sql"),
+        include_str!("../migrations/003_settings.sql"),
     ];
     for s in sqls {
         sqlx::raw_sql(*s).execute(&pool).await.unwrap();

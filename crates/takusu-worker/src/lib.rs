@@ -1,7 +1,7 @@
 //! # takusu-worker — Cloudflare Worker (Rust/WASM)
 //!
 //! Storage + auth layer for the decoupled takusu architecture. Exposes a REST
-//! API that mirrors the data subset of the legacy takusu-serve: tasks, habits,
+//! API that mirrors the data subset of the takusu-local API: tasks, habits,
 //! schedules, tokens, settings, Google Calendar settings/mappings. The local
 //! server (`takusu-local`) is the only intended client.
 //!
