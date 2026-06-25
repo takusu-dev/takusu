@@ -44,6 +44,8 @@ mod anneal;
 pub mod evaluate;
 mod solver;
 
+use std::collections::HashMap;
+
 use jiff::Timestamp;
 use rustc_hash::FxHashSet;
 use thiserror::Error;
@@ -407,6 +409,19 @@ impl Planner {
             }
         }
 
+        let mut orig_to_sub: HashMap<usize, usize> = HashMap::new();
+        for (sub_idx, &orig_id) in sub_to_orig.iter().enumerate() {
+            orig_to_sub.insert(orig_id, sub_idx);
+        }
+
+        for task in sub_planner.tasks_mut() {
+            task.depends = task
+                .depends
+                .iter()
+                .filter_map(|orig_dep| orig_to_sub.get(orig_dep).copied())
+                .collect();
+        }
+
         let sub_plan = solver::solve_partial(&sub_planner, &[]);
 
         let mut schedules = pinned;
@@ -420,6 +435,10 @@ impl Planner {
     /// 登録された全タスクを返す。
     pub fn tasks(&self) -> &[Task] {
         &self.tasks
+    }
+
+    pub fn tasks_mut(&mut self) -> &mut [Task] {
+        &mut self.tasks
     }
 
     pub(crate) fn freeness(&self, id: usize) -> f64 {
@@ -731,6 +750,125 @@ mod tests {
             Point(55),
             "pinned task 2 end should be unchanged"
         );
+    }
+
+    #[test]
+    fn plan_in_range_remaps_depends_correctly() {
+        let mut p = Planner::default();
+        let _a = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(20)),
+                end: Point(100),
+                cost_estimate: NormalDist::new(1, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+        let _b = p
+            .add(Task {
+                id: 1,
+                start: Some(Point(0)),
+                end: Point(100),
+                cost_estimate: NormalDist::new(1, 0),
+                depends: vec![0],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+        let _c = p
+            .add(Task {
+                id: 2,
+                start: Some(Point(0)),
+                end: Point(100),
+                cost_estimate: NormalDist::new(1, 0),
+                depends: vec![1],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+
+        let current_schedule = vec![
+            (Point(20), Point(30), 0),
+            (Point(10), Point(20), 1),
+            (Point(30), Point(40), 2),
+        ];
+        let range = RescheduleRange {
+            from: Point(0),
+            until: Point(15),
+        };
+        // Task 0 is out of range (starts at 20, range ends at 15) → pinned.
+        // Tasks 1 and 2 are in range → rescheduled in sub-planner.
+        // Before remap: task 2.depends = [1] (original id), but in sub-planner idx 1 is task 1.
+        // After remap: task 2.depends should be [1] (sub-planner idx).
+        // Task 1.depends = [0] (original), but 0 is pinned → filtered out, depends becomes [].
+        let replanned = p.plan_in_range(&range, &current_schedule, &[]);
+        assert_eq!(replanned.schedules.len(), 3);
+        let pinned_0 = replanned.schedules.iter().find(|(_, _, id)| *id == 0).unwrap();
+        assert_eq!(pinned_0.0, Point(20), "task 0 pinned start unchanged");
+        assert_eq!(pinned_0.1, Point(30), "task 0 pinned end unchanged");
+    }
+
+    #[test]
+    fn plan_in_range_dep_chain_remap_self_dep_prevented() {
+        let mut p = Planner::default();
+        let _a = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(100),
+                cost_estimate: NormalDist::new(1, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+        let _b = p
+            .add(Task {
+                id: 1,
+                start: Some(Point(0)),
+                end: Point(100),
+                cost_estimate: NormalDist::new(1, 0),
+                depends: vec![0],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+        let _c = p
+            .add(Task {
+                id: 2,
+                start: Some(Point(0)),
+                end: Point(100),
+                cost_estimate: NormalDist::new(1, 0),
+                depends: vec![1],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+
+        let current_schedule = vec![
+            (Point(0), Point(10), 0),
+            (Point(10), Point(20), 1),
+            (Point(50), Point(60), 2),
+        ];
+        let range = RescheduleRange {
+            from: Point(0),
+            until: Point(30),
+        };
+        // Tasks 0 and 1 are in range → rescheduled.
+        // Task 2 is out of range (starts at 50) → pinned.
+        // Sub-planner: [task 0, task 1]. Task 1.depends = [0] → remapped to [0]. Correct.
+        let replanned = p.plan_in_range(&range, &current_schedule, &[]);
+        assert_eq!(replanned.schedules.len(), 3);
+        let pinned_2 = replanned.schedules.iter().find(|(_, _, id)| *id == 2).unwrap();
+        assert_eq!(pinned_2.0, Point(50), "task 2 pinned start unchanged");
     }
 
     #[test]

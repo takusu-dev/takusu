@@ -396,6 +396,7 @@ async fn workers_storage_e2e() {
         allows_parallel: Some(false),
         abandonability: Some(0.3),
         ical_uid: None,
+        habit_id: None,
     };
     let task = storage.create_task(&create_body).await.unwrap();
     assert_eq!(task.title, "e2e task");

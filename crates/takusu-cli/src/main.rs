@@ -175,6 +175,10 @@ enum TaskCommands {
         description: Option<String>,
         #[arg(long)]
         depends: Option<Vec<String>>,
+        #[arg(long)]
+        parallelizable: Option<bool>,
+        #[arg(long)]
+        allows_parallel: Option<bool>,
     },
 
     /// Edit a task in $EDITOR
@@ -234,6 +238,10 @@ enum TaskCommands {
         description: Option<String>,
         #[arg(long)]
         depends: Option<Vec<String>>,
+        #[arg(long)]
+        parallelizable: Option<bool>,
+        #[arg(long)]
+        allows_parallel: Option<bool>,
     },
 
     /// Delete a task
@@ -592,6 +600,8 @@ async fn run_task(
             abandonability,
             description,
             depends,
+            parallelizable,
+            allows_parallel,
         } => {
             let (title, end_at) = if is_interactive() && title.is_none() && end_at.is_none() {
                 let t = prompt("Title");
@@ -613,11 +623,12 @@ async fn run_task(
                     None
                 },
                 depends,
-                parallelizable: None,
-                allows_parallel: None,
+                parallelizable,
+                allows_parallel,
                 abandonability: Some(abandonability),
                 description,
                 ical_uid: None,
+                habit_id: None,
             };
             let task = app.create_task(&body).await?;
             match mode {
@@ -674,6 +685,7 @@ async fn run_task(
                 allows_parallel,
                 abandonability,
                 status,
+                habit_id: None,
             };
             let task = app.update_task(&id, &body).await?;
             match mode {
@@ -691,6 +703,8 @@ async fn run_task(
             abandonability,
             description,
             depends,
+            parallelizable,
+            allows_parallel,
         } => {
             let avg_minutes = parse_duration(&avg_time).map_err(AppError::BadRequest)?;
             let sigma_minutes: i64 = parse_duration(&sigma_time).map_err(AppError::BadRequest)?;
@@ -705,11 +719,12 @@ async fn run_task(
                     None
                 },
                 depends,
-                parallelizable: None,
-                allows_parallel: None,
+                parallelizable,
+                allows_parallel,
                 abandonability: Some(abandonability),
                 description,
                 ical_uid: None,
+                habit_id: None,
             };
             let task = app.replace_task(&id, &body).await?;
             match mode {

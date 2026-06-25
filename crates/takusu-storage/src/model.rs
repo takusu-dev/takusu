@@ -79,6 +79,8 @@ pub struct CreateTask {
     pub abandonability: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ical_uid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub habit_id: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -105,6 +107,8 @@ pub struct UpdateTask {
     pub abandonability: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub habit_id: Option<String>,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]

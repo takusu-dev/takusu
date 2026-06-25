@@ -62,7 +62,7 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
     let abandonability = body.abandonability.unwrap_or(0.5);
 
     let stmt = database.prepare(
-        "INSERT INTO tasks (id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'pending', ?12)"
+        "INSERT INTO tasks (id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'pending', ?12, ?13)"
     );
     stmt.bind(&[
         JsValue::from_str(&id),
@@ -83,6 +83,10 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
         JsValue::from_bool(allows_parallel),
         JsValue::from_f64(abandonability),
         body.ical_uid
+            .as_deref()
+            .map(JsValue::from_str)
+            .unwrap_or(JsValue::NULL),
+        body.habit_id
             .as_deref()
             .map(JsValue::from_str)
             .unwrap_or(JsValue::NULL),
@@ -127,7 +131,7 @@ pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, Wo
         .map(|d| serde_json::to_string(d).unwrap_or_else(|_| "[]".into()));
 
     let stmt = database.prepare(
-        "UPDATE tasks SET title=COALESCE(?1,title), description=COALESCE(?2,description), start_at=COALESCE(?3,start_at), end_at=COALESCE(?4,end_at), avg_minutes=COALESCE(?5,avg_minutes), sigma_minutes=COALESCE(?6,sigma_minutes), depends=COALESCE(?7,depends), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), status=?11, updated_at=datetime('now') WHERE id = ?12"
+        "UPDATE tasks SET title=COALESCE(?1,title), description=COALESCE(?2,description), start_at=COALESCE(?3,start_at), end_at=COALESCE(?4,end_at), avg_minutes=COALESCE(?5,avg_minutes), sigma_minutes=COALESCE(?6,sigma_minutes), depends=COALESCE(?7,depends), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), status=?11, habit_id=COALESCE(?13,habit_id), updated_at=datetime('now') WHERE id = ?12"
     );
     stmt.bind(&[
         body.title
@@ -167,6 +171,10 @@ pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, Wo
             .unwrap_or(JsValue::NULL),
         JsValue::from_str(&status),
         JsValue::from_str(id),
+        body.habit_id
+            .as_deref()
+            .map(JsValue::from_str)
+            .unwrap_or(JsValue::NULL),
     ])?
     .run()
     .await
@@ -187,7 +195,7 @@ pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, W
     let abandonability = body.abandonability.unwrap_or(0.5);
 
     let stmt = database.prepare(
-        "UPDATE tasks SET title=?1, description=?2, start_at=?3, end_at=?4, avg_minutes=?5, sigma_minutes=?6, depends=?7, parallelizable=?8, allows_parallel=?9, abandonability=?10, updated_at=datetime('now') WHERE id = ?11"
+        "UPDATE tasks SET title=?1, description=?2, start_at=?3, end_at=?4, avg_minutes=?5, sigma_minutes=?6, depends=?7, parallelizable=?8, allows_parallel=?9, abandonability=?10, habit_id=COALESCE(?12,habit_id), updated_at=datetime('now') WHERE id = ?11"
     );
     stmt.bind(&[
         JsValue::from_str(&body.title),
@@ -207,6 +215,10 @@ pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, W
         JsValue::from_bool(allows_parallel),
         JsValue::from_f64(abandonability),
         JsValue::from_str(id),
+        body.habit_id
+            .as_deref()
+            .map(JsValue::from_str)
+            .unwrap_or(JsValue::NULL),
     ])?
     .run()
     .await

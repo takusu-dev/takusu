@@ -107,6 +107,7 @@ pub fn parse_edited_task(content: &str) -> Option<UpdateTask> {
         allows_parallel,
         abandonability,
         status,
+        habit_id: None,
     })
 }
 

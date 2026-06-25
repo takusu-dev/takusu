@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 takusu-core.workspace = true
 takusu-ical.workspace = true
+takusu-habit.workspace = true
 takusu-storage.workspace = true
 google-cal.workspace = true
 tokio.workspace = true

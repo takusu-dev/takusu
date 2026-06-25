@@ -1,6 +1,8 @@
 use jiff::civil::Date;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Weekday {
     Mon,
     Tue,
@@ -37,7 +39,8 @@ impl Weekday {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Frequency {
     Daily,
     Weekly,
@@ -45,7 +48,7 @@ pub enum Frequency {
     Yearly,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NWeekday {
     pub n: Option<i8>,
     pub weekday: Weekday,
@@ -64,7 +67,7 @@ impl NWeekday {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecurrenceRule {
     pub freq: Frequency,
     pub interval: u32,
@@ -72,7 +75,32 @@ pub struct RecurrenceRule {
     pub by_month: Vec<i8>,
     pub by_month_day: Vec<i8>,
     pub count: Option<u32>,
+    #[serde(with = "date_strings")]
     pub exdates: Vec<Date>,
+}
+
+mod date_strings {
+    use jiff::civil::Date;
+    use serde::{Deserializer, Serializer, de};
+
+    pub fn serialize<S>(dates: &[Date], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let strings: Vec<String> = dates.iter().map(|d| d.to_string()).collect();
+        serde::Serialize::serialize(&strings, serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<Date>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let strings: Vec<String> = serde::Deserialize::deserialize(deserializer)?;
+        strings
+            .iter()
+            .map(|s| Date::strptime("%Y-%m-%d", s).map_err(de::Error::custom))
+            .collect()
+    }
 }
 
 impl RecurrenceRule {

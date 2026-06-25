@@ -3059,6 +3059,8 @@ name = "takusu-habit"
 version = "0.1.0"
 dependencies = [
  "jiff",
+ "serde",
+ "serde_json",
  "takusu-core",
  "thiserror 2.0.18",
 ]
@@ -3108,6 +3110,7 @@ dependencies = [
  "sha2 0.11.0",
  "sqlx",
  "takusu-core",
+ "takusu-habit",
  "takusu-ical",
  "takusu-storage",
  "thiserror 2.0.18",

@@ -61,6 +61,75 @@ fn point_to_iso(slot: i64) -> String {
     ts.to_string()
 }
 
+fn iso_date(iso: &str) -> String {
+    iso.chars().take(10).collect()
+}
+
+fn detect_cycle(adj: &[Vec<usize>]) -> Result<(), AppError> {
+    let n = adj.len();
+    let mut color = vec![0u8; n];
+    fn dfs(v: usize, adj: &[Vec<usize>], color: &mut [u8]) -> bool {
+        color[v] = 1;
+        for &u in &adj[v] {
+            if color[u] == 1 {
+                return true;
+            }
+            if color[u] == 0 && dfs(u, adj, color) {
+                return true;
+            }
+        }
+        color[v] = 2;
+        false
+    }
+    for v in 0..n {
+        if color[v] == 0 && dfs(v, adj, &mut color) {
+            return Err(AppError::BadRequest("circular dependency detected".into()));
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::type_complexity)]
+fn build_dep_graph(tasks: &[TaskRow]) -> Result<(Vec<Vec<usize>>, HashMap<String, usize>), AppError> {
+    let mut id_to_idx: HashMap<String, usize> = HashMap::new();
+    for (i, t) in tasks.iter().enumerate() {
+        id_to_idx.insert(t.id.clone(), i);
+    }
+    let mut adj = vec![Vec::new(); tasks.len()];
+    for t in tasks {
+        let idx = id_to_idx[&t.id];
+        let deps: Vec<String> = serde_json::from_str(&t.depends).unwrap_or_default();
+        for dep_id in &deps {
+            if let Some(&dep_idx) = id_to_idx.get(dep_id) {
+                adj[idx].push(dep_idx);
+            }
+        }
+    }
+    Ok((adj, id_to_idx))
+}
+
+fn habit_row_to_config(row: &HabitRow, tz: &jiff::tz::TimeZone) -> Result<takusu_habit::Habit, AppError> {
+    let recurrence: takusu_habit::RecurrenceRule = serde_json::from_str(&row.recurrence)
+        .map_err(|e| AppError::BadRequest(format!("invalid recurrence: {e}")))?;
+    let (sh, sm) = parse_hhmm(&row.start_time);
+    let start_time = takusu_habit::TimeOfDay::new(sh, sm)
+        .ok_or_else(|| AppError::BadRequest(format!("invalid start_time: {}", row.start_time)))?;
+    let duration = NormalDist::new(
+        (row.avg_minutes / 5) as u64,
+        (row.sigma_minutes / 5) as u64,
+    );
+    Ok(takusu_habit::Habit {
+        recurrence,
+        start_time,
+        tz: tz.clone(),
+        duration,
+        deadline_slots: None,
+        parallelizable: row.parallelizable,
+        allows_parallel: row.allows_parallel,
+        abandonability: row.abandonability,
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IcalImportResult {
     pub imported: usize,
@@ -160,6 +229,23 @@ impl TakusuApp {
     // ── Tasks ─────────────────────────────────────────────
 
     pub async fn create_task(&self, body: &CreateTask) -> Result<TaskRow, AppError> {
+        if let Some(dep_ids) = &body.depends
+            && !dep_ids.is_empty()
+        {
+            let tasks = self
+                .storage
+                .list_tasks(&TaskQuery::default())
+                .await
+                .map_err(storage_to_app)?;
+            let (_adj, id_to_idx) = build_dep_graph(&tasks)?;
+            for did in dep_ids {
+                if !id_to_idx.contains_key(did) {
+                    return Err(AppError::BadRequest(format!(
+                        "depends on unknown task: {did}"
+                    )));
+                }
+            }
+        }
         self.storage.create_task(body).await.map_err(storage_to_app)
     }
 
@@ -172,6 +258,35 @@ impl TakusuApp {
     }
 
     pub async fn update_task(&self, id: &str, body: &UpdateTask) -> Result<TaskRow, AppError> {
+        if let Some(dep_ids) = &body.depends {
+            let tasks = self
+                .storage
+                .list_tasks(&TaskQuery::default())
+                .await
+                .map_err(storage_to_app)?;
+            let (mut adj, id_to_idx) = build_dep_graph(&tasks)?;
+            let full_id = self
+                .storage
+                .get_task(id)
+                .await
+                .map_err(storage_to_app)?
+                .id;
+            let target_idx = id_to_idx
+                .get(&full_id)
+                .ok_or_else(|| AppError::NotFound(format!("task {id} not found")))?;
+            for did in dep_ids {
+                if !id_to_idx.contains_key(did) {
+                    return Err(AppError::BadRequest(format!(
+                        "depends on unknown task: {did}"
+                    )));
+                }
+            }
+            adj[*target_idx] = dep_ids
+                .iter()
+                .filter_map(|did| id_to_idx.get(did).copied())
+                .collect();
+            detect_cycle(&adj)?;
+        }
         self.storage
             .update_task(id, body)
             .await
@@ -179,6 +294,37 @@ impl TakusuApp {
     }
 
     pub async fn replace_task(&self, id: &str, body: &CreateTask) -> Result<TaskRow, AppError> {
+        if let Some(dep_ids) = &body.depends
+            && !dep_ids.is_empty()
+        {
+            let tasks = self
+                .storage
+                .list_tasks(&TaskQuery::default())
+                .await
+                .map_err(storage_to_app)?;
+            let (mut adj, id_to_idx) = build_dep_graph(&tasks)?;
+            let full_id = self
+                .storage
+                .get_task(id)
+                .await
+                .map_err(storage_to_app)?
+                .id;
+            let target_idx = id_to_idx
+                .get(&full_id)
+                .ok_or_else(|| AppError::NotFound(format!("task {id} not found")))?;
+            for did in dep_ids {
+                if !id_to_idx.contains_key(did) {
+                    return Err(AppError::BadRequest(format!(
+                        "depends on unknown task: {did}"
+                    )));
+                }
+            }
+            adj[*target_idx] = dep_ids
+                .iter()
+                .filter_map(|did| id_to_idx.get(did).copied())
+                .collect();
+            detect_cycle(&adj)?;
+        }
         self.storage
             .replace_task(id, body)
             .await
@@ -214,6 +360,7 @@ impl TakusuApp {
                     allows_parallel: Some(false),
                     abandonability: Some(0.5),
                     ical_uid: event.uid.clone(),
+                    habit_id: None,
                 })
                 .await
                 .map_err(storage_to_app)?;
@@ -288,11 +435,18 @@ impl TakusuApp {
         let from_point = Point::from_timestamp(Timestamp::now(), 5);
 
         let task_rows = self.load_task_rows(input.task_ids.as_ref()).await?;
-        let (planner, id_map, _) = self.build_planner(from_point, sleep, &task_rows)?;
+        let tz = jiff::tz::TimeZone::get(&settings.tz).unwrap_or(jiff::tz::TimeZone::UTC);
+        let habit_rows = self.sync_habit_tasks(&tz).await?;
+        let all_rows: Vec<TaskRow> = task_rows
+            .into_iter()
+            .chain(habit_rows)
+            .filter(|t| t.status == "pending" || t.status == "scheduled")
+            .collect();
+        let (planner, id_map, _) = self.build_planner(from_point, sleep, &all_rows)?;
 
         let plan = planner.plan();
         let entries = self.plan_to_entries(&plan, &id_map);
-        let mark_ids: Vec<String> = task_rows.iter().map(|t| t.id.clone()).collect();
+        let mark_ids: Vec<String> = all_rows.iter().map(|t| t.id.clone()).collect();
 
         let result = self
             .storage
@@ -312,6 +466,7 @@ impl TakusuApp {
     pub async fn reschedule(&self, input: &RescheduleInput) -> Result<ScheduleRow, AppError> {
         let settings = self.get_settings_or_default().await?;
         let sleep = parse_sleep(&input.sleep, &settings);
+        let now_point = Point::from_timestamp(Timestamp::now(), 5);
 
         let schedule_row = self
             .storage
@@ -327,12 +482,20 @@ impl TakusuApp {
             .list_tasks(&TaskQuery::default())
             .await
             .map_err(storage_to_app)?;
-        let active: Vec<TaskRow> = task_rows
+        let mut active: Vec<TaskRow> = task_rows
             .into_iter()
             .filter(|t| t.status == "pending" || t.status == "scheduled")
             .collect();
 
-        let (planner, id_map, id_to_idx) = self.build_planner(Point(0), sleep, &active)?;
+        let tz = jiff::tz::TimeZone::get(&settings.tz).unwrap_or(jiff::tz::TimeZone::UTC);
+        let habit_rows = self.sync_habit_tasks(&tz).await?;
+        active.extend(
+            habit_rows
+                .into_iter()
+                .filter(|t| t.status == "pending" || t.status == "scheduled"),
+        );
+
+        let (planner, id_map, id_to_idx) = self.build_planner(now_point, sleep, &active)?;
 
         let current_schedule: Vec<(Point, Point, usize)> = entries
             .iter()
@@ -750,6 +913,119 @@ impl TakusuApp {
         }
     }
 
+    pub async fn sync_habit_tasks(&self, tz: &jiff::tz::TimeZone) -> Result<Vec<TaskRow>, AppError> {
+        let habits = self
+            .storage
+            .list_habits()
+            .await
+            .map_err(storage_to_app)?;
+        let active_habits: Vec<HabitRow> = habits.into_iter().filter(|h| h.active).collect();
+        if active_habits.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let now = Point::from_timestamp(Timestamp::now(), 5);
+        let from = now - 7 * 24 * 12;
+        let until = now + 14 * 24 * 12;
+
+        let mut expected: Vec<(String, String, CoreTask)> = Vec::new();
+        for row in &active_habits {
+            let config = habit_row_to_config(row, tz)?;
+            let mut store = takusu_habit::HabitStore::new();
+            store.add(config);
+            for gt in store.generate(from, until) {
+                let start_point = gt.task.start.unwrap_or(Point(0));
+                let date = iso_date(&point_to_iso(start_point.0));
+                expected.push((row.id.clone(), date, gt.task));
+            }
+        }
+
+        let all_tasks = self
+            .storage
+            .list_tasks(&TaskQuery::default())
+            .await
+            .map_err(storage_to_app)?;
+
+        let mut existing_by_key: HashMap<(String, String), TaskRow> = HashMap::new();
+        for task in &all_tasks {
+            if let Some(ref hid) = task.habit_id {
+                let date = task.start_at.as_deref().map(iso_date).unwrap_or_default();
+                if !date.is_empty() {
+                    existing_by_key.insert((hid.clone(), date), task.clone());
+                }
+            }
+        }
+
+        let mut result: Vec<TaskRow> = Vec::new();
+
+        for (habit_id, date, core_task) in &expected {
+            let key = (habit_id.clone(), date.clone());
+            let title = active_habits
+                .iter()
+                .find(|h| h.id == *habit_id)
+                .map(|h| format!("{} ({})", h.title, date))
+                .unwrap_or_else(|| format!("habit:{}", date));
+
+            if let Some(existing) = existing_by_key.remove(&key) {
+                if existing.status == "pending" {
+                    let update = UpdateTask {
+                        start_at: core_task.start.map(|p| point_to_iso(p.0)),
+                        end_at: Some(point_to_iso(core_task.end.0)),
+                        title: Some(title),
+                        avg_minutes: Some(core_task.cost_estimate.avg as i64 * 5),
+                        sigma_minutes: Some(core_task.cost_estimate.sigma as i64 * 5),
+                        parallelizable: Some(core_task.parallelizable),
+                        allows_parallel: Some(core_task.allows_parallel),
+                        abandonability: Some(core_task.abandonability),
+                        ..Default::default()
+                    };
+                    let updated = self
+                        .storage
+                        .update_task(&existing.id, &update)
+                        .await
+                        .map_err(storage_to_app)?;
+                    result.push(updated);
+                } else {
+                    result.push(existing.clone());
+                }
+            } else {
+                let create = CreateTask {
+                    title,
+                    start_at: core_task.start.map(|p| point_to_iso(p.0)),
+                    end_at: point_to_iso(core_task.end.0),
+                    avg_minutes: core_task.cost_estimate.avg as i64 * 5,
+                    sigma_minutes: Some(core_task.cost_estimate.sigma as i64 * 5),
+                    depends: Some(vec![]),
+                    parallelizable: Some(core_task.parallelizable),
+                    allows_parallel: Some(core_task.allows_parallel),
+                    abandonability: Some(core_task.abandonability),
+                    description: None,
+                    ical_uid: None,
+                    habit_id: Some(habit_id.clone()),
+                };
+                let created = self
+                    .storage
+                    .create_task(&create)
+                    .await
+                    .map_err(storage_to_app)?;
+                result.push(created);
+            }
+        }
+
+        for (_, task) in existing_by_key {
+            if task.status == "pending" {
+                self.storage
+                    .delete_task(&task.id)
+                    .await
+                    .map_err(storage_to_app)?;
+            } else {
+                result.push(task);
+            }
+        }
+
+        Ok(result)
+    }
+
     #[allow(clippy::type_complexity)]
     fn build_planner(
         &self,
@@ -757,31 +1033,57 @@ impl TakusuApp {
         sleep: SleepConfig,
         task_rows: &[TaskRow],
     ) -> Result<(Planner, Vec<String>, HashMap<String, usize>), AppError> {
-        let mut planner = Planner::new(start, sleep);
-        let mut id_map: Vec<String> = Vec::new();
         let mut id_to_idx: HashMap<String, usize> = HashMap::new();
+        for (i, row) in task_rows.iter().enumerate() {
+            id_to_idx.insert(row.id.clone(), i);
+        }
+
+        let mut all_depends: Vec<Vec<usize>> = Vec::with_capacity(task_rows.len());
         for row in task_rows {
-            let start = row.start_at.as_ref().map(|s| iso_to_point(s)).transpose()?;
+            let dep_ids: Vec<String> = serde_json::from_str(&row.depends)
+                .unwrap_or_default();
+            let mut resolved = Vec::new();
+            for dep_id in &dep_ids {
+                if let Some(&idx) = id_to_idx.get(dep_id) {
+                    resolved.push(idx);
+                } else {
+                    return Err(AppError::BadRequest(format!(
+                        "task {} depends on unknown task {}",
+                        row.id, dep_id
+                    )));
+                }
+            }
+            all_depends.push(resolved);
+        }
+
+        detect_cycle(&all_depends)?;
+
+        let mut planner = Planner::new(start, sleep);
+        let mut id_map: Vec<String> = Vec::with_capacity(task_rows.len());
+
+        for (i, row) in task_rows.iter().enumerate() {
+            let start_opt = row.start_at.as_ref().map(|s| iso_to_point(s)).transpose()?;
             let end = iso_to_point(&row.end_at)?;
             let core_task = CoreTask {
                 id: planner.tasks().len(),
-                start,
+                start: start_opt,
                 end,
                 cost_estimate: NormalDist::new(
                     (row.avg_minutes / 5) as u64,
                     (row.sigma_minutes / 5) as u64,
                 ),
-                depends: vec![],
+                depends: all_depends[i].clone(),
                 parallelizable: row.parallelizable,
                 allows_parallel: row.allows_parallel,
                 abandonability: row.abandonability,
             };
-            let idx = planner
+            planner
                 .add(core_task)
                 .map_err(|e| AppError::BadRequest(e.to_string()))?;
             id_map.push(row.id.clone());
-            id_to_idx.insert(row.id.clone(), idx);
+            id_to_idx.insert(row.id.clone(), planner.tasks().len() - 1);
         }
+
         Ok((planner, id_map, id_to_idx))
     }
 
