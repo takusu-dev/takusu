@@ -15,7 +15,9 @@ use takusu_local_lib::{
     storage_workers::WorkersStorage,
     token_cache::TokenCache,
 };
-use takusu_storage::{CreateHabit, CreateTask, ScheduleEntry, TaskQuery, UpdateHabit, UpdateSettings};
+use takusu_storage::{
+    CreateHabit, CreateTask, ScheduleEntry, TaskQuery, UpdateHabit, UpdateSettings,
+};
 use takusu_util::{generate_root_token, parse_datetime_tz, parse_duration, parse_range_tz};
 
 fn prompt(label: &str) -> String {
@@ -31,7 +33,7 @@ fn is_interactive() -> bool {
 }
 
 fn parse_dt(s: &str, tz: &jiff::tz::TimeZone) -> Result<String, AppError> {
-    parse_datetime_tz(s, tz).map_err(|e| AppError::BadRequest(e))
+    parse_datetime_tz(s, tz).map_err(AppError::BadRequest)
 }
 
 #[derive(Parser)]
@@ -485,12 +487,10 @@ async fn main() {
     });
 
     let storage: Arc<dyn takusu_storage::Storage> = match local_cfg.storage_kind() {
-        StorageKind::Workers => {
-            WorkersStorage::shared(&local_cfg).unwrap_or_else(|e| {
-                eprintln!("Error initializing workers storage: {e}");
-                process::exit(1);
-            })
-        }
+        StorageKind::Workers => WorkersStorage::shared(&local_cfg).unwrap_or_else(|e| {
+            eprintln!("Error initializing workers storage: {e}");
+            process::exit(1);
+        }),
         StorageKind::Sqlite => {
             let root_token = LocalConfig::load_root_token();
             let storage = SqliteStorage::init(&local_cfg, root_token)
@@ -600,10 +600,8 @@ async fn run_task(
             } else {
                 (title, end_at)
             };
-            let avg_minutes = parse_duration(&avg_time)
-                .map_err(|e| AppError::BadRequest(e))?;
-            let sigma_minutes: i64 = parse_duration(&sigma_time)
-                .map_err(|e| AppError::BadRequest(e))?;
+            let avg_minutes = parse_duration(&avg_time).map_err(AppError::BadRequest)?;
+            let sigma_minutes: i64 = parse_duration(&sigma_time).map_err(AppError::BadRequest)?;
             let body = CreateTask {
                 title: title.unwrap_or_default(),
                 end_at: parse_dt(&end_at.unwrap_or_default(), tz)?,
@@ -630,12 +628,10 @@ async fn run_task(
         TaskCommands::Edit { id } => {
             let task = app.get_task(&id).await?;
             let original = editor::format_task_for_editing(&task);
-            let edited = editor::open_editor(&original, &task.id).map_err(|e| {
-                AppError::BadRequest(e.to_string())
-            })?;
-            let update = editor::parse_edited_task(&edited).ok_or_else(|| {
-                AppError::BadRequest("failed to parse edited task".to_string())
-            })?;
+            let edited = editor::open_editor(&original, &task.id)
+                .map_err(|e| AppError::BadRequest(e.to_string()))?;
+            let update = editor::parse_edited_task(&edited)
+                .ok_or_else(|| AppError::BadRequest("failed to parse edited task".to_string()))?;
             let updated = app.update_task(&id, &update).await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_tasks(&[updated], tz),
@@ -660,12 +656,12 @@ async fn run_task(
                 .as_ref()
                 .map(|s| parse_duration(s))
                 .transpose()
-                .map_err(|e| AppError::BadRequest(e))?;
+                .map_err(AppError::BadRequest)?;
             let sigma_minutes = sigma_time
                 .as_ref()
                 .map(|s| parse_duration(s))
                 .transpose()
-                .map_err(|e| AppError::BadRequest(e))?;
+                .map_err(AppError::BadRequest)?;
             let body = takusu_storage::UpdateTask {
                 title,
                 description,
@@ -696,10 +692,8 @@ async fn run_task(
             description,
             depends,
         } => {
-            let avg_minutes = parse_duration(&avg_time)
-                .map_err(|e| AppError::BadRequest(e))?;
-            let sigma_minutes: i64 = parse_duration(&sigma_time)
-                .map_err(|e| AppError::BadRequest(e))?;
+            let avg_minutes = parse_duration(&avg_time).map_err(AppError::BadRequest)?;
+            let sigma_minutes: i64 = parse_duration(&sigma_time).map_err(AppError::BadRequest)?;
             let body = CreateTask {
                 title,
                 end_at: parse_dt(&end_at, tz)?,
@@ -742,11 +736,7 @@ async fn run_task(
     Ok(())
 }
 
-async fn run_habit(
-    mode: DisplayMode,
-    app: &TakusuApp,
-    cmd: HabitCommands,
-) -> Result<(), AppError> {
+async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Result<(), AppError> {
     match cmd {
         HabitCommands::List => {
             let habits = app.list_habits().await?;
@@ -788,10 +778,8 @@ async fn run_habit(
             } else {
                 (title, recurrence, start_time, end_time)
             };
-            let avg_minutes = parse_duration(&avg_time)
-                .map_err(|e| AppError::BadRequest(e))?;
-            let sigma_minutes: i64 = parse_duration(&sigma_time)
-                .map_err(|e| AppError::BadRequest(e))?;
+            let avg_minutes = parse_duration(&avg_time).map_err(AppError::BadRequest)?;
+            let sigma_minutes: i64 = parse_duration(&sigma_time).map_err(AppError::BadRequest)?;
             let body = CreateHabit {
                 title: title.unwrap_or_default(),
                 recurrence: recurrence.unwrap_or_default(),
@@ -817,12 +805,10 @@ async fn run_habit(
         HabitCommands::Edit { id } => {
             let habit = app.get_habit(&id).await?;
             let original = editor::format_habit_for_editing(&habit);
-            let edited = editor::open_editor(&original, &habit.id).map_err(|e| {
-                AppError::BadRequest(e.to_string())
-            })?;
-            let update = editor::parse_edited_habit(&edited).ok_or_else(|| {
-                AppError::BadRequest("failed to parse edited habit".to_string())
-            })?;
+            let edited = editor::open_editor(&original, &habit.id)
+                .map_err(|e| AppError::BadRequest(e.to_string()))?;
+            let update = editor::parse_edited_habit(&edited)
+                .ok_or_else(|| AppError::BadRequest("failed to parse edited habit".to_string()))?;
             let updated = app.update_habit(&id, &update).await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_habit_detail(&updated),
@@ -847,12 +833,12 @@ async fn run_habit(
                 .as_ref()
                 .map(|s| parse_duration(s))
                 .transpose()
-                .map_err(|e| AppError::BadRequest(e))?;
+                .map_err(AppError::BadRequest)?;
             let sigma_minutes = sigma_time
                 .as_ref()
                 .map(|s| parse_duration(s))
                 .transpose()
-                .map_err(|e| AppError::BadRequest(e))?;
+                .map_err(AppError::BadRequest)?;
             let body = UpdateHabit {
                 title,
                 description,
@@ -885,10 +871,8 @@ async fn run_habit(
             parallelizable,
             allows_parallel,
         } => {
-            let avg_minutes = parse_duration(&avg_time)
-                .map_err(|e| AppError::BadRequest(e))?;
-            let sigma_minutes: i64 = parse_duration(&sigma_time)
-                .map_err(|e| AppError::BadRequest(e))?;
+            let avg_minutes = parse_duration(&avg_time).map_err(AppError::BadRequest)?;
+            let sigma_minutes: i64 = parse_duration(&sigma_time).map_err(AppError::BadRequest)?;
             let body = CreateHabit {
                 title,
                 recurrence,
@@ -946,8 +930,7 @@ async fn run_schedule(
             sleep,
         } => {
             let _until = if let Some(range) = range {
-                let (_from, u) = parse_range_tz(&range, tz)
-                    .map_err(|e| AppError::BadRequest(e))?;
+                let (_from, u) = parse_range_tz(&range, tz).map_err(AppError::BadRequest)?;
                 u
             } else {
                 match until {
@@ -961,10 +944,7 @@ async fn run_schedule(
                     }
                 }
             };
-            let body = takusu_local_lib::app::GenerateScheduleInput {
-                task_ids,
-                sleep,
-            };
+            let body = takusu_local_lib::app::GenerateScheduleInput { task_ids, sleep };
             let schedule = app.generate_schedule(&body).await?;
             let entries: Vec<ScheduleEntry> =
                 serde_json::from_str(&schedule.schedule).unwrap_or_default();
@@ -1010,7 +990,9 @@ async fn run_schedule(
             start_at,
             force,
         } => {
-            let result = app.move_entry(&task_id, &parse_dt(&start_at, tz)?, force).await?;
+            let result = app
+                .move_entry(&task_id, &parse_dt(&start_at, tz)?, force)
+                .await?;
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         ScheduleCommands::Clear => {
@@ -1021,11 +1003,7 @@ async fn run_schedule(
     Ok(())
 }
 
-async fn run_token(
-    mode: DisplayMode,
-    app: &TakusuApp,
-    cmd: TokenCommands,
-) -> Result<(), AppError> {
+async fn run_token(mode: DisplayMode, app: &TakusuApp, cmd: TokenCommands) -> Result<(), AppError> {
     match cmd {
         TokenCommands::Create { label } => {
             let resp = app.create_token(label.as_deref()).await?;
@@ -1092,7 +1070,7 @@ async fn run_sync(app: &TakusuApp, cmd: SyncCommands) -> Result<(), AppError> {
             println!("OAuth callback completed successfully.");
         }
         SyncCommands::Trigger => {
-            app.do_sync().await.map_err(|e| AppError::Internal(e))?;
+            app.do_sync().await.map_err(AppError::Internal)?;
             println!("Sync triggered.");
         }
     }
@@ -1109,13 +1087,13 @@ async fn run_config(cmd: ConfigCommands, app: &TakusuApp) -> Result<(), AppError
             sleep_end,
         } => {
             if let Some(ref v) = tz {
-                config::set("tz", v).map_err(|e| AppError::BadRequest(e))?;
+                config::set("tz", v).map_err(AppError::BadRequest)?;
             }
             if let Some(ref v) = sleep_start {
-                config::set("sleep_start", v).map_err(|e| AppError::BadRequest(e))?;
+                config::set("sleep_start", v).map_err(AppError::BadRequest)?;
             }
             if let Some(ref v) = sleep_end {
-                config::set("sleep_end", v).map_err(|e| AppError::BadRequest(e))?;
+                config::set("sleep_end", v).map_err(AppError::BadRequest)?;
             }
             let mut update = UpdateSettings {
                 tz,
