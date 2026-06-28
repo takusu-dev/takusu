@@ -45,6 +45,11 @@ fn parse_sleep(s: &str, settings: &SettingsRow) -> SleepConfig {
     }
 }
 
+/// ISO文字列 → Point スロット値。`now` は現在時刻。
+/// ハードコードされた 5 (分/スロット) は Planner の per と揃っている必要がある。
+/// AGENTS.md の「point_to_iso hardcoded 5-minute slots」参照。
+/// 変更時は takusu-core, takusu-local-lib, google-cal など全 crate の
+/// 5分前提コードを同時に更新すること。
 fn iso_to_point(iso: &str) -> Result<Point, AppError> {
     let ts = if iso.eq_ignore_ascii_case("now") {
         Timestamp::now()
@@ -440,6 +445,10 @@ impl TakusuApp {
         let all_rows: Vec<TaskRow> = task_rows
             .into_iter()
             .chain(habit_rows)
+            // load_task_rows で既に status フィルタ済みだが、habit_rows から
+            // 来たタスクは created_at=ステータス変更前に取得された可能性があるため
+            // 二重チェックする。「scheduled」も含める理由: 前回生成結果のタスクが
+            // 既に scheduled 状態になっているため、再生成でそれらも対象にする。
             .filter(|t| t.status == "pending" || t.status == "scheduled")
             .collect();
         let (planner, id_map, _) = self.build_planner(from_point, sleep, &all_rows)?;
@@ -530,6 +539,9 @@ impl TakusuApp {
                 let task_ids = input.task_ids.as_ref().ok_or_else(|| {
                     AppError::BadRequest("task_ids is required for tasks mode".into())
                 })?;
+                // pinned 条件: task_ids に含まれない (再スケジュール対象外) または
+                // 明示的に pinned 指定されたタスクは固定。残りが再配置される。
+                // id_map[idx] で planner index → 文字列ID に変換している。
                 let pinned_entries: Vec<(Point, Point, usize)> = current_schedule
                     .iter()
                     .filter(|(_, _, idx)| {
@@ -606,6 +618,11 @@ impl TakusuApp {
             end_at: point_to_iso(new_end.0),
         };
 
+        // move_entry は deadline 超過のみチェックする。
+        // 依存関係違反、睡眠侵害、並列違反はチェックしない。
+        // これは意図的: 手動移動はユーザーの明示的な操作であり、
+        // 自動スケジューラの制約をすべて検証すると自由度が下がるため。
+        // force=true で強制上書きも可能。
         let mut warnings = Vec::new();
         let task_deadline = iso_to_point(&task_row.end_at)?;
         if new_end.0 > task_deadline.0 {
@@ -886,6 +903,14 @@ impl TakusuApp {
 
     // ── Helpers ───────────────────────────────────────────
 
+    /// スケジュール生成対象のタスクをロード。
+    ///
+    /// - task_ids 指定時: 指定された ID のタスクのみ取得。
+    ///   存在しない ID は無視される (ユーザーが削除済みのタスクを指定した場合など)。
+    ///   これは意図的な設計: 指定 ID の一部が消失しても生成を継続する。
+    ///   ただし、ユーザーはどの ID が無視されたか通知されないため、
+    ///   API レベルで警告を返す余地がある。
+    /// - task_ids なし: 全タスクから pending/scheduled のみをフィルタ。
     async fn load_task_rows(
         &self,
         task_ids: Option<&Vec<String>>,
@@ -1012,6 +1037,9 @@ impl TakusuApp {
             }
         }
 
+        // 過去の生成で作られたが、今回期待されなくなった習慣タスクを削除。
+        // ただし pending のものだけ: ユーザーが手動で status 変更したタスク
+        // (scheduled, in_progress, completed, skipped) は削除しない。
         for (_, task) in existing_by_key {
             if task.status == "pending" {
                 self.storage
@@ -1026,6 +1054,21 @@ impl TakusuApp {
         Ok(result)
     }
 
+    /// Planner を構築し、CoreTask のインデックスと Row ID の対応を返す。
+    ///
+    /// task_rows の順序が Planner の内部インデックスを決める。
+    /// 戻り値:
+    /// - planner: SA で最適化する Planner
+    /// - id_map: `planner.tasks[i].id` に対応する DB の task row ID
+    ///   (planner のタスクインデックス → 文字列ID の O(1) 変換テーブル)
+    /// - id_to_idx: 文字列ID → planner のタスクインデックス (逆引き)
+    ///   build_planner 内で依存関係解決に使われた後、
+    ///   呼び出し元 (reschedule など) でもスケジュールエントリのフィルタリングに使われる。
+    ///
+    /// id_to_idx は最初に task_rows のインデックスで初期化された後、
+    /// planner.add() 後に planner のインデックスで上書きされる。
+    /// 両者は同じ順序なので一致するが、一部の add が失敗すると
+    /// 不整合が生じる。その場合は関数全体がエラーを返すため問題ない。
     #[allow(clippy::type_complexity)]
     fn build_planner(
         &self,

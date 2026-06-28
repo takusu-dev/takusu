@@ -18,6 +18,26 @@
 //! | 20%  | duration ±1   |
 //! | 15%  | reorder       |
 //! | 15%  | lns (destroy+rebuild) |
+//!
+//! ## Design rationale
+//!
+//! ### Tabu list key = (task_id, start, duration)
+//! 同一タスクの同一配置への再訪を防ぐ。完全なハッシュ (全taskの配置) だと容量爆発するため
+//! 最後に動かした一つのタスクのみを記録。容量 = task_count*2。
+//! aspiration: tabu でも best より良ければ受理 (改善解は tabu を無視)。
+//!
+//! ### LNS window size
+//! pivot タスクの duration*2、最低4スロット。総タスク時間の1/3以上にはしない。
+//! これにより小さな window の局所改善と大きな再配置のバランスを取る。
+//!
+//! ### greedy_rebuild の freeness 順
+//! destroy で除去したタスクを freeness 昇順に再配置。freeness の低い(切迫した)タスクから
+//! 空きスロットに詰めることで、高 freeness タスクが柔軟に後回しにされる。
+//!
+//! ### partial モードで pinned_ids を毎回渡す理由
+//! generate_neighbor_partial は pinned タスクの位置を一切変更しないため、
+//! unpinned の task_id 一覧を毎回抽出する。これは計算量O(n)だが、n<100で支配的でない。
+//! 代わりに pinned 固定のインデックス集合をキャッシュすることもできるが、簡潔さを優先。
 
 use std::collections::VecDeque;
 
@@ -61,6 +81,9 @@ fn rand_range(rng: &mut impl Rng, low: i64, high: i64) -> i64 {
     rng.random_range(low..high)
 }
 
+/// トポロジカル順序を計算。依存関係のないタスクは自由順序。
+/// 注意: この順序は freeness ソートの入力に使われるだけで、配置順自体ではない。
+/// build_initial 内でさらに freeness 昇順に並び替えられる。
 fn topological_order(planner: &Planner, active: &FxHashSet<usize>) -> Vec<usize> {
     let n = planner.tasks.len();
     let mut in_degree = vec![0usize; n];
@@ -168,6 +191,14 @@ fn try_place(
     None
 }
 
+/// 貪欲法で初期解を構築。
+///
+/// 方針: 切迫したタスク (freeness 低い) から順に、依存を満たす最も早い位置に配置。
+/// 挿入できない場合は末尾に fallback 配置。
+///
+/// これは単なるヒューリスティック: 必ずしも実行可能解とは限らない
+/// (依存サイクルや容量超過で配置できないケースがある)。
+/// SA がその後、評価関数の勾配に従って改善する。
 fn build_initial(planner: &Planner) -> Plan {
     let all: FxHashSet<usize> = planner.tasks.iter().map(|t| t.id).collect();
     let order = topological_order(planner, &all);

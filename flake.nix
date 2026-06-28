@@ -85,7 +85,7 @@
               let
                 bname = baseNameOf name;
               in
-              bname != ".venv" && bname != "__pycache__" && bname != "opencode.json";
+              bname != ".venv" && bname != "__pycache__";
           };
 
           inherit (craneLib.crateNameFromCargoToml { inherit src; }) version;
@@ -151,8 +151,13 @@
           mcp-servers = import inputs.mcp-servers-nix { inherit pkgs; };
 
           mcp-config = mcp-servers.lib.mkConfig pkgs {
-            flavor = "opencode";
-            fileName = "opencode.json";
+            # Devin CLI reads `.devin/config.json` with the same `mcpServers`
+            # shape as Claude Desktop (command + args separated), so we use the
+            # `claude` flavor. The `opencode` flavor emits `command` as a single
+            # array and uses `environment`/`type`/`enabled`, which Devin doesn't
+            # understand.
+            flavor = "claude";
+            fileName = "config.json";
             programs = {
               serena = {
                 enable = true;
@@ -281,10 +286,11 @@
               export BLAS_INCLUDE_DIRS=${pkgs.openblas.dev}/include
               export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.openssl.out}/lib:${pkgs.openblas}/lib:${pkgs.zlib}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
               export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${pkgs.stdenv.cc}/bin/cc
-              if [ -L opencode.json ]; then
-                unlink opencode.json
+              if [ -L .devin/config.json ]; then
+                unlink .devin/config.json
               fi
-              ln -sf ${mcp-config} opencode.json
+              mkdir -p .devin
+              ln -sf ${mcp-config} .devin/config.json
             '';
           };
         };

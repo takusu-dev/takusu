@@ -12,7 +12,7 @@ takusu is a planner that automatically builds user schedules and a voice assista
 - **Language**: Rust (edition 2024, stable toolchain)
 - **Python**: FunASR server for STT (SenseVoice-Small model, managed via `uv`)
 - **Kotlin**: Planned for Android app
-- **Version Control**: Jujutsu (`jj`) + Git (GitHub)
+- **Version Control**: Jujutsu (`jj`) + Git (GitHub) — **Jujutsu is the preferred VCS in this workspace.** See [Version Control Workflow](#version-control-workflow) below.
 - **Nix**: `flake.nix` provides the dev shell (direnv with `use flake`)
 
 ## Project Structure
@@ -91,7 +91,6 @@ takusu/
 
 Use `nix develop` or `direnv allow` to enter the development shell. The flake provides:
 - `rust-bin` (from `rust-toolchain.toml`: stable + rustfmt + clippy)
-- `z3` (SAT solver)
 - `cargo-expand`, `cargo-nextest`
 
 ### Key Commands
@@ -101,10 +100,10 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `cargo check` | Type-check all crates |
 | `cargo fmt` / `treefmt` | Format code |
 | `cargo clippy` | Lint |
-| `cargo nextest run --workspace` | Run all 200 tests |
-| `cargo nextest run -p takusu-core` | Run core planner tests |
-| `cargo nextest run -p takusu-local` | Run local server integration tests (24) |
-| `cargo nextest run -p takusu-ical` | Run iCal parser tests (17) |
+| `cargo nextest run --workspace` | Run all tests (~171 across crates) |
+| `cargo nextest run -p takusu-core` | Run core planner tests (45) |
+| `cargo nextest run -p takusu-local` | Run local server integration tests (39) |
+| `cargo nextest run -p takusu-ical` | Run iCal parser tests (15) |
 | `cargo bench -p takusu-core` | Run benchmark (~148ms for 25 tasks) |
 | `cargo test -p takusu-worker` | Run takusu-worker unit tests (6 auth tests) |
 | `cargo test -p takusu-worker --test auth -- --ignored` | Run takusu-worker auth integration tests (requires `wrangler`) |
@@ -117,6 +116,39 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `cargo run -p takusu-audio-cli -- speak --text "..."` | Synthesize speech with Irodori-TTS |
 | `./scripts/irodori-tts-server.sh` | Start Irodori-TTS inference server (clones to `$XDG_CACHE_HOME`) |
 | `nix run .#irodori-tts-server` | Same as above, via Nix |
+
+## Version Control Workflow
+
+This workspace uses **Jujutsu (`jj`) as the primary VCS**, backed by a Git remote on GitHub. Prefer `jj` commands over raw `git` for everyday work.
+
+### Why Jujutsu
+
+- Commits are first-class and amendable without history-rewriting ceremony.
+- Working copy is always a commit (`@`); edits become a commit automatically.
+- Rebases, splits, and squashes are cheap and safe.
+
+### Common Commands
+
+| Command | Purpose |
+|---------|---------|
+| `jj st` | Show working copy status |
+| `jj log -r 'main..@'` | Show commits ahead of main |
+| `jj new` | Create a new empty change on top of `@` |
+| `jj squash` | Squash `@` into its parent |
+| `jj amend` | Amend `@` with working copy changes (default behavior, but explicit form useful) |
+| `jj rebase -r <rev> -d <dest>` | Rebase a change onto another |
+| `jj split <rev>` | Split a change into two interactively |
+| `jj describe` | Edit the description of `@` |
+| `jj git push` | Push to the Git remote (GitHub) |
+| `jj git fetch` | Fetch from the Git remote |
+
+### Conventions
+
+- **Commit messages**: write in the present tense, lowercase first word, no trailing period. Match the style of recent history (`iroiro fix`, `chore: fmt`, `separate takusu-local`).
+- **Pushing**: use `jj git push` rather than `git push`. Jujutsu manages the underlying Git refs.
+- **Branches**: this repo uses a single `main` bookmark; feature work happens in separate change-ids and is rebased onto `main` before push.
+- **Do not rewrite `main`**: never force-push or rebase `main` itself. Rebase your own changes onto `main` instead.
+- **Git compatibility**: `git` commands still work for read-only inspection (`git log`, `git diff`) since `.jj` backs onto `.git`. Prefer `jj` for anything that mutates history.
 
 ## Workspace Dependencies
 
@@ -140,8 +172,8 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `reqwest` | 0.13 (rustls) | google-cal, takusu-local-lib, takusu-client, takusu-audio | HTTP client |
 | `clap` | 4 (derive,env) | takusu-cli | CLI argument parsing |
 | `comfy-table` | 7 | takusu-cli | Rich table display |
-| `cpal` | 0.17.3 | takusu-audio | Audio input |
-| `tokio-tungstenite` | 0.26 | takusu-audio | WebSocket client (FunASR) |
+| `cpal` | 0.18.1 | takusu-audio | Audio input |
+| `tokio-tungstenite` | 0.29 | takusu-audio | WebSocket client (FunASR) |
 | `futures-util` | 0.3 | takusu-audio | Async stream utilities |
 
 ## Core Planner Design (takusu-core)
@@ -280,11 +312,10 @@ No external HTTP server needed. Run with `cargo nextest run -p takusu-local`.
 ## Key Design Decisions (from main.typ)
 
 - **Planner**: Uses heuristic algorithms (simulated annealing) with an evaluation
-  function, not exact SAT solving despite z3 being in the dev shell.
-  Tasks are discretized into 5-minute slots.
+  function, not exact SAT solving. Tasks are discretized into 5-minute slots.
 - **Voice Assistant**: Android `VoiceInteractionService` + server for FunASR/LLM
   processing. FunASR (SenseVoice-Small) provides fast, accurate Japanese STT via
-  WebSocket (~0.35s for 6s audio on CPU). Whisper.cpp available as offline fallback.
+  WebSocket (~0.35s for 6s audio on CPU).
   LLM fills in missing information (estimates, etc.) using memory of past similar tasks.
 - **Task model**: Includes start time, deadline, cost estimate (normal distribution),
   dependencies, parallelizability, and `abandonability` (deadline flexibility).
@@ -320,8 +351,7 @@ Standalone HTTP client library for the takusu REST API. Reused by any future cli
 
 ## Code Style
 
-- No comments by default (existing code has minimal comments)
-- **But: add a comment whenever the reason for writing code a certain way is non-obvious.** If a future reader might ask "why is this done this way?", add a comment explaining the rationale. This is especially important for performance optimizations, workarounds for external library quirks, safety invariants that aren't type-checked, and cases where the seemingly "cleaner" approach would be wrong.
+- **Add a comment whenever the reason for writing code a certain way is non-obvious.** If a future reader might ask "why is this done this way?", add a comment explaining the rationale. This is especially important for performance optimizations, workarounds for external library quirks, safety invariants that aren't type-checked, and cases where the seemingly "cleaner" approach would be wrong.
 - Uses `thiserror` for error types
 - Module-level docs (`//!`) in each source file describe algorithm details
 - Modules organized by domain (core, local, audio, google-cal)
@@ -340,7 +370,7 @@ These patterns look suspicious but exist for real reasons. If you need to change
 Dynamic SQL with parameterized `?` placeholders suppresses sqlx's compile-time verification. Safe today because all user values go through `?` bindings, but removes sqlx's guard against future accidental string interpolation. If refactoring, replace with `sqlx::query_builder` or array binding.
 
 ### `TAKUSU_WORKERS_URL` `|` split hack
-**File:** `takusu-local/src/main.rs:32-36`
+**File:** `takusu-local/src/main.rs`
 
 ```rust
 cfg.workers_url().split('|').next()
@@ -354,7 +384,7 @@ The config crate's env separator collides with `TAKUSU_WORKERS_URL` containing `
 `tokio::spawn` was replaced with awaited `do_sync()` calls. Sync now runs inline during the request.
 
 ### `COALESCE` prevents clearing fields to NULL
-**File:** `takusu-worker/src/handlers/tasks.rs:130`, `habits.rs:76`
+**File:** `takusu-worker/src/handlers/tasks.rs`, `habits.rs`
 
 ```sql
 UPDATE tasks SET title=COALESCE(?1,title), ...
@@ -363,7 +393,7 @@ UPDATE tasks SET title=COALESCE(?1,title), ...
 `Option::None` (from `serde_json::Value::Null` → `Option::None`) binds as `JsValue::NULL`, so `COALESCE(NULL, title)` keeps the old value. There is no way to clear a field. Fixing this requires distinguishing "not provided" from "explicitly set to null".
 
 ### `LIKE` prefix matching for short IDs
-**Files:** `takusu-local/src/handlers/task.rs:28`, `habit.rs:21`; `takusu-local-lib/src/storage_sqlite.rs:628`
+**Files:** `takusu-local/src/handlers/task.rs`, `habit.rs`; `takusu-local-lib/src/storage_sqlite.rs`
 
 ```sql
 SELECT id FROM tasks WHERE id LIKE ? || '%'
@@ -372,14 +402,14 @@ SELECT id FROM tasks WHERE id LIKE ? || '%'
 Forces a full table scan and is vulnerable to `_`/`%` pattern injection. The entire short-ID UX depends on this pattern.
 
 ### `point_to_iso` hardcoded 5-minute slots
-**Files:** `takusu-local-lib/src/app.rs:58-62` and ~8 other locations
+**Files:** `takusu-local-lib/src/app.rs` and ~8 other locations
 
 Magic number `5` (slot length in minutes) is duplicated across crates with no shared constant. Changing slot granularity requires updating every site.
 
-### ~~Duplicated 1024-line integration test~~ NOTED
-**Files:** `takusu-local/tests/integration.rs`
+### ~~Duplicated integration test patterns~~ NOTED
+**Files:** `takusu-local/tests/integration.rs`, `phase4.rs`, `workers_e2e.rs`
 
-Integration tests share code patterns with the old `takusu-serve/tests/integration.rs` (now deleted). Full deduplication into a shared test-utils crate is planned.
+Integration tests share code patterns. Full deduplication into a shared test-utils crate is planned.
 
 ### ~~`_unused_jsvalue_marker` dead code~~ REMOVED
 **File:** `takusu-worker/src/handlers/tokens.rs`
@@ -387,37 +417,37 @@ Integration tests share code patterns with the old `takusu-serve/tests/integrati
 Removed the dead code function and unused `JsValue` import.
 
 ### ~~410 (Gone) treated as success in Google Calendar delete~~ FIXED
-**File:** `google-cal/src/lib.rs:243`
+**File:** `google-cal/src/lib.rs`
 
 Magic number `410` is now a named constant `ALREADY_DELETED`.
 
 ### ~~`get_settings_or_default` swallows DB errors~~ FIXED
-**Files:** `takusu-local-lib/src/app.rs:135-147`
+**Files:** `takusu-local-lib/src/app.rs`
 
 Now returns `Result<SettingsRow, AppError>`. DB errors propagate correctly; `NotFound` still falls back to defaults.
 
 ### ~~Sync `.ok()` silently drops DB errors~~ FIXED
-**Files:** `takusu-local-lib/src/app.rs:597-721`
+**Files:** `takusu-local-lib/src/app.rs`
 
 All DB operations propagate errors via `?` with `.map_err()`.
 
 ### ~~Unsafe `set_len` in audio recording~~ REMOVED
-**File:** `takusu-audio/src/record.rs:88-101`
+**File:** `takusu-audio/src/record.rs`
 
 Replaced with simple `buf.push()` loop. The unsafe optimization was unnecessary overhead.
 
 ### ~~`generate_neighbor_partial` only uses 3 of 5 neighbor types~~ FIXED
-**File:** `takusu-core/src/anneal.rs:398-451`
+**File:** `takusu-core/src/anneal.rs`
 
 Added `neighbor_reorder_partial` and `neighbor_lns_partial` operators. The partial variant now uses the same 5 neighbor types with identical probability distribution as the full variant (shift 25%/swap 25%/duration 20%/reorder 15%/lns 15%).
 
 ### ~~Auth middleware not applied to CRUD endpoints~~ FIXED
-**File:** `takusu-worker/src/router.rs:69-71`
+**File:** `takusu-worker/src/router.rs`
 
 `require_auth()` is now called for every `/api/*` route except `/api/auth/verify` in the `dispatch` function. Tokens (`tasks`, `habits`, `schedule`, `settings`, `sync`, `tokens`) all require `Authorization: Bearer <token>`.
 
 ### `freeness()` name is counterintuitive
-**File:** `takusu-core/src/lib.rs:425-434`
+**File:** `takusu-core/src/lib.rs`
 
 High "freeness" means the task has slack time and is deprioritized. Low freeness → prioritized first. The name suggests the opposite convention.
 

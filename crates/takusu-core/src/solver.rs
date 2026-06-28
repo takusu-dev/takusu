@@ -4,6 +4,13 @@
 //! タスクはすべてスケジュールされる（諦めない）。
 //! abandonability が高いタスクは deadline 超過ペナルティが軽減される。
 //!
+//! ## 並列戦略
+//!
+//! 各チェーンは異なる乱数シード (0..num_chains) で初期化。
+//! これにより、同じ貪欲初期解から出発しても異なる SA 軌道を辿る。
+//! `MAX_CHAINS=4`: CPUコア数にクランプ。過剰並列はメモリ競合と
+//! 収穫逓減のため制限。
+//!
 //! ## 部分問題分割の検討
 //!
 //! ### DAG 連結成分分解
@@ -39,6 +46,9 @@ pub fn solve(planner: &Planner) -> Plan {
         .unwrap_or_else(|| Plan { schedules: vec![] })
 }
 
+/// pinned が空の場合は solve (sa_lns) に委譲する。
+/// sa_lns と sa_lns_partial は pinned_ids のフィルタリング以外は同一アルゴリズムのため、
+/// 空 pinned の場合はオーバーヘッドを避けてフル SA にフォールバック。
 pub fn solve_partial(planner: &Planner, pinned: &[(Point, Point, usize)]) -> Plan {
     if pinned.is_empty() {
         return solve(planner);

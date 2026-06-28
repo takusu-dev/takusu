@@ -4,6 +4,7 @@ result/
 .env
 result*
 opencode.json
+.devin/config.json
 *.db
 *.wav
 **/__pycache__/**

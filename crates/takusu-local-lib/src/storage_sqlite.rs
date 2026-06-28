@@ -73,6 +73,11 @@ fn map_err(e: sqlx::Error) -> StorageError {
 
 #[async_trait]
 impl Storage for SqliteStorage {
+    /// root_token は生の値で比較 (環境変数で保持)。
+    /// DB 内のトークンは SHA-256 でハッシュ化して保存、比較は hash vs hash。
+    /// hash_token(token) は SHA-256 のため衝突耐性があり、
+    /// hash == hash(root_token) は token == root_token と等価だが、
+    /// ルートトークンが何らかの理由で SHA-256 hex で渡される場合に備えて残している。
     async fn verify_token(&self, token: &str) -> StorageResult<bool> {
         let hash = crate::auth::hash_token(token);
         if token == self.root_token || hash == crate::auth::hash_token(&self.root_token) {

@@ -383,6 +383,12 @@ impl Planner {
     /// `current_schedule` に含まれるタスクのうち、期間外のものを固定とみなす。
     /// `pinned` に追加で固定したいタスクも指定できる。
     /// 期間内 (`range.from <= start` かつ `end <= range.until`) のタスクのみがSAで再配置される。
+    ///
+    /// # Known limitation
+    /// 依存関係が固定→再配置タスクの方向 (pinned が sub-planner 内のタスクに依存) の場合、
+    /// その依存はチェックされない。sub-planner は pinned タスクを一切持たないため。
+    /// 現実的には pinned タスクは期間外で既に完了していることが多く、この問題は顕在化しにくい。
+    /// 逆方向 (再配置→固定) は remap 時に depend から filtered out されるため安全。
     pub fn plan_in_range(
         &self,
         range: &RescheduleRange,
@@ -441,6 +447,15 @@ impl Planner {
         &mut self.tasks
     }
 
+    /// タスクの「余裕度」を返す [0.0, 1.0]。
+    /// 値が大きい = 余裕がある = 優先度が低い。
+    /// 値が小さい = 切迫している = 優先度が高い。
+    ///
+    /// # Counterintuitive naming
+    /// 名前は「free」だが、値が大きいほど deprioritized される。
+    /// 低 freeness → 締切までの slack が小さい → build_initial で先に配置。
+    /// `freeness()` の結果でソートし、値が小さい順に greedy 配置される。
+    /// 「freeness」＝「(slack - avg) / slack」のイメージ。
     pub(crate) fn freeness(&self, id: usize) -> f64 {
         let slack = Point::diff(
             self.tasks[id].start.unwrap_or(Point(0)).max(self.now),
