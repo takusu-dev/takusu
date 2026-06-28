@@ -39,6 +39,12 @@ pub struct TakusuServer {
     port: Mutex<u16>,
 }
 
+impl Default for TakusuServer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[uniffi::export]
 impl TakusuServer {
     #[uniffi::constructor]

@@ -1,0 +1,31 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.takususerver'
+version = '0.1.0'
+
+android {
+  namespace "expo.modules.takususerver"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+  lintOptions {
+    abortOnError false
+  }
+  sourceSets {
+    main {
+      // Include UniFFI generated Kotlin bindings
+      java.srcDirs += ['src/main/java']
+      // Include native .so libraries (built by scripts/build-android.sh)
+      jniLibs.srcDirs += ['src/main/jniLibs']
+    }
+  }
+}
+
+dependencies {
+  // UniFFI-generated Kotlin bindings use JNA for FFI
+  implementation 'net.java.dev.jna:jna:5.16.0@aar'
+}
