@@ -79,17 +79,19 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build takusu-cli
-        run: nix build .#takusu-cli
-
-      - name: Stage CLI binary
-        run: install -Dm755 result/bin/takusu takusu-cli-x86_64-linux
+      # The plain crane build links against /nix/store paths, so the bare
+      # binary won't run off this machine. Bundle the full closure into a
+      # self-contained AppImage so the release artifact is portable.
+      - name: Build takusu-cli AppImage
+        run: |
+          nix bundle --bundler github:ralismark/nix-appimage \
+            .#takusu-cli -o takusu-cli-x86_64-linux.AppImage
 
       - name: Upload CLI artifact
         uses: actions/upload-artifact@v4
         with:
           name: takusu-cli
-          path: takusu-cli-x86_64-linux
+          path: takusu-cli-x86_64-linux.AppImage
 
   build-android-apk:
     runs-on: ubuntu-latest
@@ -150,7 +152,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/takusu-cli-x86_64-linux
+            dist/takusu-cli-x86_64-linux.AppImage
             dist/app-release.apk
           name: takusu ${{ github.ref_name }}
           prerelease: true
