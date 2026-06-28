@@ -12,12 +12,16 @@ path = "src/lib.rs"
 name = "takusu-local"
 path = "src/main.rs"
 
+[features]
+default = ["sqlite"]
+sqlite = ["dep:sqlx", "takusu-local-lib/sqlite"]
+
 [dependencies]
-takusu-local-lib = { workspace = true }
+takusu-local-lib = { workspace = true, default-features = false }
 takusu-storage.workspace = true
 axum.workspace = true
 tokio.workspace = true
-sqlx.workspace = true
+sqlx = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 tower-http.workspace = true
@@ -33,3 +37,4 @@ uuid.workspace = true
 sha2.workspace = true
 http = "1"
 async-trait.workspace = true
+takusu-local-lib = { workspace = true, features = ["sqlite"] }

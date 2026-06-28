@@ -1,0 +1,35 @@
+[project]
+name = "moonshine-server"
+version = "0.1.0"
+description = "Moonshine STT WebSocket server for takusu voice assistant"
+requires-python = ">=3.10"
+dependencies = [
+    "moonshine-voice>=0.0.54",
+    "websockets>=14.0",
+    "numpy>=1.24",
+]
+
+[tool.uv]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/moonshine_server"]

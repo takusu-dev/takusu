@@ -61,3 +61,42 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  build-android-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
+
+      - name: Restore binary cache
+        uses: asa1984/infra/.github/actions/binary-cache@44165003348ea3578a66f8c879bfaf23a3c7cc18
+        with:
+          package: .#ci
+
+      - run: nix profile install .#ci
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install Expo dependencies
+        working-directory: mobile
+        run: npm install --legacy-peer-deps
+
+      - name: Build APK (Nix-managed .so + uniffi-bindgen + Gradle)
+        run: |
+          nix run .#build-android-apk
+        env:
+          EXPO_PUBLIC_WORKERS_URL: ${{ secrets.EXPO_PUBLIC_WORKERS_URL }}
+          EXPO_PUBLIC_ROOT_TOKEN: ${{ secrets.EXPO_PUBLIC_ROOT_TOKEN }}
+
+      - name: Upload APK to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: mobile/android/app/build/outputs/apk/release/app-release.apk
+          name: takusu ${{ github.ref_name }}
+          generate_release_notes: true

@@ -10,3 +10,14 @@ opencode.json
 **/__pycache__/**
 .wrangler/
 .dev.vars
+
+# Android build artifacts
+**/android/build/
+**/android/.cxx/
+**/android/.gradle/
+**/*.dex
+**/*.class
+**/*.h
+
+# UniFFI generated headers (build artifact)
+crates/takusu-android/generated/

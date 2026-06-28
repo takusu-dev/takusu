@@ -15,7 +15,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 jiff = { workspace = true }
-takusu-local-lib = { workspace = true }
+takusu-local-lib = { workspace = true, features = ["sqlite"] }
 takusu-util = { workspace = true }
 takusu-storage = { workspace = true }
 toml = "0.8"

@@ -77,6 +77,17 @@
           rust-bin = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
           craneLib = (crane.mkLib pkgs).overrideToolchain rust-bin;
 
+          androidComposition = (pkgs.androidenv.composeAndroidPackages.override { licenseAccepted = true; }) {
+            includeNDK = true;
+            includeEmulator = false;
+            includeSystemImages = false;
+            includeSources = false;
+            buildToolsVersions = [ "37.0.0" "35.0.0" ];
+            platformVersions = [ "37" "35" ];
+            cmakeVersions = [ "3.22.1" "3.30.5" ];
+          };
+          androidNdkHome = "${androidComposition.ndk-bundle}/libexec/android-sdk/ndk-bundle";
+
           src = lib.cleanSource ./.;
           funasrSrc = lib.cleanSourceWith {
             src = ./funasr_server;
@@ -148,6 +159,100 @@
             BLAS_INCLUDE_DIRS = "${pkgs.openblas.dev}/include";
           };
 
+          # Cross-compile takusu-android .so for all Android ABIs.
+          # Uses crane only for cargo registry vendoring (no network needed in
+          # the Nix sandbox). We can't use crane's buildDepsOnly because it
+          # builds for the host target — the artifacts are useless for Android
+          # cross-compilation. Instead, stdenv.mkDerivation + cargo-ndk builds
+          # everything from the vendored registry in one derivation.
+          takusu-android-libs =
+            let
+              vendoredDeps = craneLib.vendorCargoDeps { inherit src; };
+            in
+            pkgs.stdenv.mkDerivation {
+              inherit src version;
+              pname = "takusu-android-libs";
+
+              nativeBuildInputs = [
+                rust-bin
+                pkgs.cargo-ndk
+                pkgs.pkg-config
+                pkgs.cmake
+                pkgs.libclang
+              ];
+
+              buildInputs = [
+                androidComposition.ndk-bundle
+              ];
+
+              env = {
+                ANDROID_NDK_HOME = androidNdkHome;
+                LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
+                OPENBLAS_PATH = "${pkgs.openblas}/lib";
+                BLAS_INCLUDE_DIRS = "${pkgs.openblas.dev}/include";
+              };
+
+              # Don't run tests — cross-compiled binaries can't execute on host.
+              doCheck = false;
+
+              # Override the default configurePhase (which would try to run
+              # cmake since it's in nativeBuildInputs). We only need to set up
+              # CARGO_HOME from crane's vendored deps.
+              configurePhase = ''
+                runHook preConfigure
+                export CARGO_HOME="$NIX_BUILD_TOP/.cargo"
+                mkdir -p "$CARGO_HOME"
+                cp -r "${vendoredDeps}"/* "$CARGO_HOME/"
+                runHook postConfigure
+              '';
+
+              buildPhase = ''
+                runHook preBuild
+                for target in aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android; do
+                  echo "Building $target..."
+                  cargo ndk -t "$target" build -p takusu-android --release --no-default-features
+                done
+                runHook postBuild
+              '';
+
+              installPhase = ''
+                runHook preInstall
+                for target in aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android; do
+                  case $target in
+                    aarch64-linux-android) abi_dir="arm64-v8a" ;;
+                    armv7-linux-androideabi) abi_dir="armeabi-v7a" ;;
+                    x86_64-linux-android) abi_dir="x86_64" ;;
+                    i686-linux-android) abi_dir="x86" ;;
+                  esac
+                  mkdir -p "$out/jniLibs/$abi_dir"
+                  cp "target/$target/release/libtakusu_android.so" "$out/jniLibs/$abi_dir/"
+                done
+                runHook postInstall
+              '';
+            };
+
+          # Host-native uniffi-bindgen binary for generating Kotlin bindings.
+          # Built with the `bindgen` feature which pulls in uniffi/cli.
+          uniffi-bindgen = craneLib.buildPackage {
+            inherit src cargoArtifacts version;
+            pname = "uniffi-bindgen";
+            cargoExtraArgs = "-p takusu-android --features bindgen --bin uniffi-bindgen";
+            nativeBuildInputs = with pkgs; [
+              pkg-config
+              cmake
+              libclang
+            ];
+            buildInputs = with pkgs; [
+              alsa-lib
+              libpulseaudio
+              openblas
+            ];
+            LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
+            OPENBLAS_PATH = "${pkgs.openblas}/lib";
+            BLAS_INCLUDE_DIRS = "${pkgs.openblas.dev}/include";
+            doCheck = false;
+          };
+
           mcp-servers = import inputs.mcp-servers-nix { inherit pkgs; };
 
           mcp-config = mcp-servers.lib.mkConfig pkgs {
@@ -177,6 +282,10 @@
             overlays = [
               inputs.rust-overlay.overlays.default
             ];
+            config = {
+              allowUnfree = true;
+              permittedUnfreePackages = [ "android-sdk-ndk" ];
+            };
           };
 
           treefmt = {
@@ -195,8 +304,84 @@
           };
 
           packages = {
-            inherit takusu-cli takusu-local;
+            inherit takusu-cli takusu-local takusu-android-libs uniffi-bindgen;
             default = takusu-cli;
+
+            # Full APK build script. Run from the repo root:
+            #   nix run .#build-android-apk
+            # Produces: mobile/android/app/build/outputs/apk/release/app-release.apk
+            #
+            # Uses pre-built .so and uniffi-bindgen from the Nix store.
+            build-android-apk = pkgs.writeShellApplication {
+              name = "build-android-apk";
+              runtimeInputs = [
+                pkgs.nodejs
+                pkgs.openjdk_headless
+                androidComposition.ndk-bundle
+                androidComposition.androidsdk
+              ];
+              text = ''
+                export ANDROID_NDK_HOME="${androidNdkHome}"
+                export ANDROID_HOME="${androidComposition.androidsdk}/libexec/android-sdk"
+                export JAVA_HOME="${pkgs.openjdk_headless}/lib/openjdk"
+                export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.openssl.out}/lib:${pkgs.openblas}/lib:${pkgs.zlib}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+                if [ ! -f "scripts/post-prebuild-android.sh" ]; then
+                  echo "Error: run from the takusu repo root" >&2
+                  exit 1
+                fi
+
+                REPO_ROOT="$(pwd)"
+                MODULE_DIR="$REPO_ROOT/mobile/modules/takusu-server"
+                JNILIBS_DIR="$MODULE_DIR/android/src/main/jniLibs"
+                BINDINGS_DIR="$MODULE_DIR/android/src/main/java/uniffi/takusu_android"
+
+                # 1. Copy pre-built .so from Nix store into jniLibs/
+                echo "── Step 1: Copy native libraries from Nix store ──"
+                rm -rf "$JNILIBS_DIR"
+                cp -r "${takusu-android-libs}/jniLibs" "$JNILIBS_DIR"
+                echo "  copied .so files to $JNILIBS_DIR"
+
+                # 2. Generate UniFFI Kotlin bindings from the .so
+                echo ""
+                echo "── Step 2: Generate UniFFI Kotlin bindings ──"
+                BINDINGS_TMP="$BINDINGS_DIR/uniffi"
+                mkdir -p "$BINDINGS_TMP"
+                "${uniffi-bindgen}/bin/uniffi-bindgen" generate \
+                  --library "${takusu-android-libs}/jniLibs/arm64-v8a/libtakusu_android.so" \
+                  --language kotlin \
+                  --out-dir "$BINDINGS_TMP"
+                GENERATED_FILE=$(find "$BINDINGS_TMP" -name "*.kt" -type f | head -1)
+                if [ -n "$GENERATED_FILE" ]; then
+                  mv "$GENERATED_FILE" "$BINDINGS_DIR/"
+                  rm -rf "$BINDINGS_TMP"
+                  echo "  generated bindings in $BINDINGS_DIR"
+                else
+                  echo "  Error: no Kotlin bindings generated" >&2
+                  exit 1
+                fi
+
+                # 3. Expo prebuild (generates android/ directory)
+                echo ""
+                echo "── Step 3: Expo prebuild ──"
+                cd mobile
+                npx expo prebuild --platform android --no-install
+
+                # 4. Apply post-prebuild fixes (Gradle pin, NDK override, etc.)
+                echo ""
+                echo "── Step 4: Post-prebuild fixes ──"
+                "$REPO_ROOT/scripts/post-prebuild-android.sh" android
+
+                # 5. Build the release APK
+                echo ""
+                echo "── Step 5: Gradle assembleRelease ──"
+                cd android
+                ./gradlew :app:assembleRelease
+
+                echo ""
+                echo "✅ APK built: $(pwd)/app/build/outputs/apk/release/app-release.apk"
+              '';
+            };
 
             funasr-server = pkgs.writeShellApplication {
               name = "funasr-server";
@@ -228,6 +413,7 @@
               paths = with pkgs; [
                 cargo-expand
                 cargo-nextest
+                cargo-ndk
                 rust-bin
                 pkg-config
                 cmake
@@ -244,6 +430,11 @@
                 nodejs
                 wrangler
                 worker-build
+                openjdk_headless
+              ]
+              ++ [
+                androidComposition.ndk-bundle
+                androidComposition.androidsdk
               ];
             };
           };
@@ -254,6 +445,7 @@
               [
                 cargo-expand
                 cargo-nextest
+                cargo-ndk
                 rust-bin
                 pkg-config
                 cmake
@@ -264,6 +456,7 @@
                 python3
                 nodejs
                 wrangler
+                openjdk_headless
               ]
               ++ [
                 config.packages.funasr-server
@@ -278,6 +471,7 @@
               stdenv.cc.cc.lib
               zlib
               worker-build
+              androidComposition.ndk-bundle
             ];
 
             shellHook = ''
@@ -286,6 +480,9 @@
               export BLAS_INCLUDE_DIRS=${pkgs.openblas.dev}/include
               export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.openssl.out}/lib:${pkgs.openblas}/lib:${pkgs.zlib}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
               export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${pkgs.stdenv.cc}/bin/cc
+              export ANDROID_NDK_HOME=${androidNdkHome}
+              export ANDROID_HOME=${androidComposition.androidsdk}/libexec/android-sdk
+              export JAVA_HOME=${pkgs.openjdk_headless}/lib/openjdk
               if [ -L .devin/config.json ]; then
                 unlink .devin/config.json
               fi

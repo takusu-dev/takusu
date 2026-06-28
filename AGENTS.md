@@ -10,7 +10,7 @@ takusu is a planner that automatically builds user schedules and a voice assista
 ## Tech Stack
 
 - **Language**: Rust (edition 2024, stable toolchain)
-- **Python**: FunASR server for STT (SenseVoice-Small model, managed via `uv`)
+- **Python**: FunASR server for STT (SenseVoice-Small model, managed via `uv`); Moonshine server for STT (moonshine-voice, managed via `uv`)
 - **Kotlin**: Planned for Android app
 - **Version Control**: Jujutsu (`jj`) + Git (GitHub) — **Jujutsu is the preferred VCS in this workspace.** See [Version Control Workflow](#version-control-workflow) below.
 - **Nix**: `flake.nix` provides the dev shell (direnv with `use flake`)
@@ -58,16 +58,24 @@ takusu/
 │   │       ├── lib.rs
 │   │       ├── record.rs     #   Microphone recording (cpal)
 │   │       ├── funasr.rs    #   FunASR WebSocket client (SenseVoice backend)
+│   │       ├── moonshine.rs #   Moonshine WebSocket client (moonshine-voice backend)
 │   │       └── tts.rs       #   TTS client (Irodori-TTS)
 │   ├── takusu-audio-cli/     # CLI for audio recording, transcription, and TTS
-│   │   └── src/main.rs      #   STT via FunASR, TTS via Irodori-TTS
+│   │   └── src/main.rs      #   STT via FunASR/Moonshine, TTS via Irodori-TTS
 │   ├── funasr_server/        # Python WebSocket server for FunASR STT
 │   │   ├── pyproject.toml
 │   │   └── src/funasr_server/
 │   │       ├── __init__.py
 │   │       ├── __main__.py
-│   │       ├── config.py    #   Server configuration
-│   │       └── server.py    #   WebSocket server (SenseVoice-Small model)
+│   │       ├── config.py     #   Server configuration
+│   │       └── server.py     #   WebSocket server (SenseVoice-Small model)
+│   ├── moonshine_server/     # Python WebSocket server for Moonshine STT
+│   │   ├── pyproject.toml
+│   │   └── src/moonshine_server/
+│   │       ├── __init__.py
+│   │       ├── __main__.py
+│   │       ├── config.py     #   Server configuration
+│   │       └── server.py     #   WebSocket server (moonshine-voice)
 │   ├── takusu-client/         # HTTP client library for takusu REST API
 │   │   └── src/lib.rs         #   Client, all request/response types
 │   ├── takusu-cli/            # CLI client (clap derive, editor-based task editing)
@@ -113,6 +121,9 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `cd funasr_server && uv run python -m funasr_server` | Start FunASR STT server |
 | `cd funasr_server && ruff check src/` | Lint Python code |
 | `cd funasr_server && ruff format --check src/` | Check Python formatting |
+| `cd moonshine_server && uv run python -m moonshine_server` | Start Moonshine STT server |
+| `cd moonshine_server && ruff check src/` | Lint Python code |
+| `cd moonshine_server && ruff format --check src/` | Check Python formatting |
 | `cargo run -p takusu-audio-cli -- speak --text "..."` | Synthesize speech with Irodori-TTS |
 | `./scripts/irodori-tts-server.sh` | Start Irodori-TTS inference server (clones to `$XDG_CACHE_HOME`) |
 | `nix run .#irodori-tts-server` | Same as above, via Nix |
@@ -173,7 +184,7 @@ This workspace uses **Jujutsu (`jj`) as the primary VCS**, backed by a Git remot
 | `clap` | 4 (derive,env) | takusu-cli | CLI argument parsing |
 | `comfy-table` | 7 | takusu-cli | Rich table display |
 | `cpal` | 0.18.1 | takusu-audio | Audio input |
-| `tokio-tungstenite` | 0.29 | takusu-audio | WebSocket client (FunASR) |
+| `tokio-tungstenite` | 0.29 | takusu-audio | WebSocket client (FunASR/Moonshine) |
 | `futures-util` | 0.3 | takusu-audio | Async stream utilities |
 
 ## Core Planner Design (takusu-core)

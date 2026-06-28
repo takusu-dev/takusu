@@ -5,6 +5,7 @@ use takusu_local::state::AppState;
 use takusu_local_lib::app::TakusuApp;
 use takusu_local_lib::config::LocalConfig;
 use takusu_local_lib::config::StorageKind;
+#[cfg(feature = "sqlite")]
 use takusu_local_lib::storage_sqlite::SqliteStorage;
 use takusu_local_lib::storage_workers::WorkersStorage;
 use takusu_local_lib::token_cache::TokenCache;
@@ -23,11 +24,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root_token = LocalConfig::load_root_token();
 
     let storage: Arc<dyn Storage> = match cfg.storage_kind() {
+        #[cfg(feature = "sqlite")]
         StorageKind::Sqlite => {
             tracing::info!("storage backend: sqlite ({})", cfg.db_url());
             Arc::new(SqliteStorage::init(&cfg, root_token.clone()).await?)
         }
-        StorageKind::Workers => {
+        #[allow(unreachable_patterns)]
+        _ => {
             let url = std::env::var("TAKUSU_WORKERS_URL")
                 .ok()
                 .filter(|s| !s.is_empty())

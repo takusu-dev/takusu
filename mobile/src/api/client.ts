@@ -1,0 +1,169 @@
+import type {
+  TaskRow,
+  CreateTask,
+  UpdateTask,
+  TaskQuery,
+  HabitRow,
+  CreateHabit,
+  UpdateHabit,
+  ScheduleRow,
+  GenerateSchedule,
+  RescheduleRequest,
+  MoveEntryRequest,
+  SettingsRow,
+  UpdateSettings,
+  TokenRow,
+  TokenCreateResponse,
+} from './types';
+
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    public body: string,
+  ) {
+    super(`API error ${status}: ${body}`);
+    this.name = 'ApiError';
+  }
+}
+
+export class TakusuClient {
+  private baseUrl: string;
+  private token: string;
+
+  constructor(baseUrl: string, token: string) {
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.token = token;
+  }
+
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<T> {
+    const url = `${this.baseUrl}${path}`;
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.token}`,
+    };
+    if (body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+    }
+    const resp = await fetch(url, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    const status = resp.status;
+    if (status >= 400) {
+      const text = await resp.text().catch(() => '');
+      throw new ApiError(status, text);
+    }
+    const text = await resp.text();
+    if (!text) return undefined as T;
+    return JSON.parse(text) as T;
+  }
+
+  // ── Health ──
+  async health(): Promise<string> {
+    const resp = await fetch(`${this.baseUrl}/health`);
+    return resp.text();
+  }
+
+  // ── Task ──
+  async listTasks(query?: TaskQuery): Promise<TaskRow[]> {
+    const params = new URLSearchParams();
+    if (query?.status) params.set('status', query.status);
+    if (query?.from) params.set('from', query.from);
+    if (query?.until) params.set('until', query.until);
+    if (query?.habit_id) params.set('habit_id', query.habit_id);
+    const qs = params.toString();
+    return this.request('GET', `/api/tasks${qs ? `?${qs}` : ''}`);
+  }
+
+  async getTask(id: string): Promise<TaskRow> {
+    return this.request('GET', `/api/tasks/${id}`);
+  }
+
+  async createTask(body: CreateTask): Promise<TaskRow> {
+    return this.request('POST', '/api/tasks', body);
+  }
+
+  async updateTask(id: string, body: UpdateTask): Promise<TaskRow> {
+    return this.request('PATCH', `/api/tasks/${id}`, body);
+  }
+
+  async replaceTask(id: string, body: CreateTask): Promise<TaskRow> {
+    return this.request('PUT', `/api/tasks/${id}`, body);
+  }
+
+  async deleteTask(id: string): Promise<void> {
+    return this.request('DELETE', `/api/tasks/${id}`);
+  }
+
+  // ── Habit ──
+  async listHabits(): Promise<HabitRow[]> {
+    return this.request('GET', '/api/habits');
+  }
+
+  async getHabit(id: string): Promise<HabitRow> {
+    return this.request('GET', `/api/habits/${id}`);
+  }
+
+  async createHabit(body: CreateHabit): Promise<HabitRow> {
+    return this.request('POST', '/api/habits', body);
+  }
+
+  async updateHabit(id: string, body: UpdateHabit): Promise<HabitRow> {
+    return this.request('PATCH', `/api/habits/${id}`, body);
+  }
+
+  async replaceHabit(id: string, body: CreateHabit): Promise<HabitRow> {
+    return this.request('PUT', `/api/habits/${id}`, body);
+  }
+
+  async deleteHabit(id: string): Promise<void> {
+    return this.request('DELETE', `/api/habits/${id}`);
+  }
+
+  // ── Schedule ──
+  async getSchedule(): Promise<ScheduleRow> {
+    return this.request('GET', '/api/schedule');
+  }
+
+  async generateSchedule(body: GenerateSchedule): Promise<ScheduleRow> {
+    return this.request('POST', '/api/schedule/generate', body);
+  }
+
+  async reschedule(body: RescheduleRequest): Promise<ScheduleRow> {
+    return this.request('POST', '/api/schedule/reschedule', body);
+  }
+
+  async moveEntry(taskId: string, body: MoveEntryRequest): Promise<ScheduleRow> {
+    return this.request('PATCH', `/api/schedule/entries/${taskId}`, body);
+  }
+
+  async clearSchedule(): Promise<void> {
+    return this.request('DELETE', '/api/schedule');
+  }
+
+  // ── Settings ──
+  async getSettings(): Promise<SettingsRow> {
+    return this.request('GET', '/api/settings');
+  }
+
+  async updateSettings(body: UpdateSettings): Promise<SettingsRow> {
+    return this.request('PUT', '/api/settings', body);
+  }
+
+  // ── Token ──
+  async listTokens(): Promise<TokenRow[]> {
+    return this.request('GET', '/api/tokens');
+  }
+
+  async createToken(description?: string): Promise<TokenCreateResponse> {
+    return this.request('POST', '/api/tokens', { description });
+  }
+
+  async revokeToken(id: string): Promise<void> {
+    return this.request('DELETE', `/api/tokens/${id}`);
+  }
+}
