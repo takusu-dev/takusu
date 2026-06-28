@@ -81,10 +81,8 @@ impl TakusuServer {
                 detail: format!("failed to create runtime: {e}"),
             })?;
 
-        let storage: Arc<dyn Storage> = Arc::new(WorkersStorage::new_with(
-            workers_url,
-            root_token.clone(),
-        ));
+        let storage: Arc<dyn Storage> =
+            Arc::new(WorkersStorage::new_with(workers_url, root_token.clone()));
         let token_cache = Arc::new(TokenCache::with_default_ttl());
         let app = Arc::new(TakusuApp::new(storage, root_token, token_cache));
         let state = AppState::new(app);
@@ -130,9 +128,9 @@ impl TakusuServer {
         let runtime_guard = self.runtime.lock();
         let port_guard = self.port.lock();
         match (runtime_guard, port_guard) {
-            (Ok(guard), Ok(port)) if guard.is_some() && *port > 0 => ServerStatus::Running {
-                port: *port,
-            },
+            (Ok(guard), Ok(port)) if guard.is_some() && *port > 0 => {
+                ServerStatus::Running { port: *port }
+            }
             _ => ServerStatus::Stopped,
         }
     }

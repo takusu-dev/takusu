@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from moonshine_server import DEFAULT_HOST, DEFAULT_LANGUAGE, DEFAULT_MODEL_ARCH, DEFAULT_PORT
 

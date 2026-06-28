@@ -95,7 +95,9 @@ fn detect_cycle(adj: &[Vec<usize>]) -> Result<(), AppError> {
 }
 
 #[allow(clippy::type_complexity)]
-fn build_dep_graph(tasks: &[TaskRow]) -> Result<(Vec<Vec<usize>>, HashMap<String, usize>), AppError> {
+fn build_dep_graph(
+    tasks: &[TaskRow],
+) -> Result<(Vec<Vec<usize>>, HashMap<String, usize>), AppError> {
     let mut id_to_idx: HashMap<String, usize> = HashMap::new();
     for (i, t) in tasks.iter().enumerate() {
         id_to_idx.insert(t.id.clone(), i);
@@ -113,16 +115,16 @@ fn build_dep_graph(tasks: &[TaskRow]) -> Result<(Vec<Vec<usize>>, HashMap<String
     Ok((adj, id_to_idx))
 }
 
-fn habit_row_to_config(row: &HabitRow, tz: &jiff::tz::TimeZone) -> Result<takusu_habit::Habit, AppError> {
+fn habit_row_to_config(
+    row: &HabitRow,
+    tz: &jiff::tz::TimeZone,
+) -> Result<takusu_habit::Habit, AppError> {
     let recurrence: takusu_habit::RecurrenceRule = serde_json::from_str(&row.recurrence)
         .map_err(|e| AppError::BadRequest(format!("invalid recurrence: {e}")))?;
     let (sh, sm) = parse_hhmm(&row.start_time);
     let start_time = takusu_habit::TimeOfDay::new(sh, sm)
         .ok_or_else(|| AppError::BadRequest(format!("invalid start_time: {}", row.start_time)))?;
-    let duration = NormalDist::new(
-        (row.avg_minutes / 5) as u64,
-        (row.sigma_minutes / 5) as u64,
-    );
+    let duration = NormalDist::new((row.avg_minutes / 5) as u64, (row.sigma_minutes / 5) as u64);
     Ok(takusu_habit::Habit {
         recurrence,
         start_time,
@@ -270,12 +272,7 @@ impl TakusuApp {
                 .await
                 .map_err(storage_to_app)?;
             let (mut adj, id_to_idx) = build_dep_graph(&tasks)?;
-            let full_id = self
-                .storage
-                .get_task(id)
-                .await
-                .map_err(storage_to_app)?
-                .id;
+            let full_id = self.storage.get_task(id).await.map_err(storage_to_app)?.id;
             let target_idx = id_to_idx
                 .get(&full_id)
                 .ok_or_else(|| AppError::NotFound(format!("task {id} not found")))?;
@@ -308,12 +305,7 @@ impl TakusuApp {
                 .await
                 .map_err(storage_to_app)?;
             let (mut adj, id_to_idx) = build_dep_graph(&tasks)?;
-            let full_id = self
-                .storage
-                .get_task(id)
-                .await
-                .map_err(storage_to_app)?
-                .id;
+            let full_id = self.storage.get_task(id).await.map_err(storage_to_app)?.id;
             let target_idx = id_to_idx
                 .get(&full_id)
                 .ok_or_else(|| AppError::NotFound(format!("task {id} not found")))?;
@@ -938,12 +930,11 @@ impl TakusuApp {
         }
     }
 
-    pub async fn sync_habit_tasks(&self, tz: &jiff::tz::TimeZone) -> Result<Vec<TaskRow>, AppError> {
-        let habits = self
-            .storage
-            .list_habits()
-            .await
-            .map_err(storage_to_app)?;
+    pub async fn sync_habit_tasks(
+        &self,
+        tz: &jiff::tz::TimeZone,
+    ) -> Result<Vec<TaskRow>, AppError> {
+        let habits = self.storage.list_habits().await.map_err(storage_to_app)?;
         let active_habits: Vec<HabitRow> = habits.into_iter().filter(|h| h.active).collect();
         if active_habits.is_empty() {
             return Ok(vec![]);
@@ -1083,8 +1074,7 @@ impl TakusuApp {
 
         let mut all_depends: Vec<Vec<usize>> = Vec::with_capacity(task_rows.len());
         for row in task_rows {
-            let dep_ids: Vec<String> = serde_json::from_str(&row.depends)
-                .unwrap_or_default();
+            let dep_ids: Vec<String> = serde_json::from_str(&row.depends).unwrap_or_default();
             let mut resolved = Vec::new();
             for dep_id in &dep_ids {
                 if let Some(&idx) = id_to_idx.get(dep_id) {

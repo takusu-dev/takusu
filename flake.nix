@@ -82,9 +82,18 @@
             includeEmulator = false;
             includeSystemImages = false;
             includeSources = false;
-            buildToolsVersions = [ "37.0.0" "35.0.0" ];
-            platformVersions = [ "37" "35" ];
-            cmakeVersions = [ "3.22.1" "3.30.5" ];
+            buildToolsVersions = [
+              "37.0.0"
+              "35.0.0"
+            ];
+            platformVersions = [
+              "37"
+              "35"
+            ];
+            cmakeVersions = [
+              "3.22.1"
+              "3.30.5"
+            ];
           };
           androidNdkHome = "${androidComposition.ndk-bundle}/libexec/android-sdk/ndk-bundle";
 
@@ -304,7 +313,12 @@
           };
 
           packages = {
-            inherit takusu-cli takusu-local takusu-android-libs uniffi-bindgen;
+            inherit
+              takusu-cli
+              takusu-local
+              takusu-android-libs
+              uniffi-bindgen
+              ;
             default = takusu-cli;
 
             # Full APK build script. Run from the repo root:
@@ -410,32 +424,34 @@
 
             ci = pkgs.buildEnv {
               name = "ci";
-              paths = with pkgs; [
-                cargo-expand
-                cargo-nextest
-                cargo-ndk
-                rust-bin
-                pkg-config
-                cmake
-                stdenv.cc
-                mold
-                alsa-lib
-                libpulseaudio
-                libclang
-                openblas
-                uv
-                ruff
-                python3
-                zlib
-                nodejs
-                wrangler
-                worker-build
-                openjdk_headless
-              ]
-              ++ [
-                androidComposition.ndk-bundle
-                androidComposition.androidsdk
-              ];
+              paths =
+                with pkgs;
+                [
+                  cargo-expand
+                  cargo-nextest
+                  cargo-ndk
+                  rust-bin
+                  pkg-config
+                  cmake
+                  stdenv.cc
+                  mold
+                  alsa-lib
+                  libpulseaudio
+                  libclang
+                  openblas
+                  uv
+                  ruff
+                  python3
+                  zlib
+                  nodejs
+                  wrangler
+                  worker-build
+                  openjdk_headless
+                ]
+                ++ [
+                  androidComposition.ndk-bundle
+                  androidComposition.androidsdk
+                ];
             };
           };
 

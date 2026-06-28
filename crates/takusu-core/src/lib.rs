@@ -823,7 +823,11 @@ mod tests {
         // Task 1.depends = [0] (original), but 0 is pinned → filtered out, depends becomes [].
         let replanned = p.plan_in_range(&range, &current_schedule, &[]);
         assert_eq!(replanned.schedules.len(), 3);
-        let pinned_0 = replanned.schedules.iter().find(|(_, _, id)| *id == 0).unwrap();
+        let pinned_0 = replanned
+            .schedules
+            .iter()
+            .find(|(_, _, id)| *id == 0)
+            .unwrap();
         assert_eq!(pinned_0.0, Point(20), "task 0 pinned start unchanged");
         assert_eq!(pinned_0.1, Point(30), "task 0 pinned end unchanged");
     }
@@ -882,7 +886,11 @@ mod tests {
         // Sub-planner: [task 0, task 1]. Task 1.depends = [0] → remapped to [0]. Correct.
         let replanned = p.plan_in_range(&range, &current_schedule, &[]);
         assert_eq!(replanned.schedules.len(), 3);
-        let pinned_2 = replanned.schedules.iter().find(|(_, _, id)| *id == 2).unwrap();
+        let pinned_2 = replanned
+            .schedules
+            .iter()
+            .find(|(_, _, id)| *id == 2)
+            .unwrap();
         assert_eq!(pinned_2.0, Point(50), "task 2 pinned start unchanged");
     }
 

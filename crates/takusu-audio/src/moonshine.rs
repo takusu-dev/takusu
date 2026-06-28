@@ -53,10 +53,7 @@ impl MoonshineClient {
         let (mut ws_stream, _) = tokio_tungstenite::connect_async(&self.config.url)
             .await
             .map_err(|e| {
-                MoonshineError::Connection(format!(
-                    "failed to connect to {}: {e}",
-                    self.config.url
-                ))
+                MoonshineError::Connection(format!("failed to connect to {}: {e}", self.config.url))
             })?;
 
         let mut start = serde_json::json!({
@@ -80,8 +77,9 @@ impl MoonshineClient {
         while let Some(msg) = ws_stream.next().await {
             match msg {
                 Ok(Message::Text(text)) => {
-                    let parsed: ResultMessage = serde_json::from_str(&text)
-                        .map_err(|e| MoonshineError::Connection(format!("json parse error: {e}")))?;
+                    let parsed: ResultMessage = serde_json::from_str(&text).map_err(|e| {
+                        MoonshineError::Connection(format!("json parse error: {e}"))
+                    })?;
 
                     match parsed.msg_type.as_str() {
                         "result" => {

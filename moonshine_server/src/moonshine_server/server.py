@@ -21,7 +21,6 @@ import contextlib
 import json
 import logging
 import signal
-import sys
 
 import numpy as np
 import websockets
@@ -41,7 +40,9 @@ def _load_model(config: ServerConfig) -> object:
 
     if config.model_path:
         model_path = config.model_path
-        model_arch = ModelArch(config.model_arch) if config.model_arch is not None else ModelArch.BASE
+        model_arch = (
+            ModelArch(config.model_arch) if config.model_arch is not None else ModelArch.BASE
+        )
         logger.info("Loading model from %s (arch=%s) ...", model_path, model_arch)
         model = Transcriber(model_path=model_path, model_arch=model_arch)
     else:
@@ -53,10 +54,9 @@ def _load_model(config: ServerConfig) -> object:
         kw = {}
         if config.models_dir:
             from pathlib import Path
+
             kw["cache_root"] = Path(config.models_dir)
-        model_path, model_arch = get_model_for_language(
-            config.language, config.model_arch, **kw
-        )
+        model_path, model_arch = get_model_for_language(config.language, config.model_arch, **kw)
         logger.info("Model downloaded to %s", model_path)
         model = Transcriber(model_path=model_path, model_arch=model_arch)
 
