@@ -2,7 +2,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { PaperProvider, MD3DarkTheme, MD3LightTheme } from 'react-native-paper';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import * as Linking from 'expo-linking';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
@@ -27,8 +27,20 @@ Notifications.setNotificationHandler({
   }),
 });
 
+// Allowlist of valid route prefixes for notification deep links.
+// '/' is treated as exact match only — using startsWith('/') would match
+// every absolute path and defeat the allowlist purpose.
+const VALID_ROUTE_PREFIXES = ['/task/', '/habit/', '/settings'];
+
+function isValidRoute(url: string): boolean {
+  return url === '/' || VALID_ROUTE_PREFIXES.some((prefix) => url.startsWith(prefix));
+}
+
 function ThemedApp() {
   const { darkMode, client } = useServer();
+  // Track whether the initial cold-start notification response has been handled
+  // to prevent duplicate navigation when client transitions from null to non-null
+  const initialResponseHandled = useRef(false);
 
   // Set up notification channels, categories, permissions, and listeners
   useEffect(() => {
@@ -43,15 +55,24 @@ function ThemedApp() {
   useEffect(() => {
     function redirect(notification: Notifications.Notification) {
       const url = notification.request.content.data?.url;
-      if (typeof url === 'string' && url) {
+      if (typeof url === 'string' && url && isValidRoute(url)) {
         router.push(url);
       }
     }
 
-    // Check if app was opened from a notification
-    const lastResponse = Notifications.getLastNotificationResponse();
-    if (lastResponse?.notification) {
-      redirect(lastResponse.notification);
+    // Check if app was opened from a notification (only once on cold start).
+    // Only handle default body-tap actions — DONE/CANCEL action buttons have
+    // opensAppToForeground: false so they shouldn't cold-start the app, but
+    // getLastNotificationResponse() could return a stale action response.
+    if (!initialResponseHandled.current) {
+      const lastResponse = Notifications.getLastNotificationResponse();
+      if (
+        lastResponse?.notification &&
+        lastResponse.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER
+      ) {
+        redirect(lastResponse.notification);
+      }
+      initialResponseHandled.current = true;
     }
 
     const subscription = Notifications.addNotificationResponseReceivedListener(
@@ -63,8 +84,11 @@ function ThemedApp() {
           const taskId = response.notification.request.content.data?.taskId;
           if (typeof taskId === 'string' && taskId && client) {
             const newStatus = actionId === ACTION_DONE ? 'completed' : 'skipped';
-            client.updateTask(taskId, { status: newStatus }).catch(() => {});
-            dismissInProgressNotification(taskId).catch(() => {});
+            client
+              .updateTask(taskId, { status: newStatus })
+              .catch((err) => console.warn('Notification action: updateTask failed', err));
+            dismissInProgressNotification(taskId)
+              .catch((err) => console.warn('Notification action: dismiss failed', err));
           }
           return;
         }

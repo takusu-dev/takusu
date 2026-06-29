@@ -117,21 +117,27 @@ export function HomeView() {
       setTasks(taskList);
       setSchedule(sched ? parseSchedule(sched.schedule) : []);
       setHabits(habitList);
-      // Reschedule notifications with fresh data
-      rescheduleFromRaw(
-        taskList,
-        sched?.schedule ?? null,
-        habitList,
-        notifications,
-      ).catch(() => {});
     } finally {
       setRefreshing(false);
     }
-  }, [client, notifications]);
+  }, [client]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Reschedule notifications when tasks, schedule, habits, or notification
+  // settings change. This is separate from refresh() to avoid triggering a
+  // full server refetch when only notification settings are toggled.
+  useEffect(() => {
+    if (tasks.length === 0 && habits.length === 0) return;
+    rescheduleFromRaw(
+      tasks,
+      schedule.length > 0 ? JSON.stringify(schedule) : null,
+      habits,
+      notifications,
+    ).catch(() => {});
+  }, [tasks, schedule, habits, notifications]);
 
   const scheduleMap = useMemo(() => {
     const m = new Map<string, ScheduleEntry>();
