@@ -3,22 +3,46 @@ import {
   useContext,
   useEffect,
   useState,
+  useCallback,
+  useMemo,
   type ReactNode,
 } from 'react';
 import { Platform } from 'react-native';
 import { TakusuClient } from './client';
 import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
+import {
+  loadSettings,
+  saveWorkersUrl,
+  saveWorkersToken,
+  saveDarkMode,
+  type PersistedSettings,
+} from './settingsStore';
 
 interface ServerState {
   ready: boolean;
   error: string | null;
   client: TakusuClient | null;
+  workersUrl: string;
+  workersToken: string;
+  darkMode: boolean;
+  restarting: boolean;
 }
 
-const ServerContext = createContext<ServerState>({
+interface ServerContextValue extends ServerState {
+  restartServer: (url?: string, token?: string) => Promise<void>;
+  setDarkMode: (enabled: boolean) => Promise<void>;
+}
+
+const ServerContext = createContext<ServerContextValue>({
   ready: false,
   error: null,
   client: null,
+  workersUrl: '',
+  workersToken: '',
+  darkMode: false,
+  restarting: false,
+  restartServer: async () => {},
+  setDarkMode: async () => {},
 });
 
 const DEFAULT_PORT = 3838;
@@ -28,49 +52,117 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     ready: false,
     error: null,
     client: null,
+    workersUrl: '',
+    workersToken: '',
+    darkMode: false,
+    restarting: false,
   });
+
+  const startServer = useCallback(
+    async (url: string, token: string): Promise<TakusuClient | null> => {
+      if (Platform.OS !== 'android') {
+        const baseUrl =
+          process.env.EXPO_PUBLIC_TAKUSU_URL ?? 'http://localhost:3000';
+        const tk = process.env.EXPO_PUBLIC_TAKUSU_TOKEN ?? '';
+        return new TakusuClient(baseUrl, tk);
+      }
+
+      const finalUrl = url || process.env.EXPO_PUBLIC_WORKERS_URL || '';
+      const finalToken = token || process.env.EXPO_PUBLIC_ROOT_TOKEN || '';
+
+      if (!finalUrl || !finalToken) {
+        throw new Error('Workers URL and token are required');
+      }
+
+      await TakusuServerModule.start({
+        port: DEFAULT_PORT,
+        workersUrl: finalUrl,
+        rootToken: finalToken,
+      });
+
+      return new TakusuClient(`http://127.0.0.1:${DEFAULT_PORT}`, finalToken);
+    },
+    [],
+  );
+
+  const restartServer = useCallback(
+    async (url?: string, token?: string) => {
+      const newUrl = url ?? state.workersUrl;
+      const newToken = token ?? state.workersToken;
+
+      setState((prev) => ({ ...prev, restarting: true }));
+
+      try {
+        if (Platform.OS === 'android') {
+          try {
+            await TakusuServerModule.stop();
+          } catch {
+            // server may not be running, ignore
+          }
+        }
+
+        const client = await startServer(newUrl, newToken);
+
+        setState((prev) => ({
+          ...prev,
+          ready: true,
+          error: null,
+          client,
+          workersUrl: newUrl,
+          workersToken: newToken,
+          restarting: false,
+        }));
+      } catch (e) {
+        setState((prev) => ({
+          ...prev,
+          error: e instanceof Error ? e.message : String(e),
+          restarting: false,
+        }));
+      }
+    },
+    [state.workersUrl, state.workersToken, startServer],
+  );
+
+  const setDarkMode = useCallback(async (enabled: boolean) => {
+    await saveDarkMode(enabled);
+    setState((prev) => ({ ...prev, darkMode: enabled }));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
 
     async function init() {
-      if (Platform.OS !== 'android') {
-        // On non-Android platforms, use a configurable base URL
-        // (for development with an external server)
-        const baseUrl = process.env.EXPO_PUBLIC_TAKUSU_URL ?? 'http://localhost:3000';
-        const token = process.env.EXPO_PUBLIC_TAKUSU_TOKEN ?? '';
-        if (cancelled) return;
-        setState({
-          ready: true,
-          error: null,
-          client: new TakusuClient(baseUrl, token),
-        });
-        return;
-      }
+      const settings: PersistedSettings = await loadSettings();
+
+      if (cancelled) return;
+
+      setState((prev) => ({
+        ...prev,
+        workersUrl: settings.workersUrl,
+        workersToken: settings.workersToken,
+        darkMode: settings.darkMode,
+      }));
 
       try {
-        const workersUrl = process.env.EXPO_PUBLIC_WORKERS_URL ?? '';
-        const rootToken = process.env.EXPO_PUBLIC_ROOT_TOKEN ?? '';
-
-        await TakusuServerModule.start({
-          port: DEFAULT_PORT,
-          workersUrl,
-          rootToken,
-        });
-
+        const client = await startServer(
+          settings.workersUrl,
+          settings.workersToken,
+        );
         if (cancelled) return;
-        setState({
+        setState((prev) => ({
+          ...prev,
           ready: true,
           error: null,
-          client: new TakusuClient(`http://127.0.0.1:${DEFAULT_PORT}`, rootToken),
-        });
+          client,
+        }));
       } catch (e) {
         if (cancelled) return;
-        setState({
+        setState((prev) => ({
+          ...prev,
           ready: false,
           error: e instanceof Error ? e.message : String(e),
           client: null,
-        });
+        }));
       }
     }
 
@@ -82,13 +174,27 @@ export function ServerProvider({ children }: { children: ReactNode }) {
         TakusuServerModule.stop().catch(() => {});
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const contextValue = useMemo<ServerContextValue>(
+    () => ({
+      ...state,
+      restartServer,
+      setDarkMode,
+    }),
+    [state, restartServer, setDarkMode],
+  );
+
   return (
-    <ServerContext.Provider value={state}>{children}</ServerContext.Provider>
+    <ServerContext.Provider value={contextValue}>
+      {children}
+    </ServerContext.Provider>
   );
 }
 
 export function useServer() {
   return useContext(ServerContext);
 }
+
+export { saveWorkersUrl, saveWorkersToken };

@@ -1,5 +1,5 @@
 // TaskAddView — create a new task with optional dependencies
-// Fields: title, end_at, avg_minutes, sigma_minutes, abandonability, description
+// Fields: title, start_at (optional), end_at (required), avg_minutes, sigma_minutes, abandonability, description
 // Can add dependency targets (select from existing tasks)
 
 import { useState } from 'react';
@@ -12,21 +12,25 @@ import {
   View,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import Slider from '@expo/ui/community/slider';
 import { useServer } from '@/src/api/ServerProvider';
 import { undoRedo } from '@/src/api/undoRedo';
 import type { TaskRow } from '@/src/api/types';
-import { COLORS, BRAND_COLOR } from '@/src/theme';
+import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
+import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 
 export function TaskAddView() {
   const { client } = useServer();
   const router = useRouter();
+  const colors = useColors();
   const { deps } = useLocalSearchParams<{ deps?: string }>();
 
   const initialDeps: string[] = deps ? JSON.parse(deps) : [];
 
   const [title, setTitle] = useState('');
-  const [endAt, setEndAt] = useState('');
+  const [startAt, setStartAt] = useState<Date | null>(null);
+  const [endAt, setEndAt] = useState<Date | null>(null);
   const [avgMinutes, setAvgMinutes] = useState('60');
   const [sigmaMinutes, setSigmaMinutes] = useState('0');
   const [abandonability, setAbandonability] = useState(0.5);
@@ -34,10 +38,23 @@ export function TaskAddView() {
   const [selectedDeps, setSelectedDeps] = useState<string[]>(initialDeps);
   const [allTasks, setAllTasks] = useState<TaskRow[]>([]);
   const [showDepPicker, setShowDepPicker] = useState(false);
+  const [pickerField, setPickerField] = useState<'start' | 'end' | null>(null);
 
   async function loadTasks() {
     if (!client) return;
     setAllTasks(await client.listTasks());
+  }
+
+  function formatDate(d: Date | null): string {
+    if (!d) return '未設定';
+    const dateStr = `${d.getFullYear()}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}`;
+    const timeStr = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    return `${dateStr} ${timeStr}`;
+  }
+
+  function toISO(d: Date): string {
+    const tzOffset = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - tzOffset).toISOString().slice(0, -1);
   }
 
   async function create() {
@@ -45,7 +62,8 @@ export function TaskAddView() {
     const task = await client.createTask({
       title,
       description: description || undefined,
-      end_at: endAt,
+      start_at: startAt ? toISO(startAt) : undefined,
+      end_at: toISO(endAt),
       avg_minutes: parseInt(avgMinutes, 10) || 60,
       sigma_minutes: parseInt(sigmaMinutes, 10) || 0,
       depends: selectedDeps.length > 0 ? selectedDeps : undefined,
@@ -60,7 +78,8 @@ export function TaskAddView() {
         await client.createTask({
           title,
           description: description || undefined,
-          end_at: endAt,
+          start_at: startAt ? toISO(startAt) : undefined,
+          end_at: toISO(endAt),
           avg_minutes: parseInt(avgMinutes, 10) || 60,
           sigma_minutes: parseInt(sigmaMinutes, 10) || 0,
           depends: selectedDeps.length > 0 ? selectedDeps : undefined,
@@ -72,53 +91,82 @@ export function TaskAddView() {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.white }]}>
       <View style={styles.topBar}>
         <Pressable style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>‹</Text>
+          <Ionicons name="chevron-back" size={28} color={BRAND_COLOR} />
         </Pressable>
-        <Text style={styles.title}>新規タスク</Text>
+        <Text style={[styles.title, { color: colors.black }]}>新規タスク</Text>
         <View style={{ flex: 1 }} />
-        <Pressable style={styles.saveButton} onPress={create}>
+        <Pressable
+          style={[styles.saveButton, (!title || !endAt) && styles.saveButtonDisabled]}
+          onPress={create}
+          disabled={!title || !endAt}
+        >
           <Text style={styles.saveButtonText}>追加</Text>
         </Pressable>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.field}>
-          <Text style={styles.label}>タイトル</Text>
+          <Text style={[styles.label, { color: colors.gray }]}>タイトル</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
             value={title}
             onChangeText={setTitle}
             placeholder="タスク名"
+            placeholderTextColor={colors.grayLight}
           />
         </View>
 
         <View style={styles.field}>
-          <Text style={styles.label}>期限 (ISO)</Text>
-          <TextInput
-            style={styles.input}
-            value={endAt}
-            onChangeText={setEndAt}
-            placeholder="2026-06-30T18:00:00+09:00"
-          />
+          <Text style={[styles.label, { color: colors.gray }]}>開始日時 (任意)</Text>
+          <Pressable
+            style={[styles.dateField, { borderColor: colors.separator, backgroundColor: colors.white }]}
+            onPress={() => setPickerField('start')}
+          >
+            <Ionicons name="calendar-outline" size={20} color={BRAND_COLOR} />
+            <Text style={[styles.dateText, { color: startAt ? colors.black : colors.grayLight }]}>
+              {formatDate(startAt)}
+            </Text>
+            {startAt && (
+              <Pressable
+                style={styles.clearIcon}
+                onPress={() => setStartAt(null)}
+              >
+                <Ionicons name="close-circle" size={18} color={colors.grayLight} />
+              </Pressable>
+            )}
+          </Pressable>
+        </View>
+
+        <View style={styles.field}>
+          <Text style={[styles.label, { color: colors.gray }]}>期限日時 (必須)</Text>
+          <Pressable
+            style={[styles.dateField, { borderColor: colors.separator, backgroundColor: colors.white }]}
+            onPress={() => setPickerField('end')}
+          >
+            <Ionicons name="calendar-outline" size={20} color={BRAND_COLOR} />
+            <Text style={[styles.dateText, { color: endAt ? colors.black : colors.grayLight }]}>
+              {formatDate(endAt)}
+            </Text>
+          </Pressable>
         </View>
 
         <View style={styles.row}>
           <View style={[styles.field, { flex: 1 }]}>
-            <Text style={styles.label}>avg (分)</Text>
+            <Text style={[styles.label, { color: colors.gray }]}>avg (分)</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
               value={avgMinutes}
               onChangeText={setAvgMinutes}
               keyboardType="numeric"
             />
           </View>
           <View style={[styles.field, { flex: 1 }]}>
-            <Text style={styles.label}>sigma (分)</Text>
+            <Text style={[styles.label, { color: colors.gray }]}>sigma (分)</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
               value={sigmaMinutes}
               onChangeText={setSigmaMinutes}
               keyboardType="numeric"
@@ -127,7 +175,7 @@ export function TaskAddView() {
         </View>
 
         <View style={styles.field}>
-          <Text style={styles.label}>abandonability: {abandonability.toFixed(2)}</Text>
+          <Text style={[styles.label, { color: colors.gray }]}>abandonability: {abandonability.toFixed(2)}</Text>
           <Slider
             value={abandonability}
             onValueChange={setAbandonability}
@@ -139,20 +187,21 @@ export function TaskAddView() {
         </View>
 
         <View style={styles.field}>
-          <Text style={styles.label}>説明</Text>
+          <Text style={[styles.label, { color: colors.gray }]}>説明</Text>
           <TextInput
-            style={[styles.input, styles.multiline]}
+            style={[styles.input, styles.multiline, { borderColor: colors.separator, color: colors.black }]}
             value={description}
             onChangeText={setDescription}
             multiline
             placeholder="説明 (任意)"
+            placeholderTextColor={colors.grayLight}
           />
         </View>
 
         {/* Dependencies */}
         <View style={styles.field}>
           <View style={styles.depHeader}>
-            <Text style={styles.label}>依存先タスク ({selectedDeps.length})</Text>
+            <Text style={[styles.label, { color: colors.gray }]}>依存先タスク ({selectedDeps.length})</Text>
             <Pressable
               style={styles.addDepButton}
               onPress={() => {
@@ -160,14 +209,15 @@ export function TaskAddView() {
                 setShowDepPicker(true);
               }}
             >
-              <Text style={styles.addDepButtonText}>+ 追加</Text>
+              <Ionicons name="add" size={16} color={COLORS.white} />
+              <Text style={styles.addDepButtonText}>追加</Text>
             </Pressable>
           </View>
           {selectedDeps.map((depId) => {
             const depTask = allTasks.find((t) => t.id === depId);
             return (
-              <View key={depId} style={styles.depItem}>
-                <Text style={styles.depItemText}>
+              <View key={depId} style={[styles.depItem, { backgroundColor: '#F8F5FC' }]}>
+                <Text style={[styles.depItemText, { color: colors.black }]}>
                   {depTask?.title ?? depId.slice(0, 8)}
                 </Text>
                 <Pressable
@@ -175,41 +225,67 @@ export function TaskAddView() {
                     setSelectedDeps(selectedDeps.filter((d) => d !== depId))
                   }
                 >
-                  <Text style={styles.depRemove}>✕</Text>
+                  <Ionicons name="close" size={18} color={COLORS.red} />
                 </Pressable>
               </View>
             );
           })}
         </View>
-
-        {/* Dep picker overlay */}
-        {showDepPicker && (
-          <View style={styles.depPicker}>
-            <View style={styles.depPickerHeader}>
-              <Text style={styles.depPickerTitle}>依存先を選択</Text>
-              <Pressable onPress={() => setShowDepPicker(false)}>
-                <Text style={styles.depPickerClose}>閉じる</Text>
-              </Pressable>
-            </View>
-            <ScrollView style={styles.depPickerList}>
-              {allTasks
-                .filter((t) => !selectedDeps.includes(t.id))
-                .map((t) => (
-                  <Pressable
-                    key={t.id}
-                    style={styles.depPickerItem}
-                    onPress={() => {
-                      setSelectedDeps([...selectedDeps, t.id]);
-                      setShowDepPicker(false);
-                    }}
-                  >
-                    <Text style={styles.depPickerItemText}>{t.title}</Text>
-                  </Pressable>
-                ))}
-            </ScrollView>
-          </View>
-        )}
       </ScrollView>
+
+      {/* Dep picker overlay */}
+      {showDepPicker && (
+        <View style={[styles.depPicker, { backgroundColor: colors.white }]}>
+          <View style={[styles.depPickerHeader, { borderBottomColor: colors.separator }]}>
+            <Text style={[styles.depPickerTitle, { color: colors.black }]}>依存先を選択</Text>
+            <Pressable onPress={() => setShowDepPicker(false)}>
+              <Text style={styles.depPickerClose}>閉じる</Text>
+            </Pressable>
+          </View>
+          <ScrollView style={styles.depPickerList}>
+            {allTasks
+              .filter((t) => !selectedDeps.includes(t.id))
+              .map((t) => (
+                <Pressable
+                  key={t.id}
+                  style={[styles.depPickerItem, { borderBottomColor: colors.separator }]}
+                  onPress={() => {
+                    setSelectedDeps([...selectedDeps, t.id]);
+                    setShowDepPicker(false);
+                  }}
+                >
+                  <Text style={[styles.depPickerItemText, { color: colors.black }]}>{t.title}</Text>
+                </Pressable>
+              ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* DateTime Picker Modals */}
+      <DateTimePickerModal
+        visible={pickerField === 'start'}
+        value={startAt}
+        mode="datetime"
+        label="開始日時"
+        optional
+        onConfirm={(date) => {
+          setStartAt(date);
+          setPickerField(null);
+        }}
+        onCancel={() => setPickerField(null)}
+      />
+      <DateTimePickerModal
+        visible={pickerField === 'end'}
+        value={endAt}
+        mode="datetime"
+        label="期限日時"
+        minimumDate={startAt ?? undefined}
+        onConfirm={(date) => {
+          setEndAt(date);
+          setPickerField(null);
+        }}
+        onCancel={() => setPickerField(null)}
+      />
     </View>
   );
 }
@@ -217,7 +293,6 @@ export function TaskAddView() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.white,
   },
   topBar: {
     flexDirection: 'row',
@@ -233,14 +308,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  backButtonText: {
-    fontSize: 28,
-    color: BRAND_COLOR,
-  },
   title: {
     fontSize: 18,
     fontWeight: '600',
-    color: COLORS.black,
     marginLeft: 8,
   },
   saveButton: {
@@ -248,6 +318,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     backgroundColor: BRAND_COLOR,
     borderRadius: 8,
+  },
+  saveButtonDisabled: {
+    opacity: 0.4,
   },
   saveButtonText: {
     color: COLORS.white,
@@ -268,16 +341,30 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 13,
-    color: COLORS.gray,
     fontWeight: '500',
   },
   input: {
     borderWidth: 1,
-    borderColor: COLORS.separator,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
     fontSize: 16,
+  },
+  dateField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  dateText: {
+    flex: 1,
+    fontSize: 16,
+  },
+  clearIcon: {
+    padding: 4,
   },
   multiline: {
     minHeight: 80,
@@ -288,10 +375,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   addDepButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 4,
     backgroundColor: BRAND_COLOR,
     borderRadius: 6,
+    gap: 4,
   },
   addDepButtonText: {
     color: COLORS.white,
@@ -303,17 +393,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
     paddingHorizontal: 12,
-    backgroundColor: '#F8F5FC',
     borderRadius: 8,
     marginTop: 4,
   },
   depItemText: {
     fontSize: 14,
-    color: COLORS.black,
-  },
-  depRemove: {
-    fontSize: 16,
-    color: COLORS.red,
   },
   depPicker: {
     position: 'absolute',
@@ -321,7 +405,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: COLORS.white,
     zIndex: 100,
   },
   depPickerHeader: {
@@ -331,7 +414,6 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingTop: 60,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.separator,
   },
   depPickerTitle: {
     fontSize: 18,
@@ -348,7 +430,6 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.separator,
   },
   depPickerItemText: {
     fontSize: 16,

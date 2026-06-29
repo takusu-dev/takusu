@@ -11,9 +11,11 @@ import {
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { Button, IconButton } from 'react-native-paper';
 import type { TakusuClient } from '@/src/api/client';
 import type { HabitRow } from '@/src/api/types';
-import { COLORS, BRAND_COLOR } from '@/src/theme';
+import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 
 interface HabitViewProps {
   client: TakusuClient | null;
@@ -22,6 +24,7 @@ interface HabitViewProps {
 
 export function HabitView({ client, onBack }: HabitViewProps) {
   const router = useRouter();
+  const colors = useColors();
   const [habits, setHabits] = useState<HabitRow[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -49,18 +52,58 @@ export function HabitView({ client, onBack }: HabitViewProps) {
     await refresh();
   }
 
+  function toggleSelection(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.white }]}>
       <View style={styles.topBar}>
-        <Pressable style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>‹</Text>
-        </Pressable>
-        <Text style={styles.title}>ハビット</Text>
+        <IconButton
+          icon="chevron-left"
+          iconColor={BRAND_COLOR}
+          size={28}
+          onPress={onBack}
+        />
+        <Text style={[styles.title, { color: colors.black }]}>ハビット</Text>
         <View style={{ flex: 1 }} />
-        {selected.size > 0 && (
-          <Pressable style={styles.deleteButton} onPress={deleteSelected}>
-            <Text style={styles.deleteButtonText}>削除</Text>
-          </Pressable>
+        {selected.size > 0 ? (
+          <View style={styles.contextMenu}>
+            <IconButton
+              icon="select-all"
+              iconColor={BRAND_COLOR}
+              size={22}
+              onPress={() => setSelected(new Set(habits.map((h) => h.id)))}
+            />
+            <IconButton
+              icon="select-off"
+              iconColor={BRAND_COLOR}
+              size={22}
+              onPress={() => setSelected(new Set())}
+            />
+            <Button
+              mode="contained"
+              onPress={deleteSelected}
+              buttonColor={COLORS.red}
+              textColor={COLORS.white}
+              compact
+            >
+              削除
+            </Button>
+          </View>
+        ) : (
+          <IconButton
+            icon="plus"
+            iconColor={COLORS.white}
+            size={24}
+            containerColor={BRAND_COLOR}
+            onPress={() => router.push('/habit/add')}
+          />
         )}
       </View>
 
@@ -71,35 +114,33 @@ export function HabitView({ client, onBack }: HabitViewProps) {
           <Pressable
             style={[
               styles.habitCard,
+              { backgroundColor: '#F8F5FC' },
               selected.has(h.id) && styles.habitCardSelected,
             ]}
             onPress={() => {
               if (selected.size > 0) {
-                setSelected((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(h.id)) next.delete(h.id);
-                  else next.add(h.id);
-                  return next;
-                });
+                toggleSelection(h.id);
               } else {
                 router.push(`/habit/${h.id}`);
               }
             }}
-            onLongPress={() =>
-              setSelected((prev) => {
-                const next = new Set(prev);
-                if (next.has(h.id)) next.delete(h.id);
-                else next.add(h.id);
-                return next;
-              })
-            }
+            onLongPress={() => toggleSelection(h.id)}
           >
-            <Text style={styles.habitTitle}>{h.title}</Text>
-            <Text style={styles.habitRecurrence}>周期: {h.recurrence}</Text>
-            <Text style={styles.habitCost}>
+            <View style={styles.habitHeader}>
+              <Text style={[styles.habitTitle, { color: colors.black }]}>
+                {h.title}
+              </Text>
+              {selected.has(h.id) && (
+                <Ionicons name="checkmark-circle" size={20} color={BRAND_COLOR} />
+              )}
+            </View>
+            <Text style={[styles.habitRecurrence, { color: colors.gray }]}>
+              周期: {h.recurrence}
+            </Text>
+            <Text style={[styles.habitCost, { color: colors.gray }]}>
               {h.avg_minutes}m ±{h.sigma_minutes}
             </Text>
-            <Text style={styles.habitAbandon}>
+            <Text style={[styles.habitAbandon, { color: colors.gray }]}>
               abandon: {h.abandonability.toFixed(2)}
             </Text>
           </Pressable>
@@ -109,13 +150,6 @@ export function HabitView({ client, onBack }: HabitViewProps) {
         }
         contentContainerStyle={styles.listContent}
       />
-
-      <Pressable
-        style={styles.addButton}
-        onPress={() => router.push('/habit/add')}
-      >
-        <Text style={styles.addButtonText}>+</Text>
-      </Pressable>
     </View>
   );
 }
@@ -123,41 +157,23 @@ export function HabitView({ client, onBack }: HabitViewProps) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.white,
   },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
+    paddingHorizontal: 4,
     paddingTop: 48,
-    paddingBottom: 8,
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  backButtonText: {
-    fontSize: 28,
-    color: BRAND_COLOR,
+    paddingBottom: 4,
   },
   title: {
     fontSize: 18,
     fontWeight: '600',
-    color: COLORS.black,
-    marginLeft: 8,
+    marginLeft: 4,
   },
-  deleteButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: COLORS.red,
-    borderRadius: 8,
-  },
-  deleteButtonText: {
-    color: COLORS.white,
-    fontSize: 14,
+  contextMenu: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   listContent: {
     padding: 12,
@@ -165,7 +181,6 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   habitCard: {
-    backgroundColor: '#F8F5FC',
     borderRadius: 12,
     padding: 16,
     gap: 4,
@@ -174,42 +189,23 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: BRAND_COLOR,
   },
+  habitHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   habitTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: COLORS.black,
+    flex: 1,
   },
   habitRecurrence: {
     fontSize: 13,
-    color: COLORS.gray,
   },
   habitCost: {
     fontSize: 13,
-    color: COLORS.gray,
   },
   habitAbandon: {
     fontSize: 13,
-    color: COLORS.gray,
-  },
-  addButton: {
-    position: 'absolute',
-    bottom: 24,
-    right: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: BRAND_COLOR,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  addButtonText: {
-    fontSize: 28,
-    color: COLORS.white,
-    fontWeight: '300',
   },
 });

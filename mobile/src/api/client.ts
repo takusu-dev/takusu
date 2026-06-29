@@ -14,6 +14,12 @@ import type {
   UpdateSettings,
   TokenRow,
   TokenCreateResponse,
+  GoogleCalSettings,
+  UpdateGoogleCalSettings,
+  OAuthUrlResponse,
+  OAuthCallbackResponse,
+  SyncTriggerResponse,
+  GoogleCalEventMapping,
 } from './types';
 
 export class ApiError extends Error {
@@ -165,5 +171,38 @@ export class TakusuClient {
 
   async revokeToken(id: string): Promise<void> {
     return this.request('DELETE', `/api/tokens/${id}`);
+  }
+
+  // ── Sync / Google Calendar ──
+  async getGcalSettings(): Promise<GoogleCalSettings> {
+    return this.request('GET', '/api/sync/settings');
+  }
+
+  async updateGcalSettings(
+    body: UpdateGoogleCalSettings,
+  ): Promise<GoogleCalSettings> {
+    return this.request('PUT', '/api/sync/settings', body);
+  }
+
+  async getOAuthUrl(redirectUri: string): Promise<OAuthUrlResponse> {
+    return this.request('POST', '/api/sync/oauth/url', { redirect_uri: redirectUri });
+  }
+
+  async oauthCallback(
+    code: string,
+    redirectUri: string,
+  ): Promise<OAuthCallbackResponse> {
+    return this.request('POST', '/api/sync/oauth/callback', {
+      code,
+      redirect_uri: redirectUri,
+    });
+  }
+
+  async triggerSync(): Promise<SyncTriggerResponse> {
+    return this.request('POST', '/api/sync/trigger');
+  }
+
+  async listGcalMappings(): Promise<GoogleCalEventMapping[]> {
+    return this.request('GET', '/api/sync/mappings');
   }
 }

@@ -1,13 +1,14 @@
 // NavigationButtons — right side floating, vertically arranged
 // From top to bottom:
-//   << (scroll up by day)
-//   <  (scroll up by page)
-//   >> (scroll down by day)
-//   >  (scroll down by page)
+//   ⏫ (scroll up by day — fast)
+//   ↑  (scroll up by page)
+//   ↓  (scroll down by page)
+//   ⏬ (scroll down by day — fast)
 //   Calendar button (opens calendar overlay)
 
 import { useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '@/src/theme';
 
 interface NavigationButtonsProps {
@@ -68,11 +69,11 @@ export function NavigationButtons({
   return (
     <>
       <View style={styles.container}>
-        <NavButton label="⟪" onPress={onScrollUpByDay} />
-        <NavButton label="⟨" onPress={onScrollUpByPage} />
-        <NavButton label="⟩" onPress={onScrollDownByPage} />
-        <NavButton label="⟫" onPress={onScrollDownByDay} />
-        <NavButton label="📅" onPress={() => setCalendarOpen(true)} />
+        <NavButton icon="arrow-up" onPress={onScrollUpByDay} />
+        <NavButton icon="chevron-up" onPress={onScrollUpByPage} />
+        <NavButton icon="chevron-down" onPress={onScrollDownByPage} />
+        <NavButton icon="arrow-down" onPress={onScrollDownByDay} />
+        <NavButton icon="calendar" onPress={() => setCalendarOpen(true)} />
       </View>
 
       <Modal visible={calendarOpen} transparent animationType="fade">
@@ -121,13 +122,13 @@ export function NavigationButtons({
   );
 }
 
-function NavButton({ label, onPress }: { label: string; onPress?: () => void }) {
+function NavButton({ icon, onPress }: { icon: keyof typeof Ionicons.glyphMap; onPress?: () => void }) {
   return (
     <Pressable
       style={({ pressed }) => [styles.navButton, pressed && styles.navButtonPressed]}
       onPress={onPress}
     >
-      <Text style={styles.navButtonText}>{label}</Text>
+      <Ionicons name={icon} size={20} color={COLORS.brand} />
     </Pressable>
   );
 }

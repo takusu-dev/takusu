@@ -155,6 +155,41 @@ export interface TokenCreateResponse {
   id: string;
 }
 
+// ── Google Calendar Sync ──
+
+export interface GoogleCalSettings {
+  enabled: boolean;
+  calendar_id: string;
+  client_id: string;
+  has_client_secret: boolean;
+  has_refresh_token: boolean;
+}
+
+export interface UpdateGoogleCalSettings {
+  enabled?: boolean;
+  calendar_id?: string;
+  client_id?: string;
+  client_secret?: string;
+  refresh_token?: string;
+}
+
+export interface OAuthUrlResponse {
+  url: string;
+}
+
+export interface OAuthCallbackResponse {
+  refresh_token_set: boolean;
+}
+
+export interface SyncTriggerResponse {
+  status: string;
+}
+
+export interface GoogleCalEventMapping {
+  task_id: string;
+  google_event_id: string;
+}
+
 // Helper: parse depends JSON string
 export function parseDepends(depends: string): string[] {
   try {

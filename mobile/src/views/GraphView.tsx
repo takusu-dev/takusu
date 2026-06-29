@@ -5,27 +5,31 @@
 // Non-edit mode: pan/zoom enabled
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
+import { Ionicons } from '@expo/vector-icons';
+import { Button, IconButton } from 'react-native-paper';
 import type { TakusuClient } from '@/src/api/client';
 import type { TaskRow } from '@/src/api/types';
 import { parseDepends } from '@/src/api/types';
-import { COLORS, BRAND_COLOR } from '@/src/theme';
+import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 
 interface GraphViewProps {
   client: TakusuClient | null;
   onBack: () => void;
+  onTaskPress?: (taskId: string) => void;
 }
 
 // HTML content for the WebView with Cytoscape.js + dagre
-const GRAPH_HTML = `
+function buildGraphHtml(bgColor: string, brandColor: string): string {
+  return `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <style>
-    body { margin: 0; padding: 0; overflow: hidden; background: #fff; }
+    body { margin: 0; padding: 0; overflow: hidden; background: ${bgColor}; }
     #cy { width: 100vw; height: 100vh; }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.4/cytoscape.min.js"></script>
@@ -59,7 +63,7 @@ const GRAPH_HTML = `
               'width': 'data(width)',
               'height': 'data(height)',
               'border-width': 2,
-              'border-color': '#7261A3',
+              'border-color': '${brandColor}',
               'color': '#fff',
               'text-outline-width': 2,
               'text-outline-color': '#444',
@@ -78,8 +82,8 @@ const GRAPH_HTML = `
             style: {
               'curve-style': 'bezier',
               'target-arrow-shape': 'triangle',
-              'arrow-color': '#7261A3',
-              'line-color': '#7261A3',
+              'arrow-color': '${brandColor}',
+              'line-color': '${brandColor}',
               'width': 2,
             }
           },
@@ -158,6 +162,7 @@ const GRAPH_HTML = `
 </body>
 </html>
 `;
+}
 
 interface GraphNode {
   id: string;
@@ -173,7 +178,8 @@ interface GraphEdge {
   target: string;
 }
 
-export function GraphView({ client, onBack }: GraphViewProps) {
+export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
+  const colors = useColors();
   const webViewRef = useRef<WebView>(null);
   const [editMode, setEditMode] = useState(false);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
@@ -236,10 +242,12 @@ export function GraphView({ client, onBack }: GraphViewProps) {
     const msg = JSON.parse(event.nativeEvent.data);
 
     if (msg.type === 'tapNode') {
-      // Navigate to task detail — handled by parent
-      onBack();
+      if (onTaskPress) {
+        onTaskPress(msg.id);
+      } else {
+        onBack();
+      }
     } else if (msg.type === 'cutEdge') {
-      // Remove dependency: target no longer depends on source
       const targetTask = tasks.find((t) => t.id === msg.target);
       if (targetTask) {
         const deps = parseDepends(targetTask.depends).filter(
@@ -248,7 +256,6 @@ export function GraphView({ client, onBack }: GraphViewProps) {
         client.updateTask(msg.target, { depends: deps }).then(refresh);
       }
     } else if (msg.type === 'addEdge') {
-      // Add dependency: target depends on source
       const targetTask = tasks.find((t) => t.id === msg.target);
       if (targetTask) {
         const deps = parseDepends(targetTask.depends);
@@ -269,25 +276,29 @@ export function GraphView({ client, onBack }: GraphViewProps) {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.white }]}>
       <View style={styles.topBar}>
-        <Pressable style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>‹</Text>
-        </Pressable>
+        <IconButton
+          icon="chevron-left"
+          iconColor={BRAND_COLOR}
+          size={28}
+          onPress={onBack}
+        />
         <View style={{ flex: 1 }} />
-        <Pressable
-          style={[styles.editButton, editMode && styles.editButtonActive]}
+        <Button
+          mode={editMode ? 'contained' : 'outlined'}
           onPress={toggleEditMode}
+          textColor={editMode ? COLORS.white : BRAND_COLOR}
+          buttonColor={editMode ? BRAND_COLOR : undefined}
+          compact
         >
-          <Text style={[styles.editButtonText, editMode && styles.editButtonTextActive]}>
-            {editMode ? '編集中' : '編集'}
-          </Text>
-        </Pressable>
+          {editMode ? '編集中' : '編集'}
+        </Button>
       </View>
 
       <WebView
         ref={webViewRef}
-        source={{ html: GRAPH_HTML }}
+        source={{ html: buildGraphHtml(colors.white, BRAND_COLOR) }}
         onMessage={onMessage}
         style={styles.webview}
         originWhitelist={['*']}
@@ -301,42 +312,13 @@ export function GraphView({ client, onBack }: GraphViewProps) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.white,
   },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
+    paddingHorizontal: 4,
     paddingTop: 48,
-    paddingBottom: 8,
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  backButtonText: {
-    fontSize: 28,
-    color: BRAND_COLOR,
-  },
-  editButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: BRAND_COLOR,
-  },
-  editButtonActive: {
-    backgroundColor: BRAND_COLOR,
-  },
-  editButtonText: {
-    fontSize: 14,
-    color: BRAND_COLOR,
-  },
-  editButtonTextActive: {
-    color: COLORS.white,
+    paddingBottom: 4,
   },
   webview: {
     flex: 1,
