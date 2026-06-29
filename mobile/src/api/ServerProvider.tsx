@@ -15,7 +15,9 @@ import {
   saveWorkersUrl,
   saveWorkersToken,
   saveDarkMode,
+  saveNotificationSettings,
   type PersistedSettings,
+  type NotificationSettings,
 } from './settingsStore';
 
 interface ServerState {
@@ -25,12 +27,14 @@ interface ServerState {
   workersUrl: string;
   workersToken: string;
   darkMode: boolean;
+  notifications: NotificationSettings;
   restarting: boolean;
 }
 
 interface ServerContextValue extends ServerState {
   restartServer: (url?: string, token?: string) => Promise<void>;
   setDarkMode: (enabled: boolean) => Promise<void>;
+  setNotifications: (settings: NotificationSettings) => Promise<void>;
 }
 
 const ServerContext = createContext<ServerContextValue>({
@@ -40,9 +44,11 @@ const ServerContext = createContext<ServerContextValue>({
   workersUrl: '',
   workersToken: '',
   darkMode: false,
+  notifications: {} as NotificationSettings,
   restarting: false,
   restartServer: async () => {},
   setDarkMode: async () => {},
+  setNotifications: async () => {},
 });
 
 const DEFAULT_PORT = 3838;
@@ -55,6 +61,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     workersUrl: '',
     workersToken: '',
     darkMode: false,
+    notifications: {} as NotificationSettings,
     restarting: false,
   });
 
@@ -128,6 +135,11 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({ ...prev, darkMode: enabled }));
   }, []);
 
+  const setNotifications = useCallback(async (settings: NotificationSettings) => {
+    await saveNotificationSettings(settings);
+    setState((prev) => ({ ...prev, notifications: settings }));
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -141,6 +153,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
         workersUrl: settings.workersUrl,
         workersToken: settings.workersToken,
         darkMode: settings.darkMode,
+        notifications: settings.notifications,
       }));
 
       try {
@@ -182,8 +195,9 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       ...state,
       restartServer,
       setDarkMode,
+      setNotifications,
     }),
-    [state, restartServer, setDarkMode],
+    [state, restartServer, setDarkMode, setNotifications],
   );
 
   return (
@@ -197,4 +211,4 @@ export function useServer() {
   return useContext(ServerContext);
 }
 
-export { saveWorkersUrl, saveWorkersToken };
+export { saveWorkersUrl, saveWorkersToken, saveNotificationSettings };

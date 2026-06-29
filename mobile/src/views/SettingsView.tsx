@@ -24,8 +24,11 @@ import { useServer, saveWorkersUrl, saveWorkersToken } from '@/src/api/ServerPro
 import { setOAuthCallbackListener } from '@/src/api/oauthCallback';
 import type { GoogleCalSettings } from '@/src/api/types';
 import { useColors, BRAND_COLOR } from '@/src/theme';
+import type { NotificationSettings } from '@/src/notifications/settings';
+import { formatTime, minutesToTime, timeToMinutes } from '@/src/notifications/settings';
+import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 
-type SettingsCategory = 'general' | 'worker' | 'google' | 'info';
+type SettingsCategory = 'general' | 'notifications' | 'worker' | 'google' | 'info';
 
 const OAUTH_REDIRECT_URI = Linking.createURL('oauth/callback');
 
@@ -39,9 +42,14 @@ export function SettingsView() {
     workersToken: savedToken,
     restartServer,
     restarting,
+    notifications,
+    setNotifications,
   } = useServer();
   const colors = useColors();
   const [category, setCategory] = useState<SettingsCategory>('general');
+  const [notifPickerField, setNotifPickerField] = useState<
+    'morningBriefing' | 'eveningSummary' | 'habitReminder' | null
+  >(null);
 
   // Worker tab state
   const [workerUrl, setWorkerUrl] = useState(savedUrl);
@@ -188,6 +196,7 @@ export function SettingsView() {
 
   const categories: { key: SettingsCategory; label: string }[] = [
     { key: 'general', label: '一般' },
+    { key: 'notifications', label: '通知' },
     { key: 'worker', label: 'Worker' },
     { key: 'google', label: 'Google Calendar' },
     { key: 'info', label: '情報' },
@@ -239,6 +248,212 @@ export function SettingsView() {
                 trackColor={{ true: BRAND_COLOR }}
               />
             </View>
+          )}
+
+          {category === 'notifications' && (
+            <>
+              {/* Master toggle */}
+              <View style={styles.settingRow}>
+                <Text style={[styles.settingLabel, { color: colors.black }]}>
+                  通知を有効化
+                </Text>
+                <Switch
+                  value={notifications.enabled}
+                  onValueChange={(v) =>
+                    setNotifications({ ...notifications, enabled: v })
+                  }
+                  trackColor={{ true: BRAND_COLOR }}
+                />
+              </View>
+
+              {notifications.enabled && (
+                <>
+                  {/* Morning briefing */}
+                  <View style={styles.notifGroup}>
+                    <View style={styles.settingRow}>
+                      <Text style={[styles.settingLabel, { color: colors.black }]}>
+                        朝のブリーフィング
+                      </Text>
+                      <Switch
+                        value={notifications.morningBriefing}
+                        onValueChange={(v) =>
+                          setNotifications({ ...notifications, morningBriefing: v })
+                        }
+                        trackColor={{ true: BRAND_COLOR }}
+                      />
+                    </View>
+                    {notifications.morningBriefing && (
+                      <Pressable
+                        style={[styles.timeField, { borderColor: colors.separator }]}
+                        onPress={() => setNotifPickerField('morningBriefing')}
+                      >
+                        <Text style={[styles.timeText, { color: colors.black }]}>
+                          {formatTime(notifications.morningBriefingTime)}
+                        </Text>
+                      </Pressable>
+                    )}
+                  </View>
+
+                  {/* Pre-start reminder */}
+                  <View style={styles.notifGroup}>
+                    <View style={styles.settingRow}>
+                      <Text style={[styles.settingLabel, { color: colors.black }]}>
+                        開始直前リマインダー
+                      </Text>
+                      <Switch
+                        value={notifications.preStartReminder}
+                        onValueChange={(v) =>
+                          setNotifications({ ...notifications, preStartReminder: v })
+                        }
+                        trackColor={{ true: BRAND_COLOR }}
+                      />
+                    </View>
+                    {notifications.preStartReminder && (
+                      <View style={styles.field}>
+                        <Text style={[styles.label, { color: colors.gray }]}>
+                          何分前から通知するか
+                        </Text>
+                        <TextInput
+                          style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+                          value={String(notifications.preStartReminderMinutes)}
+                          onChangeText={(v) => {
+                            const n = parseInt(v, 10);
+                            if (!isNaN(n) && n > 0) {
+                              setNotifications({
+                                ...notifications,
+                                preStartReminderMinutes: n,
+                              });
+                            }
+                          }}
+                          keyboardType="numeric"
+                          placeholder="10"
+                          placeholderTextColor={colors.gray}
+                        />
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Start overdue */}
+                  <View style={styles.settingRow}>
+                    <Text style={[styles.settingLabel, { color: colors.black }]}>
+                      開始時間到着通知
+                    </Text>
+                    <Switch
+                      value={notifications.startOverdue}
+                      onValueChange={(v) =>
+                        setNotifications({ ...notifications, startOverdue: v })
+                      }
+                      trackColor={{ true: BRAND_COLOR }}
+                    />
+                  </View>
+
+                  {/* Unscheduled idle */}
+                  <View style={styles.notifGroup}>
+                    <View style={styles.settingRow}>
+                      <Text style={[styles.settingLabel, { color: colors.black }]}>
+                        未スケジュール放置通知
+                      </Text>
+                      <Switch
+                        value={notifications.unscheduledIdle}
+                        onValueChange={(v) =>
+                          setNotifications({ ...notifications, unscheduledIdle: v })
+                        }
+                        trackColor={{ true: BRAND_COLOR }}
+                      />
+                    </View>
+                    {notifications.unscheduledIdle && (
+                      <View style={styles.field}>
+                        <Text style={[styles.label, { color: colors.gray }]}>
+                          何時間放置で通知 (時間)
+                        </Text>
+                        <TextInput
+                          style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+                          value={String(notifications.unscheduledIdleHours)}
+                          onChangeText={(v) => {
+                            const n = parseInt(v, 10);
+                            if (!isNaN(n) && n > 0) {
+                              setNotifications({
+                                ...notifications,
+                                unscheduledIdleHours: n,
+                              });
+                            }
+                          }}
+                          keyboardType="numeric"
+                          placeholder="24"
+                          placeholderTextColor={colors.gray}
+                        />
+                      </View>
+                    )}
+                  </View>
+
+                  {/* In-progress */}
+                  <View style={styles.settingRow}>
+                    <Text style={[styles.settingLabel, { color: colors.black }]}>
+                      タスク実行中通知
+                    </Text>
+                    <Switch
+                      value={notifications.inProgress}
+                      onValueChange={(v) =>
+                        setNotifications({ ...notifications, inProgress: v })
+                      }
+                      trackColor={{ true: BRAND_COLOR }}
+                    />
+                  </View>
+
+                  {/* Evening summary */}
+                  <View style={styles.notifGroup}>
+                    <View style={styles.settingRow}>
+                      <Text style={[styles.settingLabel, { color: colors.black }]}>
+                        夕方サマリー
+                      </Text>
+                      <Switch
+                        value={notifications.eveningSummary}
+                        onValueChange={(v) =>
+                          setNotifications({ ...notifications, eveningSummary: v })
+                        }
+                        trackColor={{ true: BRAND_COLOR }}
+                      />
+                    </View>
+                    {notifications.eveningSummary && (
+                      <Pressable
+                        style={[styles.timeField, { borderColor: colors.separator }]}
+                        onPress={() => setNotifPickerField('eveningSummary')}
+                      >
+                        <Text style={[styles.timeText, { color: colors.black }]}>
+                          {formatTime(notifications.eveningSummaryTime)}
+                        </Text>
+                      </Pressable>
+                    )}
+                  </View>
+
+                  {/* Habit reminder */}
+                  <View style={styles.notifGroup}>
+                    <View style={styles.settingRow}>
+                      <Text style={[styles.settingLabel, { color: colors.black }]}>
+                        ハビット未完了リマインダー
+                      </Text>
+                      <Switch
+                        value={notifications.habitReminder}
+                        onValueChange={(v) =>
+                          setNotifications({ ...notifications, habitReminder: v })
+                        }
+                        trackColor={{ true: BRAND_COLOR }}
+                      />
+                    </View>
+                    {notifications.habitReminder && (
+                      <Pressable
+                        style={[styles.timeField, { borderColor: colors.separator }]}
+                        onPress={() => setNotifPickerField('habitReminder')}
+                      >
+                        <Text style={[styles.timeText, { color: colors.black }]}>
+                          {formatTime(notifications.habitReminderTime)}
+                        </Text>
+                      </Pressable>
+                    )}
+                  </View>
+                </>
+              )}
+            </>
           )}
 
           {category === 'worker' && (
@@ -421,6 +636,43 @@ export function SettingsView() {
           )}
         </ScrollView>
       </View>
+
+      {/* Notification time picker modal */}
+      {notifPickerField && (
+        <DateTimePickerModal
+          visible={true}
+          mode="time"
+          label="通知時刻"
+          value={(() => {
+            const min =
+              notifPickerField === 'morningBriefing'
+                ? notifications.morningBriefingTime
+                : notifPickerField === 'eveningSummary'
+                  ? notifications.eveningSummaryTime
+                  : notifications.habitReminderTime;
+            const { hour, minute } = minutesToTime(min);
+            const d = new Date();
+            d.setHours(hour, minute, 0, 0);
+            return d;
+          })()}
+          onConfirm={(date) => {
+            if (!date) {
+              setNotifPickerField(null);
+              return;
+            }
+            const minutes = timeToMinutes(date.getHours(), date.getMinutes());
+            if (notifPickerField === 'morningBriefing') {
+              setNotifications({ ...notifications, morningBriefingTime: minutes });
+            } else if (notifPickerField === 'eveningSummary') {
+              setNotifications({ ...notifications, eveningSummaryTime: minutes });
+            } else if (notifPickerField === 'habitReminder') {
+              setNotifications({ ...notifications, habitReminderTime: minutes });
+            }
+            setNotifPickerField(null);
+          }}
+          onCancel={() => setNotifPickerField(null)}
+        />
+      )}
     </View>
   );
 }
@@ -521,5 +773,20 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
+  },
+  notifGroup: {
+    gap: 8,
+  },
+  timeField: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    alignItems: 'flex-end',
+  },
+  timeText: {
+    fontSize: 16,
+    fontWeight: '500',
+    fontVariant: ['tabular-nums'],
   },
 });
