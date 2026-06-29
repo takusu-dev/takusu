@@ -32,6 +32,12 @@ import Reanimated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useColors, COLORS, BRAND_COLOR } from '@/src/theme';
+import {
+  rescheduleFromRaw,
+  postInProgressNotification,
+  dismissInProgressNotification,
+} from '@/src/notifications';
+import type { HabitRow } from '@/src/api/types';
 
 interface TaskItem {
   type: 'task';
@@ -71,11 +77,12 @@ function dateLabel(key: string): string {
 }
 
 export function HomeView() {
-  const { client } = useServer();
+  const { client, notifications } = useServer();
   const router = useRouter();
   const colors = useColors();
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [schedule, setSchedule] = useState<ScheduleEntry[]>([]);
+  const [habits, setHabits] = useState<HabitRow[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [refreshing, setRefreshing] = useState(false);
   const [view, setView] = useState<ViewType>('task');
@@ -102,16 +109,25 @@ export function HomeView() {
     if (!client) return;
     setRefreshing(true);
     try {
-      const [taskList, sched] = await Promise.all([
+      const [taskList, sched, habitList] = await Promise.all([
         client.listTasks(),
         client.getSchedule().catch(() => null),
+        client.listHabits().catch(() => [] as HabitRow[]),
       ]);
       setTasks(taskList);
       setSchedule(sched ? parseSchedule(sched.schedule) : []);
+      setHabits(habitList);
+      // Reschedule notifications with fresh data
+      rescheduleFromRaw(
+        taskList,
+        sched?.schedule ?? null,
+        habitList,
+        notifications,
+      ).catch(() => {});
     } finally {
       setRefreshing(false);
     }
-  }, [client]);
+  }, [client, notifications]);
 
   useEffect(() => {
     refresh();
@@ -334,6 +350,10 @@ export function HomeView() {
     if (!client) return;
     const prevStatus = task.status;
     await client.updateTask(task.id, { status: 'completed' });
+    // Dismiss in-progress notification if it was showing
+    if (prevStatus === 'in_progress') {
+      dismissInProgressNotification(task.id).catch(() => {});
+    }
     undoRedo.push({
       description: `mark done: ${task.title}`,
       undo: async () => {
@@ -599,6 +619,10 @@ export function HomeView() {
             if (next) {
               if (client && next.status !== 'in_progress') {
                 await client.updateTask(next.id, { status: 'in_progress' });
+                // Post in-progress notification with DONE/CANCEL actions
+                if (notifications.inProgress) {
+                  postInProgressNotification(next).catch(() => {});
+                }
               }
               router.push(`/task/${next.id}`);
             }

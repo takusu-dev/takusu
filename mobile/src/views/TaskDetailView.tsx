@@ -26,6 +26,10 @@ import { parseDepends, parseSchedule } from '@/src/api/types';
 import type { TaskRow, HabitRow, ScheduleEntry, TaskStatus } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
+import {
+  postInProgressNotification,
+  dismissInProgressNotification,
+} from '@/src/notifications';
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
   pending: '未スケジュール',
@@ -53,7 +57,7 @@ function formatTime(iso?: string): string {
 }
 
 export function TaskDetailView() {
-  const { client } = useServer();
+  const { client, notifications } = useServer();
   const router = useRouter();
   const colors = useColors();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -228,6 +232,16 @@ export function TaskDetailView() {
     if (editing) return;
 
     await client.updateTask(task.id, { status: newStatus });
+
+    // Manage in-progress notification
+    if (newStatus === 'in_progress') {
+      if (notifications.inProgress) {
+        postInProgressNotification({ ...task, status: newStatus }).catch(() => {});
+      }
+    } else if (prevStatus === 'in_progress') {
+      dismissInProgressNotification(task.id).catch(() => {});
+    }
+
     undoRedo.push({
       description: `status → ${STATUS_LABELS[newStatus]}: ${task.title}`,
       undo: async () => {

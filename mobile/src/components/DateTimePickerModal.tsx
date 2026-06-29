@@ -12,7 +12,7 @@ import { COLORS, BRAND_COLOR } from '@/src/theme';
 interface DateTimePickerModalProps {
   visible: boolean;
   value: Date | null;
-  mode: 'date' | 'datetime';
+  mode: 'date' | 'datetime' | 'time';
   label: string;
   onConfirm: (date: Date | null) => void;
   onCancel: () => void;
@@ -31,7 +31,9 @@ export function DateTimePickerModal({
   minimumDate,
 }: DateTimePickerModalProps) {
   const [tempDate, setTempDate] = useState<Date>(value ?? new Date());
-  const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
+  const [pickerMode, setPickerMode] = useState<'date' | 'time'>(
+    mode === 'time' ? 'time' : 'date',
+  );
   const [showPicker, setShowPicker] = useState(false);
 
   // Sync tempDate with value prop when modal opens
@@ -60,6 +62,9 @@ export function DateTimePickerModal({
       const timeStr = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
       return `${dateStr} ${timeStr}`;
     }
+    if (mode === 'time') {
+      return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    }
     return dateStr;
   }
 
@@ -74,30 +79,43 @@ export function DateTimePickerModal({
             </Pressable>
           </View>
 
-          <Pressable style={styles.fieldRow} onPress={() => openPicker('date')}>
-            <Ionicons name="calendar-outline" size={20} color={BRAND_COLOR} />
-            <Text style={styles.fieldLabel}>日付</Text>
-            <Text style={styles.fieldValue}>
-              {formatDisplay(tempDate)}
-            </Text>
-            <Ionicons name="chevron-forward" size={18} color={COLORS.grayLight} />
-          </Pressable>
-
-          {mode === 'datetime' && (
-            <Pressable
-              style={styles.fieldRow}
-              onPress={() => openPicker('time')}
-              disabled={!tempDate}
-            >
-              <Ionicons name="time-outline" size={20} color={tempDate ? BRAND_COLOR : COLORS.grayLight} />
-              <Text style={[styles.fieldLabel, !tempDate && { color: COLORS.grayLight }]}>時間</Text>
+          {mode === 'time' ? (
+            <Pressable style={styles.fieldRow} onPress={() => openPicker('time')}>
+              <Ionicons name="time-outline" size={20} color={BRAND_COLOR} />
+              <Text style={styles.fieldLabel}>時刻</Text>
               <Text style={styles.fieldValue}>
-                {tempDate
-                  ? `${tempDate.getHours().toString().padStart(2, '0')}:${tempDate.getMinutes().toString().padStart(2, '0')}`
-                  : '—'}
+                {formatDisplay(tempDate)}
               </Text>
-              <Ionicons name="chevron-forward" size={18} color={tempDate ? COLORS.gray : COLORS.grayLight} />
+              <Ionicons name="chevron-forward" size={18} color={COLORS.grayLight} />
             </Pressable>
+          ) : (
+            <>
+              <Pressable style={styles.fieldRow} onPress={() => openPicker('date')}>
+                <Ionicons name="calendar-outline" size={20} color={BRAND_COLOR} />
+                <Text style={styles.fieldLabel}>日付</Text>
+                <Text style={styles.fieldValue}>
+                  {formatDisplay(tempDate)}
+                </Text>
+                <Ionicons name="chevron-forward" size={18} color={COLORS.grayLight} />
+              </Pressable>
+
+              {mode === 'datetime' && (
+                <Pressable
+                  style={styles.fieldRow}
+                  onPress={() => openPicker('time')}
+                  disabled={!tempDate}
+                >
+                  <Ionicons name="time-outline" size={20} color={tempDate ? BRAND_COLOR : COLORS.grayLight} />
+                  <Text style={[styles.fieldLabel, !tempDate && { color: COLORS.grayLight }]}>時間</Text>
+                  <Text style={styles.fieldValue}>
+                    {tempDate
+                      ? `${tempDate.getHours().toString().padStart(2, '0')}:${tempDate.getMinutes().toString().padStart(2, '0')}`
+                      : '—'}
+                  </Text>
+                  <Ionicons name="chevron-forward" size={18} color={tempDate ? COLORS.gray : COLORS.grayLight} />
+                </Pressable>
+              )}
+            </>
           )}
 
           {optional && (
