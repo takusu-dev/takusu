@@ -3,15 +3,13 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use takusu_audio::{
-    FunASRClient, FunASRConfig, FunASRMode, MoonshineClient, MoonshineConfig, RecordConfig,
-    TtsBackend, TtsClient, TtsConfig, TtsOptions, TtsRequest, default_hotwords,
-    pick_reference_voice, record,
+    FunASRClient, FunASRConfig, FunASRMode, RecordConfig, TtsBackend, TtsClient, TtsConfig,
+    TtsOptions, TtsRequest, default_hotwords, pick_reference_voice, record,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum SttBackend {
     Funasr,
-    Moonshine,
 }
 
 #[derive(Parser)]
@@ -43,7 +41,7 @@ enum Commands {
         /// Path to WAV audio file
         audio: PathBuf,
 
-        /// STT backend (funasr or moonshine)
+        /// STT backend (funasr)
         #[arg(long, default_value = "funasr")]
         backend: SttBackend,
 
@@ -58,18 +56,6 @@ enum Commands {
         /// FunASR mode: offline or 2pass
         #[arg(long, default_value = "offline")]
         funasr_mode: String,
-
-        /// Moonshine server URL
-        #[arg(long, default_value = "ws://127.0.0.1:10096")]
-        moonshine_url: String,
-
-        /// Moonshine language
-        #[arg(long, default_value = "ja")]
-        moonshine_lang: String,
-
-        /// Moonshine model architecture (0=tiny, 1=base, 2=tiny-streaming, ...)
-        #[arg(long)]
-        moonshine_model_arch: Option<u32>,
     },
 
     /// Record from microphone and transcribe (Press Enter to stop)
@@ -82,7 +68,7 @@ enum Commands {
         #[arg(long, default_value_t = 120.0)]
         max_duration: f64,
 
-        /// STT backend (funasr or moonshine)
+        /// STT backend (funasr)
         #[arg(long, default_value = "funasr")]
         backend: SttBackend,
 
@@ -97,18 +83,6 @@ enum Commands {
         /// FunASR mode: offline or 2pass
         #[arg(long, default_value = "offline")]
         funasr_mode: String,
-
-        /// Moonshine server URL
-        #[arg(long, default_value = "ws://127.0.0.1:10096")]
-        moonshine_url: String,
-
-        /// Moonshine language
-        #[arg(long, default_value = "ja")]
-        moonshine_lang: String,
-
-        /// Moonshine model architecture (0=tiny, 1=base, 2=tiny-streaming, ...)
-        #[arg(long)]
-        moonshine_model_arch: Option<u32>,
     },
 
     /// Synthesize speech from text (Irodori-TTS)
@@ -179,52 +153,32 @@ async fn main() {
 
         Commands::Transcribe {
             audio,
-            backend,
             funasr_url,
             hotwords,
             funasr_mode,
-            moonshine_url,
-            moonshine_lang,
-            moonshine_model_arch,
+            ..
         } => {
             let samples = read_wav(&audio);
             eprintln!("Loaded {} samples from {}", samples.len(), audio.display());
 
-            match backend {
-                SttBackend::Funasr => {
-                    let text = transcribe_funasr(
-                        &samples,
-                        None,
-                        &funasr_url,
-                        hotwords.as_deref(),
-                        &funasr_mode,
-                    )
-                    .await;
-                    println!("{text}");
-                }
-                SttBackend::Moonshine => {
-                    let text = transcribe_moonshine(
-                        &samples,
-                        &moonshine_url,
-                        &moonshine_lang,
-                        moonshine_model_arch,
-                    )
-                    .await;
-                    println!("{text}");
-                }
-            }
+            let text = transcribe_funasr(
+                &samples,
+                None,
+                &funasr_url,
+                hotwords.as_deref(),
+                &funasr_mode,
+            )
+            .await;
+            println!("{text}");
         }
 
         Commands::Listen {
             output,
             max_duration,
-            backend,
             funasr_url,
             hotwords,
             funasr_mode,
-            moonshine_url,
-            moonshine_lang,
-            moonshine_model_arch,
+            ..
         } => {
             let config = RecordConfig {
                 max_duration: Duration::from_secs_f64(max_duration),
@@ -251,29 +205,15 @@ async fn main() {
             write_wav(&output, &samples, 16000);
             eprintln!("Saved to {}", output.display());
 
-            match backend {
-                SttBackend::Funasr => {
-                    let text = transcribe_funasr(
-                        &samples,
-                        None,
-                        &funasr_url,
-                        hotwords.as_deref(),
-                        &funasr_mode,
-                    )
-                    .await;
-                    println!("{text}");
-                }
-                SttBackend::Moonshine => {
-                    let text = transcribe_moonshine(
-                        &samples,
-                        &moonshine_url,
-                        &moonshine_lang,
-                        moonshine_model_arch,
-                    )
-                    .await;
-                    println!("{text}");
-                }
-            }
+            let text = transcribe_funasr(
+                &samples,
+                None,
+                &funasr_url,
+                hotwords.as_deref(),
+                &funasr_mode,
+            )
+            .await;
+            println!("{text}");
         }
 
         Commands::Speak {
@@ -376,34 +316,6 @@ async fn transcribe_funasr(
     let start = std::time::Instant::now();
     let text = client.transcribe(samples).await.unwrap_or_else(|e| {
         eprintln!("FunASR error: {e}");
-        std::process::exit(1);
-    });
-    eprintln!("Done in {:.1}s.", start.elapsed().as_secs_f64());
-    text
-}
-
-async fn transcribe_moonshine(
-    samples: &[f32],
-    url: &str,
-    language: &str,
-    model_arch: Option<u32>,
-) -> String {
-    let config = MoonshineConfig {
-        url: url.to_string(),
-        language: language.to_string(),
-        model_arch,
-    };
-
-    let client = MoonshineClient::new(config);
-
-    eprintln!(
-        "Transcribing ({} samples, {:.1}s) with Moonshine ({language})...",
-        samples.len(),
-        samples.len() as f64 / 16000.0
-    );
-    let start = std::time::Instant::now();
-    let text = client.transcribe(samples).await.unwrap_or_else(|e| {
-        eprintln!("Moonshine error: {e}");
         std::process::exit(1);
     });
     eprintln!("Done in {:.1}s.", start.elapsed().as_secs_f64());
