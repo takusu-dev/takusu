@@ -1,8 +1,9 @@
 // ViewChanger — left side bottom, vertical buttons to switch between views
 // habit / task / graph
 
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { COLORS } from '@/src/theme';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 
 export type ViewType = 'task' | 'graph' | 'habit';
 
@@ -11,6 +12,12 @@ interface ViewChangerProps {
   onChange: (view: ViewType) => void;
 }
 
+const ICONS: Record<ViewType, keyof typeof Ionicons.glyphMap> = {
+  task: 'list-outline',
+  graph: 'git-branch-outline',
+  habit: 'repeat-outline',
+};
+
 const LABELS: Record<ViewType, string> = {
   task: 'タスク',
   graph: 'グラフ',
@@ -18,20 +25,26 @@ const LABELS: Record<ViewType, string> = {
 };
 
 export function ViewChanger({ current, onChange }: ViewChangerProps) {
+  const colors = useColors();
   const views: ViewType[] = ['task', 'graph', 'habit'];
   return (
     <View style={styles.container}>
       {views.map((v) => (
         <Pressable
           key={v}
-          style={[styles.button, current === v && styles.buttonActive]}
+          style={({ pressed }) => [
+            styles.button,
+            { backgroundColor: colors.white },
+            current === v && styles.buttonActive,
+            pressed && { opacity: 0.7 },
+          ]}
           onPress={() => onChange(v)}
         >
-          <Text
-            style={[styles.buttonText, current === v && styles.buttonTextActive]}
-          >
-            {LABELS[v]}
-          </Text>
+          <Ionicons
+            name={ICONS[v]}
+            size={18}
+            color={current === v ? COLORS.white : BRAND_COLOR}
+          />
         </Pressable>
       ))}
     </View>
@@ -47,10 +60,11 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   button: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    width: 40,
+    height: 40,
     borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.2,
@@ -58,14 +72,9 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   buttonActive: {
-    backgroundColor: COLORS.brand,
+    backgroundColor: BRAND_COLOR,
   },
-  buttonText: {
-    fontSize: 12,
-    color: COLORS.brand,
-  },
-  buttonTextActive: {
-    color: COLORS.white,
-    fontWeight: '600',
+  labelHidden: {
+    display: 'none',
   },
 });

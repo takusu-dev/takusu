@@ -4,7 +4,8 @@
 
 import { useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
-import { COLORS } from '@/src/theme';
+import { Ionicons } from '@expo/vector-icons';
+import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { undoRedo } from '@/src/api/undoRedo';
 
 interface ContextMenuProps {
@@ -19,6 +20,14 @@ interface ContextMenuProps {
   onClearSelection: () => void;
 }
 
+type MenuItem = {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+};
+
 export function ContextMenu({
   hasSelection,
   onSettings,
@@ -30,25 +39,63 @@ export function ContextMenu({
   onCreateDependent,
   onClearSelection,
 }: ContextMenuProps) {
+  const colors = useColors();
   const [open, setOpen] = useState(false);
 
-  function item(label: string, onPress: () => void, disabled?: boolean) {
+  const alwaysItems: MenuItem[] = [
+    { label: '設定', icon: 'settings-outline', onPress: onSettings },
+    {
+      label: `元に戻す${undoRedo.canUndo() ? '' : ' (なし)'}`,
+      icon: 'arrow-undo-outline',
+      onPress: onUndo,
+      disabled: !undoRedo.canUndo(),
+    },
+    {
+      label: `やり直し${undoRedo.canRedo() ? '' : ' (なし)'}`,
+      icon: 'arrow-redo-outline',
+      onPress: onRedo,
+      disabled: !undoRedo.canRedo(),
+    },
+  ];
+
+  const selectionItems: MenuItem[] = hasSelection
+    ? [
+        { label: '選択以外をreschedule', icon: 'calendar-outline', onPress: onRescheduleOthers },
+        { label: '選択をreschedule', icon: 'calendar-number-outline', onPress: onRescheduleSelected },
+        { label: '依存とする新規タスク作成', icon: 'git-branch-outline', onPress: onCreateDependent },
+        { label: '削除', icon: 'trash-outline', onPress: onDeleteSelected, danger: true },
+        { label: '選択解除', icon: 'close-circle-outline', onPress: onClearSelection },
+      ]
+    : [];
+
+  function renderItem(item: MenuItem) {
     return (
       <Pressable
-        key={label}
+        key={item.label}
         style={({ pressed }) => [
           styles.menuItem,
           pressed && styles.menuItemPressed,
-          disabled && styles.menuItemDisabled,
+          item.disabled && styles.menuItemDisabled,
         ]}
-        disabled={disabled}
+        disabled={item.disabled}
         onPress={() => {
           setOpen(false);
-          onPress();
+          item.onPress();
         }}
       >
-        <Text style={[styles.menuItemText, disabled && styles.menuItemTextDisabled]}>
-          {label}
+        <Ionicons
+          name={item.icon}
+          size={20}
+          color={item.danger ? COLORS.red : item.disabled ? colors.gray : BRAND_COLOR}
+        />
+        <Text
+          style={[
+            styles.menuItemText,
+            { color: item.danger ? COLORS.red : colors.black },
+            item.disabled && styles.menuItemTextDisabled,
+          ]}
+        >
+          {item.label}
         </Text>
       </Pressable>
     );
@@ -60,32 +107,15 @@ export function ContextMenu({
         style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
         onPress={() => setOpen(true)}
       >
-        <Text style={styles.buttonText}>☰</Text>
+        <Ionicons name="menu" size={24} color={BRAND_COLOR} />
       </Pressable>
 
       <Modal visible={open} transparent animationType="fade">
         <Pressable style={styles.overlay} onPress={() => setOpen(false)}>
-          <View style={styles.menu}>
-            {item('設定', onSettings)}
-            {item(
-              `元に戻す${undoRedo.canUndo() ? '' : ' (なし)'}`,
-              onUndo,
-              !undoRedo.canUndo(),
-            )}
-            {item(
-              `やり直し${undoRedo.canRedo() ? '' : ' (なし)'}`,
-              onRedo,
-              !undoRedo.canRedo(),
-            )}
-
-            {hasSelection && <View style={styles.separator} />}
-            {hasSelection &&
-              item('選択以外をreschedule', onRescheduleOthers)}
-            {hasSelection &&
-              item('選択をreschedule', onRescheduleSelected)}
-            {hasSelection && item('削除', onDeleteSelected)}
-            {hasSelection && item('依存とする新規タスク作成', onCreateDependent)}
-            {hasSelection && item('選択解除', onClearSelection)}
+          <View style={[styles.menu, { backgroundColor: colors.white }]}>
+            {alwaysItems.map(renderItem)}
+            {hasSelection && <View style={[styles.separator, { backgroundColor: colors.separator }]} />}
+            {selectionItems.map(renderItem)}
           </View>
         </Pressable>
       </Modal>
@@ -104,10 +134,6 @@ const styles = StyleSheet.create({
   buttonPressed: {
     backgroundColor: 'rgba(114,97,163,0.1)',
   },
-  buttonText: {
-    fontSize: 22,
-    color: COLORS.brand,
-  },
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.2)',
@@ -116,10 +142,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 60,
     left: 12,
-    backgroundColor: COLORS.white,
     borderRadius: 12,
     paddingVertical: 4,
-    minWidth: 220,
+    minWidth: 240,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
@@ -127,6 +152,9 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
     paddingVertical: 12,
     paddingHorizontal: 16,
   },
@@ -138,14 +166,12 @@ const styles = StyleSheet.create({
   },
   menuItemText: {
     fontSize: 15,
-    color: COLORS.black,
   },
   menuItemTextDisabled: {
-    color: COLORS.gray,
+    opacity: 0.5,
   },
   separator: {
     height: 1,
-    backgroundColor: COLORS.separator,
     marginVertical: 4,
     marginHorizontal: 12,
   },

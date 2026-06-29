@@ -1,11 +1,13 @@
 // SettingsView — categorized settings
-// general: dark/white theme, sync mode
-// worker: endpoint, key
-// google calendar: config
+// general: dark/white theme
+// worker: endpoint, key (with server restart)
+// google calendar: config + OAuth + manual sync
 // info: license, version (build number)
 
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,21 +17,174 @@ import {
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useServer } from '@/src/api/ServerProvider';
-import { COLORS, BRAND_COLOR } from '@/src/theme';
+import * as WebBrowser from 'expo-web-browser';
+import * as Linking from 'expo-linking';
+import * as Application from 'expo-application';
+import { useServer, saveWorkersUrl, saveWorkersToken } from '@/src/api/ServerProvider';
+import { setOAuthCallbackListener } from '@/src/api/oauthCallback';
+import type { GoogleCalSettings } from '@/src/api/types';
+import { useColors, BRAND_COLOR } from '@/src/theme';
 
 type SettingsCategory = 'general' | 'worker' | 'google' | 'info';
 
+const OAUTH_REDIRECT_URI = Linking.createURL('oauth/callback');
+
 export function SettingsView() {
   const router = useRouter();
-  const { client } = useServer();
+  const {
+    client,
+    darkMode,
+    setDarkMode,
+    workersUrl: savedUrl,
+    workersToken: savedToken,
+    restartServer,
+    restarting,
+  } = useServer();
+  const colors = useColors();
   const [category, setCategory] = useState<SettingsCategory>('general');
-  const [darkMode, setDarkMode] = useState(false);
-  const [syncMode, setSyncMode] = useState<'simultaneous' | 'two-step'>(
-    'simultaneous',
-  );
-  const [workerUrl, setWorkerUrl] = useState('');
-  const [workerKey, setWorkerKey] = useState('');
+
+  // Worker tab state
+  const [workerUrl, setWorkerUrl] = useState(savedUrl);
+  const [workerKey, setWorkerKey] = useState(savedToken);
+  const [workerDirty, setWorkerDirty] = useState(false);
+
+  // Google Calendar state
+  const [gcalSettings, setGcalSettings] = useState<GoogleCalSettings | null>(null);
+  const [gcalEnabled, setGcalEnabled] = useState(false);
+  const [gcalCalendarId, setGcalCalendarId] = useState('');
+  const [gcalClientId, setGcalClientId] = useState('');
+  const [gcalClientSecret, setGcalClientSecret] = useState('');
+  const [gcalLoading, setGcalLoading] = useState(false);
+  const [oauthLoading, setOauthLoading] = useState(false);
+  const [syncLoading, setSyncLoading] = useState(false);
+
+  // Sync worker input with saved values when they change
+  useEffect(() => {
+    setWorkerUrl(savedUrl);
+    setWorkerKey(savedToken);
+    setWorkerDirty(false);
+  }, [savedUrl, savedToken]);
+
+  // Load Google Calendar settings when entering google tab
+  const loadGcalSettings = useCallback(async () => {
+    if (!client) return;
+    setGcalLoading(true);
+    try {
+      const s = await client.getGcalSettings();
+      setGcalSettings(s);
+      setGcalEnabled(s.enabled);
+      setGcalCalendarId(s.calendar_id);
+      setGcalClientId(s.client_id);
+      setGcalClientSecret('');
+    } catch {
+      // settings may not exist yet
+      setGcalSettings(null);
+    } finally {
+      setGcalLoading(false);
+    }
+  }, [client]);
+
+  useEffect(() => {
+    if (category === 'google') {
+      loadGcalSettings();
+    }
+  }, [category, loadGcalSettings]);
+
+  // OAuth callback listener — registered when google tab is active
+  // Guard against double-firing: if startOAuth already handled the code
+  // via openAuthSessionAsync result, the deep link listener is skipped.
+  const oauthHandledRef = useRef(false);
+
+  useEffect(() => {
+    if (category !== 'google' || !client) return;
+
+    setOAuthCallbackListener(async (code: string) => {
+      if (oauthHandledRef.current) {
+        oauthHandledRef.current = false;
+        return;
+      }
+      try {
+        await client.oauthCallback(code, OAUTH_REDIRECT_URI);
+        await loadGcalSettings();
+        Alert.alert('成功', 'Google Calendar認証が完了しました');
+      } catch (e) {
+        Alert.alert('エラー', `OAuth認証に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        setOauthLoading(false);
+      }
+    });
+
+    return () => {
+      setOAuthCallbackListener(null);
+    };
+  }, [category, client, loadGcalSettings]);
+
+  async function saveWorkerSettings() {
+    await saveWorkersUrl(workerUrl);
+    await saveWorkersToken(workerKey);
+    setWorkerDirty(false);
+  }
+
+  async function handleRestartServer() {
+    await saveWorkerSettings();
+    await restartServer(workerUrl, workerKey);
+  }
+
+  async function saveGcalSettings() {
+    if (!client) return;
+    try {
+      const s = await client.updateGcalSettings({
+        enabled: gcalEnabled,
+        calendar_id: gcalCalendarId || undefined,
+        client_id: gcalClientId || undefined,
+        client_secret: gcalClientSecret || undefined,
+      });
+      setGcalSettings(s);
+      setGcalClientSecret('');
+      Alert.alert('保存しました', 'Google Calendar設定を保存しました');
+    } catch (e) {
+      Alert.alert('エラー', `保存に失敗: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  async function startOAuth() {
+    if (!client) return;
+    setOauthLoading(true);
+    oauthHandledRef.current = false;
+    try {
+      const { url } = await client.getOAuthUrl(OAUTH_REDIRECT_URI);
+      const result = await WebBrowser.openAuthSessionAsync(url, OAUTH_REDIRECT_URI);
+      // On Android, openAuthSessionAsync may return the redirect URL directly
+      if (result.type === 'success' && result.url) {
+        const parsed = Linking.parse(result.url);
+        const code = parsed.queryParams?.code;
+        if (typeof code === 'string' && code) {
+          oauthHandledRef.current = true; // suppress deep link listener
+          await client.oauthCallback(code, OAUTH_REDIRECT_URI);
+          await loadGcalSettings();
+          Alert.alert('成功', 'Google Calendar認証が完了しました');
+        }
+      }
+      // If result.type is not 'success', the deep link listener will handle it
+    } catch (e) {
+      Alert.alert('エラー', `OAuth開始に失敗: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setOauthLoading(false);
+    }
+  }
+
+  async function triggerSync() {
+    if (!client) return;
+    setSyncLoading(true);
+    try {
+      await client.triggerSync();
+      Alert.alert('同期完了', 'Google Calendarへ同期しました');
+    } catch (e) {
+      Alert.alert('エラー', `同期に失敗: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSyncLoading(false);
+    }
+  }
 
   const categories: { key: SettingsCategory; label: string }[] = [
     { key: 'general', label: '一般' },
@@ -38,28 +193,32 @@ export function SettingsView() {
     { key: 'info', label: '情報' },
   ];
 
+  const appVersion = Application.nativeApplicationVersion ?? 'unknown';
+  const buildVersion = Application.nativeBuildVersion ?? 'unknown';
+
   return (
-    <View style={styles.container}>
-      <View style={styles.topBar}>
+    <View style={[styles.container, { backgroundColor: colors.white }]}>
+      <View style={[styles.topBar, { borderBottomColor: colors.separator }]}>
         <Pressable style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>‹</Text>
+          <Text style={[styles.backButtonText, { color: BRAND_COLOR }]}>‹</Text>
         </Pressable>
-        <Text style={styles.title}>設定</Text>
+        <Text style={[styles.title, { color: colors.black }]}>設定</Text>
       </View>
 
       <View style={styles.body}>
         {/* Category tabs */}
-        <View style={styles.tabs}>
+        <View style={[styles.tabs, { borderBottomColor: colors.separator }]}>
           {categories.map((c) => (
             <Pressable
               key={c.key}
-              style={[styles.tab, category === c.key && styles.tabActive]}
+              style={[styles.tab, category === c.key && { borderBottomColor: BRAND_COLOR }]}
               onPress={() => setCategory(c.key)}
             >
               <Text
                 style={[
                   styles.tabText,
-                  category === c.key && styles.tabTextActive,
+                  { color: colors.gray },
+                  category === c.key && { color: BRAND_COLOR, fontWeight: '600' },
                 ]}
               >
                 {c.label}
@@ -70,100 +229,193 @@ export function SettingsView() {
 
         <ScrollView contentContainerStyle={styles.content}>
           {category === 'general' && (
-            <>
-              <View style={styles.settingRow}>
-                <Text style={styles.settingLabel}>ダークモード</Text>
-                <Switch
-                  value={darkMode}
-                  onValueChange={setDarkMode}
-                  trackColor={{ true: BRAND_COLOR }}
-                />
-              </View>
-              <View style={styles.settingRow}>
-                <Text style={styles.settingLabel}>同期モード</Text>
-                <View style={styles.segmentedControl}>
-                  <Pressable
-                    style={[
-                      styles.segment,
-                      syncMode === 'simultaneous' && styles.segmentActive,
-                    ]}
-                    onPress={() => setSyncMode('simultaneous')}
-                  >
-                    <Text
-                      style={[
-                        styles.segmentText,
-                        syncMode === 'simultaneous' && styles.segmentTextActive,
-                      ]}
-                    >
-                      同時
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={[
-                      styles.segment,
-                      syncMode === 'two-step' && styles.segmentActive,
-                    ]}
-                    onPress={() => setSyncMode('two-step')}
-                  >
-                    <Text
-                      style={[
-                        styles.segmentText,
-                        syncMode === 'two-step' && styles.segmentTextActive,
-                      ]}
-                    >
-                      2段階
-                    </Text>
-                  </Pressable>
-                </View>
-              </View>
-            </>
+            <View style={styles.settingRow}>
+              <Text style={[styles.settingLabel, { color: colors.black }]}>
+                ダークモード
+              </Text>
+              <Switch
+                value={darkMode}
+                onValueChange={(v) => setDarkMode(v)}
+                trackColor={{ true: BRAND_COLOR }}
+              />
+            </View>
           )}
 
           {category === 'worker' && (
             <>
               <View style={styles.field}>
-                <Text style={styles.label}>エンドポイント</Text>
+                <Text style={[styles.label, { color: colors.gray }]}>
+                  エンドポイント
+                </Text>
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
                   value={workerUrl}
-                  onChangeText={setWorkerUrl}
+                  onChangeText={(v) => {
+                    setWorkerUrl(v);
+                    setWorkerDirty(true);
+                  }}
                   placeholder="https://your-worker.workers.dev"
+                  placeholderTextColor={colors.gray}
+                  autoCapitalize="none"
+                  autoCorrect={false}
                 />
               </View>
               <View style={styles.field}>
-                <Text style={styles.label}>キー</Text>
+                <Text style={[styles.label, { color: colors.gray }]}>キー</Text>
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
                   value={workerKey}
-                  onChangeText={setWorkerKey}
+                  onChangeText={(v) => {
+                    setWorkerKey(v);
+                    setWorkerDirty(true);
+                  }}
                   placeholder="tsk_..."
+                  placeholderTextColor={colors.gray}
                   secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
                 />
               </View>
+
+              {workerDirty && (
+                <Text style={[styles.warning, { color: colors.red }]}>
+                  ⚠ サーバーを再起動するまで反映されません
+                </Text>
+              )}
+
+              <Pressable
+                style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
+                onPress={handleRestartServer}
+                disabled={restarting}
+              >
+                {restarting ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.actionButtonText}>サーバーを再起動</Text>
+                )}
+              </Pressable>
             </>
           )}
 
           {category === 'google' && (
-            <View style={styles.field}>
-              <Text style={styles.label}>Google Calendar</Text>
-              <Text style={styles.value}>
-                Google Calendar連携の設定はここから行います。
-              </Text>
-              <Pressable style={styles.actionButton}>
-                <Text style={styles.actionButtonText}>OAuth認証を開始</Text>
+            <>
+              {gcalLoading && (
+                <ActivityIndicator color={BRAND_COLOR} style={styles.loader} />
+              )}
+
+              {gcalSettings && (
+                <View style={[styles.statusBox, { backgroundColor: colors.grayLight + '20' }]}>
+                  <Text style={[styles.label, { color: colors.gray }]}>状態</Text>
+                  <Text style={[styles.value, { color: colors.black }]}>
+                    有効: {gcalSettings.enabled ? 'はい' : 'いいえ'}
+                    {'\n'}client_id: {gcalSettings.client_id ? '設定済み' : '未設定'}
+                    {'\n'}client_secret: {gcalSettings.has_client_secret ? '設定済み' : '未設定'}
+                    {'\n'}refresh_token: {gcalSettings.has_refresh_token ? '設定済み' : '未設定'}
+                  </Text>
+                </View>
+              )}
+
+              <View style={styles.settingRow}>
+                <Text style={[styles.settingLabel, { color: colors.black }]}>
+                  有効化
+                </Text>
+                <Switch
+                  value={gcalEnabled}
+                  onValueChange={setGcalEnabled}
+                  trackColor={{ true: BRAND_COLOR }}
+                />
+              </View>
+
+              <View style={styles.field}>
+                <Text style={[styles.label, { color: colors.gray }]}>
+                  Calendar ID
+                </Text>
+                <TextInput
+                  style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+                  value={gcalCalendarId}
+                  onChangeText={setGcalCalendarId}
+                  placeholder="primary"
+                  placeholderTextColor={colors.gray}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+
+              <View style={styles.field}>
+                <Text style={[styles.label, { color: colors.gray }]}>
+                  Client ID
+                </Text>
+                <TextInput
+                  style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+                  value={gcalClientId}
+                  onChangeText={setGcalClientId}
+                  placeholder="xxxxx.apps.googleusercontent.com"
+                  placeholderTextColor={colors.gray}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+
+              <View style={styles.field}>
+                <Text style={[styles.label, { color: colors.gray }]}>
+                  Client Secret
+                </Text>
+                <TextInput
+                  style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+                  value={gcalClientSecret}
+                  onChangeText={setGcalClientSecret}
+                  placeholder={gcalSettings?.has_client_secret ? '設定済み (入力で上書き)' : 'GOCSPX-...'}
+                  placeholderTextColor={colors.gray}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+
+              <Pressable
+                style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
+                onPress={saveGcalSettings}
+              >
+                <Text style={styles.actionButtonText}>設定を保存</Text>
               </Pressable>
-            </View>
+
+              <Pressable
+                style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
+                onPress={startOAuth}
+                disabled={oauthLoading || !gcalSettings?.has_client_secret}
+              >
+                {oauthLoading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.actionButtonText}>OAuth認証を開始</Text>
+                )}
+              </Pressable>
+
+              <Pressable
+                style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
+                onPress={triggerSync}
+                disabled={syncLoading || !gcalSettings?.has_refresh_token}
+              >
+                {syncLoading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.actionButtonText}>手動同期</Text>
+                )}
+              </Pressable>
+            </>
           )}
 
           {category === 'info' && (
             <>
               <View style={styles.field}>
-                <Text style={styles.label}>バージョン</Text>
-                <Text style={styles.value}>0.1.0 (build 1)</Text>
+                <Text style={[styles.label, { color: colors.gray }]}>バージョン</Text>
+                <Text style={[styles.value, { color: colors.black }]}>
+                  {appVersion} (build {buildVersion})
+                </Text>
               </View>
               <View style={styles.field}>
-                <Text style={styles.label}>ライセンス</Text>
-                <Text style={styles.value}>MIT</Text>
+                <Text style={[styles.label, { color: colors.gray }]}>ライセンス</Text>
+                <Text style={[styles.value, { color: colors.black }]}>MIT</Text>
               </View>
             </>
           )}
@@ -176,7 +428,6 @@ export function SettingsView() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.white,
   },
   topBar: {
     flexDirection: 'row',
@@ -194,12 +445,10 @@ const styles = StyleSheet.create({
   },
   backButtonText: {
     fontSize: 28,
-    color: BRAND_COLOR,
   },
   title: {
     fontSize: 18,
     fontWeight: '600',
-    color: COLORS.black,
     marginLeft: 8,
   },
   body: {
@@ -210,23 +459,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     gap: 4,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.separator,
   },
   tab: {
     paddingHorizontal: 12,
     paddingVertical: 8,
-  },
-  tabActive: {
     borderBottomWidth: 2,
-    borderBottomColor: BRAND_COLOR,
+    borderBottomColor: 'transparent',
   },
   tabText: {
     fontSize: 14,
-    color: COLORS.gray,
-  },
-  tabTextActive: {
-    color: BRAND_COLOR,
-    fontWeight: '600',
   },
   content: {
     padding: 16,
@@ -240,59 +481,44 @@ const styles = StyleSheet.create({
   },
   settingLabel: {
     fontSize: 16,
-    color: COLORS.black,
-  },
-  segmentedControl: {
-    flexDirection: 'row',
-    borderRadius: 8,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: COLORS.separator,
-  },
-  segment: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  segmentActive: {
-    backgroundColor: BRAND_COLOR,
-  },
-  segmentText: {
-    fontSize: 13,
-    color: COLORS.gray,
-  },
-  segmentTextActive: {
-    color: COLORS.white,
   },
   field: {
     gap: 4,
   },
   label: {
     fontSize: 13,
-    color: COLORS.gray,
     fontWeight: '500',
   },
   value: {
     fontSize: 16,
-    color: COLORS.black,
   },
   input: {
     borderWidth: 1,
-    borderColor: COLORS.separator,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
     fontSize: 16,
   },
+  warning: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  statusBox: {
+    padding: 12,
+    borderRadius: 8,
+    gap: 4,
+  },
+  loader: {
+    paddingVertical: 16,
+  },
   actionButton: {
-    marginTop: 12,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: BRAND_COLOR,
     borderRadius: 8,
     alignItems: 'center',
   },
   actionButtonText: {
-    color: COLORS.white,
+    color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
   },
