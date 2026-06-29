@@ -7,7 +7,8 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "dev.satler.takusu"
     },
     "android": {
       "adaptiveIcon": {
@@ -17,7 +18,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": true,
-      "package": "com.anonymous.takusu"
+      "package": "dev.satler.takusu"
     },
     "web": {
       "favicon": "./assets/favicon.png",
