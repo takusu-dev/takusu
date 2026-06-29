@@ -136,8 +136,8 @@ jobs:
     needs:
       - build-cli
       - build-android-apk
-    # Only publish a release for tag pushes; on manual runs the jobs above
-    # still build/verify the artifacts without creating a GitHub release.
+    # Only publish a release for tag pushes; manual runs build/verify
+    # artifacts without cutting a GitHub release.
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
