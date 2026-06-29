@@ -15,13 +15,13 @@ jobs:
       - name: Restore binary cache
         uses: asa1984/infra/.github/actions/binary-cache@44165003348ea3578a66f8c879bfaf23a3c7cc18
         with:
-          package: .#ci
+          package: .#ci-rust
 
-      - run: nix profile install .#ci
+      - run: nix profile install .#ci-rust
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: nix develop --command bash -c "cargo clippy --all-targets --all-features -- -D warnings"
+      - run: nix develop .#rust --command bash -c "cargo clippy --all-targets --all-features -- -D warnings"
   test:
     runs-on: ubuntu-latest
     steps:
@@ -32,34 +32,44 @@ jobs:
       - name: Restore binary cache
         uses: asa1984/infra/.github/actions/binary-cache@44165003348ea3578a66f8c879bfaf23a3c7cc18
         with:
-          package: .#ci
+          package: .#ci-rust
 
-      - run: nix profile install .#ci
+      - run: nix profile install .#ci-rust
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: nix develop --command bash -c "cargo nextest run --all"
-      - run: nix develop --command bash -c "cargo test --doc --all-features -- --nocapture"
+      - run: nix develop .#rust --command bash -c "cargo nextest run --all"
+      - run: nix develop .#rust --command bash -c "cargo test --doc --all-features -- --nocapture"
 
   android-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: easimon/maximize-build-space@fc881a613ad2a34aca9c9624518214ebc21dfc0c # master 2025/3/10
+        with:
+          root-reserve-mb: 8192
+          swap-size-mb: 1024
+          temp-reserve-mb: 1024
+          build-mount-path: "/nix/store"
+          remove-dotnet: true
+          remove-android: true
+          remove-haskell: true
+          remove-codeql: true
+          remove-docker-images: true
       - name: Install Nix
         uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
 
-      - name: Restore binary cache
-        uses: asa1984/infra/.github/actions/binary-cache@44165003348ea3578a66f8c879bfaf23a3c7cc18
-        with:
-          package: .#ci
-
-      - run: nix profile install .#ci
+      # The binary-cache action writes the closure to /tmp (on the small root
+      # partition), but the Android NDK closure (~2.7GB) doesn't fit even with
+      # maximize-build-space. Skip the cache and install directly to /nix/store
+      # (on the big mount) instead.
+      - run: nix profile install .#ci-android
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Build takusu-android for aarch64
         run: |
-          nix develop --command bash -c "cargo ndk -t aarch64-linux-android build -p takusu-android --release --no-default-features"
+          nix develop .#android --command bash -c "cargo ndk -t aarch64-linux-android build -p takusu-android --release --no-default-features"
 
   expo-check:
     runs-on: ubuntu-latest

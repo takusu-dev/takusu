@@ -285,6 +285,18 @@
               context7.enable = true;
             };
           };
+
+          # Common shell environment for Rust-based CI jobs. Sets the env vars
+          # needed by crates that link against native libs (alsa, pulse,
+          # openblas, libclang for bindgen, etc.). Factored out so the per-job
+          # devShells stay in sync with the default devShell.
+          commonRustShellHook = ''
+            export LIBCLANG_PATH=${pkgs.libclang.lib}/lib
+            export OPENBLAS_PATH=${pkgs.openblas}/lib
+            export BLAS_INCLUDE_DIRS=${pkgs.openblas.dev}/include
+            export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.openssl.out}/lib:${pkgs.openblas}/lib:${pkgs.zlib}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${pkgs.stdenv.cc}/bin/cc
+          '';
         in
         {
           _module.args.pkgs = import inputs.nixpkgs {
@@ -457,89 +469,167 @@
                 '';
               };
 
-              ci = pkgs.buildEnv {
-                name = "ci";
+              # Per-job CI environments. Each job installs only what it needs so
+              # the binary cache stays small and the runner doesn't fill its disk
+              # with the Android SDK / Node / JVM on jobs that don't use them.
+              # The devShells below mirror these so `nix develop .#<job>` only
+              # pulls the same subset.
+              ci-rust = pkgs.buildEnv {
+                name = "ci-rust";
+                paths = with pkgs; [
+                  cargo-expand
+                  cargo-nextest
+                  rust-bin
+                  pkg-config
+                  cmake
+                  stdenv.cc
+                  mold
+                  alsa-lib
+                  libpulseaudio
+                  libclang
+                  openblas
+                  zlib
+                ];
+              };
+
+              ci-android = pkgs.buildEnv {
+                name = "ci-android";
                 paths =
                   with pkgs;
                   [
-                    cargo-expand
-                    cargo-nextest
                     cargo-ndk
                     rust-bin
                     pkg-config
                     cmake
-                    stdenv.cc
-                    mold
-                    alsa-lib
-                    libpulseaudio
                     libclang
+                    stdenv.cc
                     openblas
-                    uv
-                    ruff
-                    python3
                     zlib
-                    nodejs
-                    wrangler
-                    worker-build
-                    openjdk_headless
                   ]
-                  ++ [
-                    androidComposition.ndk-bundle
-                    androidComposition.androidsdk
-                  ];
+                  ++ [ androidComposition.ndk-bundle ];
+              };
+
+              ci-worker = pkgs.buildEnv {
+                name = "ci-worker";
+                paths = with pkgs; [
+                  rust-bin
+                  wrangler
+                  worker-build
+                  pkg-config
+                  cmake
+                  libclang
+                  stdenv.cc
+                ];
               };
             };
 
-          devShells.default = pkgs.mkShell {
-            nativeBuildInputs =
-              with pkgs;
-              [
+          devShells = {
+            # Minimal shells for CI jobs — each only pulls what the job needs so
+            # `nix develop .#<job>` doesn't download the Android SDK / Node / JVM
+            # on jobs that don't use them. The `ci-*` packages above mirror these
+            # so the binary cache warms exactly the same store paths.
+            rust = pkgs.mkShell {
+              nativeBuildInputs = with pkgs; [
                 cargo-expand
                 cargo-nextest
-                cargo-ndk
                 rust-bin
                 pkg-config
                 cmake
                 stdenv.cc
                 mold
-                uv
-                ruff
-                python3
-                nodejs
+              ];
+              buildInputs = with pkgs; [
+                alsa-lib
+                libpulseaudio
+                libclang
+                openblas
+                stdenv.cc.cc.lib
+                zlib
+              ];
+              shellHook = commonRustShellHook;
+            };
+
+            android = pkgs.mkShell {
+              nativeBuildInputs = with pkgs; [
+                cargo-ndk
+                rust-bin
+                pkg-config
+                cmake
+                stdenv.cc
+              ];
+              buildInputs = with pkgs; [
+                libclang
+                openblas
+                stdenv.cc.cc.lib
+                zlib
+                androidComposition.ndk-bundle
+              ];
+              shellHook = commonRustShellHook + ''
+                export ANDROID_NDK_HOME=${androidNdkHome}
+              '';
+            };
+
+            worker = pkgs.mkShell {
+              nativeBuildInputs = with pkgs; [
+                rust-bin
                 wrangler
-                openjdk_headless
-              ]
-              ++ [
-                config.packages.funasr-server
-                config.packages.irodori-tts-server
+                worker-build
+                pkg-config
+                cmake
+                stdenv.cc
+              ];
+              buildInputs = with pkgs; [ libclang ];
+              shellHook = commonRustShellHook;
+            };
+
+            # Full shell for local development — keeps everything (Android SDK,
+            # Node, JVM, uv, audio servers, MCP config symlink, etc.).
+            default = pkgs.mkShell {
+              nativeBuildInputs =
+                with pkgs;
+                [
+                  cargo-expand
+                  cargo-nextest
+                  cargo-ndk
+                  rust-bin
+                  pkg-config
+                  cmake
+                  stdenv.cc
+                  mold
+                  uv
+                  ruff
+                  python3
+                  nodejs
+                  wrangler
+                  openjdk_headless
+                ]
+                ++ [
+                  config.packages.funasr-server
+                  config.packages.irodori-tts-server
+                ];
+
+              buildInputs = with pkgs; [
+                alsa-lib
+                libpulseaudio
+                libclang
+                openblas
+                stdenv.cc.cc.lib
+                zlib
+                worker-build
+                androidComposition.ndk-bundle
               ];
 
-            buildInputs = with pkgs; [
-              alsa-lib
-              libpulseaudio
-              libclang
-              openblas
-              stdenv.cc.cc.lib
-              zlib
-              worker-build
-              androidComposition.ndk-bundle
-            ];
-
-            shellHook = ''
-              export LIBCLANG_PATH=${pkgs.libclang.lib}/lib
-              export OPENBLAS_PATH=${pkgs.openblas}/lib
-              export BLAS_INCLUDE_DIRS=${pkgs.openblas.dev}/include
-              export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.openssl.out}/lib:${pkgs.openblas}/lib:${pkgs.zlib}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-              export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${pkgs.stdenv.cc}/bin/cc
-              export ANDROID_NDK_HOME=${androidNdkHome}
-              export ANDROID_HOME=${androidComposition.androidsdk}/libexec/android-sdk
-              export JAVA_HOME=${pkgs.openjdk_headless}/lib/openjdk
-              if [ -L .devin/config.json ]; then
-                unlink .devin/config.json
-              fi
-              mkdir -p .devin
-              ln -sf ${mcp-config} .devin/config.json
-            '';
+              shellHook = commonRustShellHook + ''
+                export ANDROID_NDK_HOME=${androidNdkHome}
+                export ANDROID_HOME=${androidComposition.androidsdk}/libexec/android-sdk
+                export JAVA_HOME=${pkgs.openjdk_headless}/lib/openjdk
+                if [ -L .devin/config.json ]; then
+                  unlink .devin/config.json
+                fi
+                mkdir -p .devin
+                ln -sf ${mcp-config} .devin/config.json
+              '';
+            };
           };
         };
     };
