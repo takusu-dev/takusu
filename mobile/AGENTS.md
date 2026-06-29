@@ -24,6 +24,68 @@ nix develop --command bash -c "cd mobile/android && ./gradlew :app:assembleRelea
 
 APK output: `mobile/android/app/build/outputs/apk/release/app-release.apk`
 
+### Development Build (coexist with stable on a device)
+
+The stable app uses application ID `dev.satler.takusu`. To install a dev build
+alongside it on the same physical device, build with
+`TAKUSU_BUILD_VARIANT=dev`. `mobile/app.config.js` then switches to:
+
+| Field | Stable | Dev |
+|-------|--------|-----|
+| `android.package` / `ios.bundleIdentifier` | `dev.satler.takusu` | `dev.satler.takusu.dev` |
+| `name` (launcher label) | `takusu` | `takusu dev` |
+| `scheme` (deep link) | `takusu` | `takusu-dev` |
+
+```sh
+# One command (sets TAKUSU_BUILD_VARIANT=dev internally):
+nix run .#build-android-apk-dev
+```
+
+Or manually set the env var before the `expo prebuild` step. Release CI never
+sets `TAKUSU_BUILD_VARIANT`, so stable builds are unchanged.
+
+### On-device Debugging (Development Build)
+
+This project uses custom native code (UniFFI `.so` via the `takusu-server`
+Expo module), so **Expo Go is not supported**. Use a Development Build with
+[`expo-dev-client`](https://docs.expo.dev/develop/development-builds/introduction/)
+for interactive on-device debugging with Metro hot reload.
+
+Prerequisites:
+- Physical Android device with **USB debugging** enabled and connected
+- `nix develop` shell (provides `adb`, Android SDK, NDK, Java)
+
+```sh
+# 1. Verify the device is visible
+nix develop --command bash -c "adb devices"
+
+# 2. First build: compile native code, install dev APK, start Metro.
+#    --variant debug is required — release builds do not connect to Metro.
+cd mobile
+TAKUSU_BUILD_VARIANT=dev nix develop --command bash -c \
+  "npx expo run:android --device --variant debug"
+```
+
+The first run performs `expo prebuild` (which integrates `expo-dev-client`
+into the native project), compiles, installs, and launches Metro. The dev
+launcher UI ("takusu dev") appears on the device and connects to the local
+Metro server automatically.
+
+Subsequent iterations that only touch JS/TS do not need recompilation:
+
+```sh
+cd mobile
+TAKUSU_BUILD_VARIANT=dev nix develop --command bash -c "npx expo start"
+```
+
+Rebuild with `npx expo run:android` again only after:
+- adding/removing a native library
+- changing `app.json` / `app.config.js` / a config plugin
+- changing the Rust crate (`./scripts/build-android.sh` first, then re-run)
+
+For a release-equivalent dev APK without Metro (testing native behavior end
+to end), use `nix run .#build-android-apk-dev` then `adb install -r`.
+
 ### Known Issues & Workarounds
 
 | Issue | Fix |

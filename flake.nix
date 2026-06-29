@@ -312,7 +312,85 @@
             };
           };
 
-          packages = {
+          # Shared build logic for the Android APK, factored out so the stable
+          # and dev variants share the same steps. app.config.js reads
+          # TAKUSU_BUILD_VARIANT to switch the application ID / launcher label
+          # / deep-link scheme so a dev build can coexist with the stable app
+          # on the same device.
+          #
+          # Variant is "" for stable (dev.satler.takusu) and "dev" for the
+          # development build (dev.satler.takusu.dev).
+          packages = let
+            androidApkRuntimeInputs = [
+              pkgs.nodejs
+              pkgs.openjdk_headless
+              androidComposition.ndk-bundle
+              androidComposition.androidsdk
+            ];
+            androidApkBuildText = ''
+              export ANDROID_NDK_HOME="${androidNdkHome}"
+              export ANDROID_HOME="${androidComposition.androidsdk}/libexec/android-sdk"
+              export JAVA_HOME="${pkgs.openjdk_headless}/lib/openjdk"
+              export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.openssl.out}/lib:${pkgs.openblas}/lib:${pkgs.zlib}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+              if [ ! -f "scripts/post-prebuild-android.sh" ]; then
+                echo "Error: run from the takusu repo root" >&2
+                exit 1
+              fi
+
+              REPO_ROOT="$(pwd)"
+              MODULE_DIR="$REPO_ROOT/mobile/modules/takusu-server"
+              JNILIBS_DIR="$MODULE_DIR/android/src/main/jniLibs"
+              BINDINGS_DIR="$MODULE_DIR/android/src/main/java/uniffi/takusu_android"
+
+              # 1. Copy pre-built .so from Nix store into jniLibs/
+              echo "── Step 1: Copy native libraries from Nix store ──"
+              rm -rf "$JNILIBS_DIR"
+              cp -r "${takusu-android-libs}/jniLibs" "$JNILIBS_DIR"
+              echo "  copied .so files to $JNILIBS_DIR"
+
+              # 2. Generate UniFFI Kotlin bindings from the .so
+              echo ""
+              echo "── Step 2: Generate UniFFI Kotlin bindings ──"
+              BINDINGS_TMP="$BINDINGS_DIR/uniffi"
+              mkdir -p "$BINDINGS_TMP"
+              "${uniffi-bindgen}/bin/uniffi-bindgen" generate \
+                --library "${takusu-android-libs}/jniLibs/arm64-v8a/libtakusu_android.so" \
+                --language kotlin \
+                --out-dir "$BINDINGS_TMP"
+              GENERATED_FILE=$(find "$BINDINGS_TMP" -name "*.kt" -type f | head -1)
+              if [ -n "$GENERATED_FILE" ]; then
+                mv "$GENERATED_FILE" "$BINDINGS_DIR/"
+                rm -rf "$BINDINGS_TMP"
+                echo "  generated bindings in $BINDINGS_DIR"
+              else
+                echo "  Error: no Kotlin bindings generated" >&2
+                exit 1
+              fi
+
+              # 3. Expo prebuild (generates android/ directory)
+              #    app.config.js reads TAKUSU_BUILD_VARIANT to switch the
+              #    application ID / scheme / launcher label for dev builds.
+              echo ""
+              echo "── Step 3: Expo prebuild (variant=''${TAKUSU_BUILD_VARIANT:-stable}) ──"
+              cd mobile
+              npx expo prebuild --platform android --no-install
+
+              # 4. Apply post-prebuild fixes (Gradle pin, NDK override, etc.)
+              echo ""
+              echo "── Step 4: Post-prebuild fixes ──"
+              "$REPO_ROOT/scripts/post-prebuild-android.sh" android
+
+              # 5. Build the release APK
+              echo ""
+              echo "── Step 5: Gradle assembleRelease ──"
+              cd android
+              ./gradlew :app:assembleRelease
+
+              echo ""
+              echo "✅ APK built: $(pwd)/app/build/outputs/apk/release/app-release.apk"
+            '';
+          in {
             inherit
               takusu-cli
               takusu-local
@@ -328,72 +406,21 @@
             # Uses pre-built .so and uniffi-bindgen from the Nix store.
             build-android-apk = pkgs.writeShellApplication {
               name = "build-android-apk";
-              runtimeInputs = [
-                pkgs.nodejs
-                pkgs.openjdk_headless
-                androidComposition.ndk-bundle
-                androidComposition.androidsdk
-              ];
+              runtimeInputs = androidApkRuntimeInputs;
+              text = androidApkBuildText;
+            };
+
+            # Development APK build. Same as build-android-apk but sets
+            # TAKUSU_BUILD_VARIANT=dev so app.config.js emits a distinct
+            # application ID (dev.satler.takusu.dev), launcher label
+            # ("takusu dev"), and scheme ("takusu-dev"). This lets the dev
+            # build be installed alongside the stable app on a real device.
+            build-android-apk-dev = pkgs.writeShellApplication {
+              name = "build-android-apk-dev";
+              runtimeInputs = androidApkRuntimeInputs;
               text = ''
-                export ANDROID_NDK_HOME="${androidNdkHome}"
-                export ANDROID_HOME="${androidComposition.androidsdk}/libexec/android-sdk"
-                export JAVA_HOME="${pkgs.openjdk_headless}/lib/openjdk"
-                export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.openssl.out}/lib:${pkgs.openblas}/lib:${pkgs.zlib}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-
-                if [ ! -f "scripts/post-prebuild-android.sh" ]; then
-                  echo "Error: run from the takusu repo root" >&2
-                  exit 1
-                fi
-
-                REPO_ROOT="$(pwd)"
-                MODULE_DIR="$REPO_ROOT/mobile/modules/takusu-server"
-                JNILIBS_DIR="$MODULE_DIR/android/src/main/jniLibs"
-                BINDINGS_DIR="$MODULE_DIR/android/src/main/java/uniffi/takusu_android"
-
-                # 1. Copy pre-built .so from Nix store into jniLibs/
-                echo "── Step 1: Copy native libraries from Nix store ──"
-                rm -rf "$JNILIBS_DIR"
-                cp -r "${takusu-android-libs}/jniLibs" "$JNILIBS_DIR"
-                echo "  copied .so files to $JNILIBS_DIR"
-
-                # 2. Generate UniFFI Kotlin bindings from the .so
-                echo ""
-                echo "── Step 2: Generate UniFFI Kotlin bindings ──"
-                BINDINGS_TMP="$BINDINGS_DIR/uniffi"
-                mkdir -p "$BINDINGS_TMP"
-                "${uniffi-bindgen}/bin/uniffi-bindgen" generate \
-                  --library "${takusu-android-libs}/jniLibs/arm64-v8a/libtakusu_android.so" \
-                  --language kotlin \
-                  --out-dir "$BINDINGS_TMP"
-                GENERATED_FILE=$(find "$BINDINGS_TMP" -name "*.kt" -type f | head -1)
-                if [ -n "$GENERATED_FILE" ]; then
-                  mv "$GENERATED_FILE" "$BINDINGS_DIR/"
-                  rm -rf "$BINDINGS_TMP"
-                  echo "  generated bindings in $BINDINGS_DIR"
-                else
-                  echo "  Error: no Kotlin bindings generated" >&2
-                  exit 1
-                fi
-
-                # 3. Expo prebuild (generates android/ directory)
-                echo ""
-                echo "── Step 3: Expo prebuild ──"
-                cd mobile
-                npx expo prebuild --platform android --no-install
-
-                # 4. Apply post-prebuild fixes (Gradle pin, NDK override, etc.)
-                echo ""
-                echo "── Step 4: Post-prebuild fixes ──"
-                "$REPO_ROOT/scripts/post-prebuild-android.sh" android
-
-                # 5. Build the release APK
-                echo ""
-                echo "── Step 5: Gradle assembleRelease ──"
-                cd android
-                ./gradlew :app:assembleRelease
-
-                echo ""
-                echo "✅ APK built: $(pwd)/app/build/outputs/apk/release/app-release.apk"
+                export TAKUSU_BUILD_VARIANT=dev
+                ${androidApkBuildText}
               '';
             };
 
