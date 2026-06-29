@@ -8,7 +8,6 @@ repository.workspace = true
 [features]
 default = ["funasr"]
 funasr = ["tokio-tungstenite", "futures-util"]
-moonshine = ["tokio-tungstenite", "futures-util"]
 
 [dependencies]
 thiserror = { workspace = true }
