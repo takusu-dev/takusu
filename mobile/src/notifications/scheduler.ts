@@ -127,8 +127,11 @@ function countIncompleteHabits(
   return activeHabits.filter((h) => !completedHabitIds.has(h.id)).length;
 }
 
-// Schedule a daily notification at a specific time
-async function scheduleDaily(
+// Schedule a one-time notification for the next occurrence of a daily time.
+// If the time has already passed today, schedule for tomorrow.
+// This avoids stale content from DAILY triggers — the app reschedules with
+// fresh data each time it's opened.
+async function scheduleNextOccurrence(
   channelId: string,
   hour: number,
   minute: number,
@@ -136,19 +139,14 @@ async function scheduleDaily(
   body: string,
   data: Record<string, unknown>,
 ): Promise<void> {
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title,
-      body,
-      data,
-    },
-    trigger: {
-      type: Notifications.SchedulableTriggerInputTypes.DAILY,
-      hour,
-      minute,
-      channelId,
-    },
-  });
+  const now = new Date();
+  const today = new Date(now);
+  today.setHours(hour, minute, 0, 0);
+
+  // If the time has already passed today, schedule for tomorrow
+  const target = today.getTime() > now.getTime() ? today : new Date(today.getTime() + 24 * 60 * 60 * 1000);
+
+  await scheduleAt(channelId, target, title, body, data);
 }
 
 // Schedule a one-time notification at a specific date
@@ -189,13 +187,13 @@ export async function rescheduleNotifications(data: ScheduleData): Promise<void>
   const scheduleMap = new Map<string, ScheduleEntry>();
   for (const e of schedule) scheduleMap.set(e.task_id, e);
 
-  // ── 1. Morning briefing (daily) ──
+  // ── 1. Morning briefing (next occurrence only) ──
   if (settings.morningBriefing) {
     const { hour, minute } = minutesToTime(settings.morningBriefingTime);
     const count = countTodaysTasks(tasks, schedule);
     const title = count === 0 ? 'おはようございます' : `今日は${count}個のタスクがあります`;
     const body = count === 0 ? 'タスクを追加しましょう' : 'タップして確認';
-    await scheduleDaily(
+    await scheduleNextOccurrence(
       CHANNELS.taskSummary,
       hour,
       minute,
@@ -252,11 +250,11 @@ export async function rescheduleNotifications(data: ScheduleData): Promise<void>
     }
   }
 
-  // ── 4. Unscheduled idle (daily at noon) ──
+  // ── 4. Unscheduled idle (next occurrence at noon) ──
   if (settings.unscheduledIdle) {
     const idleCount = countIdlePendingTasks(tasks, settings.unscheduledIdleHours);
     if (idleCount > 0) {
-      await scheduleDaily(
+      await scheduleNextOccurrence(
         CHANNELS.taskIdle,
         12,
         0,
@@ -267,11 +265,11 @@ export async function rescheduleNotifications(data: ScheduleData): Promise<void>
     }
   }
 
-  // ── 6. Evening summary (daily) ──
+  // ── 6. Evening summary (next occurrence only) ──
   if (settings.eveningSummary) {
     const { hour, minute } = minutesToTime(settings.eveningSummaryTime);
     const completedCount = countCompletedToday(tasks);
-    await scheduleDaily(
+    await scheduleNextOccurrence(
       CHANNELS.taskSummary,
       hour,
       minute,
@@ -281,12 +279,12 @@ export async function rescheduleNotifications(data: ScheduleData): Promise<void>
     );
   }
 
-  // ── 7. Habit reminder (daily) ──
+  // ── 7. Habit reminder (next occurrence only) ──
   if (settings.habitReminder) {
     const { hour, minute } = minutesToTime(settings.habitReminderTime);
     const incompleteCount = countIncompleteHabits(tasks, habits);
     if (incompleteCount > 0) {
-      await scheduleDaily(
+      await scheduleNextOccurrence(
         CHANNELS.habitReminder,
         hour,
         minute,
