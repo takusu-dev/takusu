@@ -9,6 +9,7 @@ import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
 import { ServerProvider, useServer } from '@/src/api/ServerProvider';
 import { ThemeProvider } from '@/src/theme';
+import { UndoRedoToast } from '@/src/components/UndoRedoToast';
 import { emitOAuthCallback } from '@/src/api/oauthCallback';
 import {
   setupNotificationCategories,
@@ -151,6 +152,7 @@ function ThemedApp() {
           <Stack.Screen name="habit/add" />
           <Stack.Screen name="settings" />
         </Stack>
+        <UndoRedoToast />
       </PaperProvider>
     </ThemeProvider>
   );
