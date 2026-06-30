@@ -11,18 +11,23 @@ import {
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import Slider from '@expo/ui/community/slider';
 import { useServer } from '@/src/api/ServerProvider';
 import { undoRedo } from '@/src/api/undoRedo';
 import { showError } from '@/src/api/errors';
-import { COLORS, BRAND_COLOR } from '@/src/theme';
+import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
+import { RruleBuilderModal } from '@/src/components/RruleBuilderModal';
+import { defaultRule, parseRule, serializeRule, summarizeRule } from '@/src/api/rrule';
 
 export function HabitAddView() {
   const { client } = useServer();
   const router = useRouter();
+  const colors = useColors();
 
   const [title, setTitle] = useState('');
-  const [recurrence, setRecurrence] = useState('FREQ=DAILY');
+  const [recurrence, setRecurrence] = useState(serializeRule(defaultRule()));
+  const [showRruleBuilder, setShowRruleBuilder] = useState(false);
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('10:00');
   const [avgMinutes, setAvgMinutes] = useState('60');
@@ -69,12 +74,12 @@ export function HabitAddView() {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.white }]}>
       <View style={styles.topBar}>
         <Pressable style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>‹</Text>
+          <Ionicons name="chevron-back" size={28} color={BRAND_COLOR} />
         </Pressable>
-        <Text style={styles.title}>新規ハビット</Text>
+        <Text style={[styles.title, { color: colors.black }]}>新規ハビット</Text>
         <View style={{ flex: 1 }} />
         <Pressable
           style={[styles.saveButton, (!title || saving) && styles.saveButtonDisabled]}
@@ -87,60 +92,79 @@ export function HabitAddView() {
 
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.field}>
-          <Text style={styles.label}>タイトル</Text>
+          <Text style={[styles.label, { color: colors.gray }]}>タイトル</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
             value={title}
             onChangeText={setTitle}
             placeholder="ハビット名"
+            placeholderTextColor={colors.grayLight}
           />
         </View>
 
         <View style={styles.field}>
-          <Text style={styles.label}>周期 (RRULE)</Text>
-          <TextInput
-            style={styles.input}
-            value={recurrence}
-            onChangeText={setRecurrence}
-            placeholder="FREQ=DAILY"
-          />
+          <View style={styles.rruleHeader}>
+            <Text style={[styles.label, { color: colors.gray }]}>周期 (RRULE)</Text>
+            <Pressable
+              style={styles.helpButton}
+              onPress={() => setShowRruleBuilder(true)}
+              hitSlop={8}
+            >
+              <Ionicons name="help-circle-outline" size={18} color={BRAND_COLOR} />
+            </Pressable>
+          </View>
+          <Pressable
+            style={[styles.dateField, { borderColor: colors.separator, backgroundColor: colors.white }]}
+            onPress={() => setShowRruleBuilder(true)}
+          >
+            <Ionicons name="repeat" size={20} color={BRAND_COLOR} />
+            <Text
+              style={[styles.dateText, { color: colors.black }]}
+              numberOfLines={2}
+            >
+              {summarizeRule(parseRule(recurrence))}
+            </Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.grayLight} />
+          </Pressable>
         </View>
 
         <View style={styles.row}>
           <View style={[styles.field, { flex: 1 }]}>
-            <Text style={styles.label}>開始時刻</Text>
+            <Text style={[styles.label, { color: colors.gray }]}>開始時刻</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
               value={startTime}
               onChangeText={setStartTime}
               placeholder="09:00"
+              placeholderTextColor={colors.grayLight}
             />
           </View>
           <View style={[styles.field, { flex: 1 }]}>
-            <Text style={styles.label}>終了時刻</Text>
+            <Text style={[styles.label, { color: colors.gray }]}>終了時刻</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
               value={endTime}
               onChangeText={setEndTime}
               placeholder="10:00"
+              placeholderTextColor={colors.grayLight}
             />
           </View>
         </View>
 
         <View style={styles.row}>
           <View style={[styles.field, { flex: 1 }]}>
-            <Text style={styles.label}>avg (分)</Text>
+            <Text style={[styles.label, { color: colors.gray }]}>avg (分)</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
               value={avgMinutes}
               onChangeText={setAvgMinutes}
               keyboardType="numeric"
             />
           </View>
           <View style={[styles.field, { flex: 1 }]}>
-            <Text style={styles.label}>sigma (分)</Text>
+            <Text style={[styles.label, { color: colors.gray }]}>sigma (分)</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
               value={sigmaMinutes}
               onChangeText={setSigmaMinutes}
               keyboardType="numeric"
@@ -149,7 +173,7 @@ export function HabitAddView() {
         </View>
 
         <View style={styles.field}>
-          <Text style={styles.label}>
+          <Text style={[styles.label, { color: colors.gray }]}>
             abandonability: {abandonability.toFixed(2)}
           </Text>
           <Slider
@@ -162,6 +186,16 @@ export function HabitAddView() {
           />
         </View>
       </ScrollView>
+
+      <RruleBuilderModal
+        visible={showRruleBuilder}
+        value={recurrence}
+        onConfirm={(json) => {
+          setRecurrence(json);
+          setShowRruleBuilder(false);
+        }}
+        onCancel={() => setShowRruleBuilder(false)}
+      />
     </View>
   );
 }
@@ -169,7 +203,6 @@ export function HabitAddView() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.white,
   },
   topBar: {
     flexDirection: 'row',
@@ -185,14 +218,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  backButtonText: {
-    fontSize: 28,
-    color: BRAND_COLOR,
-  },
   title: {
     fontSize: 18,
     fontWeight: '600',
-    color: COLORS.black,
     marginLeft: 8,
   },
   saveButton: {
@@ -221,14 +249,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
   },
+  rruleHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  helpButton: {
+    padding: 2,
+  },
+  dateField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  dateText: {
+    flex: 1,
+    fontSize: 16,
+  },
   label: {
     fontSize: 13,
-    color: COLORS.gray,
     fontWeight: '500',
   },
   input: {
     borderWidth: 1,
-    borderColor: COLORS.separator,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,

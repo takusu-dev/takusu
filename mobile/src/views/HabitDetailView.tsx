@@ -13,6 +13,7 @@ import { useServer } from '@/src/api/ServerProvider';
 import { showError, logError } from '@/src/api/errors';
 import type { HabitRow, TaskRow } from '@/src/api/types';
 import { COLORS, BRAND_COLOR } from '@/src/theme';
+import { parseRule, summarizeRule } from '@/src/api/rrule';
 
 export function HabitDetailView() {
   const { client } = useServer();
@@ -75,7 +76,7 @@ export function HabitDetailView() {
 
         <View style={styles.section}>
           <Text style={styles.label}>周期</Text>
-          <Text style={styles.value}>{habit.recurrence}</Text>
+          <Text style={styles.value}>{summarizeRule(parseRule(habit.recurrence))}</Text>
         </View>
 
         <View style={styles.section}>
