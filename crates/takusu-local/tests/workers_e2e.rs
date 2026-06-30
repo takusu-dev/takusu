@@ -35,6 +35,8 @@ async fn setup_mock_db() -> SqlitePool {
         include_str!("../migrations/001_init.sql"),
         include_str!("../migrations/002_google_cal.sql"),
         include_str!("../migrations/003_settings.sql"),
+        include_str!("../migrations/004_indexes.sql"),
+        include_str!("../migrations/005_task_display_id.sql"),
     ];
     for s in sqls {
         sqlx::raw_sql(*s).execute(&pool).await.unwrap();
@@ -90,7 +92,7 @@ async fn list_tasks(
     axum::extract::Query(q): axum::extract::Query<TaskQuery>,
 ) -> Json<Vec<TaskRow>> {
     let mut sql = String::from(
-        "SELECT id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, created_at, updated_at FROM tasks WHERE 1=1",
+        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, created_at, updated_at FROM tasks WHERE 1=1",
     );
     if q.status.is_some() {
         sql.push_str(" AND status = ?");
@@ -135,7 +137,7 @@ async fn create_task(
     let abandonability = body.abandonability.unwrap_or(0.5);
 
     sqlx::query(
-        "INSERT INTO tasks (id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)"
+        "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid) VALUES (?, (SELECT COALESCE(MAX(display_id), 0) + 1 FROM tasks), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)"
     )
     .bind(&id)
     .bind(&body.title)
@@ -154,7 +156,7 @@ async fn create_task(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row: TaskRow = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, created_at, updated_at FROM tasks WHERE id = ?",
+        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, created_at, updated_at FROM tasks WHERE id = ?",
     )
     .bind(&id)
     .fetch_one(&state.pool)
@@ -168,7 +170,7 @@ async fn get_task(
     Path(id): Path<String>,
 ) -> Result<Json<TaskRow>, StatusCode> {
     let row: Option<TaskRow> = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, created_at, updated_at FROM tasks WHERE id = ?",
+        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, created_at, updated_at FROM tasks WHERE id = ?",
     )
     .bind(&id)
     .fetch_optional(&state.pool)
@@ -200,7 +202,7 @@ async fn update_task(
         .map(|d| serde_json::to_string(d).unwrap_or_else(|_| "[]".into()));
 
     let existing: TaskRow = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, created_at, updated_at FROM tasks WHERE id = ?",
+        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, created_at, updated_at FROM tasks WHERE id = ?",
     )
     .bind(&id)
     .fetch_one(&state.pool)
@@ -228,7 +230,7 @@ async fn update_task(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row: TaskRow = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, created_at, updated_at FROM tasks WHERE id = ?",
+        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, created_at, updated_at FROM tasks WHERE id = ?",
     )
     .bind(&id)
     .fetch_one(&state.pool)
@@ -268,7 +270,7 @@ async fn replace_task(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row: TaskRow = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, created_at, updated_at FROM tasks WHERE id = ?",
+        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, created_at, updated_at FROM tasks WHERE id = ?",
     )
     .bind(&id)
     .fetch_one(&state.pool)

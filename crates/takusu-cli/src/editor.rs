@@ -4,13 +4,25 @@ use std::io;
 use std::process::Command;
 use takusu_storage::{HabitRow, TaskRow, UpdateHabit, UpdateTask};
 
-pub fn format_task_for_editing(task: &TaskRow) -> String {
-    let depends: String = serde_json::from_str::<Vec<String>>(&task.depends)
-        .map(|v| v.join(", "))
-        .unwrap_or_default();
+pub fn format_task_for_editing(task: &TaskRow, all_tasks: &[TaskRow]) -> String {
+    let depends_uuids: Vec<String> =
+        serde_json::from_str::<Vec<String>>(&task.depends).unwrap_or_default();
+    // Show display_ids when the dependency task is known, otherwise fall back to UUID.
+    let depends: String = depends_uuids
+        .iter()
+        .map(|uuid| {
+            all_tasks
+                .iter()
+                .find(|t| &t.id == uuid)
+                .map(|t| format!("#{}", t.display_id))
+                .unwrap_or_else(|| uuid.clone())
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
         r#"# Edit task. Lines starting with '#' are comments.
 # Empty fields will not be updated. Save and quit to apply changes.
+# depends: comma-separated display IDs (e.g. #3, #17, #42) or full UUIDs
 title: {title}
 description: {desc}
 start_at: {start}
@@ -85,7 +97,7 @@ pub fn parse_edited_task(content: &str) -> Option<UpdateTask> {
                 } else {
                     value
                         .split(',')
-                        .map(|s| s.trim().to_string())
+                        .map(|s| s.trim().trim_start_matches('#').to_string())
                         .filter(|s| !s.is_empty())
                         .collect()
                 };

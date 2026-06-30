@@ -638,7 +638,8 @@ async fn run_task(
         }
         TaskCommands::Edit { id } => {
             let task = app.get_task(&id).await?;
-            let original = editor::format_task_for_editing(&task);
+            let all_tasks = app.list_tasks(&Default::default()).await?;
+            let original = editor::format_task_for_editing(&task, &all_tasks);
             let edited = editor::open_editor(&original, &task.id)
                 .map_err(|e| AppError::BadRequest(e.to_string()))?;
             let update = editor::parse_edited_task(&edited)

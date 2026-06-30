@@ -435,6 +435,16 @@ impl Storage for WorkersStorage {
 
 impl WorkersStorage {
     async fn resolve_task_id(&self, id: &str) -> StorageResult<String> {
+        // Numeric input → resolve via display_id (short sequential ID).
+        if let Ok(num) = id.parse::<i64>() {
+            let tasks: Vec<TaskRow> = self
+                .request::<Vec<TaskRow>>(reqwest::Method::GET, "/api/tasks")
+                .await?;
+            if let Some(t) = tasks.iter().find(|t| t.display_id == num) {
+                return Ok(t.id.clone());
+            }
+            return Err(StorageError::NotFound(format!("task {id} not found")));
+        }
         if id.contains('-') {
             return Ok(id.to_string());
         }

@@ -245,13 +245,25 @@ impl TakusuApp {
                 .await
                 .map_err(storage_to_app)?;
             let (_adj, id_to_idx) = build_dep_graph(&tasks)?;
+            // Resolve display_id numbers / UUID prefixes to full UUIDs before
+            // validating against the dep graph (which is keyed by UUID).
+            let mut resolved = Vec::with_capacity(dep_ids.len());
             for did in dep_ids {
-                if !id_to_idx.contains_key(did) {
+                let full = self.storage.get_task(did).await.map_err(storage_to_app)?.id;
+                if !id_to_idx.contains_key(&full) {
                     return Err(AppError::BadRequest(format!(
                         "depends on unknown task: {did}"
                     )));
                 }
+                resolved.push(full);
             }
+            let mut body = body.clone();
+            body.depends = Some(resolved);
+            return self
+                .storage
+                .create_task(&body)
+                .await
+                .map_err(storage_to_app);
         }
         self.storage.create_task(body).await.map_err(storage_to_app)
     }
@@ -276,18 +288,30 @@ impl TakusuApp {
             let target_idx = id_to_idx
                 .get(&full_id)
                 .ok_or_else(|| AppError::NotFound(format!("task {id} not found")))?;
+            // Resolve display_id numbers / UUID prefixes to full UUIDs before
+            // validating against the dep graph (which is keyed by UUID).
+            let mut resolved = Vec::with_capacity(dep_ids.len());
             for did in dep_ids {
-                if !id_to_idx.contains_key(did) {
+                let full = self.storage.get_task(did).await.map_err(storage_to_app)?.id;
+                if !id_to_idx.contains_key(&full) {
                     return Err(AppError::BadRequest(format!(
                         "depends on unknown task: {did}"
                     )));
                 }
+                resolved.push(full);
             }
-            adj[*target_idx] = dep_ids
+            adj[*target_idx] = resolved
                 .iter()
                 .filter_map(|did| id_to_idx.get(did).copied())
                 .collect();
             detect_cycle(&adj)?;
+            let mut body = body.clone();
+            body.depends = Some(resolved);
+            return self
+                .storage
+                .update_task(id, &body)
+                .await
+                .map_err(storage_to_app);
         }
         self.storage
             .update_task(id, body)
@@ -309,18 +333,30 @@ impl TakusuApp {
             let target_idx = id_to_idx
                 .get(&full_id)
                 .ok_or_else(|| AppError::NotFound(format!("task {id} not found")))?;
+            // Resolve display_id numbers / UUID prefixes to full UUIDs before
+            // validating against the dep graph (which is keyed by UUID).
+            let mut resolved = Vec::with_capacity(dep_ids.len());
             for did in dep_ids {
-                if !id_to_idx.contains_key(did) {
+                let full = self.storage.get_task(did).await.map_err(storage_to_app)?.id;
+                if !id_to_idx.contains_key(&full) {
                     return Err(AppError::BadRequest(format!(
                         "depends on unknown task: {did}"
                     )));
                 }
+                resolved.push(full);
             }
-            adj[*target_idx] = dep_ids
+            adj[*target_idx] = resolved
                 .iter()
                 .filter_map(|did| id_to_idx.get(did).copied())
                 .collect();
             detect_cycle(&adj)?;
+            let mut body = body.clone();
+            body.depends = Some(resolved);
+            return self
+                .storage
+                .replace_task(id, &body)
+                .await
+                .map_err(storage_to_app);
         }
         self.storage
             .replace_task(id, body)
