@@ -22,6 +22,7 @@ import {
 import Slider from '@expo/ui/community/slider';
 import { useServer } from '@/src/api/ServerProvider';
 import { undoRedo } from '@/src/api/undoRedo';
+import { showError, logError } from '@/src/api/errors';
 import { parseDepends, parseSchedule } from '@/src/api/types';
 import type { TaskRow, HabitRow, ScheduleEntry, TaskStatus } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
@@ -83,7 +84,13 @@ export function TaskDetailView() {
 
   const refresh = useCallback(async () => {
     if (!client || !id) return;
-    const t = await client.getTask(id);
+    let t: TaskRow;
+    try {
+      t = await client.getTask(id);
+    } catch (e) {
+      showError(e, 'タスクの取得に失敗');
+      return;
+    }
     setTask(t);
     setTitle(t.title);
     setDescription(t.description ?? '');
@@ -99,7 +106,8 @@ export function TaskDetailView() {
     if (t.habit_id) {
       try {
         setHabit(await client.getHabit(t.habit_id));
-      } catch {
+      } catch (e) {
+        logError('ハビット取得', e);
         setHabit(null);
       }
     }
@@ -108,7 +116,10 @@ export function TaskDetailView() {
     try {
       const [tasks, sched] = await Promise.all([
         client.listTasks(),
-        client.getSchedule().catch(() => null),
+        client.getSchedule().catch((e) => {
+          logError('スケジュール取得', e);
+          return null;
+        }),
       ]);
       setAllTasks(tasks);
       const entries: ScheduleEntry[] = sched ? parseSchedule(sched.schedule) : [];
@@ -137,7 +148,8 @@ export function TaskDetailView() {
           }
         }
       }
-    } catch {
+    } catch (e) {
+      logError('タスク一覧取得', e);
       setParallelTask(null);
     }
   }, [client, id]);
@@ -193,7 +205,12 @@ export function TaskDetailView() {
       return;
     }
     const prev = { ...task };
-    await client.updateTask(task.id, updates);
+    try {
+      await client.updateTask(task.id, updates);
+    } catch (e) {
+      showError(e, 'タスクの保存に失敗');
+      return;
+    }
     undoRedo.push({
       description: `edit task: ${task.title}`,
       undo: async () => {
@@ -231,15 +248,25 @@ export function TaskDetailView() {
     // In edit mode, only update local state — persisted on Save
     if (editing) return;
 
-    await client.updateTask(task.id, { status: newStatus });
+    try {
+      await client.updateTask(task.id, { status: newStatus });
+    } catch (e) {
+      showError(e, 'ステータス変更に失敗');
+      setStatus(prevStatus);
+      return;
+    }
 
     // Manage in-progress notification
     if (newStatus === 'in_progress') {
       if (notifications.inProgress) {
-        postInProgressNotification({ ...task, status: newStatus }).catch(() => {});
+        postInProgressNotification({ ...task, status: newStatus }).catch((e) =>
+          logError('通知の投稿', e),
+        );
       }
     } else if (prevStatus === 'in_progress') {
-      dismissInProgressNotification(task.id).catch(() => {});
+      dismissInProgressNotification(task.id).catch((e) =>
+        logError('通知の消去', e),
+      );
     }
 
     undoRedo.push({

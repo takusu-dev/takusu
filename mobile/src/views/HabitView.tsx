@@ -14,6 +14,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Button, IconButton } from 'react-native-paper';
 import type { TakusuClient } from '@/src/api/client';
+import { showError, logError } from '@/src/api/errors';
 import type { HabitRow } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 
@@ -34,6 +35,8 @@ export function HabitView({ client, onBack }: HabitViewProps) {
     setRefreshing(true);
     try {
       setHabits(await client.listHabits());
+    } catch (e) {
+      showError(e, 'ハビット一覧の取得に失敗');
     } finally {
       setRefreshing(false);
     }
@@ -45,8 +48,17 @@ export function HabitView({ client, onBack }: HabitViewProps) {
 
   async function deleteSelected() {
     if (!client) return;
+    let failed = 0;
     for (const id of selected) {
-      await client.deleteHabit(id);
+      try {
+        await client.deleteHabit(id);
+      } catch (e) {
+        failed++;
+        logError(`ハビット削除 (${id})`, e);
+      }
+    }
+    if (failed > 0) {
+      showError(`${failed}件の削除に失敗しました`, 'ハビットの削除');
     }
     setSelected(new Set());
     await refresh();

@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Slider from '@expo/ui/community/slider';
 import { useServer } from '@/src/api/ServerProvider';
 import { undoRedo } from '@/src/api/undoRedo';
+import { showError } from '@/src/api/errors';
 import type { TaskRow } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
@@ -39,6 +40,7 @@ export function TaskAddView() {
   const [allTasks, setAllTasks] = useState<TaskRow[]>([]);
   const [showDepPicker, setShowDepPicker] = useState(false);
   const [pickerField, setPickerField] = useState<'start' | 'end' | null>(null);
+  const [saving, setSaving] = useState(false);
 
   async function loadTasks() {
     if (!client) return;
@@ -58,36 +60,43 @@ export function TaskAddView() {
   }
 
   async function create() {
-    if (!client || !title || !endAt) return;
-    const task = await client.createTask({
-      title,
-      description: description || undefined,
-      start_at: startAt ? toISO(startAt) : undefined,
-      end_at: toISO(endAt),
-      avg_minutes: parseInt(avgMinutes, 10) || 60,
-      sigma_minutes: parseInt(sigmaMinutes, 10) || 0,
-      depends: selectedDeps.length > 0 ? selectedDeps : undefined,
-      abandonability,
-    });
-    undoRedo.push({
-      description: `create task: ${title}`,
-      undo: async () => {
-        await client.deleteTask(task.id);
-      },
-      redo: async () => {
-        await client.createTask({
-          title,
-          description: description || undefined,
-          start_at: startAt ? toISO(startAt) : undefined,
-          end_at: toISO(endAt),
-          avg_minutes: parseInt(avgMinutes, 10) || 60,
-          sigma_minutes: parseInt(sigmaMinutes, 10) || 0,
-          depends: selectedDeps.length > 0 ? selectedDeps : undefined,
-          abandonability,
-        });
-      },
-    });
-    router.back();
+    if (!client || !title || !endAt || saving) return;
+    setSaving(true);
+    try {
+      const task = await client.createTask({
+        title,
+        description: description || undefined,
+        start_at: startAt ? toISO(startAt) : undefined,
+        end_at: toISO(endAt),
+        avg_minutes: parseInt(avgMinutes, 10) || 60,
+        sigma_minutes: parseInt(sigmaMinutes, 10) || 0,
+        depends: selectedDeps.length > 0 ? selectedDeps : undefined,
+        abandonability,
+      });
+      undoRedo.push({
+        description: `create task: ${title}`,
+        undo: async () => {
+          await client.deleteTask(task.id);
+        },
+        redo: async () => {
+          await client.createTask({
+            title,
+            description: description || undefined,
+            start_at: startAt ? toISO(startAt) : undefined,
+            end_at: toISO(endAt),
+            avg_minutes: parseInt(avgMinutes, 10) || 60,
+            sigma_minutes: parseInt(sigmaMinutes, 10) || 0,
+            depends: selectedDeps.length > 0 ? selectedDeps : undefined,
+            abandonability,
+          });
+        },
+      });
+      router.back();
+    } catch (e) {
+      showError(e, 'タスクの追加に失敗');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -99,11 +108,14 @@ export function TaskAddView() {
         <Text style={[styles.title, { color: colors.black }]}>新規タスク</Text>
         <View style={{ flex: 1 }} />
         <Pressable
-          style={[styles.saveButton, (!title || !endAt) && styles.saveButtonDisabled]}
+          style={[
+            styles.saveButton,
+            (!title || !endAt || saving) && styles.saveButtonDisabled,
+          ]}
           onPress={create}
-          disabled={!title || !endAt}
+          disabled={!title || !endAt || saving}
         >
-          <Text style={styles.saveButtonText}>追加</Text>
+          <Text style={styles.saveButtonText}>{saving ? '保存中…' : '追加'}</Text>
         </Pressable>
       </View>
 
@@ -320,7 +332,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   saveButtonDisabled: {
-    opacity: 0.4,
+    backgroundColor: COLORS.grayDark,
   },
   saveButtonText: {
     color: COLORS.white,
