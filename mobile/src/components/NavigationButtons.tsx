@@ -9,7 +9,7 @@
 import { useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS } from '@/src/theme';
+import { useColors } from '@/src/theme';
 
 interface NavigationButtonsProps {
   onScrollUpByDay?: () => void;
@@ -28,6 +28,7 @@ export function NavigationButtons({
   onJumpToDate,
   markedDates,
 }: NavigationButtonsProps) {
+  const colors = useColors();
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [calMonth, setCalMonth] = useState(() => {
     const now = new Date();
@@ -69,38 +70,38 @@ export function NavigationButtons({
   return (
     <>
       <View style={styles.container}>
-        <NavButton icon="arrow-up" onPress={onScrollUpByDay} />
-        <NavButton icon="chevron-up" onPress={onScrollUpByPage} />
-        <NavButton icon="chevron-down" onPress={onScrollDownByPage} />
-        <NavButton icon="arrow-down" onPress={onScrollDownByDay} />
-        <NavButton icon="calendar" onPress={() => setCalendarOpen(true)} />
+        <NavButton icon="arrow-up" onPress={onScrollUpByDay} color={colors.brand} bgColor={colors.white} />
+        <NavButton icon="chevron-up" onPress={onScrollUpByPage} color={colors.brand} bgColor={colors.white} />
+        <NavButton icon="chevron-down" onPress={onScrollDownByPage} color={colors.brand} bgColor={colors.white} />
+        <NavButton icon="arrow-down" onPress={onScrollDownByDay} color={colors.brand} bgColor={colors.white} />
+        <NavButton icon="calendar" onPress={() => setCalendarOpen(true)} color={colors.brand} bgColor={colors.white} />
       </View>
 
       <Modal visible={calendarOpen} transparent animationType="fade">
         <Pressable style={styles.overlay} onPress={() => setCalendarOpen(false)}>
           {/* Inner Pressable stops tap-through so tapping white space inside
               the calendar no longer dismisses it (Issue #30). */}
-          <Pressable style={styles.calendar} onPress={() => {}}>
+          <Pressable style={[styles.calendar, { backgroundColor: colors.white }]} onPress={() => {}}>
             <View style={styles.calHeader}>
               <Pressable
                 onPress={prevMonth}
                 style={styles.calNavButton}
                 hitSlop={8}
               >
-                <Text style={styles.calNav}>‹</Text>
+                <Text style={[styles.calNav, { color: colors.brand }]}>‹</Text>
               </Pressable>
-              <Text style={styles.calMonthLabel}>{monthLabel}</Text>
+              <Text style={[styles.calMonthLabel, { color: colors.black }]}>{monthLabel}</Text>
               <Pressable
                 onPress={nextMonth}
                 style={styles.calNavButton}
                 hitSlop={8}
               >
-                <Text style={styles.calNav}>›</Text>
+                <Text style={[styles.calNav, { color: colors.brand }]}>›</Text>
               </Pressable>
             </View>
             <View style={styles.calGrid}>
               {['日', '月', '火', '水', '木', '金', '土'].map((d) => (
-                <Text key={d} style={styles.calWeekday}>
+                <Text key={d} style={[styles.calWeekday, { color: colors.gray }]}>
                   {d}
                 </Text>
               ))}
@@ -113,11 +114,15 @@ export function NavigationButtons({
                 return (
                   <Pressable
                     key={day}
-                    style={[styles.calDay, marked && styles.calDayMarked]}
+                    style={[styles.calDay, marked && { backgroundColor: colors.brand }]}
                     onPress={() => selectDay(day)}
                   >
                     <Text
-                      style={[styles.calDayText, marked && styles.calDayTextMarked]}
+                      style={[
+                        styles.calDayText,
+                        { color: colors.black },
+                        marked && { color: colors.white, fontWeight: '600' },
+                      ]}
                     >
                       {day}
                     </Text>
@@ -132,13 +137,27 @@ export function NavigationButtons({
   );
 }
 
-function NavButton({ icon, onPress }: { icon: keyof typeof Ionicons.glyphMap; onPress?: () => void }) {
+function NavButton({
+  icon,
+  onPress,
+  color,
+  bgColor,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress?: () => void;
+  color: string;
+  bgColor: string;
+}) {
   return (
     <Pressable
-      style={({ pressed }) => [styles.navButton, pressed && styles.navButtonPressed]}
+      style={({ pressed }) => [
+        styles.navButton,
+        { backgroundColor: bgColor },
+        pressed && styles.navButtonPressed,
+      ]}
       onPress={onPress}
     >
-      <Ionicons name={icon} size={20} color={COLORS.brand} />
+      <Ionicons name={icon} size={20} color={color} />
     </Pressable>
   );
 }
@@ -156,7 +175,6 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.9)',
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
@@ -166,11 +184,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   navButtonPressed: {
-    backgroundColor: COLORS.brandLight,
-  },
-  navButtonText: {
-    fontSize: 16,
-    color: COLORS.brand,
+    opacity: 0.7,
   },
   overlay: {
     flex: 1,
@@ -179,7 +193,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   calendar: {
-    backgroundColor: COLORS.white,
     borderRadius: 16,
     padding: 16,
     width: 300,
@@ -204,13 +217,11 @@ const styles = StyleSheet.create({
   },
   calNav: {
     fontSize: 32,
-    color: COLORS.brand,
     lineHeight: 36,
   },
   calMonthLabel: {
     fontSize: 16,
     fontWeight: '600',
-    color: COLORS.black,
   },
   calGrid: {
     flexDirection: 'row',
@@ -221,7 +232,6 @@ const styles = StyleSheet.create({
     width: 36,
     textAlign: 'center',
     fontSize: 12,
-    color: COLORS.gray,
     fontWeight: '600',
   },
   calDay: {
@@ -231,15 +241,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 8,
   },
-  calDayMarked: {
-    backgroundColor: COLORS.brand,
-  },
   calDayText: {
     fontSize: 14,
-    color: COLORS.black,
-  },
-  calDayTextMarked: {
-    color: COLORS.white,
-    fontWeight: '600',
   },
 });

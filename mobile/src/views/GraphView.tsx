@@ -4,7 +4,7 @@
 // Edit mode: tap edge to cut, drag node-to-node to add dependency
 // Non-edit mode: pan/zoom enabled
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,8 +21,10 @@ interface GraphViewProps {
   onTaskPress?: (taskId: string) => void;
 }
 
-// HTML content for the WebView with Cytoscape.js + dagre
-function buildGraphHtml(bgColor: string, brandColor: string): string {
+// HTML content for the WebView with Cytoscape.js + dagre.
+// Colors are applied at runtime via setTheme() to avoid reloading the
+// WebView when the theme changes (which causes a white flash — Issue #37).
+function buildGraphHtml(): string {
   return `
 <!DOCTYPE html>
 <html>
@@ -30,7 +32,7 @@ function buildGraphHtml(bgColor: string, brandColor: string): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <style>
-    body { margin: 0; padding: 0; overflow: hidden; background: ${bgColor}; }
+    body { margin: 0; padding: 0; overflow: hidden; background: transparent; }
     #cy { width: 100vw; height: 100vh; }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.4/cytoscape.min.js"></script>
@@ -44,6 +46,24 @@ function buildGraphHtml(bgColor: string, brandColor: string): string {
 
     let cy;
     let editMode = false;
+    let currentBrand = '${BRAND_COLOR}';
+
+    function applyTheme(brand) {
+      currentBrand = brand;
+      // Body background is transparent — the native WebView background (set
+      // via React style) provides the themed color with no flash.
+      if (cy) {
+        cy.style()
+          .selector('node')
+          .style('border-color', brand)
+          .update();
+        cy.style()
+          .selector('edge')
+          .style('arrow-color', brand)
+          .style('line-color', brand)
+          .update();
+      }
+    }
 
     function initGraph(data) {
       if (cy) cy.destroy();
@@ -64,7 +84,7 @@ function buildGraphHtml(bgColor: string, brandColor: string): string {
               'width': 'data(width)',
               'height': 'data(height)',
               'border-width': 2,
-              'border-color': '${brandColor}',
+              'border-color': currentBrand,
               'color': '#fff',
               'text-outline-width': 2,
               'text-outline-color': '#444',
@@ -83,8 +103,8 @@ function buildGraphHtml(bgColor: string, brandColor: string): string {
             style: {
               'curve-style': 'bezier',
               'target-arrow-shape': 'triangle',
-              'arrow-color': '${brandColor}',
-              'line-color': '${brandColor}',
+              'arrow-color': currentBrand,
+              'line-color': currentBrand,
               'width': 2,
             }
           },
@@ -154,11 +174,13 @@ function buildGraphHtml(bgColor: string, brandColor: string): string {
       const msg = JSON.parse(e.data);
       if (msg.type === 'init') initGraph(msg.data);
       if (msg.type === 'setEditMode') setEditMode(msg.enabled);
+      if (msg.type === 'setTheme') applyTheme(msg.brand);
     });
 
     // Expose for ReactNativeWebView
     window.initGraph = initGraph;
     window.setEditMode = setEditMode;
+    window.applyTheme = applyTheme;
   </script>
 </body>
 </html>
@@ -184,6 +206,21 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
   const webViewRef = useRef<WebView>(null);
   const [editMode, setEditMode] = useState(false);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
+
+  // Build the HTML once — it does not depend on theme colors so the WebView
+  // is not reloaded when the theme changes (avoids the flash from Issue #37).
+  // Colors are pushed in via applyTheme() instead.
+  const graphHtml = useMemo(() => buildGraphHtml(), []);
+
+  // Apply theme colors to the WebView whenever they change, without
+  // reloading the page. Only the cytoscape edge/border colors need updating —
+  // the background is handled by the native WebView style (transparent body).
+  useEffect(() => {
+    const brand = JSON.stringify(BRAND_COLOR);
+    webViewRef.current?.injectJavaScript(
+      `window.applyTheme(${brand}); true;`,
+    );
+  }, [colors.white]);
 
   const refresh = useCallback(async () => {
     if (!client) return;
@@ -314,9 +351,11 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
 
       <WebView
         ref={webViewRef}
-        source={{ html: buildGraphHtml(colors.white, BRAND_COLOR) }}
+        source={{ html: graphHtml }}
         onMessage={onMessage}
-        style={styles.webview}
+        // Match the WebView's native background to the theme so there is no
+        // white flash before the HTML body background is applied.
+        style={[styles.webview, { backgroundColor: colors.white }]}
         originWhitelist={['*']}
         javaScriptEnabled
         domStorageEnabled
