@@ -43,6 +43,8 @@ export function SettingsView() {
     client,
     darkMode,
     setDarkMode,
+    undoSteps,
+    setUndoSteps,
     workersUrl: savedUrl,
     workersToken: savedToken,
     restartServer,
@@ -60,6 +62,10 @@ export function SettingsView() {
   const [workerUrl, setWorkerUrl] = useState(savedUrl);
   const [workerKey, setWorkerKey] = useState(savedToken);
   const [workerDirty, setWorkerDirty] = useState(false);
+
+  // Undo steps input — local text state, committed on blur to avoid
+  // trimming the undo stack through intermediate values while typing.
+  const [undoStepsInput, setUndoStepsInput] = useState(String(undoSteps));
 
   // Google Calendar state
   const [gcalSettings, setGcalSettings] = useState<GoogleCalSettings | null>(null);
@@ -84,6 +90,21 @@ export function SettingsView() {
     setWorkerKey(savedToken);
     setWorkerDirty(false);
   }, [savedUrl, savedToken]);
+
+  // Keep local undo-steps input in sync with the persisted value
+  useEffect(() => {
+    setUndoStepsInput(String(undoSteps));
+  }, [undoSteps]);
+
+  function commitUndoSteps() {
+    const n = parseInt(undoStepsInput, 10);
+    if (!isNaN(n) && n > 0) {
+      setUndoSteps(n);
+    } else {
+      // Revert to the current persisted value on invalid input
+      setUndoStepsInput(String(undoSteps));
+    }
+  }
 
   // Load Google Calendar settings when entering google tab
   const loadGcalSettings = useCallback(async () => {
@@ -324,16 +345,34 @@ export function SettingsView() {
 
         <ScrollView contentContainerStyle={styles.content}>
           {category === 'general' && (
-            <View style={styles.settingRow}>
-              <Text style={[styles.settingLabel, { color: colors.black }]}>
-                ダークモード
-              </Text>
-              <Switch
-                value={darkMode}
-                onValueChange={(v) => setDarkMode(v)}
-                trackColor={{ true: BRAND_COLOR }}
-              />
-            </View>
+            <>
+              <View style={styles.settingRow}>
+                <Text style={[styles.settingLabel, { color: colors.black }]}>
+                  ダークモード
+                </Text>
+                <Switch
+                  value={darkMode}
+                  onValueChange={(v) => setDarkMode(v)}
+                  trackColor={{ true: BRAND_COLOR }}
+                />
+              </View>
+
+              <View style={styles.field}>
+                <Text style={[styles.label, { color: colors.gray }]}>
+                  アンドゥ履歴の上限 (ステップ数)
+                </Text>
+                <TextInput
+                  style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+                  value={undoStepsInput}
+                  onChangeText={setUndoStepsInput}
+                  onBlur={commitUndoSteps}
+                  onSubmitEditing={commitUndoSteps}
+                  keyboardType="numeric"
+                  placeholder="50"
+                  placeholderTextColor={colors.gray}
+                />
+              </View>
+            </>
           )}
 
           {category === 'notifications' && (

@@ -15,10 +15,12 @@ import {
   saveWorkersUrl,
   saveWorkersToken,
   saveDarkMode,
+  saveUndoSteps,
   saveNotificationSettings,
   type PersistedSettings,
   type NotificationSettings,
 } from './settingsStore';
+import { undoRedo, DEFAULT_MAX_HISTORY } from './undoRedo';
 
 interface ServerState {
   ready: boolean;
@@ -27,6 +29,7 @@ interface ServerState {
   workersUrl: string;
   workersToken: string;
   darkMode: boolean;
+  undoSteps: number;
   notifications: NotificationSettings;
   restarting: boolean;
 }
@@ -34,6 +37,7 @@ interface ServerState {
 interface ServerContextValue extends ServerState {
   restartServer: (url?: string, token?: string) => Promise<void>;
   setDarkMode: (enabled: boolean) => Promise<void>;
+  setUndoSteps: (steps: number) => Promise<void>;
   setNotifications: (settings: NotificationSettings) => Promise<void>;
 }
 
@@ -44,10 +48,12 @@ const ServerContext = createContext<ServerContextValue>({
   workersUrl: '',
   workersToken: '',
   darkMode: false,
+  undoSteps: DEFAULT_MAX_HISTORY,
   notifications: {} as NotificationSettings,
   restarting: false,
   restartServer: async () => {},
   setDarkMode: async () => {},
+  setUndoSteps: async () => {},
   setNotifications: async () => {},
 });
 
@@ -61,6 +67,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     workersUrl: '',
     workersToken: '',
     darkMode: false,
+    undoSteps: DEFAULT_MAX_HISTORY,
     notifications: {} as NotificationSettings,
     restarting: false,
   });
@@ -135,6 +142,14 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({ ...prev, darkMode: enabled }));
   }, []);
 
+  const setUndoSteps = useCallback(async (steps: number) => {
+    if (!Number.isFinite(steps) || steps <= 0) return;
+    const n = Math.floor(steps);
+    await saveUndoSteps(n);
+    undoRedo.setMaxHistory(n);
+    setState((prev) => ({ ...prev, undoSteps: n }));
+  }, []);
+
   const setNotifications = useCallback(async (settings: NotificationSettings) => {
     await saveNotificationSettings(settings);
     setState((prev) => ({ ...prev, notifications: settings }));
@@ -153,8 +168,11 @@ export function ServerProvider({ children }: { children: ReactNode }) {
         workersUrl: settings.workersUrl,
         workersToken: settings.workersToken,
         darkMode: settings.darkMode,
+        undoSteps: settings.undoSteps,
         notifications: settings.notifications,
       }));
+
+      undoRedo.setMaxHistory(settings.undoSteps);
 
       try {
         const client = await startServer(
@@ -195,9 +213,10 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       ...state,
       restartServer,
       setDarkMode,
+      setUndoSteps,
       setNotifications,
     }),
-    [state, restartServer, setDarkMode, setNotifications],
+    [state, restartServer, setDarkMode, setUndoSteps, setNotifications],
   );
 
   return (
