@@ -6,10 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
-    "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "dev.satler.takusu"
-    },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#7261A3",
@@ -19,10 +15,6 @@
       },
       "predictiveBackGestureEnabled": true,
       "package": "dev.satler.takusu"
-    },
-    "web": {
-      "favicon": "./assets/favicon.png",
-      "bundler": "metro"
     },
     "plugins": [
       "expo-router",

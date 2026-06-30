@@ -32,7 +32,7 @@ alongside it on the same physical device, build with
 
 | Field | Stable | Dev |
 |-------|--------|-----|
-| `android.package` / `ios.bundleIdentifier` | `dev.satler.takusu` | `dev.satler.takusu.dev` |
+| `android.package` | `dev.satler.takusu` | `dev.satler.takusu.dev` |
 | `name` (launcher label) | `takusu` | `takusu dev` |
 | `scheme` (deep link) | `takusu` | `takusu-dev` |
 

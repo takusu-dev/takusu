@@ -1,8 +1,5 @@
 {
-  "platforms": ["apple", "android", "web"],
-  "apple": {
-    "modules": ["TakusuServerModule"]
-  },
+  "platforms": ["android"],
   "android": {
     "modules": ["expo.modules.takususerver.TakusuServerModule"]
   }

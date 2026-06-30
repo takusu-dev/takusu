@@ -30,9 +30,6 @@ if (isDev) {
   expo.name = "takusu dev";
   expo.slug = "takusu-dev";
   expo.scheme = "takusu-dev";
-  if (expo.ios) {
-    expo.ios.bundleIdentifier = "dev.satler.takusu.dev";
-  }
   if (expo.android) {
     expo.android.package = "dev.satler.takusu.dev";
   }

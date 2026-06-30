@@ -151,7 +151,7 @@ The default loop for any task is:
 3. `jj git push --change` to push the current change to GitHub (creates/updates a branch named after the change-id).
 4. `gh pr create` (or `gh pr edit` if the PR already exists) to open or update the pull request.
 
-Repeat per change. Use `jj new` to start a fresh change on top of `@`, and `jj squash` / `jj amend` to consolidate work before pushing. Rebase onto `main` with `jj git fetch && jj rebase -r @ -d main` before pushing if `main` has moved.
+**Agents do steps 2–4 themselves**: after finishing the work, the agent writes the commit message, pushes the change, and creates/updates the PR without asking the user. Repeat per change. Use `jj new` to start a fresh change on top of `@`, and `jj squash` / `jj amend` to consolidate work before pushing. Rebase onto `main` with `jj git fetch && jj rebase -r @ -d main` before pushing if `main` has moved.
 
 ### Conventions
 
