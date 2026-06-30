@@ -1,5 +1,6 @@
-// Undo/redo stack (50 steps). Covers task CRUD, schedule operations, habit CRUD.
+// Undo/redo stack. Covers task CRUD, schedule operations, habit CRUD.
 // Sync operations are NOT included.
+// Max history is configurable via setMaxHistory() (default 50).
 
 type UndoableAction = {
   description: string;
@@ -7,12 +8,13 @@ type UndoableAction = {
   redo: () => Promise<void>;
 };
 
-const MAX_HISTORY = 50;
+export const DEFAULT_MAX_HISTORY = 50;
 
 class UndoRedoManager {
   private undoStack: UndoableAction[] = [];
   private redoStack: UndoableAction[] = [];
   private listeners: Set<() => void> = new Set();
+  private maxHistory = DEFAULT_MAX_HISTORY;
 
   private notify() {
     this.listeners.forEach((l) => l());
@@ -31,9 +33,26 @@ class UndoRedoManager {
     return this.redoStack.length > 0;
   }
 
+  getMaxHistory(): number {
+    return this.maxHistory;
+  }
+
+  setMaxHistory(n: number) {
+    if (!Number.isFinite(n) || n <= 0) return;
+    this.maxHistory = Math.floor(n);
+    // Trim existing stacks to the new limit
+    while (this.undoStack.length > this.maxHistory) {
+      this.undoStack.shift();
+    }
+    while (this.redoStack.length > this.maxHistory) {
+      this.redoStack.shift();
+    }
+    this.notify();
+  }
+
   push(action: UndoableAction) {
     this.undoStack.push(action);
-    if (this.undoStack.length > MAX_HISTORY) {
+    if (this.undoStack.length > this.maxHistory) {
       this.undoStack.shift();
     }
     this.redoStack = [];
