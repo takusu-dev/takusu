@@ -379,11 +379,14 @@ export function HomeView() {
   async function deleteTask(task: TaskRow) {
     if (!client) return;
     await client.deleteTask(task.id);
+    // Track the id assigned by the server when undo recreates the task,
+    // so redo deletes the recreated (not the stale original) id.
+    let currentId = task.id;
     undoRedo.push({
       description: `delete: ${task.title}`,
       undo: async () => {
         // Re-create with same fields
-        await client.createTask({
+        const recreated = await client.createTask({
           title: task.title,
           description: task.description,
           start_at: task.start_at,
@@ -395,10 +398,11 @@ export function HomeView() {
           allows_parallel: task.allows_parallel,
           abandonability: task.abandonability,
         });
+        currentId = recreated.id;
         await refresh();
       },
       redo: async () => {
-        await client.deleteTask(task.id);
+        await client.deleteTask(currentId);
         await refresh();
       },
     });
@@ -437,10 +441,47 @@ export function HomeView() {
 
   async function deleteSelected() {
     if (!client) return;
-    for (const id of selected) {
-      const task = tasks.find((t) => t.id === id);
-      if (task) await client.deleteTask(id);
+    const toDelete = tasks.filter((t) => selected.has(t.id));
+    for (const task of toDelete) {
+      await client.deleteTask(task.id);
     }
+    // Track the ids assigned by the server when undo recreates the tasks,
+    // so redo deletes the recreated (not the stale original) ids.
+    // Push a single grouped undo entry so one undo restores all tasks.
+    const currentIds: string[] = [...toDelete.map((t) => t.id)];
+    undoRedo.push({
+      description:
+        toDelete.length === 1
+          ? `delete: ${toDelete[0].title}`
+          : `delete ${toDelete.length} tasks`,
+      undo: async () => {
+        const recreatedIds: string[] = [];
+        for (const task of toDelete) {
+          const recreated = await client.createTask({
+            title: task.title,
+            description: task.description,
+            start_at: task.start_at,
+            end_at: task.end_at,
+            avg_minutes: task.avg_minutes,
+            sigma_minutes: task.sigma_minutes,
+            depends: parseDepends(task.depends),
+            parallelizable: task.parallelizable,
+            allows_parallel: task.allows_parallel,
+            abandonability: task.abandonability,
+          });
+          recreatedIds.push(recreated.id);
+        }
+        currentIds.length = 0;
+        currentIds.push(...recreatedIds);
+        await refresh();
+      },
+      redo: async () => {
+        for (const id of currentIds) {
+          await client.deleteTask(id);
+        }
+        await refresh();
+      },
+    });
     setSelected(new Set());
     await refresh();
   }
@@ -510,7 +551,6 @@ export function HomeView() {
     return (
       <HabitWrapper
         client={client}
-        onBack={() => setView('task')}
         viewChanger={<ViewChanger current={view} onChange={setView} />}
       />
     );
@@ -680,17 +720,15 @@ function GraphWrapper({
 
 function HabitWrapper({
   client,
-  onBack,
   viewChanger,
 }: {
   client: TakusuClient | null;
-  onBack: () => void;
   viewChanger: React.ReactNode;
 }) {
   const { HabitView } = require('@/src/views/HabitView');
   return (
     <View style={{ flex: 1 }}>
-      <HabitView client={client} onBack={onBack} />
+      <HabitView client={client} />
       {viewChanger}
     </View>
   );
@@ -753,10 +791,10 @@ const styles = StyleSheet.create({
     flex: 1,
     borderWidth: 1,
     borderColor: COLORS.separator,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    fontSize: 14,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 16,
   },
   listContent: {
     paddingBottom: 100,

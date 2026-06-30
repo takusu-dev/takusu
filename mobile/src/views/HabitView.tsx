@@ -1,5 +1,5 @@
 // HabitView — list of habit cards with add button
-// Habits are selectable, context menu changes with selection
+// Habits are selectable, context menu (left) changes with selection
 
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -12,17 +12,18 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Button, IconButton } from 'react-native-paper';
+import { IconButton } from 'react-native-paper';
 import type { TakusuClient } from '@/src/api/client';
 import type { HabitRow } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
+import { ContextMenu } from '@/src/components/ContextMenu';
+import { undoRedo } from '@/src/api/undoRedo';
 
 interface HabitViewProps {
   client: TakusuClient | null;
-  onBack: () => void;
 }
 
-export function HabitView({ client, onBack }: HabitViewProps) {
+export function HabitView({ client }: HabitViewProps) {
   const router = useRouter();
   const colors = useColors();
   const [habits, setHabits] = useState<HabitRow[]>([]);
@@ -45,9 +46,51 @@ export function HabitView({ client, onBack }: HabitViewProps) {
 
   async function deleteSelected() {
     if (!client) return;
-    for (const id of selected) {
-      await client.deleteHabit(id);
+    const toDelete = habits.filter((h) => selected.has(h.id));
+    for (const h of toDelete) {
+      await client.deleteHabit(h.id);
     }
+    // Track the ids assigned by the server when undo recreates the habits,
+    // so redo deletes the recreated (not the stale original) ids.
+    // Push a single grouped undo entry so one undo restores all habits.
+    const currentIds: string[] = [...toDelete.map((h) => h.id)];
+    undoRedo.push({
+      description:
+        toDelete.length === 1
+          ? `delete habit: ${toDelete[0].title}`
+          : `delete ${toDelete.length} habits`,
+      undo: async () => {
+        const recreatedIds: string[] = [];
+        for (const h of toDelete) {
+          const recreated = await client.createHabit({
+            title: h.title,
+            description: h.description,
+            recurrence: h.recurrence,
+            start_time: h.start_time,
+            end_time: h.end_time,
+            avg_minutes: h.avg_minutes,
+            sigma_minutes: h.sigma_minutes,
+            parallelizable: h.parallelizable,
+            allows_parallel: h.allows_parallel,
+            abandonability: h.abandonability,
+          });
+          // CreateHabit does not accept `active`; restore it via update.
+          if (!h.active) {
+            await client.updateHabit(recreated.id, { active: h.active });
+          }
+          recreatedIds.push(recreated.id);
+        }
+        currentIds.length = 0;
+        currentIds.push(...recreatedIds);
+        await refresh();
+      },
+      redo: async () => {
+        for (const id of currentIds) {
+          await client.deleteHabit(id);
+        }
+        await refresh();
+      },
+    });
     setSelected(new Set());
     await refresh();
   }
@@ -64,47 +107,24 @@ export function HabitView({ client, onBack }: HabitViewProps) {
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
       <View style={styles.topBar}>
-        <IconButton
-          icon="chevron-left"
-          iconColor={BRAND_COLOR}
-          size={28}
-          onPress={onBack}
+        <ContextMenu
+          hasSelection={selected.size > 0}
+          onSettings={() => router.push('/settings')}
+          onUndo={() => undoRedo.undo().then(refresh)}
+          onRedo={() => undoRedo.redo().then(refresh)}
+          onSelectAll={() => setSelected(new Set(habits.map((h) => h.id)))}
+          onClearSelection={() => setSelected(new Set())}
+          onDeleteSelected={deleteSelected}
         />
         <Text style={[styles.title, { color: colors.black }]}>ハビット</Text>
         <View style={{ flex: 1 }} />
-        {selected.size > 0 ? (
-          <View style={styles.contextMenu}>
-            <IconButton
-              icon="select-all"
-              iconColor={BRAND_COLOR}
-              size={22}
-              onPress={() => setSelected(new Set(habits.map((h) => h.id)))}
-            />
-            <IconButton
-              icon="select-off"
-              iconColor={BRAND_COLOR}
-              size={22}
-              onPress={() => setSelected(new Set())}
-            />
-            <Button
-              mode="contained"
-              onPress={deleteSelected}
-              buttonColor={COLORS.red}
-              textColor={COLORS.white}
-              compact
-            >
-              削除
-            </Button>
-          </View>
-        ) : (
-          <IconButton
-            icon="plus"
-            iconColor={COLORS.white}
-            size={24}
-            containerColor={BRAND_COLOR}
-            onPress={() => router.push('/habit/add')}
-          />
-        )}
+        <IconButton
+          icon="plus"
+          iconColor={COLORS.white}
+          size={24}
+          containerColor={BRAND_COLOR}
+          onPress={() => router.push('/habit/add')}
+        />
       </View>
 
       <FlatList
@@ -169,11 +189,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     marginLeft: 4,
-  },
-  contextMenu: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
   },
   listContent: {
     padding: 12,
