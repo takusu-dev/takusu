@@ -49,4 +49,9 @@ pub trait Storage: Send + Sync + 'static {
     async fn upsert_gcal_mappings(&self, mappings: &[(String, String)]) -> StorageResult<()>;
     async fn delete_gcal_mappings(&self, task_ids: &[String]) -> StorageResult<()>;
     async fn clear_gcal_mappings(&self) -> StorageResult<()>;
+
+    /// Backend health check. Returns a short human-readable status string.
+    /// For `WorkersStorage` this pings the Cloudflare Worker `/health`;
+    /// for `SqliteStorage` it reports the local DB is reachable.
+    async fn health_check(&self) -> StorageResult<String>;
 }

@@ -1,5 +1,7 @@
 uniffi::setup_scaffolding!();
 
+mod log_buffer;
+
 use std::sync::{Arc, Mutex};
 
 use takusu_local::router::router;
@@ -80,6 +82,10 @@ impl TakusuServer {
             });
         }
 
+        // Install the in-process log ring buffer. Uses try_init() so restarts
+        // (stop → start) don't panic when the global subscriber is already set.
+        log_buffer::install();
+
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -140,4 +146,19 @@ impl TakusuServer {
             _ => ServerStatus::Stopped,
         }
     }
+}
+
+// ── Log capture (free functions exported to Kotlin) ──────────────────
+
+/// Snapshot of the captured server log lines (oldest first).
+/// Returns an empty list if the server hasn't started or no logs exist.
+#[uniffi::export]
+fn get_logs() -> Vec<String> {
+    log_buffer::get_logs()
+}
+
+/// Clear the captured log buffer.
+#[uniffi::export]
+fn clear_logs() {
+    log_buffer::clear_logs();
 }

@@ -766,6 +766,12 @@ impl TakusuApp {
             .map_err(storage_to_app)
     }
 
+    /// Backend health check. Returns a short status string from the storage
+    /// backend (e.g. "worker ok" or "sqlite ok (v3.x)").
+    pub async fn health_check(&self) -> Result<String, AppError> {
+        self.storage.health_check().await.map_err(storage_to_app)
+    }
+
     pub async fn do_sync(&self) -> Result<(), String> {
         let settings = self
             .storage

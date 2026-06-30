@@ -357,6 +357,13 @@
                   exit 1
                 fi
 
+                # Embed git commit/tag into the APK via app.config.js so the
+                # settings page can show the exact source the build came from.
+                # Allow caller overrides (CI may set these explicitly).
+                : "''${TAKUSU_GIT_COMMIT:=$(git -C "$(pwd)" rev-parse --short HEAD 2>/dev/null || echo unknown)}"
+                : "''${TAKUSU_GIT_TAG:=$(git -C "$(pwd)" describe --tags --always 2>/dev/null || echo unknown)}"
+                export TAKUSU_GIT_COMMIT TAKUSU_GIT_TAG
+
                 REPO_ROOT="$(pwd)"
                 MODULE_DIR="$REPO_ROOT/mobile/modules/takusu-server"
                 JNILIBS_DIR="$MODULE_DIR/android/src/main/jniLibs"

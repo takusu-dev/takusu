@@ -11,6 +11,12 @@ const stub = {
   status: async (): Promise<ServerStatusResult> => {
     return { running: false, port: 0 };
   },
+  getLogs: async (): Promise<string[]> => {
+    return [];
+  },
+  clearLogs: async (): Promise<void> => {
+    /* no-op */
+  },
 };
 
 export default stub;

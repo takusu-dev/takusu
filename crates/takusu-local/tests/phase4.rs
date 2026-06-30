@@ -161,6 +161,9 @@ impl Storage for CountingStorage {
     async fn clear_gcal_mappings(&self) -> StorageResult<()> {
         Ok(())
     }
+    async fn health_check(&self) -> StorageResult<String> {
+        Ok("mock ok".into())
+    }
 }
 
 #[tokio::test]
