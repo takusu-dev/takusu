@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useServer } from '@/src/api/ServerProvider';
+import { showError, logError } from '@/src/api/errors';
 import type { HabitRow, TaskRow } from '@/src/api/types';
 import { COLORS, BRAND_COLOR } from '@/src/theme';
 
@@ -22,12 +23,18 @@ export function HabitDetailView() {
 
   const refresh = useCallback(async () => {
     if (!client || !id) return;
-    setHabit(await client.getHabit(id));
+    try {
+      setHabit(await client.getHabit(id));
+    } catch (e) {
+      showError(e, 'ハビットの取得に失敗');
+      return;
+    }
     try {
       const allTasks = await client.listTasks({ habit_id: id });
       // Show recent tasks (up to 10)
       setTasks(allTasks.slice(0, 10));
-    } catch {
+    } catch (e) {
+      logError('ハビットのタスク取得', e);
       setTasks([]);
     }
   }, [client, id]);

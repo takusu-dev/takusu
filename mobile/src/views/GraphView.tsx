@@ -10,6 +10,7 @@ import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { Button, IconButton } from 'react-native-paper';
 import type { TakusuClient } from '@/src/api/client';
+import { showError } from '@/src/api/errors';
 import type { TaskRow } from '@/src/api/types';
 import { parseDepends } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
@@ -186,7 +187,13 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
 
   const refresh = useCallback(async () => {
     if (!client) return;
-    const allTasks = await client.listTasks();
+    let allTasks: TaskRow[];
+    try {
+      allTasks = await client.listTasks();
+    } catch (e) {
+      showError(e, 'タスク一覧の取得に失敗');
+      return;
+    }
     setTasks(allTasks);
 
     // Build transitive dependency graph from incomplete tasks
@@ -253,7 +260,10 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
         const deps = parseDepends(targetTask.depends).filter(
           (d) => d !== msg.source,
         );
-        client.updateTask(msg.target, { depends: deps }).then(refresh);
+        client
+          .updateTask(msg.target, { depends: deps })
+          .then(refresh)
+          .catch((e) => showError(e, '依存関係の削除に失敗'));
       }
     } else if (msg.type === 'addEdge') {
       const targetTask = tasks.find((t) => t.id === msg.target);
@@ -261,7 +271,10 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
         const deps = parseDepends(targetTask.depends);
         if (!deps.includes(msg.source)) {
           deps.push(msg.source);
-          client.updateTask(msg.target, { depends: deps }).then(refresh);
+          client
+            .updateTask(msg.target, { depends: deps })
+            .then(refresh)
+            .catch((e) => showError(e, '依存関係の追加に失敗'));
         }
       }
     }

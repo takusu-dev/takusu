@@ -14,6 +14,7 @@ import { useRouter } from 'expo-router';
 import Slider from '@expo/ui/community/slider';
 import { useServer } from '@/src/api/ServerProvider';
 import { undoRedo } from '@/src/api/undoRedo';
+import { showError } from '@/src/api/errors';
 import { COLORS, BRAND_COLOR } from '@/src/theme';
 
 export function HabitAddView() {
@@ -27,36 +28,44 @@ export function HabitAddView() {
   const [avgMinutes, setAvgMinutes] = useState('60');
   const [sigmaMinutes, setSigmaMinutes] = useState('0');
   const [abandonability, setAbandonability] = useState(0.5);
+  const [saving, setSaving] = useState(false);
 
   async function create() {
-    if (!client || !title) return;
-    const habit = await client.createHabit({
-      title,
-      recurrence,
-      start_time: startTime,
-      end_time: endTime,
-      avg_minutes: parseInt(avgMinutes, 10) || 60,
-      sigma_minutes: parseInt(sigmaMinutes, 10) || 0,
-      abandonability,
-    });
-    undoRedo.push({
-      description: `create habit: ${title}`,
-      undo: async () => {
-        await client.deleteHabit(habit.id);
-      },
-      redo: async () => {
-        await client.createHabit({
-          title,
-          recurrence,
-          start_time: startTime,
-          end_time: endTime,
-          avg_minutes: parseInt(avgMinutes, 10) || 60,
-          sigma_minutes: parseInt(sigmaMinutes, 10) || 0,
-          abandonability,
-        });
-      },
-    });
-    router.back();
+    if (!client || !title || saving) return;
+    setSaving(true);
+    try {
+      const habit = await client.createHabit({
+        title,
+        recurrence,
+        start_time: startTime,
+        end_time: endTime,
+        avg_minutes: parseInt(avgMinutes, 10) || 60,
+        sigma_minutes: parseInt(sigmaMinutes, 10) || 0,
+        abandonability,
+      });
+      undoRedo.push({
+        description: `create habit: ${title}`,
+        undo: async () => {
+          await client.deleteHabit(habit.id);
+        },
+        redo: async () => {
+          await client.createHabit({
+            title,
+            recurrence,
+            start_time: startTime,
+            end_time: endTime,
+            avg_minutes: parseInt(avgMinutes, 10) || 60,
+            sigma_minutes: parseInt(sigmaMinutes, 10) || 0,
+            abandonability,
+          });
+        },
+      });
+      router.back();
+    } catch (e) {
+      showError(e, 'ハビットの追加に失敗');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -67,8 +76,12 @@ export function HabitAddView() {
         </Pressable>
         <Text style={styles.title}>新規ハビット</Text>
         <View style={{ flex: 1 }} />
-        <Pressable style={styles.saveButton} onPress={create}>
-          <Text style={styles.saveButtonText}>追加</Text>
+        <Pressable
+          style={[styles.saveButton, (!title || saving) && styles.saveButtonDisabled]}
+          onPress={create}
+          disabled={!title || saving}
+        >
+          <Text style={styles.saveButtonText}>{saving ? '保存中…' : '追加'}</Text>
         </Pressable>
       </View>
 
@@ -187,6 +200,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     backgroundColor: BRAND_COLOR,
     borderRadius: 8,
+  },
+  saveButtonDisabled: {
+    backgroundColor: COLORS.grayDark,
   },
   saveButtonText: {
     color: COLORS.white,

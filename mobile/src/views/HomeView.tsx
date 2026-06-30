@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useServer } from '@/src/api/ServerProvider';
 import { TakusuClient } from '@/src/api/client';
 import { undoRedo } from '@/src/api/undoRedo';
+import { showError, logError } from '@/src/api/errors';
 import type { TaskRow, ScheduleEntry } from '@/src/api/types';
 import { parseDepends, parseSchedule } from '@/src/api/types';
 import { TaskCard } from '@/src/components/TaskCard';
@@ -113,12 +114,20 @@ export function HomeView() {
     try {
       const [taskList, sched, habitList] = await Promise.all([
         client.listTasks(),
-        client.getSchedule().catch(() => null),
-        client.listHabits().catch(() => [] as HabitRow[]),
+        client.getSchedule().catch((e) => {
+          logError('スケジュール取得', e);
+          return null;
+        }),
+        client.listHabits().catch((e) => {
+          logError('ハビット取得', e);
+          return [] as HabitRow[];
+        }),
       ]);
       setTasks(taskList);
       setSchedule(sched ? parseSchedule(sched.schedule) : []);
       setHabits(habitList);
+    } catch (e) {
+      showError(e, 'タスク一覧の取得に失敗');
     } finally {
       setRefreshing(false);
     }
@@ -138,7 +147,7 @@ export function HomeView() {
       schedule.length > 0 ? JSON.stringify(schedule) : null,
       habits,
       notifications,
-    ).catch(() => {});
+    ).catch((e) => logError('通知の再スケジュール', e));
   }, [tasks, schedule, habits, notifications]);
 
   const scheduleMap = useMemo(() => {
@@ -357,10 +366,17 @@ export function HomeView() {
   async function markDone(task: TaskRow) {
     if (!client) return;
     const prevStatus = task.status;
-    await client.updateTask(task.id, { status: 'completed' });
+    try {
+      await client.updateTask(task.id, { status: 'completed' });
+    } catch (e) {
+      showError(e, 'タスクの完了に失敗');
+      return;
+    }
     // Dismiss in-progress notification if it was showing
     if (prevStatus === 'in_progress') {
-      dismissInProgressNotification(task.id).catch(() => {});
+      dismissInProgressNotification(task.id).catch((e) =>
+        logError('通知の消去', e),
+      );
     }
     undoRedo.push({
       description: `mark done: ${task.title}`,
@@ -378,7 +394,12 @@ export function HomeView() {
 
   async function deleteTask(task: TaskRow) {
     if (!client) return;
-    await client.deleteTask(task.id);
+    try {
+      await client.deleteTask(task.id);
+    } catch (e) {
+      showError(e, 'タスクの削除に失敗');
+      return;
+    }
     undoRedo.push({
       description: `delete: ${task.title}`,
       undo: async () => {
@@ -412,11 +433,16 @@ export function HomeView() {
       .map((t) => t.id);
     const until = new Date();
     until.setDate(until.getDate() + 7);
-    await client.reschedule({
-      range_start: new Date().toISOString(),
-      range_end: until.toISOString(),
-      pinned_task_ids: pinned,
-    });
+    try {
+      await client.reschedule({
+        range_start: new Date().toISOString(),
+        range_end: until.toISOString(),
+        pinned_task_ids: pinned,
+      });
+    } catch (e) {
+      showError(e, '再スケジュールに失敗');
+      return;
+    }
     setSelected(new Set());
     await refresh();
   }
@@ -426,20 +452,36 @@ export function HomeView() {
     const pinned = Array.from(selected);
     const until = new Date();
     until.setDate(until.getDate() + 7);
-    await client.reschedule({
-      range_start: new Date().toISOString(),
-      range_end: until.toISOString(),
-      pinned_task_ids: pinned,
-    });
+    try {
+      await client.reschedule({
+        range_start: new Date().toISOString(),
+        range_end: until.toISOString(),
+        pinned_task_ids: pinned,
+      });
+    } catch (e) {
+      showError(e, '再スケジュールに失敗');
+      return;
+    }
     setSelected(new Set());
     await refresh();
   }
 
   async function deleteSelected() {
     if (!client) return;
+    let failed = 0;
     for (const id of selected) {
       const task = tasks.find((t) => t.id === id);
-      if (task) await client.deleteTask(id);
+      if (task) {
+        try {
+          await client.deleteTask(id);
+        } catch (e) {
+          failed++;
+          logError(`タスク削除 (${task.title})`, e);
+        }
+      }
+    }
+    if (failed > 0) {
+      showError(`${failed}件の削除に失敗しました`, 'タスクの削除');
     }
     setSelected(new Set());
     await refresh();
@@ -523,8 +565,12 @@ export function HomeView() {
         <ContextMenu
           hasSelection={selected.size > 0}
           onSettings={() => router.push('/settings')}
-          onUndo={() => undoRedo.undo().then(refresh)}
-          onRedo={() => undoRedo.redo().then(refresh)}
+          onUndo={() =>
+            undoRedo.undo().then(refresh).catch((e) => showError(e, 'アンドゥに失敗'))
+          }
+          onRedo={() =>
+            undoRedo.redo().then(refresh).catch((e) => showError(e, 'リドゥに失敗'))
+          }
           onRescheduleSelected={rescheduleSelected}
           onRescheduleOthers={rescheduleOthers}
           onDeleteSelected={deleteSelected}
@@ -552,11 +598,17 @@ export function HomeView() {
           style={({ pressed }) => [styles.topButton, pressed && styles.topButtonPressed]}
           onPress={async () => {
             if (!client) return;
-            await client.generateSchedule({
-              until: new Date(Date.now() + 7 * 86400000).toISOString(),
-            });
-            // Trigger Google Calendar sync (no-op if not configured)
-            await client.triggerSync().catch(() => {});
+            try {
+              await client.generateSchedule({
+                until: new Date(Date.now() + 7 * 86400000).toISOString(),
+              });
+              // Trigger Google Calendar sync (no-op if not configured)
+              await client.triggerSync().catch((e) =>
+                logError('Google Calendar同期', e),
+              );
+            } catch (e) {
+              showError(e, 'スケジュール生成に失敗');
+            }
             await refresh();
           }}
         >
@@ -626,10 +678,17 @@ export function HomeView() {
             );
             if (next) {
               if (client && next.status !== 'in_progress') {
-                await client.updateTask(next.id, { status: 'in_progress' });
-                // Post in-progress notification with DONE/CANCEL actions
-                if (notifications.inProgress) {
-                  postInProgressNotification(next).catch(() => {});
+                try {
+                  await client.updateTask(next.id, { status: 'in_progress' });
+                  // Post in-progress notification with DONE/CANCEL actions
+                  if (notifications.inProgress) {
+                    postInProgressNotification(next).catch((e) =>
+                      logError('通知の投稿', e),
+                    );
+                  }
+                } catch (e) {
+                  showError(e, 'タスクの開始に失敗');
+                  return;
                 }
               }
               router.push(`/task/${next.id}`);
