@@ -303,10 +303,13 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
           onPress={toggleEditMode}
           textColor={editMode ? COLORS.white : BRAND_COLOR}
           buttonColor={editMode ? BRAND_COLOR : undefined}
-          compact
+          style={styles.editButton}
+          labelStyle={styles.editButtonLabel}
+          contentStyle={styles.editButtonContent}
         >
           {editMode ? '編集中' : '編集'}
         </Button>
+        <View style={{ flex: 1 }} />
       </View>
 
       <WebView
@@ -332,6 +335,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     paddingTop: 48,
     paddingBottom: 4,
+  },
+  editButton: {
+    borderRadius: 4,
+    minWidth: 96,
+  },
+  editButtonLabel: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  editButtonContent: {
+    paddingVertical: 6,
+    paddingHorizontal: 8,
   },
   webview: {
     flex: 1,
