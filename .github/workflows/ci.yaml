@@ -48,12 +48,15 @@ jobs:
       - uses: easimon/maximize-build-space@fc881a613ad2a34aca9c9624518214ebc21dfc0c # master 2025/3/10
         with:
           # The Android build (cargo-ndk + Gradle) runs in the workspace on the
-          # root filesystem, so it needs plenty of free space there; keep a
-          # large reserve. /nix still gets the rest of the (very large) disk
-          # for the Nix closure and the NDK build dir.
-          root-reserve-mb: 40960
+          # root filesystem, so it needs plenty of free space there. On these
+          # runners /mnt lives on the same /dev/root filesystem, so the action
+          # creates both LVM PVs on root: the final free space left on / ends
+          # up being temp-reserve-mb (the second PV eats into root-reserve-mb).
+          # Keep BOTH reserves large so / actually retains ~35G; /nix still
+          # gets the rest for the Nix closure and the NDK build dir.
+          root-reserve-mb: 35840
           swap-size-mb: 1024
-          temp-reserve-mb: 1024
+          temp-reserve-mb: 35840
           # Mount the maximized volume at /nix (not just /nix/store) so the Nix
           # build directory can live on the big mount too (see build-dir below).
           build-mount-path: "/nix"
