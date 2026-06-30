@@ -4,6 +4,7 @@ export type TaskStatus = 'pending' | 'scheduled' | 'in_progress' | 'completed' |
 
 export interface TaskRow {
   id: string;
+  display_id: number;
   title: string;
   description?: string;
   start_at?: string;

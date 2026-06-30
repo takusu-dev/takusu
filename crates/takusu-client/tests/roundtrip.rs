@@ -177,6 +177,7 @@ fn client_error_display() {
 fn task_row_deserialization() {
     let json = json!({
         "id": "task-123",
+        "display_id": 42,
         "title": "Write tests",
         "description": "Add tests",
         "start_at": "2025-06-05T09:00:00Z",
@@ -195,6 +196,7 @@ fn task_row_deserialization() {
     });
     let tr: TaskRow = serde_json::from_value(json).unwrap();
     assert_eq!(tr.id, "task-123");
+    assert_eq!(tr.display_id, 42);
     assert_eq!(tr.status, "pending");
     assert_eq!(tr.depends, "[]");
 }

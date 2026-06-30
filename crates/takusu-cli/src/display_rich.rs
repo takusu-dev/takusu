@@ -28,7 +28,7 @@ pub fn display_task_detail(task: &TaskRow, entry: Option<&ScheduleEntry>, tz: &j
         Cell::new("Abandon").fg(Color::Cyan),
     ]);
     table.add_row(vec![
-        Cell::new(task.id.as_str()),
+        Cell::new(format!("#{}", task.display_id)),
         Cell::new(&task.title),
         Cell::new(&task.status).fg(status_color),
         Cell::new(
@@ -185,7 +185,7 @@ pub fn display_tasks(tasks: &[TaskRow], tz: &jiff::tz::TimeZone) {
             "skipped" => Color::DarkGrey,
             _ => Color::White,
         };
-        let short_id = &t.id[..8];
+        let short_id = format!("#{}", t.display_id);
         table.add_row(vec![
             Cell::new(short_id),
             Cell::new(&t.title),
@@ -232,18 +232,18 @@ pub fn display_schedule(entries: &[ScheduleEntry], tasks: &[TaskRow], tz: &jiff:
         tasks.iter().map(|t| (t.id.as_str(), t)).collect();
 
     for (i, e) in sorted.iter().enumerate() {
-        let title = task_map
-            .get(e.task_id.as_str())
-            .map(|t| t.title.as_str())
-            .unwrap_or("(unknown)");
-        let short_id = &e.task_id[..8];
+        let task = task_map.get(e.task_id.as_str());
+        let title = task.map(|t| t.title.as_str()).unwrap_or("(unknown)");
+        let id_label = task
+            .map(|t| format!("#{}", t.display_id))
+            .unwrap_or_else(|| e.task_id[..8].to_string());
         let start = format_datetime(&e.start_at, tz);
         let end = format_datetime(&e.end_at, tz);
         let dur = format_duration(&e.start_at, &e.end_at);
         table.add_row(vec![
             Cell::new(i + 1),
             Cell::new(title),
-            Cell::new(short_id),
+            Cell::new(id_label),
             Cell::new(start),
             Cell::new(end),
             Cell::new(dur),

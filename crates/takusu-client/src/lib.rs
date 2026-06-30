@@ -517,6 +517,7 @@ impl Client {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskRow {
     pub id: String,
+    pub display_id: i64,
     pub title: String,
     pub description: Option<String>,
     pub start_at: Option<String>,

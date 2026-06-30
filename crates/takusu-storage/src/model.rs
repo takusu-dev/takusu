@@ -39,6 +39,7 @@ pub mod bool_compat {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct TaskRow {
     pub id: String,
+    pub display_id: i64,
     pub title: String,
     pub description: Option<String>,
     pub start_at: Option<String>,
@@ -58,7 +59,7 @@ pub struct TaskRow {
     pub updated_at: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateTask {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -83,7 +84,7 @@ pub struct CreateTask {
     pub habit_id: Option<String>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct UpdateTask {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,

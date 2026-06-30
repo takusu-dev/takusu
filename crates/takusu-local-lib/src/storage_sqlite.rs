@@ -13,6 +13,8 @@ use crate::config::LocalConfig;
 const MIGRATION_001: &str = include_str!("../migrations/001_init.sql");
 const MIGRATION_002: &str = include_str!("../migrations/002_google_cal.sql");
 const MIGRATION_003: &str = include_str!("../migrations/003_settings.sql");
+const MIGRATION_004: &str = include_str!("../migrations/004_indexes.sql");
+const MIGRATION_005: &str = include_str!("../migrations/005_task_display_id.sql");
 
 pub struct SqliteStorage {
     pool: SqlitePool,
@@ -40,6 +42,19 @@ impl SqliteStorage {
         sqlx::raw_sql(MIGRATION_001).execute(&pool).await?;
         sqlx::raw_sql(MIGRATION_002).execute(&pool).await?;
         sqlx::raw_sql(MIGRATION_003).execute(&pool).await?;
+        sqlx::raw_sql(MIGRATION_004).execute(&pool).await?;
+
+        // Migration 005 uses ALTER TABLE ADD COLUMN which is not idempotent
+        // (SQLite has no IF NOT EXISTS for ADD COLUMN). Check whether the
+        // display_id column already exists before running it.
+        let has_display_id: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name = 'display_id'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        if !has_display_id {
+            sqlx::raw_sql(MIGRATION_005).execute(&pool).await?;
+        }
 
         Ok(Self { pool, root_token })
     }
@@ -134,14 +149,17 @@ impl Storage for SqliteStorage {
 
     async fn create_task(&self, body: &CreateTask) -> StorageResult<TaskRow> {
         let id = uuid::Uuid::now_v7().to_string();
-        let depends_json = serde_json::to_string(&body.depends.clone().unwrap_or_default())
-            .unwrap_or_else(|_| "[]".to_string());
+        let resolved_depends = resolve_depends(&self.pool, body.depends.as_deref()).await?;
+        let depends_json =
+            serde_json::to_string(&resolved_depends).unwrap_or_else(|_| "[]".to_string());
         let sigma = body.sigma_minutes.unwrap_or(0);
         let parallelizable = body.parallelizable.unwrap_or(false);
         let allows_parallel = body.allows_parallel.unwrap_or(false);
         let abandonability = body.abandonability.unwrap_or(0.5);
+        // Atomic display_id allocation via subquery — avoids TOCTOU race
+        // between separate SELECT MAX and INSERT under concurrent creates.
         sqlx::query(
-            "INSERT INTO tasks (id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)"
+            "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id) VALUES (?, (SELECT COALESCE(MAX(display_id), 0) + 1 FROM tasks), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)"
         )
         .bind(&id)
         .bind(&body.title)
@@ -177,10 +195,12 @@ impl Storage for SqliteStorage {
                 other => StorageError::Internal(other.to_string()),
             })?;
 
-        let depends_json = body
-            .depends
-            .as_ref()
-            .map(|d| serde_json::to_string(d).unwrap_or_else(|_| "[]".into()));
+        let depends_json = if let Some(ref deps) = body.depends {
+            let resolved = resolve_depends(&self.pool, Some(deps)).await?;
+            Some(serde_json::to_string(&resolved).unwrap_or_else(|_| "[]".into()))
+        } else {
+            None
+        };
         let status = body.status.as_ref().unwrap_or(&existing.status);
         let validated = [
             "pending",
@@ -224,8 +244,8 @@ impl Storage for SqliteStorage {
 
     async fn replace_task(&self, id: &str, body: &CreateTask) -> StorageResult<TaskRow> {
         let full = resolve_task_id(&self.pool, id).await?;
-        let depends_json = serde_json::to_string(&body.depends.clone().unwrap_or_default())
-            .unwrap_or_else(|_| "[]".into());
+        let resolved_depends = resolve_depends(&self.pool, body.depends.as_deref()).await?;
+        let depends_json = serde_json::to_string(&resolved_depends).unwrap_or_else(|_| "[]".into());
         let sigma = body.sigma_minutes.unwrap_or(0);
         let parallelizable = body.parallelizable.unwrap_or(false);
         let allows_parallel = body.allows_parallel.unwrap_or(false);
@@ -623,6 +643,15 @@ impl Storage for SqliteStorage {
 }
 
 async fn resolve_task_id(pool: &SqlitePool, id: &str) -> StorageResult<String> {
+    // Numeric input → display_id lookup only (no UUID prefix fallthrough).
+    if let Ok(num) = id.parse::<i64>() {
+        return sqlx::query_scalar::<_, String>("SELECT id FROM tasks WHERE display_id = ?")
+            .bind(num)
+            .fetch_optional(pool)
+            .await
+            .map_err(map_err)?
+            .ok_or_else(|| StorageError::NotFound(format!("task {id} not found")));
+    }
     if id.contains('-') {
         let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM tasks WHERE id = ?")
             .bind(id)
@@ -650,4 +679,17 @@ async fn resolve_task_id(pool: &SqlitePool, id: &str) -> StorageResult<String> {
         }
     }
     Err(StorageError::NotFound(format!("task {id} not found")))
+}
+
+/// Resolve a list of dependency references (display_id numbers or UUIDs/prefixes)
+/// to full UUID strings. Entries that are already full UUIDs are passed through.
+async fn resolve_depends(pool: &SqlitePool, deps: Option<&[String]>) -> StorageResult<Vec<String>> {
+    let Some(deps) = deps else {
+        return Ok(Vec::new());
+    };
+    let mut resolved = Vec::with_capacity(deps.len());
+    for d in deps {
+        resolved.push(resolve_task_id(pool, d).await?);
+    }
+    Ok(resolved)
 }
