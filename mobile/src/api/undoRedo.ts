@@ -1,6 +1,8 @@
 // Undo/redo stack. Covers task CRUD, schedule operations, habit CRUD.
 // Sync operations are NOT included.
 // Max history is configurable via setMaxHistory() (default 50).
+// onUndo/onRedo callbacks fire with the action description so callers
+// can show a toast/snackbar feedback to the user.
 
 type UndoableAction = {
   description: string;
@@ -15,6 +17,8 @@ class UndoRedoManager {
   private redoStack: UndoableAction[] = [];
   private listeners: Set<() => void> = new Set();
   private maxHistory = DEFAULT_MAX_HISTORY;
+  private undoCallback: ((description: string) => void) | null = null;
+  private redoCallback: ((description: string) => void) | null = null;
 
   private notify() {
     this.listeners.forEach((l) => l());
@@ -50,6 +54,14 @@ class UndoRedoManager {
     this.notify();
   }
 
+  setOnUndo(cb: ((description: string) => void) | null) {
+    this.undoCallback = cb;
+  }
+
+  setOnRedo(cb: ((description: string) => void) | null) {
+    this.redoCallback = cb;
+  }
+
   push(action: UndoableAction) {
     this.undoStack.push(action);
     if (this.undoStack.length > this.maxHistory) {
@@ -62,16 +74,34 @@ class UndoRedoManager {
   async undo(): Promise<void> {
     const action = this.undoStack.pop();
     if (!action) return;
-    await action.undo();
+    // Push to redoStack before executing so a throw doesn't lose the action.
     this.redoStack.push(action);
+    try {
+      await action.undo();
+    } catch (e) {
+      // Execution failed — move the action back to undoStack so it can be retried.
+      this.redoStack.pop();
+      this.undoStack.push(action);
+      throw e;
+    }
+    this.undoCallback?.(action.description);
     this.notify();
   }
 
   async redo(): Promise<void> {
     const action = this.redoStack.pop();
     if (!action) return;
-    await action.redo();
+    // Push to undoStack before executing so a throw doesn't lose the action.
     this.undoStack.push(action);
+    try {
+      await action.redo();
+    } catch (e) {
+      // Execution failed — move the action back to redoStack so it can be retried.
+      this.undoStack.pop();
+      this.redoStack.push(action);
+      throw e;
+    }
+    this.redoCallback?.(action.description);
     this.notify();
   }
 

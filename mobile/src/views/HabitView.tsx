@@ -49,18 +49,67 @@ export function HabitView({ client }: HabitViewProps) {
 
   async function deleteSelected() {
     if (!client) return;
+    const toDelete = habits.filter((h) => selected.has(h.id));
+    const deleted: HabitRow[] = [];
     let failed = 0;
-    for (const id of selected) {
+    for (const h of toDelete) {
       try {
-        await client.deleteHabit(id);
+        await client.deleteHabit(h.id);
+        deleted.push(h);
       } catch (e) {
         failed++;
-        logError(`ハビット削除 (${id})`, e);
+        logError(`ハビット削除 (${h.id})`, e);
       }
     }
     if (failed > 0) {
       showError(`${failed}件の削除に失敗しました`, 'ハビットの削除');
     }
+    if (deleted.length === 0) return;
+    // Track the ids assigned by the server when undo recreates the habits,
+    // so redo deletes the recreated (not the stale original) ids.
+    // Push a single grouped undo entry so one undo restores all habits.
+    const currentIds: string[] = [...deleted.map((h) => h.id)];
+    // Track which items have been recreated so a retry after partial failure
+    // doesn't create duplicates.
+    const createdIdx = new Set<number>();
+    undoRedo.push({
+      description:
+        deleted.length === 1
+          ? `delete habit: ${deleted[0].title}`
+          : `delete ${deleted.length} habits`,
+      undo: async () => {
+        for (let i = 0; i < deleted.length; i++) {
+          if (createdIdx.has(i)) continue;
+          const h = deleted[i];
+          const recreated = await client.createHabit({
+            title: h.title,
+            description: h.description,
+            recurrence: h.recurrence,
+            start_time: h.start_time,
+            end_time: h.end_time,
+            avg_minutes: h.avg_minutes,
+            sigma_minutes: h.sigma_minutes,
+            parallelizable: h.parallelizable,
+            allows_parallel: h.allows_parallel,
+            abandonability: h.abandonability,
+          });
+          // CreateHabit does not accept `active`; restore it via update.
+          if (!h.active) {
+            await client.updateHabit(recreated.id, { active: h.active });
+          }
+          currentIds[i] = recreated.id;
+          createdIdx.add(i);
+        }
+        await refresh();
+      },
+      redo: async () => {
+        createdIdx.clear();
+        for (const id of currentIds) {
+          await client.deleteHabit(id);
+        }
+        await refresh();
+      },
+    });
     setSelected(new Set());
     await refresh();
   }
@@ -80,8 +129,12 @@ export function HabitView({ client }: HabitViewProps) {
         <ContextMenu
           hasSelection={selected.size > 0}
           onSettings={() => router.push('/settings')}
-          onUndo={() => undoRedo.undo().then(refresh)}
-          onRedo={() => undoRedo.redo().then(refresh)}
+          onUndo={() =>
+            undoRedo.undo().then(refresh).catch((e) => showError(e, 'アンドゥに失敗'))
+          }
+          onRedo={() =>
+            undoRedo.redo().then(refresh).catch((e) => showError(e, 'リドゥに失敗'))
+          }
           onSelectAll={() => setSelected(new Set(habits.map((h) => h.id)))}
           onClearSelection={() => setSelected(new Set())}
           onDeleteSelected={deleteSelected}

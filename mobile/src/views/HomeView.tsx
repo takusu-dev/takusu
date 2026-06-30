@@ -400,11 +400,14 @@ export function HomeView() {
       showError(e, 'タスクの削除に失敗');
       return;
     }
+    // Track the id assigned by the server when undo recreates the task,
+    // so redo deletes the recreated (not the stale original) id.
+    let currentId = task.id;
     undoRedo.push({
       description: `delete: ${task.title}`,
       undo: async () => {
         // Re-create with same fields
-        await client.createTask({
+        const recreated = await client.createTask({
           title: task.title,
           description: task.description,
           start_at: task.start_at,
@@ -415,11 +418,18 @@ export function HomeView() {
           parallelizable: task.parallelizable,
           allows_parallel: task.allows_parallel,
           abandonability: task.abandonability,
+          ical_uid: task.ical_uid,
+          habit_id: task.habit_id,
         });
+        // CreateTask does not accept `status`; restore it via update.
+        if (task.status !== 'pending') {
+          await client.updateTask(recreated.id, { status: task.status });
+        }
+        currentId = recreated.id;
         await refresh();
       },
       redo: async () => {
-        await client.deleteTask(task.id);
+        await client.deleteTask(currentId);
         await refresh();
       },
     });
@@ -468,21 +478,85 @@ export function HomeView() {
 
   async function deleteSelected() {
     if (!client) return;
+    const toDelete = tasks.filter((t) => selected.has(t.id));
+    const deleted: TaskRow[] = [];
     let failed = 0;
-    for (const id of selected) {
-      const task = tasks.find((t) => t.id === id);
-      if (task) {
-        try {
-          await client.deleteTask(id);
-        } catch (e) {
-          failed++;
-          logError(`タスク削除 (${task.title})`, e);
-        }
+    for (const task of toDelete) {
+      try {
+        await client.deleteTask(task.id);
+        deleted.push(task);
+      } catch (e) {
+        failed++;
+        logError(`タスク削除 (${task.title})`, e);
       }
     }
     if (failed > 0) {
       showError(`${failed}件の削除に失敗しました`, 'タスクの削除');
     }
+    if (deleted.length === 0) return;
+    // Track the ids assigned by the server when undo recreates the tasks,
+    // so redo deletes the recreated (not the stale original) ids.
+    // Push a single grouped undo entry so one undo restores all tasks.
+    const currentIds: string[] = [...deleted.map((t) => t.id)];
+    // Track which items have been recreated so a retry after partial failure
+    // doesn't create duplicates.
+    const createdIdx = new Set<number>();
+    undoRedo.push({
+      description:
+        deleted.length === 1
+          ? `delete: ${deleted[0].title}`
+          : `delete ${deleted.length} tasks`,
+      undo: async () => {
+        const oldToNew = new Map<string, string>();
+        // First pass: create tasks not yet recreated (skip on retry).
+        for (let i = 0; i < deleted.length; i++) {
+          if (createdIdx.has(i)) {
+            // Already recreated on a previous (partial) attempt.
+            oldToNew.set(deleted[i].id, currentIds[i]);
+            continue;
+          }
+          const task = deleted[i];
+          const recreated = await client.createTask({
+            title: task.title,
+            description: task.description,
+            start_at: task.start_at,
+            end_at: task.end_at,
+            avg_minutes: task.avg_minutes,
+            sigma_minutes: task.sigma_minutes,
+            depends: [],
+            parallelizable: task.parallelizable,
+            allows_parallel: task.allows_parallel,
+            abandonability: task.abandonability,
+            ical_uid: task.ical_uid,
+            habit_id: task.habit_id,
+          });
+          // CreateTask does not accept `status`; restore it via update.
+          if (task.status !== 'pending') {
+            await client.updateTask(recreated.id, { status: task.status });
+          }
+          currentIds[i] = recreated.id;
+          oldToNew.set(task.id, recreated.id);
+          createdIdx.add(i);
+        }
+        // Second pass: remap depends to new IDs for deps within the deleted set.
+        for (let i = 0; i < deleted.length; i++) {
+          const task = deleted[i];
+          const origDeps = parseDepends(task.depends);
+          if (origDeps.length === 0) continue;
+          const newId = oldToNew.get(task.id)!;
+          const remapped = origDeps.map((d) => oldToNew.get(d) ?? d);
+          await client.updateTask(newId, { depends: remapped });
+        }
+        await refresh();
+      },
+      redo: async () => {
+        createdIdx.clear();
+        for (const id of currentIds) {
+          await client.deleteTask(id);
+        }
+        await refresh();
+      },
+    });
     setSelected(new Set());
     await refresh();
   }
@@ -552,7 +626,6 @@ export function HomeView() {
     return (
       <HabitWrapper
         client={client}
-        onBack={() => setView('task')}
         viewChanger={<ViewChanger current={view} onChange={setView} />}
       />
     );
@@ -570,6 +643,15 @@ export function HomeView() {
           }
           onRedo={() =>
             undoRedo.redo().then(refresh).catch((e) => showError(e, 'リドゥに失敗'))
+          }
+          onSelectAll={() =>
+            setSelected(
+              new Set(
+                items
+                  .filter((it): it is TaskItem => it.type === 'task')
+                  .map((it) => it.task.id),
+              ),
+            )
           }
           onRescheduleSelected={rescheduleSelected}
           onRescheduleOthers={rescheduleOthers}
@@ -739,17 +821,15 @@ function GraphWrapper({
 
 function HabitWrapper({
   client,
-  onBack,
   viewChanger,
 }: {
   client: TakusuClient | null;
-  onBack: () => void;
   viewChanger: React.ReactNode;
 }) {
   const { HabitView } = require('@/src/views/HabitView');
   return (
     <View style={{ flex: 1 }}>
-      <HabitView client={client} onBack={onBack} />
+      <HabitView client={client} />
       {viewChanger}
     </View>
   );
