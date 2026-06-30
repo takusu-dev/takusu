@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, BRAND_COLOR } from '@/src/theme';
 
 interface DateTimePickerModalProps {
@@ -35,6 +36,7 @@ export function DateTimePickerModal({
     mode === 'time' ? 'time' : 'date',
   );
   const [showPicker, setShowPicker] = useState(false);
+  const insets = useSafeAreaInsets();
 
   // Sync tempDate with value prop when modal opens
   useEffect(() => {
@@ -71,7 +73,7 @@ export function DateTimePickerModal({
   return (
     <Modal visible={visible} transparent animationType="slide">
       <Pressable style={styles.overlay} onPress={onCancel}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+        <Pressable style={[styles.sheet, { paddingBottom: 32 + insets.bottom }]} onPress={(e) => e.stopPropagation()}>
           <View style={styles.header}>
             <Text style={styles.title}>{label}</Text>
             <Pressable onPress={onCancel}>

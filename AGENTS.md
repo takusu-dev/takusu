@@ -142,10 +142,21 @@ This workspace uses **Jujutsu (`jj`) as the primary VCS**, backed by a Git remot
 | `jj git push` | Push to the Git remote (GitHub) |
 | `jj git fetch` | Fetch from the Git remote |
 
+### Basic Workflow
+
+The default loop for any task is:
+
+1. Do the work (explore, edit, run `cargo check` / `cargo nextest run` / `cargo clippy` as needed).
+2. `jj describe` to write a commit message for `@` (present tense, lowercase first word, no trailing period).
+3. `jj git push --change` to push the current change to GitHub (creates/updates a branch named after the change-id).
+4. `gh pr create` (or `gh pr edit` if the PR already exists) to open or update the pull request.
+
+Repeat per change. Use `jj new` to start a fresh change on top of `@`, and `jj squash` / `jj amend` to consolidate work before pushing. Rebase onto `main` with `jj git fetch && jj rebase -r @ -d main` before pushing if `main` has moved.
+
 ### Conventions
 
 - **Commit messages**: write in the present tense, lowercase first word, no trailing period. Match the style of recent history (`iroiro fix`, `chore: fmt`, `separate takusu-local`).
-- **Pushing**: use `jj git push` rather than `git push`. Jujutsu manages the underlying Git refs.
+- **Pushing**: use `jj git push --change` to push a single change as a reviewable branch (this is the default for PR work). Plain `jj git push` pushes all bookmarks; prefer `--change` for feature work.
 - **Branches**: this repo uses a single `main` bookmark; feature work happens in separate change-ids and is rebased onto `main` before push.
 - **Do not rewrite `main`**: never force-push or rebase `main` itself. Rebase your own changes onto `main` instead.
 - **Git compatibility**: `git` commands still work for read-only inspection (`git log`, `git diff`) since `.jj` backs onto `.git`. Prefer `jj` for anything that mutates history.
