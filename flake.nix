@@ -509,6 +509,17 @@
                   ++ [ androidComposition.ndk-bundle ];
               };
 
+              # Combined closure of the two Nix-built Android derivations
+              # (cross-compiled .so + uniffi-bindgen) so a single binary-cache
+              # action can warm/restore both at once.
+              ci-android-libs = pkgs.buildEnv {
+                name = "ci-android-libs";
+                paths = [
+                  takusu-android-libs
+                  uniffi-bindgen
+                ];
+              };
+
               ci-worker = pkgs.buildEnv {
                 name = "ci-worker";
                 paths = with pkgs; [
