@@ -3,6 +3,7 @@
 
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 
 export type ViewType = 'task' | 'graph' | 'habit';
@@ -26,9 +27,10 @@ const LABELS: Record<ViewType, string> = {
 
 export function ViewChanger({ current, onChange }: ViewChangerProps) {
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const views: ViewType[] = ['task', 'graph', 'habit'];
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { bottom: 80 + insets.bottom }]}>
       {views.map((v) => (
         <Pressable
           key={v}

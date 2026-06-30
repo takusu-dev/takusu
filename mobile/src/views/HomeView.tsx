@@ -15,6 +15,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useServer } from '@/src/api/ServerProvider';
 import { TakusuClient } from '@/src/api/client';
 import { undoRedo } from '@/src/api/undoRedo';
@@ -80,6 +81,7 @@ export function HomeView() {
   const { client, notifications } = useServer();
   const router = useRouter();
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [schedule, setSchedule] = useState<ScheduleEntry[]>([]);
   const [habits, setHabits] = useState<HabitRow[]>([]);
@@ -609,11 +611,11 @@ export function HomeView() {
             animated: true,
           });
         }}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, { paddingBottom: 100 + insets.bottom }]}
       />
 
       {/* Bottom bar */}
-      <View style={styles.bottomBar}>
+      <View style={[styles.bottomBar, { paddingBottom: 16 + insets.bottom }]}>
         <AddButton onSlideUp={() => router.push('/task/add')} />
         <Pressable
           style={styles.startDoneButton}

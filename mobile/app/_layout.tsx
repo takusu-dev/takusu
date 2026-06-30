@@ -2,6 +2,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { PaperProvider, MD3DarkTheme, MD3LightTheme } from 'react-native-paper';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useEffect, useRef } from 'react';
 import * as Linking from 'expo-linking';
 import * as Notifications from 'expo-notifications';
@@ -158,9 +159,11 @@ function ThemedApp() {
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <ServerProvider>
-        <ThemedApp />
-      </ServerProvider>
+      <SafeAreaProvider>
+        <ServerProvider>
+          <ThemedApp />
+        </ServerProvider>
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }
