@@ -132,9 +132,29 @@ jobs:
       - name: Create Nix build directory on the large mount
         run: sudo install -d -m 1777 /nix/tmp
 
-      # `nix run` builds directly to /nix/store (on the big mount), so no
-      # binary cache or profile install is needed here.
+      # The binary-cache action hardcodes /tmp/binary-cache as its cache
+      # directory, but /tmp lives on the small root partition. Symlink it
+      # to the large /nix mount so the multi-GB .so closure fits.
+      - name: Symlink binary cache to large mount
+        run: |
+          mkdir -p /nix/tmp/binary-cache
+          ln -sfn /nix/tmp/binary-cache /tmp/binary-cache
+
+      - name: Restore binary cache
+        uses: asa1984/infra/.github/actions/binary-cache@44165003348ea3578a66f8c879bfaf23a3c7cc18
+        with:
+          package: .#ci-android-libs
+
       - uses: Swatinem/rust-cache@v2
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('mobile/package.json', 'mobile/package-lock.json') }}
+          restore-keys: gradle-
 
       - uses: actions/setup-node@v4
         with:
@@ -144,6 +164,18 @@ jobs:
         working-directory: mobile
         run: npm install --legacy-peer-deps
 
+      - name: Determine APK version
+        id: version
+        env:
+          GITHUB_REF: ${{ github.ref }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            version=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
+            echo "version=v${version}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build APK (Nix-managed .so + uniffi-bindgen + Gradle)
         run: |
           nix run .#build-android-apk
@@ -151,11 +183,18 @@ jobs:
           EXPO_PUBLIC_WORKERS_URL: ${{ secrets.EXPO_PUBLIC_WORKERS_URL }}
           EXPO_PUBLIC_ROOT_TOKEN: ${{ secrets.EXPO_PUBLIC_ROOT_TOKEN }}
 
+      # Rename the APK to include the version so Obtainium can identify and
+      # filter it (e.g. takusu-v0.1.0.apk).
+      - name: Rename APK for Obtainium
+        run: |
+          cp mobile/android/app/build/outputs/apk/release/app-release.apk \
+             takusu-${{ steps.version.outputs.version }}.apk
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: takusu-apk
-          path: mobile/android/app/build/outputs/apk/release/app-release.apk
+          path: takusu-${{ steps.version.outputs.version }}.apk
 
   prerelease:
     runs-on: ubuntu-latest
@@ -179,7 +218,7 @@ jobs:
         with:
           files: |
             dist/takusu-cli-x86_64-linux.AppImage
-            dist/app-release.apk
+            dist/takusu-${{ github.ref_name }}.apk
           name: takusu ${{ github.ref_name }}
           prerelease: true
           generate_release_notes: true
