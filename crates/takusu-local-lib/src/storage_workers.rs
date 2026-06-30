@@ -407,6 +407,30 @@ impl Storage for WorkersStorage {
             .await?;
         map_empty(resp).await
     }
+
+    async fn health_check(&self) -> StorageResult<String> {
+        let url = format!("{}/health", self.base_url);
+        // Per-request timeout so an unreachable worker fails fast instead of
+        // hanging indefinitely (the shared client has no default timeout).
+        let resp = self
+            .http
+            .get(&url)
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+            .map_err(|e| StorageError::Internal(format!("worker health check failed: {e}")))?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(StorageError::Internal(format!(
+                "worker health check returned {status}"
+            )));
+        }
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| StorageError::Internal(format!("worker health check body read: {e}")))?;
+        Ok(format!("worker ok: {}", body.trim()))
+    }
 }
 
 impl WorkersStorage {

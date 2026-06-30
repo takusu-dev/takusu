@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -20,6 +21,9 @@ import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
 import * as Application from 'expo-application';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import Constants from 'expo-constants';
 import { useServer, saveWorkersUrl, saveWorkersToken } from '@/src/api/ServerProvider';
 import { setOAuthCallbackListener } from '@/src/api/oauthCallback';
 import type { GoogleCalSettings } from '@/src/api/types';
@@ -27,6 +31,7 @@ import { useColors, BRAND_COLOR } from '@/src/theme';
 import type { NotificationSettings } from '@/src/notifications/settings';
 import { formatTime, minutesToTime, timeToMinutes } from '@/src/notifications/settings';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
+import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
 
 type SettingsCategory = 'general' | 'notifications' | 'worker' | 'google' | 'info';
 
@@ -65,6 +70,13 @@ export function SettingsView() {
   const [gcalLoading, setGcalLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
+
+  // Health check state (info tab)
+  const [localHealthLoading, setLocalHealthLoading] = useState(false);
+  const [localHealthResult, setLocalHealthResult] = useState<string | null>(null);
+  const [workerHealthLoading, setWorkerHealthLoading] = useState(false);
+  const [workerHealthResult, setWorkerHealthResult] = useState<string | null>(null);
+  const [logExportLoading, setLogExportLoading] = useState(false);
 
   // Sync worker input with saved values when they change
   useEffect(() => {
@@ -194,6 +206,78 @@ export function SettingsView() {
     }
   }
 
+  // ── Health checks (info tab) ──
+
+  async function checkLocalHealth() {
+    if (!client) return;
+    setLocalHealthLoading(true);
+    setLocalHealthResult(null);
+    try {
+      const text = await client.health();
+      setLocalHealthResult(`✓ ${text}`);
+    } catch (e) {
+      setLocalHealthResult(`✗ ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setLocalHealthLoading(false);
+    }
+  }
+
+  async function checkWorkerHealth() {
+    if (!client) return;
+    setWorkerHealthLoading(true);
+    setWorkerHealthResult(null);
+    try {
+      const { status } = await client.workerHealthCheck();
+      setWorkerHealthResult(`✓ ${status}`);
+    } catch (e) {
+      setWorkerHealthResult(`✗ ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setWorkerHealthLoading(false);
+    }
+  }
+
+  // ── Log export (info tab) ──
+
+  async function exportLogs() {
+    setLogExportLoading(true);
+    try {
+      const lines = await TakusuServerModule.getLogs();
+      if (lines.length === 0) {
+        Alert.alert('ログなし', 'エクスポートするログがありません');
+        return;
+      }
+      const content = lines.join('\n') + '\n';
+      const filename = `takusu-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+      const file = new FileSystem.File(FileSystem.Paths.cache, filename);
+      // write() does not auto-create the file, so create it first if missing.
+      if (!file.exists) {
+        file.create();
+      }
+      file.write(content);
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(file.uri, {
+          mimeType: 'text/plain',
+          dialogTitle: 'ログをエクスポート',
+        });
+      } else {
+        Alert.alert('エクスポート完了', `ログを保存しました:\n${file.uri}`);
+      }
+    } catch (e) {
+      Alert.alert('エラー', `ログエクスポートに失敗: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setLogExportLoading(false);
+    }
+  }
+
+  async function clearLogs() {
+    try {
+      await TakusuServerModule.clearLogs();
+      Alert.alert('消去しました', 'ログバッファをクリアしました');
+    } catch (e) {
+      Alert.alert('エラー', `ログクリアに失敗: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   const categories: { key: SettingsCategory; label: string }[] = [
     { key: 'general', label: '一般' },
     { key: 'notifications', label: '通知' },
@@ -204,6 +288,8 @@ export function SettingsView() {
 
   const appVersion = Application.nativeApplicationVersion ?? 'unknown';
   const buildVersion = Application.nativeBuildVersion ?? 'unknown';
+  const gitCommit = Constants.expoConfig?.extra?.gitCommit ?? 'unknown';
+  const gitTag = Constants.expoConfig?.extra?.gitTag ?? 'unknown';
 
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
@@ -629,9 +715,93 @@ export function SettingsView() {
                 </Text>
               </View>
               <View style={styles.field}>
+                <Text style={[styles.label, { color: colors.gray }]}>Git</Text>
+                <Text style={[styles.value, { color: colors.black }]}>
+                  {gitTag} @ {gitCommit}
+                </Text>
+              </View>
+              <View style={styles.field}>
                 <Text style={[styles.label, { color: colors.gray }]}>ライセンス</Text>
                 <Text style={[styles.value, { color: colors.black }]}>MIT</Text>
               </View>
+
+              {/* Health checks */}
+              <View style={styles.field}>
+                <Text style={[styles.label, { color: colors.gray }]}>ヘルスチェック</Text>
+              </View>
+
+              <Pressable
+                style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
+                onPress={checkLocalHealth}
+                disabled={localHealthLoading || !client}
+              >
+                {localHealthLoading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.actionButtonText}>ローカルサーバー</Text>
+                )}
+              </Pressable>
+              {localHealthResult && (
+                <Text
+                  style={[
+                    styles.healthResult,
+                    { color: localHealthResult.startsWith('✓') ? colors.black : colors.red },
+                  ]}
+                >
+                  {localHealthResult}
+                </Text>
+              )}
+
+              <Pressable
+                style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
+                onPress={checkWorkerHealth}
+                disabled={workerHealthLoading || !client}
+              >
+                {workerHealthLoading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.actionButtonText}>Worker</Text>
+                )}
+              </Pressable>
+              {workerHealthResult && (
+                <Text
+                  style={[
+                    styles.healthResult,
+                    { color: workerHealthResult.startsWith('✓') ? colors.black : colors.red },
+                  ]}
+                >
+                  {workerHealthResult}
+                </Text>
+              )}
+
+              {/* Log export */}
+              <View style={styles.field}>
+                <Text style={[styles.label, { color: colors.gray }]}>ログ</Text>
+              </View>
+
+              <Pressable
+                style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
+                onPress={exportLogs}
+                disabled={logExportLoading || Platform.OS !== 'android'}
+              >
+                {logExportLoading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.actionButtonText}>
+                    {Platform.OS === 'android' ? 'ログをエクスポート' : 'ログ (Androidのみ)'}
+                  </Text>
+                )}
+              </Pressable>
+
+              <Pressable
+                style={[styles.actionButton, { backgroundColor: colors.grayLight }]}
+                onPress={clearLogs}
+                disabled={Platform.OS !== 'android'}
+              >
+                <Text style={[styles.actionButtonText, { color: colors.black }]}>
+                  ログを消去
+                </Text>
+              </Pressable>
             </>
           )}
         </ScrollView>
@@ -788,5 +958,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
     fontVariant: ['tabular-nums'],
+  },
+  healthResult: {
+    fontSize: 13,
+    fontFamily: 'monospace',
+    paddingHorizontal: 4,
   },
 });

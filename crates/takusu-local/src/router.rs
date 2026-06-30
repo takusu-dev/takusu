@@ -43,6 +43,7 @@ pub fn router(state: AppState) -> Router {
         .route("/sync/mappings", get(handlers::sync::list_mappings))
         .route("/settings", get(handlers::settings::get_settings))
         .route("/settings", put(handlers::settings::update_settings))
+        .route("/workers/health", get(handlers::settings::workers_health))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,

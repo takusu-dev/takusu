@@ -205,4 +205,9 @@ export class TakusuClient {
   async listGcalMappings(): Promise<GoogleCalEventMapping[]> {
     return this.request('GET', '/api/sync/mappings');
   }
+
+  // ── Health ──
+  async workerHealthCheck(): Promise<{ status: string }> {
+    return this.request('GET', '/api/workers/health');
+  }
 }

@@ -611,6 +611,15 @@ impl Storage for SqliteStorage {
             .map_err(map_err)?;
         Ok(())
     }
+
+    async fn health_check(&self) -> StorageResult<String> {
+        // A cheap round-trip to the DB confirms the connection is alive.
+        let v: String = sqlx::query_scalar("SELECT sqlite_version()")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(format!("sqlite ok (v{v})"))
+    }
 }
 
 async fn resolve_task_id(pool: &SqlitePool, id: &str) -> StorageResult<String> {

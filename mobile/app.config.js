@@ -17,6 +17,15 @@ const expo = baseConfig.expo;
 
 const isDev = process.env.TAKUSU_BUILD_VARIANT === "dev";
 
+// Embed git commit/tag at build time so the settings page can show the
+// exact source the APK was built from (instead of an opaque build number).
+// Falls back to "unknown" when the env vars are not set (e.g. local dev).
+expo.extra = {
+  ...(expo.extra || {}),
+  gitCommit: process.env.TAKUSU_GIT_COMMIT || "unknown",
+  gitTag: process.env.TAKUSU_GIT_TAG || "unknown",
+};
+
 if (isDev) {
   expo.name = "takusu dev";
   expo.slug = "takusu-dev";

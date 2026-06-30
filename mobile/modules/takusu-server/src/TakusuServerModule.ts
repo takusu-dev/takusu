@@ -15,6 +15,8 @@ interface TakusuServerModuleType extends NativeModule {
   start(options: StartOptions): Promise<boolean>;
   stop(): Promise<boolean>;
   status(): Promise<ServerStatusResult>;
+  getLogs(): Promise<string[]>;
+  clearLogs(): Promise<void>;
 }
 
 const TakusuServerModule = requireNativeModule<TakusuServerModuleType>(
