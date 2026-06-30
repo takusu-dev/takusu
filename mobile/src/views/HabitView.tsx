@@ -1,5 +1,5 @@
 // HabitView — list of habit cards with add button
-// Habits are selectable, context menu changes with selection
+// Habits are selectable, context menu (left) changes with selection
 
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -12,18 +12,19 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Button, IconButton } from 'react-native-paper';
+import { IconButton } from 'react-native-paper';
 import type { TakusuClient } from '@/src/api/client';
 import { showError, logError } from '@/src/api/errors';
 import type { HabitRow } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
+import { ContextMenu } from '@/src/components/ContextMenu';
+import { undoRedo } from '@/src/api/undoRedo';
 
 interface HabitViewProps {
   client: TakusuClient | null;
-  onBack: () => void;
 }
 
-export function HabitView({ client, onBack }: HabitViewProps) {
+export function HabitView({ client }: HabitViewProps) {
   const router = useRouter();
   const colors = useColors();
   const [habits, setHabits] = useState<HabitRow[]>([]);
@@ -76,47 +77,24 @@ export function HabitView({ client, onBack }: HabitViewProps) {
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
       <View style={styles.topBar}>
-        <IconButton
-          icon="chevron-left"
-          iconColor={BRAND_COLOR}
-          size={28}
-          onPress={onBack}
+        <ContextMenu
+          hasSelection={selected.size > 0}
+          onSettings={() => router.push('/settings')}
+          onUndo={() => undoRedo.undo().then(refresh)}
+          onRedo={() => undoRedo.redo().then(refresh)}
+          onSelectAll={() => setSelected(new Set(habits.map((h) => h.id)))}
+          onClearSelection={() => setSelected(new Set())}
+          onDeleteSelected={deleteSelected}
         />
         <Text style={[styles.title, { color: colors.black }]}>ハビット</Text>
         <View style={{ flex: 1 }} />
-        {selected.size > 0 ? (
-          <View style={styles.contextMenu}>
-            <IconButton
-              icon="select-all"
-              iconColor={BRAND_COLOR}
-              size={22}
-              onPress={() => setSelected(new Set(habits.map((h) => h.id)))}
-            />
-            <IconButton
-              icon="select-off"
-              iconColor={BRAND_COLOR}
-              size={22}
-              onPress={() => setSelected(new Set())}
-            />
-            <Button
-              mode="contained"
-              onPress={deleteSelected}
-              buttonColor={COLORS.red}
-              textColor={COLORS.white}
-              compact
-            >
-              削除
-            </Button>
-          </View>
-        ) : (
-          <IconButton
-            icon="plus"
-            iconColor={COLORS.white}
-            size={24}
-            containerColor={BRAND_COLOR}
-            onPress={() => router.push('/habit/add')}
-          />
-        )}
+        <IconButton
+          icon="plus"
+          iconColor={COLORS.white}
+          size={24}
+          containerColor={BRAND_COLOR}
+          onPress={() => router.push('/habit/add')}
+        />
       </View>
 
       <FlatList
@@ -181,11 +159,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     marginLeft: 4,
-  },
-  contextMenu: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
   },
   listContent: {
     padding: 12,
