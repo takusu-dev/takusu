@@ -19,6 +19,7 @@ import type { HabitRow } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { ContextMenu } from '@/src/components/ContextMenu';
 import { undoRedo } from '@/src/api/undoRedo';
+import { parseRule, summarizeRule } from '@/src/api/rrule';
 
 interface HabitViewProps {
   client: TakusuClient | null;
@@ -178,7 +179,7 @@ export function HabitView({ client }: HabitViewProps) {
               )}
             </View>
             <Text style={[styles.habitRecurrence, { color: colors.gray }]}>
-              周期: {h.recurrence}
+              周期: {summarizeRule(parseRule(h.recurrence))}
             </Text>
             <Text style={[styles.habitCost, { color: colors.gray }]}>
               {h.avg_minutes}m ±{h.sigma_minutes}
