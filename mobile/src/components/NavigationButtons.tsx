@@ -78,13 +78,23 @@ export function NavigationButtons({
 
       <Modal visible={calendarOpen} transparent animationType="fade">
         <Pressable style={styles.overlay} onPress={() => setCalendarOpen(false)}>
-          <View style={styles.calendar}>
+          {/* Inner Pressable stops tap-through so tapping white space inside
+              the calendar no longer dismisses it (Issue #30). */}
+          <Pressable style={styles.calendar} onPress={() => {}}>
             <View style={styles.calHeader}>
-              <Pressable onPress={prevMonth}>
+              <Pressable
+                onPress={prevMonth}
+                style={styles.calNavButton}
+                hitSlop={8}
+              >
                 <Text style={styles.calNav}>‹</Text>
               </Pressable>
               <Text style={styles.calMonthLabel}>{monthLabel}</Text>
-              <Pressable onPress={nextMonth}>
+              <Pressable
+                onPress={nextMonth}
+                style={styles.calNavButton}
+                hitSlop={8}
+              >
                 <Text style={styles.calNav}>›</Text>
               </Pressable>
             </View>
@@ -95,7 +105,7 @@ export function NavigationButtons({
                 </Text>
               ))}
               {Array.from({ length: firstDay }).map((_, i) => (
-                <View key={`empty-${i}`} />
+                <View key={`empty-${i}`} style={styles.calDay} />
               ))}
               {Array.from({ length: daysInMonth }).map((_, i) => {
                 const day = i + 1;
@@ -115,7 +125,7 @@ export function NavigationButtons({
                 );
               })}
             </View>
-          </View>
+          </Pressable>
         </Pressable>
       </Modal>
     </>
@@ -172,7 +182,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     borderRadius: 16,
     padding: 16,
-    width: 320,
+    width: 300,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
@@ -185,10 +195,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
+  calNavButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   calNav: {
-    fontSize: 24,
+    fontSize: 32,
     color: COLORS.brand,
-    paddingHorizontal: 8,
+    lineHeight: 36,
   },
   calMonthLabel: {
     fontSize: 16,
@@ -201,15 +218,15 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   calWeekday: {
-    width: 40,
+    width: 36,
     textAlign: 'center',
     fontSize: 12,
     color: COLORS.gray,
     fontWeight: '600',
   },
   calDay: {
-    width: 40,
-    height: 40,
+    width: 36,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 8,
