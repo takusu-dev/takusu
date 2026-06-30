@@ -6,12 +6,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  BackHandler,
   FlatList,
   Pressable,
   StyleSheet,
   Text,
   View,
   RefreshControl,
+  useWindowDimensions,
   type ViewStyle,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -27,6 +29,7 @@ import { NavigationButtons } from '@/src/components/NavigationButtons';
 import { ViewChanger, type ViewType } from '@/src/components/ViewChanger';
 import { ContextMenu } from '@/src/components/ContextMenu';
 import { AddButton } from '@/src/components/AddButton';
+import { TaskAddSheet } from '@/src/components/TaskAddSheet';
 import { Ionicons } from '@expo/vector-icons';
 import Reanimated, {
   useSharedValue,
@@ -83,6 +86,32 @@ export function HomeView() {
   const router = useRouter();
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { height: screenHeight } = useWindowDimensions();
+
+  // ── Task-add bottom-sheet preview state ──
+  // sheetY drives the sheet's translateY (screenHeight = hidden, 0 = open).
+  // sheetMounted controls whether the sheet is rendered at all.
+  // sheetOpen controls whether the sheet content is interactive.
+  // unmountTimer holds the pending setTimeout id that unmounts the sheet
+  // after the close animation; it is cleared whenever a new drag starts so
+  // a quick second drag can't have the sheet yanked out from under it.
+  const sheetY = useSharedValue(screenHeight);
+  const [sheetMounted, setSheetMounted] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const unmountTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function scheduleUnmount(delay = 220) {
+    if (unmountTimer.current) clearTimeout(unmountTimer.current);
+    unmountTimer.current = setTimeout(() => setSheetMounted(false), delay);
+  }
+
+  function cancelUnmount() {
+    if (unmountTimer.current) {
+      clearTimeout(unmountTimer.current);
+      unmountTimer.current = null;
+    }
+  }
+
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [schedule, setSchedule] = useState<ScheduleEntry[]>([]);
   const [habits, setHabits] = useState<HabitRow[]>([]);
@@ -149,6 +178,26 @@ export function HomeView() {
       notifications,
     ).catch((e) => logError('通知の再スケジュール', e));
   }, [tasks, schedule, habits, notifications]);
+
+  // Close the task-add sheet on Android hardware back button.  Without this
+  // the back button would navigate away from HomeView (or exit the app)
+  // instead of dismissing the sheet overlay.
+  // closeAddSheetRef always points at the latest closeAddSheet (which reads
+  // the current screenHeight), so a rotation while the sheet is open does
+  // not leave the handler animating to a stale height.
+  const closeAddSheetRef = useRef<() => void>(() => {});
+  closeAddSheetRef.current = closeAddSheet;
+  useEffect(() => {
+    if (!sheetOpen) return;
+    const subscription = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        closeAddSheetRef.current();
+        return true; // prevent default navigation
+      },
+    );
+    return () => subscription.remove();
+  }, [sheetOpen]);
 
   const scheduleMap = useMemo(() => {
     const m = new Map<string, ScheduleEntry>();
@@ -567,6 +616,39 @@ export function HomeView() {
     router.push({ pathname: '/task/add', params: { deps: JSON.stringify(deps) } });
   }
 
+  // ── Bottom-sheet preview handlers (AddButton drag → TaskAddSheet) ──
+  function handleAddDragStart() {
+    // Cancel any pending unmount so a quick second drag can't have the
+    // sheet yanked out from under the user mid-gesture.
+    cancelUnmount();
+    // Reset to current hidden position so a dimension change (e.g. rotation)
+    // doesn't leave sheetY at a stale value that would flash the sheet.
+    sheetY.value = screenHeight;
+    setSheetMounted(true);
+    setSheetOpen(false);
+  }
+
+  function handleAddDragEnd(committed: boolean) {
+    if (committed) {
+      cancelUnmount();
+      sheetY.value = withTiming(0, { duration: 200 });
+      setSheetOpen(true);
+    } else {
+      sheetY.value = withTiming(screenHeight, { duration: 200 });
+      setSheetOpen(false);
+      // Unmount after the close animation finishes.
+      scheduleUnmount();
+    }
+  }
+
+  function closeAddSheet() {
+    sheetY.value = withTiming(screenHeight, { duration: 200 });
+    setSheetOpen(false);
+    scheduleUnmount();
+    // Refresh the task list so a newly created task appears immediately.
+    refresh();
+  }
+
   function renderItem(item: ListItem) {
     if (item.type === 'separator') {
       return (
@@ -750,7 +832,13 @@ export function HomeView() {
 
       {/* Bottom bar */}
       <View style={[styles.bottomBar, { paddingBottom: 16 + insets.bottom }]}>
-        <AddButton onSlideUp={() => router.push('/task/add')} />
+        <AddButton
+          onSlideUp={() => {}}
+          sheetY={sheetY}
+          screenHeight={screenHeight}
+          onDragStart={handleAddDragStart}
+          onDragEnd={handleAddDragEnd}
+        />
         <Pressable
           style={styles.startDoneButton}
           onPress={async () => {
@@ -793,6 +881,16 @@ export function HomeView() {
 
       {/* View changer */}
       <ViewChanger current={view} onChange={setView} />
+
+      {/* Task-add bottom-sheet preview (revealed by dragging the add button) */}
+      {sheetMounted && (
+        <TaskAddSheet
+          sheetY={sheetY}
+          screenHeight={screenHeight}
+          open={sheetOpen}
+          onClose={closeAddSheet}
+        />
+      )}
     </View>
   );
 }
