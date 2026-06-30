@@ -39,6 +39,7 @@ export function TaskAddView() {
   const [selectedDeps, setSelectedDeps] = useState<string[]>(initialDeps);
   const [allTasks, setAllTasks] = useState<TaskRow[]>([]);
   const [showDepPicker, setShowDepPicker] = useState(false);
+  const [depSearch, setDepSearch] = useState('');
   const [pickerField, setPickerField] = useState<'start' | 'end' | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -218,6 +219,7 @@ export function TaskAddView() {
               style={styles.addDepButton}
               onPress={() => {
                 loadTasks();
+                setDepSearch('');
                 setShowDepPicker(true);
               }}
             >
@@ -230,7 +232,7 @@ export function TaskAddView() {
             return (
               <View key={depId} style={[styles.depItem, { backgroundColor: '#F8F5FC' }]}>
                 <Text style={[styles.depItemText, { color: colors.black }]}>
-                  {depTask?.title ?? depId.slice(0, 8)}
+                  {depTask ? `#${depTask.display_id} ${depTask.title}` : depId.slice(0, 8)}
                 </Text>
                 <Pressable
                   onPress={() =>
@@ -254,9 +256,30 @@ export function TaskAddView() {
               <Text style={styles.depPickerClose}>閉じる</Text>
             </Pressable>
           </View>
+          <View style={[styles.depSearchContainer, { borderBottomColor: colors.separator }]}>
+            <Ionicons name="search" size={18} color={colors.gray} />
+            <TextInput
+              style={[styles.depSearchInput, { color: colors.black }]}
+              value={depSearch}
+              onChangeText={setDepSearch}
+              placeholder="タイトルで検索"
+              placeholderTextColor={colors.grayLight}
+              autoFocus
+            />
+            {depSearch.length > 0 && (
+              <Pressable onPress={() => setDepSearch('')}>
+                <Ionicons name="close-circle" size={18} color={colors.grayLight} />
+              </Pressable>
+            )}
+          </View>
           <ScrollView style={styles.depPickerList}>
             {allTasks
               .filter((t) => !selectedDeps.includes(t.id))
+              .filter((t) =>
+                depSearch.length === 0
+                  ? true
+                  : t.title.toLowerCase().includes(depSearch.toLowerCase()),
+              )
               .map((t) => (
                 <Pressable
                   key={t.id}
@@ -266,7 +289,12 @@ export function TaskAddView() {
                     setShowDepPicker(false);
                   }}
                 >
-                  <Text style={[styles.depPickerItemText, { color: colors.black }]}>{t.title}</Text>
+                  <Text style={[styles.depPickerItemId, { color: colors.gray }]}>
+                    #{t.display_id}
+                  </Text>
+                  <Text style={[styles.depPickerItemText, { color: colors.black }]}>
+                    {t.title}
+                  </Text>
                 </Pressable>
               ))}
           </ScrollView>
@@ -439,11 +467,33 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   depPickerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     paddingVertical: 16,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
   },
+  depPickerItemId: {
+    fontSize: 13,
+    fontWeight: '500',
+    fontVariant: ['tabular-nums'],
+  },
   depPickerItemText: {
     fontSize: 16,
+    flex: 1,
+  },
+  depSearchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 8,
+    borderBottomWidth: 1,
+  },
+  depSearchInput: {
+    flex: 1,
+    fontSize: 16,
+    paddingVertical: 4,
   },
 });
