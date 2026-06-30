@@ -80,6 +80,7 @@ export function TaskDetailView() {
   const [pickerField, setPickerField] = useState<'start' | 'end' | null>(null);
   const [statusMenuVisible, setStatusMenuVisible] = useState(false);
   const [depModalVisible, setDepModalVisible] = useState(false);
+  const [depSearch, setDepSearch] = useState('');
   const [status, setStatus] = useState<TaskStatus>('pending');
 
   const refresh = useCallback(async () => {
@@ -554,7 +555,10 @@ export function TaskDetailView() {
               <Button
                 mode="text"
                 compact
-                onPress={() => setDepModalVisible(true)}
+                onPress={() => {
+                  setDepSearch('');
+                  setDepModalVisible(true);
+                }}
                 textColor={BRAND_COLOR}
               >
                 + 追加
@@ -571,7 +575,7 @@ export function TaskDetailView() {
                     onPress={() => !editing && router.push(`/task/${depId}`)}
                   >
                     <Text style={styles.depLink}>
-                      • {depTask ? depTask.title : depId.slice(0, 8) + '...'} ›
+                      • {depTask ? `#${depTask.display_id} ${depTask.title}` : depId.slice(0, 8) + '...'} ›
                     </Text>
                   </Pressable>
                   {editing && (
@@ -642,26 +646,52 @@ export function TaskDetailView() {
           contentContainerStyle={[styles.depModal, { backgroundColor: colors.white }]}
         >
           <Text style={[styles.depModalTitle, { color: colors.black }]}>依存先を選択</Text>
+          <View style={[styles.depModalSearch, { borderBottomColor: colors.separator }]}>
+            <Ionicons name="search" size={18} color={colors.gray} />
+            <PaperTextInput
+              mode="outlined"
+              value={depSearch}
+              onChangeText={setDepSearch}
+              placeholder="タイトルで検索"
+              placeholderTextColor={colors.grayLight}
+              outlineColor={colors.separator}
+              activeOutlineColor={BRAND_COLOR}
+              style={styles.depModalSearchInput}
+              dense
+              autoFocus
+            />
+            {depSearch.length > 0 && (
+              <Pressable onPress={() => setDepSearch('')}>
+                <Ionicons name="close-circle" size={18} color={colors.grayLight} />
+              </Pressable>
+            )}
+          </View>
           <ScrollView style={styles.depModalList}>
             {availableDeps.length === 0 ? (
               <Text style={[styles.depModalEmpty, { color: colors.gray }]}>
                 追加可能なタスクがありません
               </Text>
             ) : (
-              availableDeps.map((t) => (
-                <List.Item
-                  key={t.id}
-                  title={t.title}
-                  description={t.status !== 'pending' ? STATUS_LABELS[t.status] : undefined}
-                  onPress={() => {
-                    setDeps([...deps, t.id]);
-                    setDepModalVisible(false);
-                  }}
-                  left={() => (
-                    <List.Icon icon={STATUS_ICONS[t.status] as string} color={BRAND_COLOR} />
-                  )}
-                />
-              ))
+              availableDeps
+                .filter((t) =>
+                  depSearch.length === 0
+                    ? true
+                    : t.title.toLowerCase().includes(depSearch.toLowerCase()),
+                )
+                .map((t) => (
+                  <List.Item
+                    key={t.id}
+                    title={t.title}
+                    description={`#${t.display_id}${t.status !== 'pending' ? ' · ' + STATUS_LABELS[t.status] : ''}`}
+                    onPress={() => {
+                      setDeps([...deps, t.id]);
+                      setDepModalVisible(false);
+                    }}
+                    left={() => (
+                      <List.Icon icon={STATUS_ICONS[t.status] as string} color={BRAND_COLOR} />
+                    )}
+                  />
+                ))
             )}
           </ScrollView>
           <Divider />
@@ -821,6 +851,18 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     marginBottom: 8,
+  },
+  depModalSearch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderBottomWidth: 1,
+    paddingBottom: 8,
+    marginBottom: 8,
+  },
+  depModalSearchInput: {
+    flex: 1,
+    fontSize: 15,
   },
   depModalList: {
     maxHeight: 400,
