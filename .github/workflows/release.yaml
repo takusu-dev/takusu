@@ -99,7 +99,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: easimon/maximize-build-space@fc881a613ad2a34aca9c9624518214ebc21dfc0c # master 2025/3/10
         with:
-          root-reserve-mb: 12288
+          # The Expo/Gradle/React-Native build runs in the workspace on the
+          # root filesystem, so it needs plenty of free space there; keep a
+          # large reserve. /nix still gets the rest of the (very large) disk
+          # for the Nix closure and the NDK build dir.
+          root-reserve-mb: 40960
           swap-size-mb: 1024
           temp-reserve-mb: 1024
           # Mount the maximized volume at /nix (not just /nix/store) so the Nix
