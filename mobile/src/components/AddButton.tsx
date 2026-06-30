@@ -1,6 +1,12 @@
 // AddButton — floating add button with gesture support
-// Slide up (bottom→top): opens task add view
+// Slide up (bottom→top): opens task add view (via bottom-sheet preview)
 // Tap: shows "Assistant未実装" message (Assistant is planned for later)
+//
+// During an upward drag the button writes the live translation into `sheetY`
+// (a Reanimated shared value owned by the parent) so a TaskAddSheet can
+// reveal itself from the bottom of the screen in lock-step with the finger.
+// On release the parent decides whether to commit (sheet fully opens) or
+// cancel (sheet animates closed) via `onDragEnd`.
 
 import { Alert, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,30 +16,79 @@ import Reanimated, {
   useAnimatedStyle,
   runOnJS,
   withSpring,
+  type SharedValue,
 } from 'react-native-reanimated';
 import { BRAND_COLOR, COLORS } from '@/src/theme';
 
+/** Multiplier: 1px of finger drag → DRAG_SCALE px of sheet reveal. */
+const DRAG_SCALE = 4;
+/** Drag distance (px) past which a release commits the sheet to full open. */
+const COMMIT_THRESHOLD = 60;
+
 interface AddButtonProps {
+  /** Called when the user releases past the commit threshold. */
   onSlideUp: () => void;
+  /** Shared value the button writes the sheet's translateY into during drag.
+   *  Parent should initialise this to `screenHeight` (sheet hidden). */
+  sheetY: SharedValue<number>;
+  /** Screen height in px — used to compute the sheet position from the drag. */
+  screenHeight: number;
+  /** Fired when a drag begins (sheet should mount in preview mode). */
+  onDragStart?: () => void;
+  /** Fired when a drag ends. `committed` is true when the drag passed the
+   *  threshold. The parent animates `sheetY` accordingly. */
+  onDragEnd?: (committed: boolean) => void;
 }
 
-export function AddButton({ onSlideUp }: AddButtonProps) {
-  const translateY = useSharedValue(0);
+export function AddButton({
+  onSlideUp,
+  sheetY,
+  screenHeight,
+  onDragStart,
+  onDragEnd,
+}: AddButtonProps) {
+  // The button's own visual offset (follows finger, springs back on release).
+  const buttonY = useSharedValue(0);
 
   const panGesture = Gesture.Pan()
+    .onBegin(() => {
+      runOnJS(onDragStart ?? (() => {}))();
+    })
     .onUpdate((e) => {
-      // Only allow upward movement
-      translateY.value = Math.min(0, e.translationY);
+      // Only allow upward movement for the button itself.
+      buttonY.value = Math.min(0, e.translationY);
+      // Sheet reveals from the bottom: as the finger moves up (negative
+      // translationY) the sheet's translateY decreases from screenHeight.
+      // Clamp at 0 so a long drag can't push the sheet past the top of
+      // the screen (which would leave a gap at the bottom).
+      sheetY.value = Math.max(0, screenHeight + e.translationY * DRAG_SCALE);
     })
     .onEnd((e) => {
-      if (e.translationY < -60) {
+      const committed = e.translationY < -COMMIT_THRESHOLD;
+      if (committed) {
         runOnJS(onSlideUp)();
       }
-      translateY.value = withSpring(0);
+      runOnJS(onDragEnd ?? (() => {}))(committed);
+      // Button springs back to rest; the parent animates sheetY separately.
+      buttonY.value = withSpring(0);
+    })
+    // onEnd only fires when the gesture was ACTIVE (finger moved past the
+    // activation distance).  A pure tap goes BEGAN → FAILED, skipping onEnd,
+    // so onFinalize cleans up the sheet mount in that case.  When the gesture
+    // succeeded, onFinalize fires with success=true and the guard skips it
+    // (onEnd already handled the cleanup).
+    .onFinalize((_e, success) => {
+      if (!success) {
+        runOnJS(onDragEnd ?? (() => {}))(false);
+        // Reset the button's visual offset — onEnd is skipped on cancel so
+        // the spring-back there never runs.  Without this the button stays
+        // visually displaced after a cancelled drag.
+        buttonY.value = withSpring(0);
+      }
     });
 
   const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }],
+    transform: [{ translateY: buttonY.value }],
   }));
 
   function handleTap() {

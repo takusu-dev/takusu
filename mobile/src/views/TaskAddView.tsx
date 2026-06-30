@@ -21,13 +21,26 @@ import type { TaskRow } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 
-export function TaskAddView() {
+interface TaskAddViewProps {
+  /** Called when the view requests closing (back button / successful save).
+   *  When omitted (route usage), falls back to router.back(). */
+  onClose?: () => void;
+  /** Pre-selected dependency IDs. Takes precedence over the `deps` search param. */
+  initialDeps?: string[];
+}
+
+export function TaskAddView({ onClose, initialDeps: propDeps }: TaskAddViewProps = {}) {
   const { client } = useServer();
   const router = useRouter();
   const colors = useColors();
   const { deps } = useLocalSearchParams<{ deps?: string }>();
 
-  const initialDeps: string[] = deps ? JSON.parse(deps) : [];
+  const initialDeps: string[] = propDeps ?? (deps ? JSON.parse(deps) : []);
+
+  function close() {
+    if (onClose) onClose();
+    else router.back();
+  }
 
   const [title, setTitle] = useState('');
   const [startAt, setStartAt] = useState<Date | null>(null);
@@ -92,7 +105,7 @@ export function TaskAddView() {
           });
         },
       });
-      router.back();
+      close();
     } catch (e) {
       showError(e, 'タスクの追加に失敗');
     } finally {
@@ -103,7 +116,7 @@ export function TaskAddView() {
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
       <View style={styles.topBar}>
-        <Pressable style={styles.backButton} onPress={() => router.back()}>
+        <Pressable style={styles.backButton} onPress={close}>
           <Ionicons name="chevron-back" size={28} color={BRAND_COLOR} />
         </Pressable>
         <Text style={[styles.title, { color: colors.black }]}>新規タスク</Text>
