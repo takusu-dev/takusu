@@ -1,6 +1,9 @@
 // ContextMenu — hamburger menu button + dropdown
 // Always available: Settings, Undo/Redo
-// When tasks are selected: Reschedule selected, Reschedule others, Delete, Create dependent task, Clear selection
+// When items are selected: Delete, Clear selection (and Select all when
+//   onSelectAll is provided). Task-specific actions (Reschedule selected,
+//   Reschedule others, Create dependent task) are only shown when their
+//   handlers are provided.
 
 import { useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -13,11 +16,13 @@ interface ContextMenuProps {
   onSettings: () => void;
   onUndo: () => void;
   onRedo: () => void;
-  onRescheduleSelected: () => void;
-  onRescheduleOthers: () => void;
-  onDeleteSelected: () => void;
-  onCreateDependent: () => void;
   onClearSelection: () => void;
+  onDeleteSelected: () => void;
+  // Optional handlers — only rendered when provided
+  onSelectAll?: () => void;
+  onRescheduleSelected?: () => void;
+  onRescheduleOthers?: () => void;
+  onCreateDependent?: () => void;
 }
 
 type MenuItem = {
@@ -33,11 +38,12 @@ export function ContextMenu({
   onSettings,
   onUndo,
   onRedo,
+  onClearSelection,
+  onDeleteSelected,
+  onSelectAll,
   onRescheduleSelected,
   onRescheduleOthers,
-  onDeleteSelected,
   onCreateDependent,
-  onClearSelection,
 }: ContextMenuProps) {
   const colors = useColors();
   const [open, setOpen] = useState(false);
@@ -60,11 +66,12 @@ export function ContextMenu({
 
   const selectionItems: MenuItem[] = hasSelection
     ? [
-        { label: '選択以外をreschedule', icon: 'calendar-outline', onPress: onRescheduleOthers },
-        { label: '選択をreschedule', icon: 'calendar-number-outline', onPress: onRescheduleSelected },
-        { label: '依存とする新規タスク作成', icon: 'git-branch-outline', onPress: onCreateDependent },
-        { label: '削除', icon: 'trash-outline', onPress: onDeleteSelected, danger: true },
+        ...(onSelectAll ? [{ label: 'すべて選択', icon: 'checkbox-outline' as const, onPress: onSelectAll }] : []),
         { label: '選択解除', icon: 'close-circle-outline', onPress: onClearSelection },
+        ...(onRescheduleOthers ? [{ label: '選択以外をreschedule', icon: 'calendar-outline' as const, onPress: onRescheduleOthers }] : []),
+        ...(onRescheduleSelected ? [{ label: '選択をreschedule', icon: 'calendar-number-outline' as const, onPress: onRescheduleSelected }] : []),
+        ...(onCreateDependent ? [{ label: '依存とする新規タスク作成', icon: 'git-branch-outline' as const, onPress: onCreateDependent }] : []),
+        { label: '削除', icon: 'trash-outline', onPress: onDeleteSelected, danger: true },
       ]
     : [];
 
