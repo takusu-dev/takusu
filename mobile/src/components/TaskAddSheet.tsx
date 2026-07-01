@@ -50,7 +50,7 @@ export function TaskAddSheet({
 
   return (
     <View
-      style={StyleSheet.absoluteFill}
+      style={[StyleSheet.absoluteFill, { zIndex: 20 }]}
       pointerEvents={open ? 'auto' : 'none'}
     >
       {/* Scrim — tap to close (only when open) */}

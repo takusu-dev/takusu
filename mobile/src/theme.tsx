@@ -35,6 +35,7 @@ export const COLORS = {
   done: '#AAAAAA',
   red: '#E07070',
   green: '#70B070',
+  surface: '#FFFFFF',
 } as const;
 
 // Dark theme colors
@@ -51,6 +52,7 @@ export const DARK_COLORS = {
   done: '#555555',
   red: '#E07070',
   green: '#70B070',
+  surface: '#2A2A45', // elevated surface (buttons, cards) — lighter than bg
 } as const;
 
 export type ColorSet = {
@@ -66,6 +68,7 @@ export type ColorSet = {
   done: string;
   red: string;
   green: string;
+  surface: string;
 };
 
 // ── Theme Context ──
