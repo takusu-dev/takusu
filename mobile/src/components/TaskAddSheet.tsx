@@ -12,7 +12,6 @@ import Reanimated, {
   useAnimatedStyle,
   type SharedValue,
 } from 'react-native-reanimated';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TaskAddView } from '@/src/views/TaskAddView';
 import { BRAND_COLOR, useColors } from '@/src/theme';
 
@@ -37,7 +36,6 @@ export function TaskAddSheet({
   initialDeps,
 }: TaskAddSheetProps) {
   const colors = useColors();
-  const insets = useSafeAreaInsets();
 
   const sheetStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: sheetY.value }],
@@ -79,9 +77,6 @@ export function TaskAddSheet({
         </View>
 
         <TaskAddView onClose={onClose} initialDeps={initialDeps} />
-
-        {/* Bottom inset spacer so content isn't hidden behind the home indicator */}
-        <View style={{ height: insets.bottom }} />
       </Reanimated.View>
     </View>
   );

@@ -14,6 +14,7 @@ import { showError } from '@/src/api/errors';
 import type { TaskRow } from '@/src/api/types';
 import { parseDepends } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface GraphViewProps {
   client: TakusuClient | null;
@@ -203,6 +204,7 @@ interface GraphEdge {
 
 export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const webViewRef = useRef<WebView>(null);
   const [editMode, setEditMode] = useState(false);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
@@ -327,7 +329,7 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
-      <View style={styles.topBar}>
+      <View style={[styles.topBar, { paddingTop: 4 + insets.top }]}>
         <IconButton
           icon="chevron-left"
           iconColor={BRAND_COLOR}
@@ -372,7 +374,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 4,
-    paddingTop: 48,
     paddingBottom: 4,
   },
   editButton: {

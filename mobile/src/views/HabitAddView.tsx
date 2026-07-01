@@ -17,6 +17,7 @@ import { useServer } from '@/src/api/ServerProvider';
 import { undoRedo } from '@/src/api/undoRedo';
 import { showError } from '@/src/api/errors';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RruleBuilderModal } from '@/src/components/RruleBuilderModal';
 import { defaultRule, parseRule, serializeRule, summarizeRule } from '@/src/api/rrule';
 
@@ -24,6 +25,7 @@ export function HabitAddView() {
   const { client } = useServer();
   const router = useRouter();
   const colors = useColors();
+  const insets = useSafeAreaInsets();
 
   const [title, setTitle] = useState('');
   const [recurrence, setRecurrence] = useState(serializeRule(defaultRule()));
@@ -75,7 +77,7 @@ export function HabitAddView() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
-      <View style={styles.topBar}>
+      <View style={[styles.topBar, { paddingTop: 8 + insets.top }]}>
         <Pressable style={styles.backButton} onPress={() => router.back()}>
           <Ionicons name="chevron-back" size={28} color={BRAND_COLOR} />
         </Pressable>
@@ -90,7 +92,9 @@ export function HabitAddView() {
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={[styles.content, { paddingBottom: 40 + insets.bottom }]}
+      >
         <View style={styles.field}>
           <Text style={[styles.label, { color: colors.gray }]}>タイトル</Text>
           <TextInput
@@ -208,7 +212,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
-    paddingTop: 48,
     paddingBottom: 8,
   },
   backButton: {
@@ -240,7 +243,6 @@ const styles = StyleSheet.create({
   content: {
     padding: 16,
     gap: 16,
-    paddingBottom: 40,
   },
   field: {
     gap: 4,

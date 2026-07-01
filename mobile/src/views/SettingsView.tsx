@@ -30,6 +30,7 @@ import type { GoogleCalSettings } from '@/src/api/types';
 import { useColors, BRAND_COLOR } from '@/src/theme';
 import type { NotificationSettings } from '@/src/notifications/settings';
 import { formatTime, minutesToTime, timeToMinutes } from '@/src/notifications/settings';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
 
@@ -53,6 +54,7 @@ export function SettingsView() {
     setNotifications,
   } = useServer();
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const [category, setCategory] = useState<SettingsCategory>('general');
   const [notifPickerField, setNotifPickerField] = useState<
     'morningBriefing' | 'eveningSummary' | 'habitReminder' | null
@@ -314,7 +316,12 @@ export function SettingsView() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
-      <View style={[styles.topBar, { borderBottomColor: colors.separator }]}>
+      <View
+        style={[
+          styles.topBar,
+          { borderBottomColor: colors.separator, paddingTop: 8 + insets.top },
+        ]}
+      >
         <Pressable style={styles.backButton} onPress={() => router.back()}>
           <Text style={[styles.backButtonText, { color: BRAND_COLOR }]}>‹</Text>
         </Pressable>
@@ -343,7 +350,9 @@ export function SettingsView() {
           ))}
         </View>
 
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView
+          contentContainerStyle={[styles.content, { paddingBottom: 16 + insets.bottom }]}
+        >
           {category === 'general' && (
             <>
               <View style={styles.settingRow}>
@@ -894,7 +903,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
-    paddingTop: 48,
     paddingBottom: 8,
   },
   backButton: {

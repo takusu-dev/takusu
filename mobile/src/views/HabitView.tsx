@@ -17,6 +17,7 @@ import type { TakusuClient } from '@/src/api/client';
 import { showError, logError } from '@/src/api/errors';
 import type { HabitRow } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ContextMenu } from '@/src/components/ContextMenu';
 import { undoRedo } from '@/src/api/undoRedo';
 import { parseRule, summarizeRule } from '@/src/api/rrule';
@@ -28,6 +29,7 @@ interface HabitViewProps {
 export function HabitView({ client }: HabitViewProps) {
   const router = useRouter();
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const [habits, setHabits] = useState<HabitRow[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -126,7 +128,7 @@ export function HabitView({ client }: HabitViewProps) {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
-      <View style={styles.topBar}>
+      <View style={[styles.topBar, { paddingTop: 4 + insets.top }]}>
         <ContextMenu
           hasSelection={selected.size > 0}
           onSettings={() => router.push('/settings')}
@@ -192,7 +194,7 @@ export function HabitView({ client }: HabitViewProps) {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={refresh} />
         }
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, { paddingBottom: 100 + insets.bottom }]}
       />
     </View>
   );
@@ -206,7 +208,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 4,
-    paddingTop: 48,
     paddingBottom: 4,
   },
   title: {
@@ -216,7 +217,6 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 12,
-    paddingBottom: 100,
     gap: 8,
   },
   habitCard: {

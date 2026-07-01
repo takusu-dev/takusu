@@ -716,7 +716,7 @@ export function HomeView() {
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
       {/* Top bar */}
-      <View style={styles.topBar}>
+      <View style={[styles.topBar, { paddingTop: 8 + insets.top }]}>
         <ContextMenu
           hasSelection={selected.size > 0}
           onSettings={() => router.push('/settings')}
@@ -969,7 +969,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
-    paddingTop: 48,
     paddingBottom: 8,
     gap: 4,
   },
