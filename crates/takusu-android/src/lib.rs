@@ -93,8 +93,32 @@ impl TakusuServer {
                 detail: format!("failed to create runtime: {e}"),
             })?;
 
-        let storage: Arc<dyn Storage> =
-            Arc::new(WorkersStorage::new_with(workers_url, root_token.clone()));
+        // Build a reqwest client that uses bundled Mozilla root certificates
+        // (webpki-root-certs) instead of rustls-platform-verifier.  The
+        // platform verifier requires JNI initialisation with an Android
+        // Context, which is not available inside the embedded UniFFI runtime.
+        // Without it, any HTTPS request panics ("Expect rustls-platform-verifier
+        // to be initialized"), killing the axum task and surfacing as
+        // "unexpected end of stream" on the client side.
+        let http_client = {
+            let certs: Vec<reqwest::Certificate> = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+                .iter()
+                .filter_map(|c| reqwest::Certificate::from_der(c.as_ref()).ok())
+                .collect();
+            reqwest::Client::builder()
+                .use_rustls_tls()
+                .tls_certs_only(certs)
+                .build()
+                .map_err(|e| TakusuError::Server {
+                    detail: format!("failed to build HTTP client: {e}"),
+                })?
+        };
+
+        let storage: Arc<dyn Storage> = Arc::new(WorkersStorage::new_with_client(
+            http_client,
+            workers_url,
+            root_token.clone(),
+        ));
         let token_cache = Arc::new(TokenCache::with_default_ttl());
         let app = Arc::new(TakusuApp::new(storage, root_token, token_cache));
         let state = AppState::new(app);
