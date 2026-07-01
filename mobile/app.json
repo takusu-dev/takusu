@@ -8,10 +8,9 @@
     "userInterfaceStyle": "automatic",
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#7261A3",
+        "backgroundColor": "#4ECDC4",
         "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundImage": "./assets/android-icon-background.png"
       },
       "predictiveBackGestureEnabled": true,
       "package": "dev.satler.takusu"
@@ -24,9 +23,20 @@
       "expo-sharing",
       "@react-native-community/datetimepicker",
       [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#4ECDC4",
+          "imageWidth": 200
+        }
+      ],
+      [
         "expo-notifications",
         {
-          "defaultChannel": "task-reminders"
+          "defaultChannel": "task-reminders",
+          "icon": "./assets/notification_icon.png",
+          "color": "#4ECDC4"
         }
       ],
       [
