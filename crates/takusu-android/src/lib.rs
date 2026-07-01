@@ -64,33 +64,42 @@ impl TakusuServer {
         workers_url: String,
         root_token: String,
     ) -> Result<(), TakusuError> {
-        let mut runtime_guard = self.runtime.lock().map_err(|e| TakusuError::Server {
-            detail: format!("lock poisoned: {e}"),
+        // Install the in-process log ring buffer first so that validation
+        // errors and subsequent server logs are captured. Uses try_init() so
+        // restarts (stop → start) don't panic when the global subscriber is
+        // already set.
+        log_buffer::install();
+
+        let mut runtime_guard = self.runtime.lock().map_err(|e| {
+            let detail = format!("lock poisoned: {e}");
+            tracing::error!("{detail}");
+            TakusuError::Server { detail }
         })?;
         if runtime_guard.is_some() {
+            tracing::error!("server already running");
             return Err(TakusuError::AlreadyRunning);
         }
 
         if workers_url.is_empty() {
+            tracing::error!("workers_url must not be empty");
             return Err(TakusuError::InvalidConfig {
                 detail: "workers_url must not be empty".to_string(),
             });
         }
         if root_token.is_empty() {
+            tracing::error!("root_token must not be empty");
             return Err(TakusuError::InvalidConfig {
                 detail: "root_token must not be empty".to_string(),
             });
         }
 
-        // Install the in-process log ring buffer. Uses try_init() so restarts
-        // (stop → start) don't panic when the global subscriber is already set.
-        log_buffer::install();
-
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
-            .map_err(|e| TakusuError::Server {
-                detail: format!("failed to create runtime: {e}"),
+            .map_err(|e| {
+                let detail = format!("failed to create runtime: {e}");
+                tracing::error!("{detail}");
+                TakusuError::Server { detail }
             })?;
 
         // Build a reqwest client that uses bundled Mozilla root certificates
@@ -127,18 +136,22 @@ impl TakusuServer {
         let bind_addr = format!("127.0.0.1:{port}");
         let listener = runtime
             .block_on(async { TcpListener::bind(&bind_addr).await })
-            .map_err(|e| TakusuError::Server {
-                detail: format!("failed to bind {bind_addr}: {e}"),
+            .map_err(|e| {
+                let detail = format!("failed to bind {bind_addr}: {e}");
+                tracing::error!("{detail}");
+                TakusuError::Server { detail }
             })?;
 
         let actual_port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
-        *self.port.lock().map_err(|e| TakusuError::Server {
-            detail: format!("lock poisoned: {e}"),
+        *self.port.lock().map_err(|e| {
+            let detail = format!("lock poisoned: {e}");
+            tracing::error!("{detail}");
+            TakusuError::Server { detail }
         })? = actual_port;
 
         runtime.spawn(async move {
             if let Err(e) = axum::serve(listener, app_router).await {
-                eprintln!("server error: {e}");
+                tracing::error!("server error: {e}");
             }
         });
 
@@ -185,4 +198,10 @@ fn get_logs() -> Vec<String> {
 #[uniffi::export]
 fn clear_logs() {
     log_buffer::clear_logs();
+}
+
+/// Push a client-side log line (e.g. from JS/Expo) into the shared buffer.
+#[uniffi::export]
+fn push_log(line: String) {
+    log_buffer::push_log(line);
 }

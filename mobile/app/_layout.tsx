@@ -8,6 +8,7 @@ import * as Linking from 'expo-linking';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
 import { ServerProvider, useServer } from '@/src/api/ServerProvider';
+import { installGlobalErrorHandler } from '@/src/api/installGlobalErrorHandler';
 import { ThemeProvider } from '@/src/theme';
 import { UndoRedoToast } from '@/src/components/UndoRedoToast';
 import { emitOAuthCallback } from '@/src/api/oauthCallback';
@@ -159,6 +160,12 @@ function ThemedApp() {
 }
 
 export default function RootLayout() {
+  // Forward uncaught JS exceptions and promise rejections to the native log
+  // ring buffer so they appear in log exports alongside server logs.
+  useEffect(() => {
+    installGlobalErrorHandler();
+  }, []);
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
