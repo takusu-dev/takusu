@@ -9,6 +9,7 @@ import uniffi.takusu_android.TakusuServer
 import uniffi.takusu_android.ServerStatus
 import uniffi.takusu_android.getLogs
 import uniffi.takusu_android.clearLogs
+import uniffi.takusu_android.pushLog
 
 class StartOptions : Record {
   @Field val port: Int = 3838
@@ -78,6 +79,15 @@ class TakusuServerModule : Module() {
     Function("clearLogs") {
       try {
         clearLogs()
+        true
+      } catch (e: Exception) {
+        false
+      }
+    }
+
+    Function("pushLog") { line: String ->
+      try {
+        pushLog(line)
         true
       } catch (e: Exception) {
         false

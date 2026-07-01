@@ -2,9 +2,14 @@
 // All async UI actions should surface failures to the user via `showError`
 // rather than silently swallowing them. Notification side-effects (which are
 // non-critical and should not interrupt the user) use `logError`.
+//
+// Both helpers also forward the formatted message to the native log ring
+// buffer (via TakusuServerModule.pushLog) so client-side errors appear in
+// the same export as server logs.
 
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import { ApiError } from './client';
+import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
 
 /** Format an unknown error into a human-readable string. */
 export function formatError(e: unknown): string {
@@ -27,12 +32,27 @@ export function formatError(e: unknown): string {
 }
 
 /**
+ * Forward a log line to the native ring buffer (Android only).
+ * Silently no-ops on non-Android platforms or if the native module is
+ * unavailable.
+ */
+function pushClientLog(level: string, context: string, message: string): void {
+  if (Platform.OS !== 'android') return;
+  const line = `[client][${level}] ${context}: ${message}`;
+  TakusuServerModule.pushLog(line).catch(() => {
+    // native module not ready — drop silently
+  });
+}
+
+/**
  * Show an alert for an operation failure.
  * `title` defaults to "エラー" but can be overridden for context
  * (e.g. "タスクの削除に失敗").
  */
 export function showError(e: unknown, title = 'エラー'): void {
-  Alert.alert(title, formatError(e));
+  const msg = formatError(e);
+  pushClientLog('error', title, msg);
+  Alert.alert(title, msg);
 }
 
 /**
@@ -40,5 +60,7 @@ export function showError(e: unknown, title = 'エラー'): void {
  * Used for notification side-effects where a failure should not block the UI.
  */
 export function logError(context: string, e: unknown): void {
-  console.warn(`${context}:`, formatError(e));
+  const msg = formatError(e);
+  pushClientLog('warn', context, msg);
+  console.warn(`${context}:`, msg);
 }
