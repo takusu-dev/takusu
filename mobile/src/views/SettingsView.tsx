@@ -643,6 +643,55 @@ export function SettingsView() {
                   <Text style={styles.actionButtonText}>サーバーを再起動</Text>
                 )}
               </Pressable>
+
+              {/* Health checks */}
+              <View style={styles.field}>
+                <Text style={[styles.label, { color: colors.gray }]}>ヘルスチェック</Text>
+              </View>
+
+              <Pressable
+                style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
+                onPress={checkLocalHealth}
+                disabled={localHealthLoading || !client}
+              >
+                {localHealthLoading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.actionButtonText}>ローカルサーバー</Text>
+                )}
+              </Pressable>
+              {localHealthResult && (
+                <Text
+                  style={[
+                    styles.healthResult,
+                    { color: localHealthResult.startsWith('✓') ? colors.black : colors.red },
+                  ]}
+                >
+                  {localHealthResult}
+                </Text>
+              )}
+
+              <Pressable
+                style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
+                onPress={checkWorkerHealth}
+                disabled={workerHealthLoading || !client}
+              >
+                {workerHealthLoading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.actionButtonText}>Worker</Text>
+                )}
+              </Pressable>
+              {workerHealthResult && (
+                <Text
+                  style={[
+                    styles.healthResult,
+                    { color: workerHealthResult.startsWith('✓') ? colors.black : colors.red },
+                  ]}
+                >
+                  {workerHealthResult}
+                </Text>
+              )}
             </>
           )}
 
@@ -772,55 +821,6 @@ export function SettingsView() {
                 <Text style={[styles.label, { color: colors.gray }]}>ライセンス</Text>
                 <Text style={[styles.value, { color: colors.black }]}>MIT</Text>
               </View>
-
-              {/* Health checks */}
-              <View style={styles.field}>
-                <Text style={[styles.label, { color: colors.gray }]}>ヘルスチェック</Text>
-              </View>
-
-              <Pressable
-                style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
-                onPress={checkLocalHealth}
-                disabled={localHealthLoading || !client}
-              >
-                {localHealthLoading ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.actionButtonText}>ローカルサーバー</Text>
-                )}
-              </Pressable>
-              {localHealthResult && (
-                <Text
-                  style={[
-                    styles.healthResult,
-                    { color: localHealthResult.startsWith('✓') ? colors.black : colors.red },
-                  ]}
-                >
-                  {localHealthResult}
-                </Text>
-              )}
-
-              <Pressable
-                style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
-                onPress={checkWorkerHealth}
-                disabled={workerHealthLoading || !client}
-              >
-                {workerHealthLoading ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.actionButtonText}>Worker</Text>
-                )}
-              </Pressable>
-              {workerHealthResult && (
-                <Text
-                  style={[
-                    styles.healthResult,
-                    { color: workerHealthResult.startsWith('✓') ? colors.black : colors.red },
-                  ]}
-                >
-                  {workerHealthResult}
-                </Text>
-              )}
 
               {/* Log export */}
               <View style={styles.field}>

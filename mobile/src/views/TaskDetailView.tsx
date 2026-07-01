@@ -310,16 +310,17 @@ export function TaskDetailView() {
           size={28}
           onPress={() => router.back()}
         />
-        <View style={{ flex: 1 }} />
-        <Button
-          mode={editing ? 'contained' : 'outlined'}
-          onPress={() => (editing ? save() : setEditing(true))}
-          textColor={editing ? COLORS.white : BRAND_COLOR}
-          buttonColor={editing ? BRAND_COLOR : undefined}
-          compact
-        >
-          {editing ? '保存' : '編集'}
-        </Button>
+        <View style={styles.centerButtonContainer} pointerEvents="box-none">
+          <Button
+            mode={editing ? 'contained' : 'outlined'}
+            onPress={() => (editing ? save() : setEditing(true))}
+            textColor={editing ? COLORS.white : BRAND_COLOR}
+            buttonColor={editing ? BRAND_COLOR : undefined}
+            compact
+          >
+            {editing ? '保存' : '編集'}
+          </Button>
+        </View>
       </View>
 
       <ScrollView
@@ -723,6 +724,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 4,
     paddingBottom: 4,
+  },
+  centerButtonContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
   },
   content: {
     flex: 1,

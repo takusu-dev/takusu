@@ -70,11 +70,11 @@ export function NavigationButtons({
   return (
     <>
       <View style={styles.container}>
-        <NavButton icon="arrow-up" onPress={onScrollUpByDay} color={colors.brand} bgColor={colors.white} />
-        <NavButton icon="chevron-up" onPress={onScrollUpByPage} color={colors.brand} bgColor={colors.white} />
-        <NavButton icon="chevron-down" onPress={onScrollDownByPage} color={colors.brand} bgColor={colors.white} />
-        <NavButton icon="arrow-down" onPress={onScrollDownByDay} color={colors.brand} bgColor={colors.white} />
-        <NavButton icon="calendar" onPress={() => setCalendarOpen(true)} color={colors.brand} bgColor={colors.white} />
+        <NavButton icon="arrow-up" onPress={onScrollUpByDay} color={colors.brand} bgColor={colors.surface} />
+        <NavButton icon="chevron-up" onPress={onScrollUpByPage} color={colors.brand} bgColor={colors.surface} />
+        <NavButton icon="chevron-down" onPress={onScrollDownByPage} color={colors.brand} bgColor={colors.surface} />
+        <NavButton icon="arrow-down" onPress={onScrollDownByDay} color={colors.brand} bgColor={colors.surface} />
+        <NavButton icon="calendar" onPress={() => setCalendarOpen(true)} color={colors.brand} bgColor={colors.surface} />
       </View>
 
       <Modal visible={calendarOpen} transparent animationType="fade">

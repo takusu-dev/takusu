@@ -36,7 +36,7 @@ export function ViewChanger({ current, onChange }: ViewChangerProps) {
           key={v}
           style={({ pressed }) => [
             styles.button,
-            { backgroundColor: colors.white },
+            { backgroundColor: colors.surface },
             current === v && styles.buttonActive,
             pressed && { opacity: 0.7 },
           ]}
