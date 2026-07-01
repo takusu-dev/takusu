@@ -5,7 +5,36 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Detect which areas of the repo changed so unrelated jobs can be skipped.
+  # On workflow_dispatch every job runs (manual triggers ignore the filter).
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      mobile: ${{ steps.filter.outputs.mobile }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'flake.nix'
+              - 'flake.lock'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/ci.yaml'
+            mobile:
+              - 'mobile/**'
+              - '.github/workflows/ci.yaml'
+
   lint:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,6 +52,8 @@ jobs:
 
       - run: nix develop .#rust --command bash -c "cargo clippy --all-targets --all-features -- -D warnings"
   test:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +73,8 @@ jobs:
       - run: nix develop .#rust --command bash -c "cargo test --doc --all-features -- --nocapture"
 
   android-build:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -90,6 +123,8 @@ jobs:
           nix develop .#android --command bash -c "cargo ndk -t aarch64-linux-android build -p takusu-android --release --no-default-features"
 
   expo-check:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.mobile == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
