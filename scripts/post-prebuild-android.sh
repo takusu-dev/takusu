@@ -8,6 +8,9 @@
 #   2. Expo defaults to NDK 27.1.12297006 which is not in the Nix Android SDK.
 #      Override to 29.0.14206865 (the Nix-provided NDK).
 #   3. Suppress compileSdk 37 unsupported warning (AGP 8.12 only tested up to 36).
+#   4. Increase Gradle JVM heap. The default 2GB is too small for a 4-ABI
+#      React Native release build and causes OutOfMemoryError in
+#      packageRelease (IncrementalSplitterRunnable) with no error message.
 
 set -euo pipefail
 
@@ -44,6 +47,19 @@ if ! grep -q 'android.suppressUnsupportedCompileSdk' "$GRADLE_PROPERTIES"; then
   echo "" >> "$GRADLE_PROPERTIES"
   echo "android.suppressUnsupportedCompileSdk=37.0" >> "$GRADLE_PROPERTIES"
   echo "  Added compileSdk suppression"
+fi
+
+# 4. Increase Gradle JVM heap for 4-ABI release builds
+#    Expo prebuild defaults to -Xmx2048m which is too small and causes
+#    OutOfMemoryError during packageRelease (the APK packaging step).
+#    Replace the -Xmx value independently of the surrounding jvmargs format
+#    so the fix still applies if Expo changes MaxMetaspaceSize or ordering.
+if grep -q 'org.gradle.jvmargs=.*-Xmx2048m' "$GRADLE_PROPERTIES"; then
+  sed -i 's/-Xmx2048m/-Xmx4096m/' "$GRADLE_PROPERTIES"
+  sed -i 's/-XX:MaxMetaspaceSize=512m/-XX:MaxMetaspaceSize=1024m/' "$GRADLE_PROPERTIES"
+  echo "  Increased Gradle JVM heap to 4GB"
+else
+  echo "  Warning: unexpected org.gradle.jvmargs format; heap left unchanged" >&2
 fi
 
 echo "Post-prebuild fixes applied successfully."

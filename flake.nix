@@ -411,7 +411,7 @@
                 echo ""
                 echo "── Step 5: Gradle assembleRelease ──"
                 cd android
-                ./gradlew :app:assembleRelease
+                ./gradlew :app:assembleRelease --stacktrace
 
                 echo ""
                 echo "✅ APK built: $(pwd)/app/build/outputs/apk/release/app-release.apk"
