@@ -26,6 +26,7 @@ import { showError, logError } from '@/src/api/errors';
 import { parseDepends, parseSchedule } from '@/src/api/types';
 import type { TaskRow, HabitRow, ScheduleEntry, TaskStatus } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import {
   postInProgressNotification,
@@ -61,6 +62,7 @@ export function TaskDetailView() {
   const { client, notifications } = useServer();
   const router = useRouter();
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [task, setTask] = useState<TaskRow | null>(null);
   const [habit, setHabit] = useState<HabitRow | null>(null);
@@ -301,7 +303,7 @@ export function TaskDetailView() {
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
       {/* Top bar */}
-      <View style={styles.topBar}>
+      <View style={[styles.topBar, { paddingTop: 4 + insets.top }]}>
         <IconButton
           icon="chevron-left"
           iconColor={BRAND_COLOR}
@@ -320,7 +322,10 @@ export function TaskDetailView() {
         </Button>
       </View>
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={[styles.contentContainer, { paddingBottom: 40 + insets.bottom }]}
+      >
         {/* Title */}
         {editing ? (
           <PaperTextInput
@@ -717,7 +722,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 4,
-    paddingTop: 48,
     paddingBottom: 4,
   },
   content: {
@@ -726,7 +730,6 @@ const styles = StyleSheet.create({
   contentContainer: {
     padding: 16,
     gap: 16,
-    paddingBottom: 40,
   },
   loading: {
     textAlign: 'center',

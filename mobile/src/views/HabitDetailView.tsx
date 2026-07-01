@@ -13,12 +13,14 @@ import { useServer } from '@/src/api/ServerProvider';
 import { showError, logError } from '@/src/api/errors';
 import type { HabitRow, TaskRow } from '@/src/api/types';
 import { COLORS, BRAND_COLOR } from '@/src/theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { parseRule, summarizeRule } from '@/src/api/rrule';
 
 export function HabitDetailView() {
   const { client } = useServer();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const insets = useSafeAreaInsets();
   const [habit, setHabit] = useState<HabitRow | null>(null);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
 
@@ -54,14 +56,16 @@ export function HabitDetailView() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.topBar}>
+      <View style={[styles.topBar, { paddingTop: 8 + insets.top }]}>
         <Pressable style={styles.backButton} onPress={() => router.back()}>
           <Text style={styles.backButtonText}>‹</Text>
         </Pressable>
         <Text style={styles.title}>{habit.title}</Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={[styles.content, { paddingBottom: 16 + insets.bottom }]}
+      >
         <View style={styles.section}>
           <Text style={styles.label}>タイトル</Text>
           <Text style={styles.value}>{habit.title}</Text>
@@ -135,7 +139,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
-    paddingTop: 48,
     paddingBottom: 8,
   },
   backButton: {

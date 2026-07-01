@@ -19,6 +19,7 @@ import { undoRedo } from '@/src/api/undoRedo';
 import { showError } from '@/src/api/errors';
 import type { TaskRow } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 
 interface TaskAddViewProps {
@@ -33,6 +34,7 @@ export function TaskAddView({ onClose, initialDeps: propDeps }: TaskAddViewProps
   const { client } = useServer();
   const router = useRouter();
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const { deps } = useLocalSearchParams<{ deps?: string }>();
 
   const initialDeps: string[] = propDeps ?? (deps ? JSON.parse(deps) : []);
@@ -115,7 +117,7 @@ export function TaskAddView({ onClose, initialDeps: propDeps }: TaskAddViewProps
 
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
-      <View style={styles.topBar}>
+      <View style={[styles.topBar, { paddingTop: 8 + insets.top }]}>
         <Pressable style={styles.backButton} onPress={close}>
           <Ionicons name="chevron-back" size={28} color={BRAND_COLOR} />
         </Pressable>
@@ -133,7 +135,9 @@ export function TaskAddView({ onClose, initialDeps: propDeps }: TaskAddViewProps
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={[styles.content, { paddingBottom: 40 + insets.bottom }]}
+      >
         <View style={styles.field}>
           <Text style={[styles.label, { color: colors.gray }]}>タイトル</Text>
           <TextInput
@@ -263,7 +267,12 @@ export function TaskAddView({ onClose, initialDeps: propDeps }: TaskAddViewProps
       {/* Dep picker overlay */}
       {showDepPicker && (
         <View style={[styles.depPicker, { backgroundColor: colors.white }]}>
-          <View style={[styles.depPickerHeader, { borderBottomColor: colors.separator }]}>
+          <View
+            style={[
+              styles.depPickerHeader,
+              { borderBottomColor: colors.separator, paddingTop: 16 + insets.top },
+            ]}
+          >
             <Text style={[styles.depPickerTitle, { color: colors.black }]}>依存先を選択</Text>
             <Pressable onPress={() => setShowDepPicker(false)}>
               <Text style={styles.depPickerClose}>閉じる</Text>
@@ -351,7 +360,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
-    paddingTop: 48,
     paddingBottom: 8,
   },
   backButton: {
@@ -383,7 +391,6 @@ const styles = StyleSheet.create({
   content: {
     padding: 16,
     gap: 16,
-    paddingBottom: 40,
   },
   field: {
     gap: 4,
@@ -465,7 +472,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 16,
-    paddingTop: 60,
     borderBottomWidth: 1,
   },
   depPickerTitle: {
