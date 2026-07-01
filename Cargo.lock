@@ -3183,6 +3183,7 @@ name = "takusu-android"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "reqwest",
  "takusu-local",
  "takusu-local-lib",
  "takusu-storage",
@@ -3191,6 +3192,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uniffi",
+ "webpki-root-certs",
 ]
 
 [[package]]

@@ -33,6 +33,20 @@ impl WorkersStorage {
         }
     }
 
+    /// Like [`new_with`](Self::new_with) but with a caller-supplied HTTP
+    /// client.  On Android the default `Client::new()` pulls in
+    /// `rustls-platform-verifier`, which panics unless initialised with a JNI
+    /// context.  Callers that cannot provide that context should instead build
+    /// a client with bundled root certificates (e.g. `webpki-root-certs`) and
+    /// pass it here.
+    pub fn new_with_client(client: Client, base_url: String, token: String) -> Self {
+        Self {
+            http: client,
+            base_url: base_url.trim_end_matches('/').to_string(),
+            token,
+        }
+    }
+
     pub fn new(cfg: &LocalConfig) -> Result<Self, Box<dyn std::error::Error>> {
         let url = std::env::var("TAKUSU_WORKERS_URL")
             .or_else(|_| Ok::<_, std::env::VarError>(cfg.workers_url().to_string()))
