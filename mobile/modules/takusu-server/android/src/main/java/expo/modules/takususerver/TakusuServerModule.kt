@@ -7,6 +7,8 @@ import expo.modules.kotlin.records.Field
 import expo.modules.kotlin.exception.CodedException
 import uniffi.takusu_android.TakusuServer
 import uniffi.takusu_android.ServerStatus
+import uniffi.takusu_android.getLogs
+import uniffi.takusu_android.clearLogs
 
 class StartOptions : Record {
   @Field val port: Int = 3838
@@ -62,6 +64,23 @@ class TakusuServerModule : Module() {
         }
       } catch (e: Exception) {
         mapOf("running" to false, "port" to 0)
+      }
+    }
+
+    Function("getLogs") {
+      try {
+        getLogs()
+      } catch (e: Exception) {
+        emptyList<String>()
+      }
+    }
+
+    Function("clearLogs") {
+      try {
+        clearLogs()
+        true
+      } catch (e: Exception) {
+        false
       }
     }
   }
