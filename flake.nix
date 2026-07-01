@@ -178,6 +178,12 @@
           takusu-android-libs =
             let
               vendoredDeps = craneLib.vendorCargoDeps { inherit src; };
+              # Only build arm64-v8a (aarch64-linux-android). Modern Android
+              # devices are arm64; dropping armeabi-v7a / x86 / x86_64 cuts the
+              # Rust cross-compile and Gradle CMake build time by ~4x.
+              androidTargets = [
+                "aarch64-linux-android"
+              ];
             in
             pkgs.stdenv.mkDerivation {
               inherit src version;
@@ -218,7 +224,7 @@
 
               buildPhase = ''
                 runHook preBuild
-                for target in aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android; do
+                for target in ${lib.concatStringsSep " " androidTargets}; do
                   echo "Building $target..."
                   cargo ndk -t "$target" build -p takusu-android --release --no-default-features
                 done
@@ -227,7 +233,7 @@
 
               installPhase = ''
                 runHook preInstall
-                for target in aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android; do
+                for target in ${lib.concatStringsSep " " androidTargets}; do
                   case $target in
                     aarch64-linux-android) abi_dir="arm64-v8a" ;;
                     armv7-linux-androideabi) abi_dir="armeabi-v7a" ;;
