@@ -8,9 +8,13 @@
 #   2. Expo defaults to NDK 27.1.12297006 which is not in the Nix Android SDK.
 #      Override to 29.0.14206865 (the Nix-provided NDK).
 #   3. Suppress compileSdk 37 unsupported warning (AGP 8.12 only tested up to 36).
-#   4. Increase Gradle JVM heap. The default 2GB is too small for a 4-ABI
+#   4. Increase Gradle JVM heap. The default 2GB is too small for a
 #      React Native release build and causes OutOfMemoryError in
 #      packageRelease (IncrementalSplitterRunnable) with no error message.
+#   5. Limit reactNativeArchitectures to arm64-v8a only. The Rust .so is
+#      only cross-compiled for aarch64 (see flake.nix androidTargets), so
+#      building CMake for other ABIs wastes time and fails without their .so.
+#   6. Enable Gradle parallel + build cache for faster incremental builds.
 
 set -euo pipefail
 
@@ -49,7 +53,7 @@ if ! grep -q 'android.suppressUnsupportedCompileSdk' "$GRADLE_PROPERTIES"; then
   echo "  Added compileSdk suppression"
 fi
 
-# 4. Increase Gradle JVM heap for 4-ABI release builds
+# 4. Increase Gradle JVM heap for release builds
 #    Expo prebuild defaults to -Xmx2048m which is too small and causes
 #    OutOfMemoryError during packageRelease (the APK packaging step).
 #    Replace the -Xmx value independently of the surrounding jvmargs format
@@ -61,5 +65,26 @@ if grep -q 'org.gradle.jvmargs=.*-Xmx2048m' "$GRADLE_PROPERTIES"; then
 else
   echo "  Warning: unexpected org.gradle.jvmargs format; heap left unchanged" >&2
 fi
+
+# 5. Limit reactNativeArchitectures to arm64-v8a only.
+#    The Rust .so is only built for aarch64 (see flake.nix androidTargets),
+#    so building CMake for other ABIs wastes time and fails without their .so.
+#    expo-build-properties' buildArchs is buggy (expo/expo#38225), so set
+#    reactNativeArchitectures directly in gradle.properties.
+if grep -q 'reactNativeArchitectures=' "$GRADLE_PROPERTIES"; then
+  sed -i 's/^reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' "$GRADLE_PROPERTIES"
+else
+  echo "reactNativeArchitectures=arm64-v8a" >> "$GRADLE_PROPERTIES"
+fi
+echo "  Limited reactNativeArchitectures to arm64-v8a"
+
+# 6. Enable Gradle parallel + build cache for faster incremental builds.
+#    These are safe additions that only help when tasks are cacheable.
+for prop in "org.gradle.parallel=true" "org.gradle.caching=true"; do
+  if ! grep -q "^${prop}" "$GRADLE_PROPERTIES"; then
+    echo "$prop" >> "$GRADLE_PROPERTIES"
+  fi
+done
+echo "  Enabled Gradle parallel + build cache"
 
 echo "Post-prebuild fixes applied successfully."
