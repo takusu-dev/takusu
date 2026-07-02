@@ -5,6 +5,7 @@ use worker::Response;
 
 use crate::error::WorkerError;
 use crate::handlers::auth::db;
+use crate::handlers::d1::safe_all;
 use crate::handlers::tokens::{json_ok, parse_json};
 use crate::models::{GoogleCalEventRow, GoogleCalSettingsRow, UpdateGoogleCalSettings};
 
@@ -74,12 +75,9 @@ pub async fn update_settings(mut req: worker::Request, env: Env) -> Result<Respo
 
 pub async fn list_mappings(_req: worker::Request, env: Env) -> Result<Response, WorkerError> {
     let database = db(&env)?;
-    let result = database
-        .prepare("SELECT task_id, google_event_id, updated_at FROM google_cal_events")
-        .all()
-        .await
-        .map_err(WorkerError::Worker)?;
-    let rows: Vec<GoogleCalEventRow> = result.results().map_err(WorkerError::Worker)?;
+    let stmt = database
+        .prepare("SELECT task_id, google_event_id, updated_at FROM google_cal_events");
+    let rows: Vec<GoogleCalEventRow> = safe_all(&stmt).await?;
     json_ok(&rows)
 }
 
@@ -124,12 +122,9 @@ pub async fn delete_mappings(req: worker::Request, env: Env) -> Result<Response,
 async fn get_settings_row(
     database: &worker::D1Database,
 ) -> Result<GoogleCalSettingsRow, WorkerError> {
-    let result = database
-        .prepare("SELECT id, enabled, calendar_id, client_id, client_secret, refresh_token, created_at, updated_at FROM google_cal_settings WHERE id = 'active'")
-        .all()
-        .await
-        .map_err(WorkerError::Worker)?;
-    let rows: Vec<GoogleCalSettingsRow> = result.results().map_err(WorkerError::Worker)?;
+    let stmt = database
+        .prepare("SELECT id, enabled, calendar_id, client_id, client_secret, refresh_token, created_at, updated_at FROM google_cal_settings WHERE id = 'active'");
+    let rows: Vec<GoogleCalSettingsRow> = safe_all(&stmt).await?;
     Ok(rows
         .into_iter()
         .next()

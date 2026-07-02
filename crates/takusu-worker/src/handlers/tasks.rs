@@ -1,10 +1,9 @@
 use wasm_bindgen::JsValue;
-use worker::Env;
-use worker::Request;
-use worker::Response;
+use worker::{Env, Request, Response};
 
 use crate::error::WorkerError;
 use crate::handlers::auth::db;
+use crate::handlers::d1::safe_all;
 use crate::handlers::tokens::{json_created, json_ok, parse_json};
 use crate::models::{CreateTask, TaskRow, UpdateTask};
 
@@ -20,33 +19,38 @@ pub async fn list(req: Request, env: Env) -> Result<Response, WorkerError> {
     let mut sql = format!("{select} WHERE 1=1", select = select_tasks());
     let mut bindings: Vec<JsValue> = Vec::new();
     for (k, v) in url.query_pairs() {
-        let col = match k.as_ref() {
-            "status" => "status",
-            "from" => "end_at",
-            "until" => "start_at",
-            "habit_id" => "habit_id",
+        match k.as_ref() {
+            "status" => {
+                sql.push_str(" AND status = ?");
+                bindings.push(JsValue::from_str(&v));
+            }
+            "from" => {
+                // end_at is NOT NULL, so a simple >= is safe.
+                sql.push_str(" AND end_at >= ?");
+                bindings.push(JsValue::from_str(&v));
+            }
+            "until" => {
+                // start_at is nullable: NULL <= value evaluates to NULL
+                // (excluded). Include tasks with no explicit start time so
+                // range queries don't silently drop them.
+                sql.push_str(" AND (start_at IS NULL OR start_at <= ?)");
+                bindings.push(JsValue::from_str(&v));
+            }
+            "habit_id" => {
+                sql.push_str(" AND habit_id = ?");
+                bindings.push(JsValue::from_str(&v));
+            }
             _ => continue,
-        };
-        sql.push_str(&format!(" AND {col} = ?"));
-        bindings.push(JsValue::from_str(&v));
+        }
     }
     sql.push_str(" ORDER BY created_at DESC");
 
-    let result = if bindings.is_empty() {
-        database
-            .prepare(&sql)
-            .all()
-            .await
-            .map_err(WorkerError::Worker)?
+    let stmt = if bindings.is_empty() {
+        database.prepare(&sql)
     } else {
-        database
-            .prepare(&sql)
-            .bind(&bindings)?
-            .all()
-            .await
-            .map_err(WorkerError::Worker)?
+        database.prepare(&sql).bind(&bindings)?
     };
-    let rows: Vec<TaskRow> = result.results().map_err(WorkerError::Worker)?;
+    let rows: Vec<TaskRow> = safe_all(&stmt).await?;
     json_ok(&rows)
 }
 
@@ -281,8 +285,7 @@ async fn resolve_task_id(database: &worker::D1Database, id: &str) -> Result<Stri
     }
     // UUID prefix — fetch all and filter
     let stmt = database.prepare(select_tasks());
-    let result = stmt.all().await.map_err(WorkerError::Worker)?;
-    let all: Vec<TaskRow> = result.results().map_err(WorkerError::Worker)?;
+    let all: Vec<TaskRow> = safe_all(&stmt).await?;
     let matches: Vec<String> = all
         .iter()
         .filter(|t| t.id.starts_with(id))

@@ -5,17 +5,15 @@ use worker::Response;
 
 use crate::error::WorkerError;
 use crate::handlers::auth::db;
+use crate::handlers::d1::safe_all;
 use crate::handlers::tokens::{json_created, json_ok, parse_json};
 use crate::models::{SaveScheduleRequest, ScheduleRow};
 
 pub async fn get(_req: worker::Request, env: Env) -> Result<Response, WorkerError> {
     let database = db(&env)?;
-    let result = database
-        .prepare("SELECT id, created_at, updated_at, schedule FROM schedules WHERE id = 'active'")
-        .all()
-        .await
-        .map_err(WorkerError::Worker)?;
-    let rows: Vec<ScheduleRow> = result.results().map_err(WorkerError::Worker)?;
+    let stmt = database
+        .prepare("SELECT id, created_at, updated_at, schedule FROM schedules WHERE id = 'active'");
+    let rows: Vec<ScheduleRow> = safe_all(&stmt).await?;
     match rows.into_iter().next() {
         Some(row) => json_ok(&row),
         None => Err(WorkerError::NotFound("no active schedule".into())),
@@ -50,12 +48,9 @@ pub async fn save(mut req: worker::Request, env: Env) -> Result<Response, Worker
 
     database.batch(stmts).await.map_err(WorkerError::Worker)?;
 
-    let result = database
-        .prepare("SELECT id, created_at, updated_at, schedule FROM schedules WHERE id = 'active'")
-        .all()
-        .await
-        .map_err(WorkerError::Worker)?;
-    let rows: Vec<ScheduleRow> = result.results().map_err(WorkerError::Worker)?;
+    let stmt = database
+        .prepare("SELECT id, created_at, updated_at, schedule FROM schedules WHERE id = 'active'");
+    let rows: Vec<ScheduleRow> = safe_all(&stmt).await?;
     let row = rows
         .into_iter()
         .next()
