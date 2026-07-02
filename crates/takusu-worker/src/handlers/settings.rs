@@ -4,6 +4,7 @@ use worker::Response;
 
 use crate::error::WorkerError;
 use crate::handlers::auth::db;
+use crate::handlers::d1::safe_all;
 use crate::handlers::tokens::{json_ok, parse_json};
 use crate::models::{SettingsRow, UpdateSettings};
 
@@ -36,12 +37,9 @@ pub async fn update(mut req: worker::Request, env: Env) -> Result<Response, Work
 }
 
 async fn get_inner(database: &worker::D1Database) -> Result<SettingsRow, WorkerError> {
-    let result = database
-        .prepare("SELECT id, tz, sleep_start, sleep_end, created_at, updated_at FROM settings WHERE id = 'active'")
-        .all()
-        .await
-        .map_err(WorkerError::Worker)?;
-    let rows: Vec<SettingsRow> = result.results().map_err(WorkerError::Worker)?;
+    let stmt = database
+        .prepare("SELECT id, tz, sleep_start, sleep_end, created_at, updated_at FROM settings WHERE id = 'active'");
+    let rows: Vec<SettingsRow> = safe_all(&stmt).await?;
     rows.into_iter()
         .next()
         .ok_or_else(|| WorkerError::NotFound("settings not found".into()))

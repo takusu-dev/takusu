@@ -120,7 +120,10 @@ impl Storage for SqliteStorage {
             bindings.push(v.clone());
         }
         if let Some(ref v) = query.until {
-            sql.push_str(" AND start_at <= ?");
+            // start_at is nullable: NULL <= value evaluates to NULL
+            // (excluded). Include tasks with no explicit start time so
+            // range queries don't silently drop them.
+            sql.push_str(" AND (start_at IS NULL OR start_at <= ?)");
             bindings.push(v.clone());
         }
         if let Some(ref v) = query.habit_id {

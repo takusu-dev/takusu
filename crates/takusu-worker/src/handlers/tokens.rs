@@ -3,6 +3,7 @@ use worker::{Env, Request, Response};
 use crate::auth;
 use crate::error::WorkerError;
 use crate::handlers::auth::db;
+use crate::handlers::d1::safe_all;
 use crate::models::{TokenCreateResponse, TokenRow};
 
 #[derive(serde::Deserialize)]
@@ -53,8 +54,7 @@ pub async fn list(_req: Request, env: Env) -> Result<Response, WorkerError> {
         &database,
         "SELECT id, token_hash, label, created_by, created_at, revoked_at FROM tokens ORDER BY created_at DESC"
     );
-    let result = stmt.all().await.map_err(WorkerError::Worker)?;
-    let rows: Vec<TokenRow> = result.results().map_err(WorkerError::Worker)?;
+    let rows: Vec<TokenRow> = safe_all(&stmt).await?;
     json_ok(&rows)
 }
 

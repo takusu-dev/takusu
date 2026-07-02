@@ -39,6 +39,7 @@ pub mod bool_compat {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct TaskRow {
     pub id: String,
+    #[serde(default)]
     pub display_id: i64,
     pub title: String,
     pub description: Option<String>,
