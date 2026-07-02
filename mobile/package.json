@@ -1,6 +1,6 @@
 {
   "name": "mobile",
-  "version": "0.20260702.1",
+  "version": "0.20260702.2",
   "main": "expo-router/entry",
   "dependencies": {
     "@expo/ui": "~56.0.18",
