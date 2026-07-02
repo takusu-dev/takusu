@@ -28,9 +28,13 @@ interface TaskAddViewProps {
   onClose?: () => void;
   /** Pre-selected dependency IDs. Takes precedence over the `deps` search param. */
   initialDeps?: string[];
+  /** When true the view is embedded inside a sheet that already provides
+   *  top safe-area spacing (e.g. TaskAddSheet's grabber handle), so the
+   *  topBar skips adding `insets.top` padding. Defaults to false (standalone route). */
+  embedded?: boolean;
 }
 
-export function TaskAddView({ onClose, initialDeps: propDeps }: TaskAddViewProps = {}) {
+export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }: TaskAddViewProps = {}) {
   const { client } = useServer();
   const router = useRouter();
   const colors = useColors();
@@ -117,7 +121,7 @@ export function TaskAddView({ onClose, initialDeps: propDeps }: TaskAddViewProps
 
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
-      <View style={[styles.topBar, { paddingTop: 8 + insets.top }]}>
+      <View style={[styles.topBar, { paddingTop: 8 + (embedded ? 0 : insets.top) }]}>
         <Pressable style={styles.backButton} onPress={close}>
           <Ionicons name="chevron-back" size={28} color={BRAND_COLOR} />
         </Pressable>
@@ -270,7 +274,7 @@ export function TaskAddView({ onClose, initialDeps: propDeps }: TaskAddViewProps
           <View
             style={[
               styles.depPickerHeader,
-              { borderBottomColor: colors.separator, paddingTop: 16 + insets.top },
+              { borderBottomColor: colors.separator, paddingTop: 16 + (embedded ? 0 : insets.top) },
             ]}
           >
             <Text style={[styles.depPickerTitle, { color: colors.black }]}>依存先を選択</Text>

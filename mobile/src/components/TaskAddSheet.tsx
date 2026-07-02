@@ -14,6 +14,7 @@
 
 import { Pressable, StyleSheet, View } from 'react-native';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Reanimated, {
   useAnimatedStyle,
   useSharedValue,
@@ -48,6 +49,7 @@ export function TaskAddSheet({
   initialDeps,
 }: TaskAddSheetProps) {
   const colors = useColors();
+  const insets = useSafeAreaInsets();
 
   // Starting translateY captured at gesture begin (normally 0 when open).
   const startY = useSharedValue(0);
@@ -110,14 +112,15 @@ export function TaskAddSheet({
           sheetStyle,
         ]}
       >
-        {/* Grabber handle — drag down to close (inverse of slide-up to open) */}
+        {/* Grabber handle — drag down to close (inverse of slide-up to open).
+            Padded below the status bar so it stays touchable in edge-to-edge. */}
         <GestureDetector gesture={closeGesture}>
-          <View style={styles.handleContainer}>
+          <View style={[styles.handleContainer, { paddingTop: 12 + insets.top }]}>
             <View style={[styles.handle, { backgroundColor: colors.grayLight }]} />
           </View>
         </GestureDetector>
 
-        <TaskAddView onClose={onClose} initialDeps={initialDeps} />
+        <TaskAddView onClose={onClose} initialDeps={initialDeps} embedded />
       </Reanimated.View>
     </View>
   );
