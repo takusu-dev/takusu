@@ -87,12 +87,13 @@ const MIN_SLEEP: i64 = 36;
 pub fn evaluate(planner: &Planner, plan: &Plan, temperature: f64, t0: f64) -> f64 {
     let mut score = 0.0;
     let schedules = &plan.schedules;
+    let index = build_index(planner, schedules);
 
-    score += deadline_score(planner, schedules);
-    score += start_score(planner, schedules);
-    score += depend_score(planner, schedules, temperature, t0);
-    score += buffer_score(planner, schedules);
-    score += duration_score(planner, schedules);
+    score += deadline_score(planner, &index);
+    score += start_score(planner, &index);
+    score += depend_score(planner, &index, temperature, t0);
+    score += buffer_score(planner, &index);
+    score += duration_score(planner, &index);
     score += sleep_score(planner, schedules);
     score += parallel_violation_score(planner, schedules);
     score += inclusion_bonus(planner, schedules);
@@ -100,20 +101,27 @@ pub fn evaluate(planner: &Planner, plan: &Plan, temperature: f64, t0: f64) -> f6
     score
 }
 
-fn find_schedule(
+/// task_id → (start, end) の索引。O(n) で構築し、各スコア関数の探索を O(1) にする。
+fn build_index(
+    planner: &Planner,
     schedules: &[(Point, Point, usize)],
-    task_id: usize,
-) -> Option<&(Point, Point, usize)> {
-    schedules.iter().find(|(_, _, id)| *id == task_id)
+) -> Vec<Option<(Point, Point)>> {
+    let mut index = vec![None; planner.tasks.len()];
+    for (s, e, id) in schedules {
+        if *id < index.len() {
+            index[*id] = Some((*s, *e));
+        }
+    }
+    index
 }
 
-fn deadline_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
+fn deadline_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
     let mut score = 0.0;
     for task in &planner.tasks {
-        let Some((_start, sched_end, _id)) = find_schedule(schedules, task.id) else {
+        let Some((_start, sched_end)) = index[task.id] else {
             continue;
         };
-        let slack = Point::delta(task.end, *sched_end);
+        let slack = Point::delta(task.end, sched_end);
         if slack >= 0 {
             score += (slack as f64 * W_EARLY).min(50.0);
         } else {
@@ -124,16 +132,16 @@ fn deadline_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64
     score
 }
 
-fn start_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
+fn start_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
     let mut score = 0.0;
     for task in &planner.tasks {
-        let Some((sched_start, _sched_end, _id)) = find_schedule(schedules, task.id) else {
+        let Some((sched_start, _sched_end)) = index[task.id] else {
             continue;
         };
         if let Some(task_start) = task.start
-            && *sched_start < task_start
+            && sched_start < task_start
         {
-            score += Point::delta(*sched_start, task_start) as f64 * W_START;
+            score += Point::delta(sched_start, task_start) as f64 * W_START;
         }
     }
     score
@@ -141,19 +149,19 @@ fn start_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
 
 fn depend_score(
     planner: &Planner,
-    schedules: &[(Point, Point, usize)],
+    index: &[Option<(Point, Point)>],
     temperature: f64,
     t0: f64,
 ) -> f64 {
     let weight = W_DEPEND_BASE * (1.0 - temperature / t0);
     let mut penalty_slots = 0i64;
     for task in &planner.tasks {
-        let Some((sched_start, _, _)) = find_schedule(schedules, task.id) else {
+        let Some((sched_start, _)) = index[task.id] else {
             continue;
         };
         for dep_id in &task.depends {
-            if let Some((_, dep_end, _)) = find_schedule(schedules, *dep_id)
-                && *dep_end > *sched_start
+            if let Some(Some((_, dep_end))) = index.get(*dep_id)
+                && *dep_end > sched_start
             {
                 penalty_slots += dep_end.0 - sched_start.0;
             }
@@ -162,13 +170,13 @@ fn depend_score(
     -(penalty_slots as f64) * weight
 }
 
-fn buffer_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
+fn buffer_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
     let mut score = 0.0;
     for task in &planner.tasks {
-        let Some((_start, sched_end, _id)) = find_schedule(schedules, task.id) else {
+        let Some((_start, sched_end)) = index[task.id] else {
             continue;
         };
-        let remaining = Point::delta(task.end, *sched_end);
+        let remaining = Point::delta(task.end, sched_end);
         if remaining > 0 {
             score += task.cost_estimate.sigma as f64 * remaining as f64 * W_BUFFER;
         }
@@ -176,13 +184,13 @@ fn buffer_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
     score
 }
 
-fn duration_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
+fn duration_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
     let mut score = 0.0;
     for task in &planner.tasks {
-        let Some((sched_start, sched_end, _id)) = find_schedule(schedules, task.id) else {
+        let Some((sched_start, sched_end)) = index[task.id] else {
             continue;
         };
-        let actual = Point::delta(*sched_end, *sched_start);
+        let actual = Point::delta(sched_end, sched_start);
         let deficit = task.cost_estimate.avg as i64 - actual;
         if deficit > 0 {
             score += -(deficit * deficit) as f64 * W_SHORT;
@@ -245,12 +253,18 @@ fn sleep_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
 }
 
 fn parallel_violation_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
+    let mut sorted: Vec<(Point, Point, usize)> = schedules.to_vec();
+    sorted.sort_unstable_by_key(|(s, _, _)| s.0);
+
     let mut penalty_slots = 0i64;
-    let n = schedules.len();
+    let n = sorted.len();
     for i in 0..n {
-        let (a_start, a_end, a_id) = schedules[i];
-        for (b_start, b_end, b_id) in schedules.iter().skip(i + 1).copied() {
-            if a_end <= b_start || b_end <= a_start {
+        let (a_start, a_end, a_id) = sorted[i];
+        for (b_start, b_end, b_id) in sorted.iter().skip(i + 1).copied() {
+            if b_start >= a_end {
+                break;
+            }
+            if b_end <= a_start {
                 continue;
             }
             let task_a = &planner.tasks[a_id];
