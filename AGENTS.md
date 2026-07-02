@@ -15,6 +15,19 @@ takusu is a planner that automatically builds user schedules and a voice assista
 - **Version Control**: Jujutsu (`jj`) + Git (GitHub) — **Jujutsu is the preferred VCS in this workspace.** See [Version Control Workflow](#version-control-workflow) below.
 - **Nix**: `flake.nix` provides the dev shell (direnv with `use flake`)
 
+## Agent Notifications
+
+When a task is finished or when you have a question for the user, send a desktop notification via `dunstify` so the user is alerted even when not watching the terminal.
+
+```sh
+dunstify "takusu agent" "task finished: <short summary>"
+dunstify "takusu agent" "question: <short question>"
+```
+
+- Fire the notification **once** at the very end of the task, or when you need user input to proceed.
+- Keep the body short (one line). Do not dump long output into the notification.
+- Use a meaningful summary: what was done, or what you need from the user.
+
 ## Project Structure
 
 ```
