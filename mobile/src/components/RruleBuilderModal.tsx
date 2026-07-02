@@ -396,6 +396,7 @@ const styles = StyleSheet.create({
   },
   body: {
     flexGrow: 0,
+    flexShrink: 1,
   },
   section: {
     marginTop: 12,
@@ -450,6 +451,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 8,
     borderWidth: 1,
+    alignItems: 'center',
   },
   chipSmall: {
     paddingHorizontal: 10,

@@ -840,7 +840,7 @@ export function HomeView() {
           onDragEnd={handleAddDragEnd}
         />
         <Pressable
-          style={styles.startDoneButton}
+          style={[styles.startDoneButton, { bottom: 16 + insets.bottom }]}
           onPress={async () => {
             // Start next pending/scheduled task — mark as in_progress
             const next = tasks.find(
@@ -1047,6 +1047,7 @@ const styles = StyleSheet.create({
   startDoneButton: {
     position: 'absolute',
     right: 24,
+    bottom: 16,
     width: 48,
     height: 48,
     borderRadius: 24,
