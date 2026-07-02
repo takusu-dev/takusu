@@ -462,16 +462,11 @@ impl WorkersStorage {
         if id.contains('-') {
             return Ok(id.to_string());
         }
-        let tasks: Vec<TaskRow> = match self
-            .request::<Vec<TaskRow>>(reqwest::Method::GET, &format!("/api/tasks?habit_id={id}"))
-            .await
-        {
-            Ok(t) => t,
-            Err(_) => {
-                self.request::<Vec<TaskRow>>(reqwest::Method::GET, "/api/tasks")
-                    .await?
-            }
-        };
+        // UUID prefix — fetch all tasks and filter client-side (matches
+        // SqliteStorage's `LIKE prefix%` behaviour).
+        let tasks: Vec<TaskRow> = self
+            .request::<Vec<TaskRow>>(reqwest::Method::GET, "/api/tasks")
+            .await?;
         let mut matches: Vec<String> = tasks
             .iter()
             .filter(|t| t.id.starts_with(id))

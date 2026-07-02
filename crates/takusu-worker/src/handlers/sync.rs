@@ -75,8 +75,8 @@ pub async fn update_settings(mut req: worker::Request, env: Env) -> Result<Respo
 
 pub async fn list_mappings(_req: worker::Request, env: Env) -> Result<Response, WorkerError> {
     let database = db(&env)?;
-    let stmt = database
-        .prepare("SELECT task_id, google_event_id, updated_at FROM google_cal_events");
+    let stmt =
+        database.prepare("SELECT task_id, google_event_id, updated_at FROM google_cal_events");
     let rows: Vec<GoogleCalEventRow> = safe_all(&stmt).await?;
     json_ok(&rows)
 }

@@ -77,10 +77,12 @@ pub struct TtsClient {
 
 impl TtsClient {
     pub fn new(config: TtsConfig) -> Self {
-        Self {
-            config,
-            http: reqwest::Client::new(),
-        }
+        let http = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .unwrap_or_default();
+        Self { config, http }
     }
 
     pub fn config(&self) -> &TtsConfig {

@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio_tungstenite::tungstenite::Message;
 
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const RESULT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 #[derive(Debug, Error)]
 pub enum FunASRError {
     #[error("websocket error: {0}")]
@@ -80,11 +83,17 @@ impl FunASRClient {
     }
 
     pub async fn transcribe(&self, audio: &[f32]) -> Result<String, FunASRError> {
-        let (mut ws_stream, _) = tokio_tungstenite::connect_async(&self.config.url)
-            .await
-            .map_err(|e| {
-                FunASRError::Connection(format!("failed to connect to {}: {e}", self.config.url))
-            })?;
+        let (mut ws_stream, _) = tokio::time::timeout(
+            CONNECT_TIMEOUT,
+            tokio_tungstenite::connect_async(&self.config.url),
+        )
+        .await
+        .map_err(|_| {
+            FunASRError::Connection(format!("timed out connecting to {}", self.config.url))
+        })?
+        .map_err(|e| {
+            FunASRError::Connection(format!("failed to connect to {}: {e}", self.config.url))
+        })?;
 
         let hotwords_str = self.config.hotwords.join(" ");
         let start_msg = StartMessage {
@@ -104,7 +113,10 @@ impl FunASRClient {
         ws_stream.send(Message::Text(end_msg.into())).await?;
 
         let mut final_text = String::new();
-        while let Some(msg) = ws_stream.next().await {
+        while let Some(msg) = tokio::time::timeout(RESULT_TIMEOUT, ws_stream.next())
+            .await
+            .map_err(|_| FunASRError::Connection("timed out waiting for result".to_string()))?
+        {
             match msg {
                 Ok(Message::Text(text)) => {
                     let parsed: ResultMessage = serde_json::from_str(&text)
@@ -145,9 +157,14 @@ impl FunASRClient {
     }
 
     pub async fn check_available(&self) -> bool {
-        tokio_tungstenite::connect_async(&self.config.url)
-            .await
-            .is_ok()
+        matches!(
+            tokio::time::timeout(
+                CONNECT_TIMEOUT,
+                tokio_tungstenite::connect_async(&self.config.url),
+            )
+            .await,
+            Ok(Ok(_))
+        )
     }
 }
 

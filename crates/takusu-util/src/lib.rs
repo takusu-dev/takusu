@@ -20,6 +20,7 @@ pub fn parse_duration(s: &str) -> Result<i64, String> {
     let mut num_start = 0;
     let mut chars = s.char_indices().peekable();
     let mut parsed_something = false;
+    let mut pending_number = false;
 
     while let Some(&(i, c)) = chars.peek() {
         if c.is_ascii_digit() {
@@ -31,6 +32,7 @@ pub fn parse_duration(s: &str) -> Result<i64, String> {
                 }
             }
             num_start = i;
+            pending_number = true;
         } else {
             let unit = c;
             chars.next();
@@ -49,11 +51,17 @@ pub fn parse_duration(s: &str) -> Result<i64, String> {
                 }
             }
             parsed_something = true;
+            pending_number = false;
         }
     }
 
     if !parsed_something {
         return Err(format!("could not parse duration: {s}"));
+    }
+    if pending_number {
+        return Err(format!(
+            "trailing number without unit in duration: {s} (use h, m, s for slots)"
+        ));
     }
     Ok(total_minutes)
 }
@@ -76,24 +84,14 @@ pub fn parse_datetime_tz(s: &str, tz: &jiff::tz::TimeZone) -> Result<String, Str
         return Ok(ts.to_string());
     }
 
-    // Full ISO datetime or "2025-06-05 14:00" with explicit timezone
+    // Normalize "2025-06-05 14:00" → "2025-06-05T14:00" so the civil
+    // datetime fallback below can parse it. Datetimes without an explicit
+    // timezone are interpreted in the configured tz (see the fallback).
     let normalized = if s.contains(' ') && !s.contains('T') {
         s.replace(' ', "T")
     } else {
         s.to_string()
     };
-    if !normalized.ends_with('Z') && !normalized.contains('+') && !normalized.contains('-')
-        || normalized.contains('-') && normalized.matches('-').count() >= 2
-    {
-        let with_z = if !normalized.ends_with('Z') && !normalized.contains('+') {
-            format!("{normalized}Z")
-        } else {
-            normalized.clone()
-        };
-        if let Ok(ts) = jiff::Timestamp::from_str(&with_z) {
-            return Ok(ts.to_string());
-        }
-    }
 
     // "06-15" → this year June 15th end-of-day (in configured tz)
     // "-06" → this year this month day 6 end-of-day (in configured tz)
@@ -136,20 +134,23 @@ pub fn parse_datetime_tz(s: &str, tz: &jiff::tz::TimeZone) -> Result<String, Str
         }
     }
 
-    // Full date without timezone: "2025-06-05"
-    if let Ok(d) = jiff::civil::Date::from_str(s) {
+    // Full datetime without timezone: "2025-06-05T14:00", interpreted in
+    // the configured tz. Checked before the date-only branch because
+    // `civil::Date::from_str` accepts datetime strings and truncates the
+    // time part.
+    if normalized.contains('T') {
+        if let Ok(dt) = jiff::civil::DateTime::from_str(&normalized) {
+            let zdt = dt
+                .to_zoned(tz.clone())
+                .map_err(|e| format!("could not convert datetime: {e}"))?;
+            return Ok(zdt.timestamp().to_string());
+        }
+    } else if let Ok(d) = jiff::civil::Date::from_str(s) {
+        // Full date without timezone: "2025-06-05" → end-of-day in tz
         let zdt = d
             .at(23, 59, 59, 0)
             .to_zoned(tz.clone())
             .map_err(|e| format!("could not convert date: {e}"))?;
-        return Ok(zdt.timestamp().to_string());
-    }
-
-    // Full datetime without timezone: "2025-06-05T14:00"
-    if let Ok(dt) = jiff::civil::DateTime::from_str(&normalized) {
-        let zdt = dt
-            .to_zoned(tz.clone())
-            .map_err(|e| format!("could not convert datetime: {e}"))?;
         return Ok(zdt.timestamp().to_string());
     }
 
@@ -339,5 +340,31 @@ mod tests {
     fn test_parse_datetime_day_with_time() {
         let result = parse_datetime("-06T14:30").unwrap();
         assert!(result.contains("T14:30"));
+    }
+
+    #[test]
+    fn test_trailing_number_without_unit_errors() {
+        assert!(parse_duration("1h30").is_err());
+    }
+
+    #[test]
+    fn test_parse_datetime_naive_uses_configured_tz() {
+        let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+        let result = parse_datetime_tz("2025-06-05T14:00", &tz).unwrap();
+        // 14:00 JST == 05:00 UTC
+        let ts = jiff::Timestamp::from_str(&result).unwrap();
+        let expected = jiff::civil::date(2025, 6, 5)
+            .at(14, 0, 0, 0)
+            .to_zoned(tz)
+            .unwrap()
+            .timestamp();
+        assert_eq!(ts, expected);
+    }
+
+    #[test]
+    fn test_parse_datetime_explicit_offset_preserved() {
+        let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+        let result = parse_datetime_tz("2025-06-05T14:00:00Z", &tz).unwrap();
+        assert!(result.starts_with("2025-06-05T14:00:00"));
     }
 }

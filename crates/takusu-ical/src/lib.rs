@@ -1,5 +1,4 @@
 //! # takusu-ical — iCalendar parser
-//! # takusu-ical — iCalendar parser
 //!
 //! iCalendar (.ics) 形式の文字列をパースし、タスク相当の構造体に変換する。
 //! HTTP依存なしのpure parser。

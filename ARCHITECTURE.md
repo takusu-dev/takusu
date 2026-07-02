@@ -328,9 +328,11 @@ let schedule = client.generate_schedule(&req).await?;
    │◀─── {"type":"result","text":"..."}─│
 ```
 
-- モード: offline（全文一度に）, 2pass（部分認識 + 確定）
+- モード: offline（全文一度に）のみ実装。`2pass` はプロトコル上受け付けるが
+  サーバー側では offline と同じ扱い（部分認識 `partial` は未実装）
 - モデル: SenseVoice-Small（日本語特化）
 - 言語: ja（日本語）, hotwords 指定可
+- クライアント側タイムアウト: 接続 10s / 結果待ち 120s
 
 ### 6.3 TTS (takusu-audio/src/tts.rs)
 
@@ -361,7 +363,9 @@ do_sync():
 6. マッピングを upsert/delete
 ```
 
-- リトライ: 3回、指数バックオフ（5s/10s/20s）
+- リトライなし（同期は schedule 操作のたびに実行されるため、失敗分は次回同期で回収）
+- `update_event()` 失敗時は `create_event()` にフォールバック
+- `delete_event()` 失敗時はマッピングを保持し、次回同期で再試行
 - `delete_event()` で 410 Gone は成功扱い
 
 ## 8. iCal インポート (takusu-ical)
@@ -376,8 +380,9 @@ parse_ical(input: &str) -> Result<Vec<IcalTask>>
 ```
 
 - LINE FOLDING 対応 (RFC 5545 §3.1)
-- DTSTART/DTEND: タイムゾーン付き、日付のみ、UTC、浮動時間、すべて対応
-- DURATION 代替対応
+- DTSTART/DTEND: UTC (`Z` サフィックス)、浮動時間、日付のみ (終日) に対応。
+  `TZID` パラメータは未対応（無視され、浮動時間として扱われる）
+- DURATION 未対応（DTEND 必須。DTEND のない VEVENT はスキップ）
 - UID 重複スキップ（インポート時）
 
 ## 9. 習慣生成 (takusu-habit)
@@ -511,5 +516,5 @@ AGENTS.md の "Hacks / Brittle Code" セクションを参照。
 特に注意すべきもの:
 - `point_to_iso` のハードコードされた 5分スロット (全クレートに分散)
 - `LIKE ? || '%'` による前方一致ID解決 (フルテーブルスキャン)
-- `COALESCE` によるフィールドクリア不能問題 (Worker側)
+- `COALESCE` によるフィールドクリア不能問題 (Worker側・SQLite側の両方)
 - `freeness()` の直感に反する命名 (高いほど余裕がある = 優先度が低い)

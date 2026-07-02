@@ -8,8 +8,10 @@ Protocol:
 
   Server -> Client:
     Text:   {"type": "result", "text": "transcribed text"}
-    Text:   {"type": "partial", "text": "..."}   (2pass mode only)
     Text:   {"type": "error", "message": "..."}
+
+Note: the "mode" field is accepted for protocol compatibility but only
+"offline" behaviour is implemented; "2pass" partial results are not sent.
 """
 
 from __future__ import annotations
