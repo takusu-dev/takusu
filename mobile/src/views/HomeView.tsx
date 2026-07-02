@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   BackHandler,
   FlatList,
   Pressable,
@@ -117,6 +118,9 @@ export function HomeView() {
   const [habits, setHabits] = useState<HabitRow[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [refreshing, setRefreshing] = useState(false);
+  // In-progress status label shown in the top-bar center while a
+  // scheduling / Google Calendar sync operation is running.
+  const [statusLabel, setStatusLabel] = useState<string | null>(null);
   const [view, setView] = useState<ViewType>('task');
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -485,6 +489,18 @@ export function HomeView() {
     await refresh();
   }
 
+  // Run an async operation while showing a status label in the top-bar
+  // center. The label is cleared when the operation finishes (success or
+  // failure).
+  async function withStatus<T>(label: string, fn: () => Promise<T>): Promise<T> {
+    setStatusLabel(label);
+    try {
+      return await fn();
+    } finally {
+      setStatusLabel(null);
+    }
+  }
+
   async function rescheduleSelected() {
     if (!client) return;
     const pinned = tasks
@@ -493,11 +509,13 @@ export function HomeView() {
     const until = new Date();
     until.setDate(until.getDate() + 7);
     try {
-      await client.reschedule({
-        range_start: new Date().toISOString(),
-        range_end: until.toISOString(),
-        pinned_task_ids: pinned,
-      });
+      await withStatus('reschedule中', () =>
+        client.reschedule({
+          range_start: new Date().toISOString(),
+          range_end: until.toISOString(),
+          pinned_task_ids: pinned,
+        }),
+      );
     } catch (e) {
       showError(e, '再スケジュールに失敗');
       return;
@@ -512,11 +530,13 @@ export function HomeView() {
     const until = new Date();
     until.setDate(until.getDate() + 7);
     try {
-      await client.reschedule({
-        range_start: new Date().toISOString(),
-        range_end: until.toISOString(),
-        pinned_task_ids: pinned,
-      });
+      await withStatus('reschedule中', () =>
+        client.reschedule({
+          range_start: new Date().toISOString(),
+          range_end: until.toISOString(),
+          pinned_task_ids: pinned,
+        }),
+      );
     } catch (e) {
       showError(e, '再スケジュールに失敗');
       return;
@@ -757,18 +777,29 @@ export function HomeView() {
             autoFocus
           />
         )}
-        <View style={{ flex: 1 }} />
+        <View style={styles.topBarCenter}>
+          {statusLabel && (
+            <View style={styles.statusPill}>
+              <ActivityIndicator size="small" color={BRAND_COLOR} />
+              <Text style={styles.statusText}>{statusLabel}</Text>
+            </View>
+          )}
+        </View>
         <Pressable
           style={({ pressed }) => [styles.topButton, pressed && styles.topButtonPressed]}
           onPress={async () => {
             if (!client) return;
             try {
-              await client.generateSchedule({
-                until: new Date(Date.now() + 7 * 86400000).toISOString(),
-              });
+              await withStatus('スケジュール生成中', () =>
+                client.generateSchedule({
+                  until: new Date(Date.now() + 7 * 86400000).toISOString(),
+                }),
+              );
               // Trigger Google Calendar sync (no-op if not configured)
-              await client.triggerSync().catch((e) =>
-                logError('Google Calendar同期', e),
+              await withStatus('GCal同期中', () =>
+                client.triggerSync().catch((e) =>
+                  logError('Google Calendar同期', e),
+                ),
               );
             } catch (e) {
               showError(e, 'スケジュール生成に失敗');
@@ -978,6 +1009,25 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  topBarCenter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: 'rgba(114,97,163,0.1)',
+  },
+  statusText: {
+    fontSize: 12,
+    color: BRAND_COLOR,
+    fontWeight: '500',
   },
   topButtonPressed: {
     backgroundColor: 'rgba(114,97,163,0.1)',
