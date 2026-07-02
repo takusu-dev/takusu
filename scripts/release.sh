@@ -105,17 +105,23 @@ perl -0pi -e \
 
 jj describe -m "release ${TAG}"
 
+# Move the main bookmark to the release commit so that main carries the
+# version bump. Without this, main would keep the pre-release version
+# forever (the bump commit would only live on the tag object).
+jj bookmark set main -r @ --allow-backwards
+
 # Tag the current working-copy commit (@) — jj tag set manages tags in jj.
 jj tag set "$TAG"
 
 echo ""
-echo "Created tag ${TAG} on @"
+echo "Created tag ${TAG} on @ (main bookmark moved to @)"
 
 if [ "$NO_PUSH" -eq 0 ]; then
-  echo "Pushing tag to origin..."
+  echo "Pushing main and tag to origin..."
+  jj git push --bookmark main
   git push origin "$TAG"
   echo "Pushed. The release workflow should start shortly:"
   echo "  https://github.com/satler-git/takusu/actions/workflows/release.yaml"
 else
-  echo "(--no-push: tag created locally only)"
+  echo "(--no-push: tag and bookmark created locally only)"
 fi
