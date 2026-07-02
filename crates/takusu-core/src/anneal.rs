@@ -132,6 +132,27 @@ fn compute_earliest(planner: &Planner, schedules: &[(Point, Point, usize)], task
     earliest
 }
 
+/// `[start, end)` と重なる睡眠窓があれば、その窓の終端スロットを返す。
+fn sleep_window_conflict(planner: &Planner, start: i64, end: i64) -> Option<i64> {
+    let sleep = &planner.sleep;
+    if !sleep.enabled {
+        return None;
+    }
+    let slots_per_day: i64 = (24 * 60) / planner.per as i64;
+    let mut day = sleep.day_start
+        + (start - sleep.day_start).div_euclid(slots_per_day) * slots_per_day
+        - slots_per_day;
+    while day + sleep.start < end {
+        let w_start = day + sleep.start;
+        let w_end = day + sleep.end;
+        if w_start < end && w_end > start {
+            return Some(w_end);
+        }
+        day += slots_per_day;
+    }
+    None
+}
+
 fn try_place(
     planner: &Planner,
     schedules: &[(Point, Point, usize)],
@@ -142,10 +163,28 @@ fn try_place(
     if dur <= 0 {
         return None;
     }
+    let awake_len = if planner.sleep.enabled {
+        (24 * 60) / planner.per as i64 - (planner.sleep.end - planner.sleep.start)
+    } else {
+        i64::MAX
+    };
+    let avoid_sleep = dur <= awake_len;
     let mut cursor = earliest;
+    let mut guard = 0u32;
 
     loop {
+        guard += 1;
+        if guard > 10_000 {
+            break;
+        }
         let candidate_end = Point(cursor.0 + dur);
+
+        if avoid_sleep
+            && let Some(w_end) = sleep_window_conflict(planner, cursor.0, candidate_end.0)
+        {
+            cursor = Point(w_end);
+            continue;
+        }
 
         let overlapping: Vec<_> = schedules
             .iter()
@@ -233,6 +272,30 @@ fn build_initial(planner: &Planner) -> Plan {
     Plan { schedules }
 }
 
+/// 改善なしの温度レベルがこの回数続いたら current を best に戻す (intensification)。
+const STAGNATION_LIMIT: u32 = 3;
+
+/// 長距離 shift を選ぶ確率の分母 (1/5 = 20%)。
+const LONG_SHIFT_ONE_IN: u32 = 5;
+
+/// プラン全体の時間スパン。長距離 shift の移動幅に使う。
+fn plan_span(plan: &Plan) -> i64 {
+    let min_s = plan.schedules.iter().map(|(s, _, _)| s.0).min();
+    let max_e = plan.schedules.iter().map(|(_, e, _)| e.0).max();
+    match (min_s, max_e) {
+        (Some(a), Some(b)) => (b - a).max(1),
+        _ => 1,
+    }
+}
+
+fn shift_range(current: &Plan, dur: i64, rng: &mut impl Rng) -> i64 {
+    if rng.random_range(0..LONG_SHIFT_ONE_IN) == 0 {
+        plan_span(current)
+    } else {
+        (dur / 2).max(1)
+    }
+}
+
 pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
     let task_count = planner.tasks.len().max(1);
 
@@ -247,7 +310,7 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
     let t0 = (total_avg as f64 * 0.1).max(1.0);
     let alpha = 0.93;
     let t_min = t0 * 1e-4;
-    let iter_per_temp = task_count * 20;
+    let iter_per_temp = task_count * 30;
 
     let mut tabu = TabuList::new(task_count * 2);
     let mut temperature = t0;
@@ -255,7 +318,10 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
     let mut eval_current = evaluate(planner, &current, temperature, t0);
     let mut eval_best = eval_current;
 
+    let mut stagnant_levels = 0u32;
+
     while temperature > t_min {
+        let mut improved = false;
         for _ in 0..iter_per_temp {
             let neighbor = generate_neighbor(planner, &current, rng);
             let eval_neighbor = evaluate(planner, &neighbor, temperature, t0);
@@ -274,7 +340,18 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
                 if eval_current > eval_best {
                     best = current.clone();
                     eval_best = eval_current;
+                    improved = true;
                 }
+            }
+        }
+
+        if improved {
+            stagnant_levels = 0;
+        } else {
+            stagnant_levels += 1;
+            if stagnant_levels >= STAGNATION_LIMIT {
+                current = best.clone();
+                stagnant_levels = 0;
             }
         }
 
@@ -283,7 +360,7 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
         eval_best = evaluate(planner, &best, temperature, t0);
     }
 
-    best
+    repair_polish(planner, best, None)
 }
 
 pub fn sa_lns_partial(
@@ -316,7 +393,7 @@ pub fn sa_lns_partial(
     let t0 = (total_avg as f64 * 0.1).max(1.0);
     let alpha = 0.93;
     let t_min = t0 * 1e-4;
-    let iter_per_temp = unpinned_count.max(1) * 20;
+    let iter_per_temp = unpinned_count.max(1) * 30;
 
     let mut tabu = TabuList::new(task_count * 2);
     let mut temperature = t0;
@@ -324,7 +401,10 @@ pub fn sa_lns_partial(
     let mut eval_current = evaluate(planner, &current, temperature, t0);
     let mut eval_best = eval_current;
 
+    let mut stagnant_levels = 0u32;
+
     while temperature > t_min {
+        let mut improved = false;
         for _ in 0..iter_per_temp {
             let neighbor = generate_neighbor_partial(planner, &current, rng, &pinned_ids);
             let eval_neighbor = evaluate(planner, &neighbor, temperature, t0);
@@ -343,7 +423,18 @@ pub fn sa_lns_partial(
                 if eval_current > eval_best {
                     best = current.clone();
                     eval_best = eval_current;
+                    improved = true;
                 }
+            }
+        }
+
+        if improved {
+            stagnant_levels = 0;
+        } else {
+            stagnant_levels += 1;
+            if stagnant_levels >= STAGNATION_LIMIT {
+                current = best.clone();
+                stagnant_levels = 0;
             }
         }
 
@@ -352,7 +443,83 @@ pub fn sa_lns_partial(
         eval_best = evaluate(planner, &best, temperature, t0);
     }
 
-    best
+    repair_polish(planner, best, Some(&pinned_ids))
+}
+
+/// SA 後の仕上げ: 依存違反中のタスクを取り除いて貪欲に再配置し、
+/// T=0 の評価が改善する場合のみ採用する。
+fn repair_polish(planner: &Planner, best: Plan, pinned_ids: Option<&FxHashSet<usize>>) -> Plan {
+    let mut index: Vec<Option<(Point, Point)>> = vec![None; planner.tasks.len()];
+    for (s, e, id) in &best.schedules {
+        if *id < index.len() {
+            index[*id] = Some((*s, *e));
+        }
+    }
+
+    let mut violators: FxHashSet<usize> = FxHashSet::default();
+    for task in &planner.tasks {
+        if let Some(p) = pinned_ids
+            && p.contains(&task.id)
+        {
+            continue;
+        }
+        let Some((start, _)) = index[task.id] else {
+            continue;
+        };
+        for dep_id in &task.depends {
+            if let Some(Some((_, dep_end))) = index.get(*dep_id)
+                && *dep_end > start
+            {
+                violators.insert(task.id);
+            }
+        }
+    }
+
+    if violators.is_empty() {
+        return best;
+    }
+
+    // 違反タスクを後ろへ動かすとその依存元も違反し得るため、推移的な依存元も再配置対象にする。
+    loop {
+        let mut grew = false;
+        for task in &planner.tasks {
+            if violators.contains(&task.id) {
+                continue;
+            }
+            if let Some(p) = pinned_ids
+                && p.contains(&task.id)
+            {
+                continue;
+            }
+            if task.depends.iter().any(|d| violators.contains(d)) {
+                violators.insert(task.id);
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+
+    let mut remaining = Vec::new();
+    let mut destroyed: Vec<usize> = Vec::new();
+    for sched in &best.schedules {
+        if violators.contains(&sched.2) {
+            destroyed.push(sched.2);
+        } else {
+            remaining.push(*sched);
+        }
+    }
+
+    let rebuilt = Plan {
+        schedules: greedy_rebuild(planner, &remaining, &destroyed),
+    };
+
+    if evaluate(planner, &rebuilt, 0.0, 1.0) > evaluate(planner, &best, 0.0, 1.0) {
+        rebuilt
+    } else {
+        best
+    }
 }
 
 fn build_initial_partial(planner: &Planner, pinned: &[(Point, Point, usize)]) -> Plan {
@@ -424,12 +591,12 @@ fn generate_neighbor_partial(
     let r = rng.random_range(0..100u32) as i32;
 
     let result = match r {
-        0..=24 => {
+        0..=19 => {
             let idx = rng.random_range(0..unpinned_positions.len());
             let pos = unpinned_positions[idx];
             neighbor_shift_at(planner, current, pos, rng)
         }
-        25..=49 => {
+        20..=39 => {
             if unpinned.len() < 2 {
                 return current.clone();
             }
@@ -442,17 +609,18 @@ fn generate_neighbor_partial(
             let b_pos = unpinned_positions[b_idx];
             neighbor_swap_at(current, a_pos, b_pos)
         }
-        50..=69 => {
+        40..=54 => {
             let idx = rng.random_range(0..unpinned_positions.len());
             let pos = unpinned_positions[idx];
             neighbor_duration_at(current, pos, rng)
         }
-        70..=84 => {
+        55..=69 => {
             if unpinned.len() < 2 {
                 return current.clone();
             }
             neighbor_reorder_partial(current, &unpinned_positions, rng)
         }
+        70..=84 => neighbor_repair_depend(planner, current, rng, Some(pinned_ids)),
         _ => neighbor_lns_partial(planner, current, rng, pinned_ids),
     };
 
@@ -467,7 +635,7 @@ fn neighbor_shift_at(
 ) -> Option<Plan> {
     let (start, end, task_id) = current.schedules[idx];
     let dur = end.0 - start.0;
-    let range = (dur / 2).max(1);
+    let range = shift_range(current, dur, rng);
     let k = rand_range(rng, -range, range + 1);
     let new_start_0 = (start.0 + k).max(planner.now.0);
     let mut new_scheds = current.schedules.to_vec();
@@ -607,10 +775,11 @@ fn generate_neighbor(planner: &Planner, current: &Plan, rng: &mut impl Rng) -> P
     let r = rng.random_range(0..100u32) as i32;
 
     let result = match r {
-        0..=24 => neighbor_shift(planner, current, rng),
-        25..=49 => neighbor_swap(planner, current, rng),
-        50..=69 => neighbor_duration(planner, current, rng),
-        70..=84 => neighbor_reorder(planner, current, rng),
+        0..=19 => neighbor_shift(planner, current, rng),
+        20..=39 => neighbor_swap(planner, current, rng),
+        40..=54 => neighbor_duration(planner, current, rng),
+        55..=69 => neighbor_reorder(planner, current, rng),
+        70..=84 => neighbor_repair_depend(planner, current, rng, None),
         _ => neighbor_lns(planner, current, rng),
     };
 
@@ -625,7 +794,7 @@ fn neighbor_shift(planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Opti
     let idx = rng.random_range(0..schedules.len());
     let (start, end, task_id) = schedules[idx];
     let dur = end.0 - start.0;
-    let range = (dur / 2).max(1);
+    let range = shift_range(current, dur, rng);
     let k = rand_range(rng, -range, range + 1);
 
     let new_start_0 = (start.0 + k).max(planner.now.0);
@@ -715,6 +884,61 @@ fn neighbor_reorder(_planner: &Planner, current: &Plan, rng: &mut impl Rng) -> O
     })
 }
 
+/// 依存違反を一つ選んで修復する: 依存先の終了直後に依存元タスクを移動。
+/// `pinned_ids` が Some の場合、pinned タスクは移動しない。
+fn neighbor_repair_depend(
+    planner: &Planner,
+    current: &Plan,
+    rng: &mut impl Rng,
+    pinned_ids: Option<&FxHashSet<usize>>,
+) -> Option<Plan> {
+    let schedules = &current.schedules;
+    let mut index: Vec<Option<(Point, Point)>> = vec![None; planner.tasks.len()];
+    for (s, e, id) in schedules {
+        if *id < index.len() {
+            index[*id] = Some((*s, *e));
+        }
+    }
+
+    let mut violations: Vec<(usize, Point)> = Vec::new();
+    for task in &planner.tasks {
+        if let Some(p) = pinned_ids
+            && p.contains(&task.id)
+        {
+            continue;
+        }
+        let Some((start, _)) = index[task.id] else {
+            continue;
+        };
+        let mut latest_dep_end: Option<Point> = None;
+        for dep_id in &task.depends {
+            if let Some(Some((_, dep_end))) = index.get(*dep_id)
+                && *dep_end > start
+            {
+                latest_dep_end = Some(latest_dep_end.map_or(*dep_end, |m| m.max(*dep_end)));
+            }
+        }
+        if let Some(dep_end) = latest_dep_end {
+            violations.push((task.id, dep_end));
+        }
+    }
+
+    if violations.is_empty() {
+        return None;
+    }
+
+    let (task_id, new_start) = violations[rng.random_range(0..violations.len())];
+    let pos = schedules.iter().position(|(_, _, id)| *id == task_id)?;
+    let (start, end, _) = schedules[pos];
+    let dur = end.0 - start.0;
+
+    let mut new_scheds = schedules.to_vec();
+    new_scheds[pos] = (new_start, Point(new_start.0 + dur), task_id);
+    Some(Plan {
+        schedules: new_scheds,
+    })
+}
+
 fn neighbor_lns(planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Option<Plan> {
     let schedules = &current.schedules;
     if schedules.is_empty() {
@@ -753,28 +977,60 @@ fn greedy_rebuild(
 ) -> Vec<(Point, Point, usize)> {
     let mut scheds = existing.to_vec();
 
-    let mut to_place: Vec<usize> = task_ids.to_vec();
-    to_place.sort_by(|a, b| {
+    let mut pending: Vec<usize> = task_ids.to_vec();
+    pending.sort_by(|a, b| {
         planner
             .freeness(*a)
             .partial_cmp(&planner.freeness(*b))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    for task_id in to_place {
-        let task = &planner.tasks[task_id];
-        let dur = task.cost_estimate.avg as i64;
-        if dur == 0 {
-            continue;
+    let destroyed: FxHashSet<usize> = task_ids.iter().copied().collect();
+    let mut placed: FxHashSet<usize> = FxHashSet::default();
+
+    // 依存先が先に配置されるよう、配置可能なタスクから複数パスで配置する。
+    while !pending.is_empty() {
+        let mut progressed = false;
+        let mut next_pending = Vec::new();
+
+        for task_id in pending {
+            let task = &planner.tasks[task_id];
+            let deps_ready = task
+                .depends
+                .iter()
+                .all(|d| !destroyed.contains(d) || placed.contains(d));
+            if !deps_ready {
+                next_pending.push(task_id);
+                continue;
+            }
+
+            place_one(planner, &mut scheds, task_id);
+            placed.insert(task_id);
+            progressed = true;
         }
 
-        let earliest = compute_earliest(planner, &scheds, task);
-        if let Some((start, end)) = try_place(planner, &scheds, task, earliest, dur) {
-            scheds.push((start, end, task_id));
+        if !progressed {
+            for task_id in next_pending {
+                place_one(planner, &mut scheds, task_id);
+            }
+            break;
         }
+        pending = next_pending;
     }
 
     scheds
+}
+
+fn place_one(planner: &Planner, scheds: &mut Vec<(Point, Point, usize)>, task_id: usize) {
+    let task = &planner.tasks[task_id];
+    let dur = task.cost_estimate.avg as i64;
+    if dur == 0 {
+        return;
+    }
+    let earliest = compute_earliest(planner, scheds, task);
+    if let Some((start, end)) = try_place(planner, scheds, task, earliest, dur) {
+        scheds.push((start, end, task_id));
+    }
 }
 
 #[cfg(test)]
