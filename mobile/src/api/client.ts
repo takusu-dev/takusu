@@ -76,12 +76,16 @@ export class TakusuClient {
 
   // ── Task ──
   async listTasks(query?: TaskQuery): Promise<TaskRow[]> {
-    const params = new URLSearchParams();
-    if (query?.status) params.set('status', query.status);
-    if (query?.from) params.set('from', query.from);
-    if (query?.until) params.set('until', query.until);
-    if (query?.habit_id) params.set('habit_id', query.habit_id);
-    const qs = params.toString();
+    // Build the query string manually: Hermes does not provide a working
+    // URLSearchParams (its methods throw or are missing at runtime).
+    const params: string[] = [];
+    if (query?.status)
+      params.push(`status=${encodeURIComponent(query.status)}`);
+    if (query?.from) params.push(`from=${encodeURIComponent(query.from)}`);
+    if (query?.until) params.push(`until=${encodeURIComponent(query.until)}`);
+    if (query?.habit_id)
+      params.push(`habit_id=${encodeURIComponent(query.habit_id)}`);
+    const qs = params.join('&');
     return this.request('GET', `/api/tasks${qs ? `?${qs}` : ''}`);
   }
 
