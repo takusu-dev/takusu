@@ -197,7 +197,7 @@ The default loop for any task is:
 | `clap` | 4 (derive,env) | takusu-cli | CLI argument parsing |
 | `comfy-table` | 7 | takusu-cli | Rich table display |
 | `cpal` | 0.18.1 | takusu-audio | Audio input |
-| `tokio-tungstenite` | 0.29 | takusu-audio | WebSocket client (FunASR/Moonshine) |
+| `tokio-tungstenite` | 0.29 | takusu-audio | WebSocket client (FunASR) |
 | `futures-util` | 0.3 | takusu-audio | Async stream utilities |
 
 ## Core Planner Design (takusu-core)
@@ -322,7 +322,8 @@ No external HTTP server needed. Run with `cargo nextest run -p takusu-local`.
 - **Google Calendar sync**: schedule generate/reschedule/move/clear triggers sync
   inline (no fire-and-forget). `google-cal` crate does diff-based sync.
 - **Generate uses `now` as start**: `POST /api/schedule/generate` no longer accepts `from`;
-  the start time is always the current time. Only `until` is required.
+  the start time is always the current time. `until` is still required in the body for
+  backward compatibility but is currently unused — the horizon is derived from task deadlines.
 - **Task status tracking**: tasks have a `status` column with 5 states:
   `pending` (not yet scheduled), `scheduled` (in current schedule), `in_progress` (being worked on),
   `completed` (done), `skipped` (explicitly skipped). Status is changeable via `task status <id> <value>`
@@ -343,8 +344,9 @@ No external HTTP server needed. Run with `cargo nextest run -p takusu-local`.
   LLM fills in missing information (estimates, etc.) using memory of past similar tasks.
 - **Task model**: Includes start time, deadline, cost estimate (normal distribution),
   dependencies, parallelizability, and `abandonability` (deadline flexibility).
-- **No existing README** — the design document (`main.typ`) and this file serve
-  as the primary project documentation.
+- **Documentation**: `README.md` (overview), `ARCHITECTURE.md` (structure),
+  the design document (`main.typ`), and this file serve as the primary
+  project documentation.
 
 ## takusu-cli
 

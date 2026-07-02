@@ -8,9 +8,9 @@
 
 use serde::de::DeserializeOwned;
 use wasm_bindgen::JsCast;
+use worker::D1PreparedStatement;
 use worker::wasm_bindgen_futures::JsFuture;
 use worker::worker_sys::types::D1Result as D1ResultSys;
-use worker::D1PreparedStatement;
 
 use crate::error::WorkerError;
 
