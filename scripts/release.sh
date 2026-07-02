@@ -8,6 +8,7 @@
 #
 # Files updated:
 #   Cargo.toml              (workspace.package.version)
+#   Cargo.lock              (workspace member version entries, via cargo check)
 #   mobile/app.json         (expo.version)
 #   mobile/package.json     (version)
 #
@@ -67,6 +68,7 @@ fi
 # ── Show what will change (dry run, no edits yet) ───────────────────────────
 echo "Files that will be updated to ${VERSION}:"
 echo "  Cargo.toml              (workspace.package.version)"
+echo "  Cargo.lock              (workspace member version entries)"
 echo "  mobile/app.json         (expo.version)"
 echo "  mobile/package.json     (version)"
 echo ""
@@ -102,6 +104,13 @@ perl -0pi -e \
 perl -0pi -e \
   's/("version":\s*")[^"]*(")/${1}'"${VERSION}"'${2}/' \
   mobile/package.json
+
+# Regenerate Cargo.lock so workspace member version entries match the
+# bumped workspace.package.version. The Nix CI build uses --locked, so a
+# stale Cargo.lock fails the release. `cargo check` only updates the lock
+# minimally (just the changed workspace member versions) without bumping
+# transitive dependencies.
+cargo check --workspace --quiet
 
 jj describe -m "release ${TAG}"
 
