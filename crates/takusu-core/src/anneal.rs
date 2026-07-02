@@ -1030,6 +1030,15 @@ fn place_one(planner: &Planner, scheds: &mut Vec<(Point, Point, usize)>, task_id
     let earliest = compute_earliest(planner, scheds, task);
     if let Some((start, end)) = try_place(planner, scheds, task, earliest, dur) {
         scheds.push((start, end, task_id));
+    } else {
+        // build_initial と同様、配置できない場合は末尾に fallback してタスクを落とさない。
+        let last_end = scheds
+            .iter()
+            .map(|(_, e, _)| e.0)
+            .max()
+            .unwrap_or(planner.now.0);
+        let fallback_start = Point(last_end).max(planner.now).max(earliest);
+        scheds.push((fallback_start, Point(fallback_start.0 + dur), task_id));
     }
 }
 
