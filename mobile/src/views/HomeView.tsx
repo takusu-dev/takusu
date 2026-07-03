@@ -794,9 +794,7 @@ export function HomeView() {
             haptic.medium();
             try {
               await withStatus('スケジュール生成中', () =>
-                client.generateSchedule({
-                  until: new Date(Date.now() + 7 * 86400000).toISOString(),
-                }),
+                client.generateSchedule({}),
               );
               // Trigger Google Calendar sync (no-op if not configured)
               await withStatus('GCal同期中', () =>

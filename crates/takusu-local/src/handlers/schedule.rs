@@ -11,8 +11,6 @@ use crate::state::AppState;
 #[derive(Debug, Deserialize)]
 pub struct GenerateSchedule {
     pub task_ids: Option<Vec<String>>,
-    #[allow(dead_code)]
-    pub until: String,
     #[serde(default = "default_sleep")]
     pub sleep: String,
 }

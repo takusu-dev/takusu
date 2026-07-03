@@ -321,9 +321,9 @@ No external HTTP server needed. Run with `cargo nextest run -p takusu-local`.
 - **Token hashing**: tokens stored as SHA-256, full token only returned on creation
 - **Google Calendar sync**: schedule generate/reschedule/move/clear triggers sync
   inline (no fire-and-forget). `google-cal` crate does diff-based sync.
-- **Generate uses `now` as start**: `POST /api/schedule/generate` no longer accepts `from`;
-  the start time is always the current time. `until` is still required in the body for
-  backward compatibility but is currently unused — the horizon is derived from task deadlines.
+- **Generate uses `now` as start**: `POST /api/schedule/generate` no longer accepts `from`
+  or `until`; the start time is always the current time and the horizon is derived from
+  task deadlines. The planner schedules all eligible tasks regardless of an upper bound.
 - **Task status tracking**: tasks have a `status` column with 5 states:
   `pending` (not yet scheduled), `scheduled` (in current schedule), `in_progress` (being worked on),
   `completed` (done), `skipped` (explicitly skipped). Status is changeable via `task status <id> <value>`

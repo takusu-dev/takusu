@@ -430,7 +430,6 @@ async fn schedule_generate_and_get() {
         Method::POST,
         "/api/schedule/generate",
         json!({
-            "until": "2026-06-05T23:59:59+09:00",
             "sleep": "disabled"
         }),
     );
@@ -620,7 +619,6 @@ async fn generate_excludes_in_progress() {
         Method::POST,
         "/api/schedule/generate",
         json!({
-            "until": "2026-06-05T23:59:59+09:00",
             "sleep": "disabled"
         }),
     );
@@ -663,7 +661,6 @@ async fn generate_excludes_completed_and_skipped() {
         Method::POST,
         "/api/schedule/generate",
         json!({
-            "until": "2026-06-05T23:59:59+09:00",
             "sleep": "disabled"
         }),
     );
@@ -774,7 +771,6 @@ async fn schedule_generate_with_custom_sleep() {
         Method::POST,
         "/api/schedule/generate",
         json!({
-            "until": "2026-06-05T23:59:59+09:00",
             "sleep": "recommended"
         }),
     );
@@ -1018,7 +1014,6 @@ async fn generate_schedule_excludes_completed_in_progress_skipped() {
         Method::POST,
         "/api/schedule/generate",
         json!({
-            "until": "2026-06-10T23:59:59Z",
             "sleep": "disabled"
         }),
     );
@@ -1065,7 +1060,6 @@ async fn habit_sync_marks_generated_task_unedited() {
         Method::POST,
         "/api/schedule/generate",
         json!({
-            "until": "2030-01-01T23:59:59Z",
             "sleep": "disabled"
         }),
     );
@@ -1111,7 +1105,6 @@ async fn task_edit_marks_habit_task_user_edited() {
         Method::POST,
         "/api/schedule/generate",
         json!({
-            "until": "2030-01-01T23:59:59Z",
             "sleep": "disabled"
         }),
     );
@@ -1165,7 +1158,6 @@ async fn task_status_update_keeps_user_edited_false() {
         Method::POST,
         "/api/schedule/generate",
         json!({
-            "until": "2030-01-01T23:59:59Z",
             "sleep": "disabled"
         }),
     );
@@ -1218,7 +1210,6 @@ async fn habit_change_respects_user_edited_flag() {
         Method::POST,
         "/api/schedule/generate",
         json!({
-            "until": "2030-01-01T23:59:59Z",
             "sleep": "disabled"
         }),
     );
@@ -1272,7 +1263,6 @@ async fn habit_change_respects_user_edited_flag() {
         Method::POST,
         "/api/schedule/generate",
         json!({
-            "until": "2030-01-01T23:59:59Z",
             "sleep": "disabled"
         }),
     );
@@ -1320,7 +1310,6 @@ async fn revert_to_habit_clears_user_edited_flag() {
         Method::POST,
         "/api/schedule/generate",
         json!({
-            "until": "2030-01-01T23:59:59Z",
             "sleep": "disabled"
         }),
     );
@@ -1375,7 +1364,6 @@ async fn revert_to_habit_clears_user_edited_flag() {
         Method::POST,
         "/api/schedule/generate",
         json!({
-            "until": "2030-01-01T23:59:59Z",
             "sleep": "disabled"
         }),
     );
@@ -1434,7 +1422,6 @@ async fn stale_user_edited_task_is_not_deleted() {
         Method::POST,
         "/api/schedule/generate",
         json!({
-            "until": "2030-01-01T23:59:59Z",
             "sleep": "disabled"
         }),
     );

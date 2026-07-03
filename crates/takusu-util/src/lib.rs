@@ -159,67 +159,6 @@ pub fn parse_datetime_tz(s: &str, tz: &jiff::tz::TimeZone) -> Result<String, Str
     ))
 }
 
-pub fn parse_range(s: &str) -> Result<(String, String), String> {
-    parse_range_tz(s, &jiff::tz::TimeZone::UTC)
-}
-
-pub fn parse_range_tz(s: &str, tz: &jiff::tz::TimeZone) -> Result<(String, String), String> {
-    let s = s.trim();
-    if s.is_empty() {
-        return Err("empty range".to_string());
-    }
-
-    if let Some(idx) = s.find(" to ") {
-        let from_str = s[..idx].trim();
-        let until_str = s[idx + 4..].trim();
-        let from = parse_datetime_tz(from_str, tz)?;
-        let until = parse_datetime_tz(until_str, tz)?;
-        return Ok((from, until));
-    }
-
-    if let Ok(secs) = parse_range_duration(s) {
-        let now = jiff::Timestamp::now();
-        let until_secs = now.as_second().saturating_add(secs);
-        let until = jiff::Timestamp::from_second(until_secs).unwrap_or(now);
-        return Ok((now.to_string(), until.to_string()));
-    }
-
-    let until = parse_datetime_tz(s, tz)?;
-    let now = jiff::Timestamp::now().to_string();
-    Ok((now, until))
-}
-
-fn parse_range_duration(s: &str) -> Result<i64, String> {
-    let s = s.trim().to_lowercase();
-
-    let (num_str, unit) = if let Some(pos) = s.find(|c: char| !c.is_ascii_digit() && c != '.') {
-        let ns = &s[..pos];
-        if ns.is_empty() {
-            return Err(format!("could not parse duration: {s}"));
-        }
-        (ns, s[pos..].trim())
-    } else {
-        return Err(format!("could not parse duration: {s}"));
-    };
-
-    let num: f64 = num_str
-        .parse()
-        .map_err(|_| format!("invalid number in duration: {num_str}"))?;
-
-    let secs = match unit {
-        "m" | "min" | "mins" | "minute" | "minutes" => num * 60.0,
-        "h" | "hr" | "hrs" | "hour" | "hours" => num * 3600.0,
-        "d" | "day" | "days" => num * 86400.0,
-        "w" | "wk" | "wks" | "week" | "weeks" => num * 604800.0,
-        _ => return Err(format!("unknown duration unit: {unit} (use m, h, d, w)")),
-    };
-
-    if secs < 0.0 {
-        return Err("negative duration".to_string());
-    }
-    Ok(secs as i64)
-}
-
 fn try_build_datetime(
     year: i16,
     month: i8,
