@@ -224,9 +224,9 @@ pub trait Storage: Send + Sync {
 ### 4.1 スケジュール生成（完全版）
 
 ```
-CLI: takusu schedule generate --until 2026-06-23
+CLI: takusu schedule generate
                   │
-                  ▼ POST /api/schedule/generate { until: "..." }
+                  ▼ POST /api/schedule/generate { sleep: "..." }
          ┌────── takusu-local ──────┐
          │                          │
          │ 1. parse_sleep()         │

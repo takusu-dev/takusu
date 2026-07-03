@@ -71,14 +71,13 @@ fn update_task_default_is_empty() {
 fn generate_schedule_serialization() {
     let gs = GenerateSchedule {
         task_ids: None,
-        until: "2025-06-05T23:59:59Z".to_string(),
         sleep: "recommended".to_string(),
     };
 
     let json = serde_json::to_value(&gs).unwrap();
-    assert_eq!(json["until"], "2025-06-05T23:59:59Z");
     assert_eq!(json["sleep"], "recommended");
     assert!(!json.as_object().unwrap().contains_key("task_ids"));
+    assert!(!json.as_object().unwrap().contains_key("until"));
 }
 
 #[test]

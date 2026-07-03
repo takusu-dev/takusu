@@ -119,7 +119,6 @@ export interface ScheduleRow {
 
 export interface GenerateSchedule {
   task_ids?: string[];
-  until: string;
   sleep?: string;
 }
 

@@ -18,7 +18,7 @@ use takusu_local_lib::{
 use takusu_storage::{
     CreateHabit, CreateTask, ScheduleEntry, TaskQuery, UpdateHabit, UpdateSettings,
 };
-use takusu_util::{generate_root_token, parse_datetime_tz, parse_duration, parse_range_tz};
+use takusu_util::{generate_root_token, parse_datetime_tz, parse_duration};
 
 fn prompt(label: &str) -> String {
     print!("{label}: ");
@@ -369,10 +369,6 @@ enum ScheduleCommands {
 
     /// Generate a new schedule
     Generate {
-        #[arg(long, help = "Time range (e.g. '1w', '3d', 'now to 2025-06-12')")]
-        range: Option<String>,
-        #[arg(long, help = "End time (e.g. 2025-06-06, 2025-06-06T06:00Z, now)")]
-        until: Option<String>,
         #[arg(long)]
         task_ids: Option<Vec<String>>,
         #[arg(long, default_value = "recommended")]
@@ -940,27 +936,7 @@ async fn run_schedule(
                 DisplayMode::Simple => display_simple::display_schedule(&entries, &tasks, tz),
             }
         }
-        ScheduleCommands::Generate {
-            range,
-            until,
-            task_ids,
-            sleep,
-        } => {
-            let _until = if let Some(range) = range {
-                let (_from, u) = parse_range_tz(&range, tz).map_err(AppError::BadRequest)?;
-                u
-            } else {
-                match until {
-                    Some(s) => parse_dt(&s, tz)?,
-                    None => {
-                        let now = jiff::Timestamp::now();
-                        let until_secs = now.as_second().saturating_add(7 * 86400);
-                        jiff::Timestamp::from_second(until_secs)
-                            .unwrap_or(now)
-                            .to_string()
-                    }
-                }
-            };
+        ScheduleCommands::Generate { task_ids, sleep } => {
             let body = takusu_local_lib::app::GenerateScheduleInput { task_ids, sleep };
             let schedule = app.generate_schedule(&body).await?;
             let entries: Vec<ScheduleEntry> =

@@ -676,7 +676,6 @@ pub struct ScheduleEntry {
 pub struct GenerateSchedule {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_ids: Option<Vec<String>>,
-    pub until: String,
     #[serde(default = "default_sleep")]
     pub sleep: String,
 }
