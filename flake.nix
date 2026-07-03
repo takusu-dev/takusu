@@ -289,6 +289,19 @@
                 ];
               };
               context7.enable = true;
+              # GitHub MCP server (stdio). The passwordCommand wraps the
+              # binary so GITHUB_PERSONAL_ACCESS_TOKEN is fetched at runtime
+              # via `gh auth token` — no secret lands in the Nix store.
+              github = {
+                enable = true;
+                passwordCommand = {
+                  GITHUB_PERSONAL_ACCESS_TOKEN = [
+                    "${lib.getExe pkgs.gh}"
+                    "auth"
+                    "token"
+                  ];
+                };
+              };
             };
           };
 
