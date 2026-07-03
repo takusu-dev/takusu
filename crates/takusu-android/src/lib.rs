@@ -149,6 +149,8 @@ impl TakusuServer {
             TakusuError::Server { detail }
         })? = actual_port;
 
+        tracing::info!("takusu-local listening on 127.0.0.1:{actual_port} (workers storage)");
+
         runtime.spawn(async move {
             if let Err(e) = axum::serve(listener, app_router).await {
                 tracing::error!("server error: {e}");
