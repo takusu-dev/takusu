@@ -164,7 +164,8 @@ impl Storage for SqliteStorage {
         let resolved_depends = resolve_depends(&self.pool, body.depends.as_deref()).await?;
         let depends_json =
             serde_json::to_string(&resolved_depends).unwrap_or_else(|_| "[]".to_string());
-        let sigma = body.sigma_minutes.unwrap_or(0);
+        // sigma 未指定時は avg の 20% をデフォルトにする (確定タスクでない限りある程度バッファを見込む)
+        let sigma = body.sigma_minutes.unwrap_or((body.avg_minutes / 5).max(1));
         let parallelizable = body.parallelizable.unwrap_or(false);
         let allows_parallel = body.allows_parallel.unwrap_or(false);
         let abandonability = body.abandonability.unwrap_or(0.5);
@@ -259,7 +260,7 @@ impl Storage for SqliteStorage {
         let full = resolve_task_id(&self.pool, id).await?;
         let resolved_depends = resolve_depends(&self.pool, body.depends.as_deref()).await?;
         let depends_json = serde_json::to_string(&resolved_depends).unwrap_or_else(|_| "[]".into());
-        let sigma = body.sigma_minutes.unwrap_or(0);
+        let sigma = body.sigma_minutes.unwrap_or((body.avg_minutes / 5).max(1));
         let parallelizable = body.parallelizable.unwrap_or(false);
         let allows_parallel = body.allows_parallel.unwrap_or(false);
         let abandonability = body.abandonability.unwrap_or(0.5);
@@ -318,7 +319,7 @@ impl Storage for SqliteStorage {
 
     async fn create_habit(&self, body: &CreateHabit) -> StorageResult<HabitRow> {
         let id = uuid::Uuid::now_v7().to_string();
-        let sigma = body.sigma_minutes.unwrap_or(0);
+        let sigma = body.sigma_minutes.unwrap_or((body.avg_minutes / 5).max(1));
         let parallelizable = body.parallelizable.unwrap_or(false);
         let allows_parallel = body.allows_parallel.unwrap_or(false);
         let abandonability = body.abandonability.unwrap_or(0.5);
@@ -376,7 +377,7 @@ impl Storage for SqliteStorage {
     }
 
     async fn replace_habit(&self, id: &str, body: &CreateHabit) -> StorageResult<HabitRow> {
-        let sigma = body.sigma_minutes.unwrap_or(0);
+        let sigma = body.sigma_minutes.unwrap_or((body.avg_minutes / 5).max(1));
         let parallelizable = body.parallelizable.unwrap_or(false);
         let allows_parallel = body.allows_parallel.unwrap_or(false);
         let abandonability = body.abandonability.unwrap_or(0.5);

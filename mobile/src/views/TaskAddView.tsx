@@ -84,14 +84,18 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
     if (!client || !title || !endAt || saving) return;
     haptic.medium();
     setSaving(true);
+    const avg = parseInt(avgMinutes, 10) || 60;
+    const sigmaRaw = parseInt(sigmaMinutes, 10);
+    // sigma=0/未入力の時は未送信にしてサーバーの auto (avg/5) に任せる
+    const sigma = sigmaRaw > 0 ? sigmaRaw : undefined;
     try {
       const task = await client.createTask({
         title,
         description: description || undefined,
         start_at: startAt ? toISO(startAt) : undefined,
         end_at: toISO(endAt),
-        avg_minutes: parseInt(avgMinutes, 10) || 60,
-        sigma_minutes: parseInt(sigmaMinutes, 10) || 0,
+        avg_minutes: avg,
+        sigma_minutes: sigma,
         depends: selectedDeps.length > 0 ? selectedDeps : undefined,
         abandonability,
       });
@@ -106,8 +110,8 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
             description: description || undefined,
             start_at: startAt ? toISO(startAt) : undefined,
             end_at: toISO(endAt),
-            avg_minutes: parseInt(avgMinutes, 10) || 60,
-            sigma_minutes: parseInt(sigmaMinutes, 10) || 0,
+            avg_minutes: avg,
+            sigma_minutes: sigma,
             depends: selectedDeps.length > 0 ? selectedDeps : undefined,
             abandonability,
           });
@@ -206,7 +210,14 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
               value={sigmaMinutes}
               onChangeText={setSigmaMinutes}
               keyboardType="numeric"
+              placeholder="auto"
+              placeholderTextColor={colors.grayLight}
             />
+            {(!sigmaMinutes || sigmaMinutes === '0') && (
+              <Text style={[styles.hint, { color: colors.grayLight }]}>
+                auto: {Math.max(1, Math.round((parseInt(avgMinutes, 10) || 60) / 5))}m (avg/5)
+              </Text>
+            )}
           </View>
         </View>
 
@@ -411,6 +422,10 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 13,
     fontWeight: '500',
+  },
+  hint: {
+    fontSize: 11,
+    marginTop: 2,
   },
   input: {
     borderWidth: 1,

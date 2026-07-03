@@ -166,7 +166,7 @@ enum TaskCommands {
         #[arg(
             long,
             default_value = "0",
-            help = "Std dev of duration (same format as avg_time)"
+            help = "Std dev of duration (same format as avg_time). 0 = auto (avg/5)"
         )]
         sigma_time: String,
         #[arg(long, default_value_t = 0.5, help = "Abandonability 0.0-1.0")]
@@ -229,7 +229,7 @@ enum TaskCommands {
         #[arg(
             long,
             default_value = "0",
-            help = "Std dev of duration (same format as avg_time)"
+            help = "Std dev of duration (same format as avg_time). 0 = auto (avg/5)"
         )]
         sigma_time: String,
         #[arg(long, default_value_t = 0.5)]
@@ -281,7 +281,7 @@ enum HabitCommands {
         #[arg(
             long,
             default_value = "0",
-            help = "Std dev of duration (same format as avg_time)"
+            help = "Std dev of duration (same format as avg_time). 0 = auto (avg/5)"
         )]
         sigma_time: String,
         #[arg(long, default_value_t = 0.5, help = "Abandonability 0.0-1.0")]
@@ -344,7 +344,7 @@ enum HabitCommands {
         #[arg(
             long,
             default_value = "0",
-            help = "Std dev of duration (same format as avg_time)"
+            help = "Std dev of duration (same format as avg_time). 0 = auto (avg/5)"
         )]
         sigma_time: String,
         #[arg(long, default_value_t = 0.5)]

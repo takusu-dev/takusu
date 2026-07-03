@@ -132,7 +132,7 @@ async fn create_task(
     let id = uuid::Uuid::now_v7().to_string();
     let depends_json = serde_json::to_string(&body.depends.clone().unwrap_or_default())
         .unwrap_or_else(|_| "[]".to_string());
-    let sigma = body.sigma_minutes.unwrap_or(0);
+    let sigma = body.sigma_minutes.unwrap_or((body.avg_minutes / 5).max(1));
     let parallelizable = body.parallelizable.unwrap_or(false);
     let allows_parallel = body.allows_parallel.unwrap_or(false);
     let abandonability = body.abandonability.unwrap_or(0.5);
@@ -248,7 +248,7 @@ async fn replace_task(
 ) -> Result<Json<TaskRow>, StatusCode> {
     let depends_json = serde_json::to_string(&body.depends.clone().unwrap_or_default())
         .unwrap_or_else(|_| "[]".to_string());
-    let sigma = body.sigma_minutes.unwrap_or(0);
+    let sigma = body.sigma_minutes.unwrap_or((body.avg_minutes / 5).max(1));
     let parallelizable = body.parallelizable.unwrap_or(false);
     let allows_parallel = body.allows_parallel.unwrap_or(false);
     let abandonability = body.abandonability.unwrap_or(0.5);
