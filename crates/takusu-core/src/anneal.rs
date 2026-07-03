@@ -1023,10 +1023,10 @@ fn greedy_rebuild(
 
 fn place_one(planner: &Planner, scheds: &mut Vec<(Point, Point, usize)>, task_id: usize) {
     let task = &planner.tasks[task_id];
-    let dur = task.cost_estimate.avg as i64;
-    if dur == 0 {
-        return;
-    }
+    // build_initial と同様、avg=0 のタスクは dur=1 として配置する。
+    // さもないと iCal 由来の avg=0 タスクが LNS/repair_polish の再構築で
+    // サイレントにドロップされてしまう (inclusion_bonus の不整合)。
+    let dur = (task.cost_estimate.avg as i64).max(1);
     let earliest = compute_earliest(planner, scheds, task);
     if let Some((start, end)) = try_place(planner, scheds, task, earliest, dur) {
         scheds.push((start, end, task_id));
@@ -1191,5 +1191,82 @@ mod tests {
         let t0_entry = plan.schedules.iter().find(|(_, _, id)| *id == 0).unwrap();
         let t1_entry = plan.schedules.iter().find(|(_, _, id)| *id == 1).unwrap();
         assert!(t0_entry.1.0 <= t1_entry.0.0, "SA must respect dependencies");
+    }
+
+    // Regression: zero-avg tasks (e.g. iCal imports with avg_minutes=0) must
+    // not be silently dropped by greedy_rebuild/place_one. build_initial
+    // places them with dur=1, so the rebuild path must be consistent.
+    #[test]
+    fn greedy_rebuild_keeps_zero_avg_task() {
+        let zero = Task {
+            id: 0,
+            start: Some(Point(0)),
+            end: Point(100),
+            cost_estimate: NormalDist { avg: 0, sigma: 0 },
+            depends: vec![],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+        };
+        let other = Task {
+            id: 1,
+            start: Some(Point(0)),
+            end: Point(100),
+            cost_estimate: NormalDist { avg: 3, sigma: 0 },
+            depends: vec![],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+        };
+        let p = test_planner(vec![zero, other]);
+
+        // Destroy both and rebuild from empty — both must come back.
+        let rebuilt = greedy_rebuild(&p, &[], &[0, 1]);
+        assert_eq!(
+            rebuilt.len(),
+            2,
+            "zero-avg task must not be dropped by greedy_rebuild: {rebuilt:?}"
+        );
+        assert!(rebuilt.iter().any(|(_, _, id)| *id == 0));
+    }
+
+    // Regression: repair_polish must not drop a zero-avg violator. Even when
+    // the violator has avg=0, it should be re-placed rather than removed.
+    #[test]
+    fn repair_polish_keeps_zero_avg_violator() {
+        let dep = Task {
+            id: 0,
+            start: Some(Point(0)),
+            end: Point(100),
+            cost_estimate: NormalDist { avg: 5, sigma: 0 },
+            depends: vec![],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+        };
+        // zero-avg task that depends on dep, but is scheduled before dep ends.
+        let violator = Task {
+            id: 1,
+            start: Some(Point(0)),
+            end: Point(100),
+            cost_estimate: NormalDist { avg: 0, sigma: 0 },
+            depends: vec![0],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+        };
+        let p = test_planner(vec![dep, violator]);
+        // Force a dependency violation: dep ends at 5, violator starts at 0.
+        let bad = Plan {
+            schedules: vec![(Point(0), Point(5), 0), (Point(0), Point(1), 1)],
+        };
+        let polished = repair_polish(&p, bad, None);
+        assert_eq!(
+            polished.schedules.len(),
+            2,
+            "zero-avg violator must not be dropped by repair_polish: {:?}",
+            polished.schedules
+        );
+        assert!(polished.schedules.iter().any(|(_, _, id)| *id == 1));
     }
 }

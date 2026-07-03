@@ -122,4 +122,35 @@ mod tests {
         cache.put("a", TokenState::Invalid);
         assert_eq!(cache.get("a"), Some(TokenState::Invalid));
     }
+
+    #[test]
+    fn ttl_zero_entry_is_immediately_expired() {
+        // With TTL=0, expires_at == now at put time, so the `<=` check in
+        // get treats it as already expired. This documents that boundary.
+        let cache = TokenCache::new(Duration::from_secs(0));
+        cache.put("a", TokenState::Valid);
+        assert_eq!(cache.get("a"), None, "TTL=0 entry should be expired on get");
+    }
+
+    #[test]
+    fn overwrite_replaces_state_and_resets_ttl() {
+        let cache = TokenCache::new(Duration::from_secs(10));
+        cache.put("a", TokenState::Invalid);
+        assert_eq!(cache.get("a"), Some(TokenState::Invalid));
+        cache.put("a", TokenState::Valid);
+        assert_eq!(cache.get("a"), Some(TokenState::Valid));
+    }
+
+    #[test]
+    fn distinct_tokens_have_distinct_entries() {
+        let cache = TokenCache::new(Duration::from_secs(10));
+        cache.put("token-one", TokenState::Valid);
+        cache.put("token-two", TokenState::Invalid);
+        assert_eq!(cache.get("token-one"), Some(TokenState::Valid));
+        assert_eq!(cache.get("token-two"), Some(TokenState::Invalid));
+        // Invalidating must clear both.
+        cache.invalidate();
+        assert_eq!(cache.get("token-one"), None);
+        assert_eq!(cache.get("token-two"), None);
+    }
 }

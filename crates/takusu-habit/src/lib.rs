@@ -627,4 +627,243 @@ mod tests {
         assert_eq!(dates.len(), 1);
         assert_eq!(dates[0], date(2025, 3, 31));
     }
+
+    // ── RRULE edge cases ────────────────────────────────────────────────
+
+    #[test]
+    fn negative_nth_weekday_last_friday() {
+        let tz = utc();
+        let start = point_at(date(2025, 3, 1), &TimeOfDay::new(9, 0).unwrap(), &tz);
+        let until = point_at(date(2025, 4, 1), &TimeOfDay::new(9, 0).unwrap(), &tz);
+
+        // -1 = last Friday of the month. March 2025: last Friday = March 28.
+        let iter = RecurrenceGenerator::new(
+            RecurrenceRule::monthly().by_day(vec![NWeekday::nth(-1, Weekday::Fri)]),
+            TimeOfDay::new(9, 0).unwrap(),
+            tz.clone(),
+            NormalDist::new(6, 0),
+            None,
+            false,
+            false,
+            0.0,
+            start,
+            until,
+        );
+
+        let tasks: Vec<_> = iter.collect();
+        let dates: Vec<_> = tasks
+            .iter()
+            .map(|gt| date_at(gt.task.start.unwrap(), &tz))
+            .collect();
+        assert_eq!(dates.len(), 1);
+        assert_eq!(dates[0], date(2025, 3, 28));
+    }
+
+    #[test]
+    fn negative_nth_weekday_second_to_last_monday() {
+        let tz = utc();
+        let start = point_at(date(2025, 3, 1), &TimeOfDay::new(9, 0).unwrap(), &tz);
+        let until = point_at(date(2025, 4, 1), &TimeOfDay::new(9, 0).unwrap(), &tz);
+
+        // -2 = second-to-last Monday of March 2025.
+        // March 2025 Mondays: 3, 10, 17, 24, 31. Last = 31, 2nd-to-last = 24.
+        let iter = RecurrenceGenerator::new(
+            RecurrenceRule::monthly().by_day(vec![NWeekday::nth(-2, Weekday::Mon)]),
+            TimeOfDay::new(9, 0).unwrap(),
+            tz.clone(),
+            NormalDist::new(6, 0),
+            None,
+            false,
+            false,
+            0.0,
+            start,
+            until,
+        );
+
+        let tasks: Vec<_> = iter.collect();
+        let dates: Vec<_> = tasks
+            .iter()
+            .map(|gt| date_at(gt.task.start.unwrap(), &tz))
+            .collect();
+        assert_eq!(dates.len(), 1);
+        assert_eq!(dates[0], date(2025, 3, 24));
+    }
+
+    #[test]
+    fn weekly_interval_skips_weeks() {
+        let tz = utc();
+        // Start on Monday March 3 2025.
+        let start = point_at(date(2025, 3, 3), &TimeOfDay::new(9, 0).unwrap(), &tz);
+        let until = point_at(date(2025, 4, 7), &TimeOfDay::new(9, 0).unwrap(), &tz);
+
+        // Every other Monday (interval=2). Mondays in range:
+        // Mar 3 (week 0), Mar 17 (week 2), Mar 31 (week 4).
+        // Mar 10 / Mar 24 / Apr 7 are in odd weeks → skipped.
+        let iter = RecurrenceGenerator::new(
+            RecurrenceRule::weekly()
+                .interval(2)
+                .by_day(vec![NWeekday::every(Weekday::Mon)]),
+            TimeOfDay::new(9, 0).unwrap(),
+            tz.clone(),
+            NormalDist::new(6, 0),
+            None,
+            false,
+            false,
+            0.0,
+            start,
+            until,
+        );
+
+        let tasks: Vec<_> = iter.collect();
+        let dates: Vec<_> = tasks
+            .iter()
+            .map(|gt| date_at(gt.task.start.unwrap(), &tz))
+            .collect();
+        assert_eq!(
+            dates,
+            vec![date(2025, 3, 3), date(2025, 3, 17), date(2025, 3, 31)]
+        );
+    }
+
+    #[test]
+    fn count_does_not_count_exdated_occurrences() {
+        let tz = utc();
+        let start = point_at(date(2025, 3, 1), &TimeOfDay::new(9, 0).unwrap(), &tz);
+        let until = point_at(date(2025, 3, 31), &TimeOfDay::new(9, 0).unwrap(), &tz);
+
+        // count=3 but exdate removes the 2nd and 4th days. The 3 counted
+        // occurrences should be Mar 1, Mar 3, Mar 4 (Mar 2 exdated).
+        let iter = RecurrenceGenerator::new(
+            RecurrenceRule::daily()
+                .count(3)
+                .exdates(vec![date(2025, 3, 2)]),
+            TimeOfDay::new(9, 0).unwrap(),
+            tz.clone(),
+            NormalDist::new(6, 0),
+            None,
+            false,
+            false,
+            0.0,
+            start,
+            until,
+        );
+
+        let tasks: Vec<_> = iter.collect();
+        let dates: Vec<_> = tasks
+            .iter()
+            .map(|gt| date_at(gt.task.start.unwrap(), &tz))
+            .collect();
+        assert_eq!(
+            dates,
+            vec![date(2025, 3, 1), date(2025, 3, 3), date(2025, 3, 4)]
+        );
+    }
+
+    #[test]
+    fn until_boundary_excludes_at_until() {
+        let tz = utc();
+        // until is exclusive: a task starting exactly at until is not emitted.
+        let start = point_at(date(2025, 3, 1), &TimeOfDay::new(9, 0).unwrap(), &tz);
+        let until = point_at(date(2025, 3, 3), &TimeOfDay::new(9, 0).unwrap(), &tz);
+
+        let iter = RecurrenceGenerator::new(
+            RecurrenceRule::daily(),
+            TimeOfDay::new(9, 0).unwrap(),
+            tz,
+            NormalDist::new(6, 0),
+            None,
+            false,
+            false,
+            0.0,
+            start,
+            until,
+        );
+
+        let tasks: Vec<_> = iter.collect();
+        let dates: Vec<_> = tasks
+            .iter()
+            .map(|gt| date_at(gt.task.start.unwrap(), &utc()))
+            .collect();
+        // Mar 1 and Mar 2 only; Mar 3 == until → excluded.
+        assert_eq!(dates, vec![date(2025, 3, 1), date(2025, 3, 2)]);
+    }
+
+    #[test]
+    fn deadline_slots_sets_task_end() {
+        let tz = utc();
+        let start = point_at(date(2025, 3, 1), &TimeOfDay::new(9, 0).unwrap(), &tz);
+        let until = point_at(date(2025, 3, 2), &TimeOfDay::new(9, 0).unwrap(), &tz);
+
+        let iter = RecurrenceGenerator::new(
+            RecurrenceRule::daily().count(1),
+            TimeOfDay::new(9, 0).unwrap(),
+            tz,
+            NormalDist::new(6, 0),
+            Some(48),
+            false,
+            false,
+            0.0,
+            start,
+            until,
+        );
+
+        let tasks: Vec<_> = iter.collect();
+        let t = &tasks[0].task;
+        let dur = t.end.0 - t.start.unwrap().0;
+        assert_eq!(dur, 48, "deadline_slots should set end = start + 48 slots");
+    }
+
+    #[test]
+    fn recurrence_rule_serde_roundtrip() {
+        let rule = RecurrenceRule::weekly()
+            .interval(2)
+            .by_day(vec![
+                NWeekday::every(Weekday::Mon),
+                NWeekday::nth(2, Weekday::Fri),
+            ])
+            .by_month(vec![1, 7])
+            .by_month_day(vec![15, -1])
+            .count(10)
+            .exdates(vec![date(2025, 3, 3)]);
+        let json = serde_json::to_string(&rule).unwrap();
+        let back: RecurrenceRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.freq, Frequency::Weekly);
+        assert_eq!(back.interval, 2);
+        assert_eq!(back.by_day.len(), 2);
+        assert_eq!(back.by_month, vec![1, 7]);
+        assert_eq!(back.by_month_day, vec![15, -1]);
+        assert_eq!(back.count, Some(10));
+        assert_eq!(back.exdates, vec![date(2025, 3, 3)]);
+    }
+
+    #[test]
+    fn monthly_without_by_day_uses_start_day() {
+        let tz = utc();
+        // Start on Jan 15. Monthly with no by_day/by_month_day → 15th of each month.
+        let start = point_at(date(2025, 1, 15), &TimeOfDay::new(9, 0).unwrap(), &tz);
+        let until = point_at(date(2025, 4, 1), &TimeOfDay::new(9, 0).unwrap(), &tz);
+
+        let iter = RecurrenceGenerator::new(
+            RecurrenceRule::monthly(),
+            TimeOfDay::new(9, 0).unwrap(),
+            tz.clone(),
+            NormalDist::new(6, 0),
+            None,
+            false,
+            false,
+            0.0,
+            start,
+            until,
+        );
+
+        let tasks: Vec<_> = iter.collect();
+        let dates: Vec<_> = tasks
+            .iter()
+            .map(|gt| date_at(gt.task.start.unwrap(), &tz))
+            .collect();
+        assert_eq!(
+            dates,
+            vec![date(2025, 1, 15), date(2025, 2, 15), date(2025, 3, 15)]
+        );
+    }
 }
