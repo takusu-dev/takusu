@@ -368,4 +368,81 @@ END:VCALENDAR";
         let result = parse_ical(ical).unwrap();
         assert_eq!(result.len(), 1);
     }
+
+    // ── Property parameters & edge cases ────────────────────────────────
+
+    #[test]
+    fn parse_dtstart_with_tzid_parameter() {
+        // Property parameters are separated by ';'. The value is after the
+        // first ':'. The parser must keep DTSTART as the key and the naive
+        // datetime (no Z) as the value.
+        let ical = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:tzid-test\r\nDTSTART;TZID=America/New_York:20250101T090000\r\nDTEND;TZID=America/New_York:20250101T100000\r\nSUMMARY:TZID event\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let result = parse_ical(ical).unwrap();
+        assert_eq!(result.len(), 1);
+        // No 'Z' suffix because the value had no Z.
+        assert_eq!(result[0].start_at, "2025-01-01T09:00:00");
+        assert_eq!(result[0].end_at, "2025-01-01T10:00:00");
+    }
+
+    #[test]
+    fn parse_value_with_colon_in_summary() {
+        // A colon inside the property VALUE is fine: the split is on the
+        // FIRST colon only, so "SUMMARY:Title: subtitle" keeps the rest.
+        let ical = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:colon\r\nDTSTART:20250101T090000Z\r\nDTEND:20250101T100000Z\r\nSUMMARY:Title: subtitle\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let result = parse_ical(ical).unwrap();
+        assert_eq!(result[0].title, "Title: subtitle");
+    }
+
+    #[test]
+    fn parse_event_without_uid() {
+        let ical = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nDTSTART:20250101T090000Z\r\nDTEND:20250101T100000Z\r\nSUMMARY:No UID\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let result = parse_ical(ical).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].uid, None);
+        assert_eq!(result[0].title, "No UID");
+    }
+
+    #[test]
+    fn parse_event_without_summary_uses_untitled() {
+        let ical = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:no-sum\r\nDTSTART:20250101T090000Z\r\nDTEND:20250101T100000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let result = parse_ical(ical).unwrap();
+        assert_eq!(result[0].title, "Untitled");
+    }
+
+    #[test]
+    fn parse_missing_dtend_errors() {
+        let ical = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:no-end\r\nDTSTART:20250101T090000Z\r\nSUMMARY:No end\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        assert!(parse_ical(ical).is_err());
+    }
+
+    #[test]
+    fn parse_invalid_date_errors() {
+        let ical = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:bad\r\nDTSTART:xyz\r\nDTEND:20250101T100000Z\r\nSUMMARY:Bad\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        assert!(parse_ical(ical).is_err());
+    }
+
+    #[test]
+    fn parse_tab_continuation_folding() {
+        // RFC 5545 allows tab as a continuation-line prefix too.
+        let ical = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:tab\nDTSTART:20250101T090000Z\nDTEND:20250101T100000Z\nSUMMARY:Long\n\tcontinued\nEND:VEVENT\nEND:VCALENDAR\n";
+        let result = parse_ical(ical).unwrap();
+        assert_eq!(result[0].title, "Longcontinued");
+    }
+
+    #[test]
+    fn parse_nested_vevent_only_innermost_used() {
+        // VCALENDAR wrapping is not strictly required; VEVENTs are collected.
+        let ical = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:a\nDTSTART:20250101T090000Z\nDTEND:20250101T100000Z\nSUMMARY:A\nEND:VEVENT\nBEGIN:VEVENT\nUID:b\nDTSTART:20250102T090000Z\nDTEND:20250102T100000Z\nSUMMARY:B\nEND:VEVENT\nEND:VCALENDAR\n";
+        let result = parse_ical(ical).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].uid.as_deref(), Some("a"));
+        assert_eq!(result[1].uid.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn parse_short_date_string_errors() {
+        // "2025010" is only 7 chars → invalid date.
+        let ical = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:short\nDTSTART:2025010\nDTEND:20250101T100000Z\nSUMMARY:Short\nEND:VEVENT\nEND:VCALENDAR\n";
+        assert!(parse_ical(ical).is_err());
+    }
 }

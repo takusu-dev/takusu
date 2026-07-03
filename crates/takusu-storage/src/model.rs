@@ -284,3 +284,137 @@ pub struct UpdateSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sleep_end: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bool_compat_deserializes_true_false() {
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(with = "bool_compat", default)]
+            #[allow(dead_code)]
+            v: bool,
+        }
+        assert!(serde_json::from_str::<Wrap>(r#"{"v":true}"#).unwrap().v);
+        assert!(!serde_json::from_str::<Wrap>(r#"{"v":false}"#).unwrap().v);
+    }
+
+    #[test]
+    fn bool_compat_deserializes_numbers_as_bool() {
+        // Non-zero numbers → true, zero → false. This is the compat path for
+        // clients that send 0/1 instead of booleans (e.g. some CLI/worker paths).
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(with = "bool_compat", default)]
+            #[allow(dead_code)]
+            v: bool,
+        }
+        assert!(serde_json::from_str::<Wrap>(r#"{"v":1}"#).unwrap().v);
+        assert!(!serde_json::from_str::<Wrap>(r#"{"v":0}"#).unwrap().v);
+        // Floats: 0.0 → false, anything else → true.
+        assert!(!serde_json::from_str::<Wrap>(r#"{"v":0.0}"#).unwrap().v);
+        assert!(serde_json::from_str::<Wrap>(r#"{"v":2.5}"#).unwrap().v);
+    }
+
+    #[test]
+    fn bool_compat_deserializes_null_as_false() {
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(with = "bool_compat", default)]
+            #[allow(dead_code)]
+            v: bool,
+        }
+        assert!(!serde_json::from_str::<Wrap>(r#"{"v":null}"#).unwrap().v);
+    }
+
+    #[test]
+    fn bool_compat_rejects_strings() {
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(with = "bool_compat")]
+            #[allow(dead_code)]
+            v: bool,
+        }
+        assert!(serde_json::from_str::<Wrap>(r#"{"v":"true"}"#).is_err());
+    }
+
+    #[test]
+    fn bool_compat_defaults_to_false_when_missing() {
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(with = "bool_compat", default)]
+            #[allow(dead_code)]
+            v: bool,
+        }
+        assert!(!serde_json::from_str::<Wrap>(r#"{}"#).unwrap().v);
+    }
+
+    #[test]
+    fn task_row_defaults_optional_bools_when_missing() {
+        // TaskRow has #[serde(default)] on parallelizable/allows_parallel/user_edited.
+        // A minimal JSON missing those fields should still deserialize.
+        let json = r#"{
+            "id": "t1",
+            "display_id": 1,
+            "title": "T",
+            "description": null,
+            "start_at": null,
+            "end_at": "2025-01-01T00:00:00Z",
+            "avg_minutes": 30,
+            "sigma_minutes": 0,
+            "depends": "[]",
+            "abandonability": 0.5,
+            "status": "pending",
+            "habit_id": null,
+            "ical_uid": null,
+            "created_at": "",
+            "updated_at": ""
+        }"#;
+        let row: TaskRow = serde_json::from_str(json).unwrap();
+        assert!(!row.parallelizable);
+        assert!(!row.allows_parallel);
+        assert!(!row.user_edited);
+    }
+
+    #[test]
+    fn update_task_skip_serializing_none() {
+        let u = UpdateTask::default();
+        let json = serde_json::to_string(&u).unwrap();
+        // All fields None → serialized JSON should be empty object.
+        assert_eq!(json, "{}");
+    }
+
+    #[test]
+    fn create_task_roundtrip() {
+        let c = CreateTask {
+            title: "Test".into(),
+            description: Some("desc".into()),
+            start_at: None,
+            end_at: "2025-01-01T00:00:00Z".into(),
+            avg_minutes: 30,
+            sigma_minutes: Some(5),
+            depends: Some(vec!["t1".into()]),
+            parallelizable: Some(true),
+            allows_parallel: Some(false),
+            abandonability: Some(0.3),
+            ical_uid: None,
+            habit_id: None,
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let back: CreateTask = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.title, "Test");
+        assert_eq!(back.avg_minutes, 30);
+        assert_eq!(back.sigma_minutes, Some(5));
+        assert_eq!(back.parallelizable, Some(true));
+    }
+
+    #[test]
+    fn save_schedule_request_default_mark_ids_empty() {
+        let json = r#"{"entries":[]}"#;
+        let req: SaveScheduleRequest = serde_json::from_str(json).unwrap();
+        assert!(req.entries.is_empty());
+        assert!(req.mark_scheduled_task_ids.is_empty());
+    }
+}

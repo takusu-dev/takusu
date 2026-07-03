@@ -306,4 +306,141 @@ mod tests {
         let result = parse_datetime_tz("2025-06-05T14:00:00Z", &tz).unwrap();
         assert!(result.starts_with("2025-06-05T14:00:00"));
     }
+
+    // ── parse_duration edge cases ───────────────────────────────────────
+
+    #[test]
+    fn parse_duration_empty_errors() {
+        assert!(parse_duration("").is_err());
+        assert!(parse_duration("   ").is_err());
+    }
+
+    #[test]
+    fn parse_duration_unknown_unit_errors() {
+        assert!(parse_duration("5x").is_err());
+        assert!(
+            parse_duration("1d").is_err(),
+            "'d' is not a duration unit here"
+        );
+    }
+
+    #[test]
+    fn parse_duration_unit_without_number_errors() {
+        assert!(parse_duration("h").is_err());
+        assert!(parse_duration("m").is_err());
+    }
+
+    #[test]
+    fn parse_duration_zero_pure_number() {
+        assert_eq!(parse_duration("0").unwrap(), 0);
+    }
+
+    #[test]
+    fn parse_duration_trims_whitespace() {
+        assert_eq!(parse_duration("  30m  ").unwrap(), 30);
+    }
+
+    #[test]
+    fn parse_duration_s_is_slots_not_seconds() {
+        // Documented footgun: 's' means 5-min slots, not seconds.
+        // 1s = 1 slot = 5 minutes.
+        assert_eq!(parse_duration("1s").unwrap(), 5);
+        assert_eq!(parse_duration("12s").unwrap(), 60);
+    }
+
+    #[test]
+    fn parse_duration_multiple_units() {
+        assert_eq!(parse_duration("1h30m15s").unwrap(), 60 + 30 + 75);
+    }
+
+    // ── parse_range edge cases ──────────────────────────────────────────
+
+    #[test]
+    fn parse_range_to_separator() {
+        let (from, until) = parse_range("2025-06-05T09:00:00Z to 2025-06-06T09:00:00Z").unwrap();
+        assert!(from.starts_with("2025-06-05T09:00:00"));
+        assert!(until.starts_with("2025-06-06T09:00:00"));
+    }
+
+    #[test]
+    fn parse_range_duration_hours() {
+        let now = jiff::Timestamp::now();
+        let (from, until) = parse_range("1.5h").unwrap();
+        let from_ts = jiff::Timestamp::from_str(&from).unwrap();
+        let until_ts = jiff::Timestamp::from_str(&until).unwrap();
+        // from ≈ now (within a second), until = from + 5400s
+        assert!((from_ts.as_second() - now.as_second()).abs() <= 2);
+        assert_eq!(until_ts.as_second() - from_ts.as_second(), 5400);
+    }
+
+    #[test]
+    fn parse_range_duration_days_and_weeks() {
+        let (from_d, until_d) = parse_range("2d").unwrap();
+        let f = jiff::Timestamp::from_str(&from_d).unwrap();
+        let u = jiff::Timestamp::from_str(&until_d).unwrap();
+        assert_eq!(u.as_second() - f.as_second(), 2 * 86400);
+
+        let (from_w, until_w) = parse_range("1w").unwrap();
+        let f = jiff::Timestamp::from_str(&from_w).unwrap();
+        let u = jiff::Timestamp::from_str(&until_w).unwrap();
+        assert_eq!(u.as_second() - f.as_second(), 7 * 86400);
+    }
+
+    #[test]
+    fn parse_range_duration_minutes_unit() {
+        let (from, until) = parse_range("90min").unwrap();
+        let f = jiff::Timestamp::from_str(&from).unwrap();
+        let u = jiff::Timestamp::from_str(&until).unwrap();
+        assert_eq!(u.as_second() - f.as_second(), 90 * 60);
+    }
+
+    #[test]
+    fn parse_range_empty_errors() {
+        assert!(parse_range("").is_err());
+    }
+
+    #[test]
+    fn parse_range_unknown_unit_errors() {
+        assert!(parse_range("5x").is_err());
+    }
+
+    #[test]
+    fn parse_range_single_datetime_uses_now_as_from() {
+        let now = jiff::Timestamp::now();
+        let (from, until) = parse_range("2025-06-05T09:00:00Z").unwrap();
+        let from_ts = jiff::Timestamp::from_str(&from).unwrap();
+        // from ≈ now
+        assert!((from_ts.as_second() - now.as_second()).abs() <= 2);
+        assert!(until.starts_with("2025-06-05T09:00:00"));
+    }
+
+    // ── parse_datetime edge cases ───────────────────────────────────────
+
+    #[test]
+    fn parse_datetime_now_keyword() {
+        let now = jiff::Timestamp::now();
+        let result = parse_datetime("now").unwrap();
+        let ts = jiff::Timestamp::from_str(&result).unwrap();
+        assert!((ts.as_second() - now.as_second()).abs() <= 2);
+    }
+
+    #[test]
+    fn parse_datetime_ambiguous_dash_format_errors() {
+        // "06-15-2025" looks like month-day-year but is ambiguous → error
+        assert!(parse_datetime("06-15-2025").is_err());
+    }
+
+    #[test]
+    fn parse_datetime_garbage_errors() {
+        assert!(parse_datetime("hello world").is_err());
+        assert!(parse_datetime("2025-13-45").is_err());
+    }
+
+    #[test]
+    fn generate_root_token_format() {
+        let t = generate_root_token();
+        assert!(t.starts_with("tsk_"), "token must start with tsk_: {t}");
+        // UUID v7 is 36 chars including dashes; prefix is 4 chars.
+        assert_eq!(t.len(), 4 + 36);
+    }
 }

@@ -608,4 +608,159 @@ mod tests {
             "Second day afternoon should score higher than second night: day2={day2_score} night2={night2_score}"
         );
     }
+
+    // abandonability=1.0 → deadline-late penalty is fully suppressed.
+    #[test]
+    fn deadline_late_penalty_zero_when_abandonability_one() {
+        let mut p = make_planner();
+        let id = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(5),
+                cost_estimate: NormalDist::new(3, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 1.0,
+            })
+            .unwrap();
+        let on_time = plan_with(vec![(Point(0), Point(3), id)]);
+        let late = plan_with(vec![(Point(0), Point(6), id)]);
+
+        let score_on = evaluate(&p, &on_time, 0.0, 1.0);
+        let score_late = evaluate(&p, &late, 0.0, 1.0);
+        // With abandonability=1.0 the late penalty term vanishes; the only
+        // difference is the early-bonus cap (on_time gets +2 capped, late 0)
+        // and duration_score (both have deficit 0). So on_time must score
+        // strictly higher, but the gap should be small (just the early bonus),
+        // not the W_LATE*slack gap.
+        assert!(
+            score_on > score_late,
+            "on_time={score_on} late={score_late}"
+        );
+        // The gap should be the early bonus (2.0, capped at 50), NOT 20*1.
+        assert!(
+            (score_on - score_late) < 10.0,
+            "gap should be small (early bonus only), got {}",
+            score_on - score_late
+        );
+    }
+
+    // abandonability=0.0 → full late penalty applied.
+    #[test]
+    fn deadline_late_penalty_full_when_abandonability_zero() {
+        let mut p = make_planner();
+        let id = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(5),
+                cost_estimate: NormalDist::new(3, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.0,
+            })
+            .unwrap();
+        let on_time = plan_with(vec![(Point(0), Point(3), id)]);
+        let late = plan_with(vec![(Point(0), Point(6), id)]);
+
+        let score_on = evaluate(&p, &on_time, 0.0, 1.0);
+        let score_late = evaluate(&p, &late, 0.0, 1.0);
+        // slack = 5 - 6 = -1, penalty = -1 * 20 * 1.0 = -20
+        assert!(
+            score_on - score_late >= 20.0,
+            "full late penalty should apply: on={score_on} late={score_late}"
+        );
+    }
+
+    // duration over-assignment (deficit < 0) is a light linear penalty.
+    #[test]
+    fn duration_over_assignment_is_light_linear() {
+        let mut p = make_planner();
+        let id = add_simple_task(&mut p, 3, 0, 100);
+        let exact = plan_with(vec![(Point(0), Point(3), id)]);
+        let over = plan_with(vec![(Point(0), Point(5), id)]);
+
+        let score_exact = evaluate(&p, &exact, 0.0, 1.0);
+        let score_over = evaluate(&p, &over, 0.0, 1.0);
+        // over by 2 slots: penalty = -2 * 0.5 = -1.0 (plus deadline slack change).
+        // exact: slack = 100-3 = 97 → capped at 50. over: slack = 100-5 = 95 → capped 50.
+        // So deadline term equal; only duration differs by 1.0.
+        assert!(
+            (score_exact - score_over - 1.0).abs() < 1e-9,
+            "over-assignment penalty should be -1.0: exact={score_exact} over={score_over}"
+        );
+    }
+
+    // depend_score penalty scales with temperature (constraint annealing).
+    // At T=T0 the penalty is ~0; at T=0 it is the full magnitude.
+    #[test]
+    fn depend_score_anneals_with_temperature() {
+        let mut p = make_planner();
+        let a = add_simple_task(&mut p, 2, 0, 10);
+        let b = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(10),
+                cost_estimate: NormalDist::new(2, 0),
+                depends: vec![a],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+            })
+            .unwrap();
+        // b starts before a ends: 2-slot violation.
+        let violated = plan_with(vec![(Point(0), Point(2), a), (Point(0), Point(2), b)]);
+
+        let score_hot = evaluate(&p, &violated, 10.0, 10.0);
+        let score_cold = evaluate(&p, &violated, 0.0, 10.0);
+        // At T=T0: weight = 100*(1-1) = 0 → no depend penalty.
+        // At T=0:  weight = 100*(1-0) = 100 → penalty = -2*100 = -200.
+        assert!(
+            score_cold < score_hot,
+            "cold should penalize violation more: hot={score_hot} cold={score_cold}"
+        );
+        // The difference should be ~200 (the annealed-in penalty).
+        assert!(
+            (score_hot - score_cold - 200.0).abs() < 1e-6,
+            "annealed penalty magnitude: hot={score_hot} cold={score_cold}"
+        );
+        // unused warning suppression
+        let _ = b;
+    }
+
+    // inclusion_bonus is linear in scheduled count.
+    #[test]
+    fn inclusion_bonus_scales_with_count() {
+        let mut p = make_planner();
+        let a = add_simple_task(&mut p, 1, 0, 100);
+        let b = add_simple_task(&mut p, 1, 0, 100);
+        let one = plan_with(vec![(Point(0), Point(1), a)]);
+        let two = plan_with(vec![(Point(0), Point(1), a), (Point(1), Point(2), b)]);
+
+        let score_one = evaluate(&p, &one, 0.0, 1.0);
+        let score_two = evaluate(&p, &two, 0.0, 1.0);
+        // Adding a second scheduled task adds exactly W_INCLUSION (10.0)
+        // plus the second task's own deadline early-bonus (capped 50) and
+        // duration match (deficit 0). So the gap is >= 10.
+        assert!(
+            score_two - score_one >= 10.0,
+            "second task should add at least inclusion bonus: one={score_one} two={score_two}"
+        );
+    }
+
+    // build_index ignores out-of-range task ids (defensive).
+    #[test]
+    fn evaluate_ignores_unknown_task_id_in_schedule() {
+        let mut p = make_planner();
+        let _id = add_simple_task(&mut p, 2, 0, 10);
+        // schedule references task id 99 which doesn't exist in planner.
+        let plan = plan_with(vec![(Point(0), Point(2), 99)]);
+        // Should not panic; score is just inclusion_bonus for the bogus entry.
+        let score = evaluate(&p, &plan, 0.0, 1.0);
+        assert!(score.is_finite());
+    }
 }
