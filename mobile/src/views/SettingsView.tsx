@@ -4,7 +4,7 @@
 // google calendar: config + OAuth + manual sync
 // info: license, version (build number)
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -18,15 +18,17 @@ import {
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import * as WebBrowser from 'expo-web-browser';
-import * as Linking from 'expo-linking';
 import * as Application from 'expo-application';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as Clipboard from 'expo-clipboard';
 import Constants from 'expo-constants';
+import {
+  GoogleOneTapSignIn,
+  isSuccessResponse,
+  isNoSavedCredentialFoundResponse,
+} from 'react-native-nitro-google-signin';
 import { useServer, saveWorkersUrl, saveWorkersToken } from '@/src/api/ServerProvider';
-import { setOAuthCallbackListener } from '@/src/api/oauthCallback';
 import type { GoogleCalSettings } from '@/src/api/types';
 import { useColors, BRAND_COLOR } from '@/src/theme';
 import type { NotificationSettings } from '@/src/notifications/settings';
@@ -38,7 +40,7 @@ import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModu
 
 type SettingsCategory = 'general' | 'notifications' | 'worker' | 'google' | 'info';
 
-const OAUTH_REDIRECT_URI = Linking.createURL('oauth/callback');
+const CALENDAR_EVENTS_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
 
 export function SettingsView() {
   const router = useRouter();
@@ -136,35 +138,6 @@ export function SettingsView() {
     }
   }, [category, loadGcalSettings]);
 
-  // OAuth callback listener — registered when google tab is active
-  // Guard against double-firing: if startOAuth already handled the code
-  // via openAuthSessionAsync result, the deep link listener is skipped.
-  const oauthHandledRef = useRef(false);
-
-  useEffect(() => {
-    if (category !== 'google' || !client) return;
-
-    setOAuthCallbackListener(async (code: string) => {
-      if (oauthHandledRef.current) {
-        oauthHandledRef.current = false;
-        return;
-      }
-      try {
-        await client.oauthCallback(code, OAUTH_REDIRECT_URI);
-        await loadGcalSettings();
-        Alert.alert('成功', 'Google Calendar認証が完了しました');
-      } catch (e) {
-        Alert.alert('エラー', `OAuth認証に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
-      } finally {
-        setOauthLoading(false);
-      }
-    });
-
-    return () => {
-      setOAuthCallbackListener(null);
-    };
-  }, [category, client, loadGcalSettings]);
-
   async function saveWorkerSettings() {
     await saveWorkersUrl(workerUrl);
     await saveWorkersToken(workerKey);
@@ -193,27 +166,52 @@ export function SettingsView() {
     }
   }
 
+  // Google Sign-In SDK flow: configure with the saved Web client ID,
+  // sign in (silent → account picker → explicit UI), then request the
+  // calendar.events scope. The serverAuthCode returned by requestScopes
+  // is sent to the backend, which exchanges it for a refresh token
+  // without a redirect_uri (Android SDK code does not use one).
   async function startOAuth() {
     if (!client) return;
+    const webClientId = gcalSettings?.client_id;
+    if (!webClientId) {
+      Alert.alert('エラー', '先にClient IDを保存してください');
+      return;
+    }
     setOauthLoading(true);
-    oauthHandledRef.current = false;
     try {
-      const { url } = await client.getOAuthUrl(OAUTH_REDIRECT_URI);
-      const result = await WebBrowser.openAuthSessionAsync(url, OAUTH_REDIRECT_URI);
-      // On Android, openAuthSessionAsync may return the redirect URL directly
-      if (result.type === 'success' && result.url) {
-        const parsed = Linking.parse(result.url);
-        const code = parsed.queryParams?.code;
-        if (typeof code === 'string' && code) {
-          oauthHandledRef.current = true; // suppress deep link listener
-          await client.oauthCallback(code, OAUTH_REDIRECT_URI);
-          await loadGcalSettings();
-          Alert.alert('成功', 'Google Calendar認証が完了しました');
-        }
+      GoogleOneTapSignIn.configure({
+        webClientId,
+        offlineAccess: true,
+      });
+      await GoogleOneTapSignIn.checkPlayServices();
+
+      let response = await GoogleOneTapSignIn.signIn();
+      if (isNoSavedCredentialFoundResponse(response)) {
+        response = await GoogleOneTapSignIn.createAccount();
       }
-      // If result.type is not 'success', the deep link listener will handle it
+      if (isNoSavedCredentialFoundResponse(response)) {
+        response = await GoogleOneTapSignIn.presentExplicitSignIn();
+      }
+      if (!isSuccessResponse(response)) {
+        // User cancelled or no credential — nothing to do
+        return;
+      }
+
+      const { serverAuthCode } = await GoogleOneTapSignIn.requestScopes([
+        CALENDAR_EVENTS_SCOPE,
+      ]);
+
+      if (!serverAuthCode) {
+        Alert.alert('エラー', '認可コードを取得できませんでした');
+        return;
+      }
+
+      await client.oauthCallback(serverAuthCode);
+      await loadGcalSettings();
+      Alert.alert('成功', 'Google Calendar認証が完了しました');
     } catch (e) {
-      Alert.alert('エラー', `OAuth開始に失敗: ${e instanceof Error ? e.message : String(e)}`);
+      Alert.alert('エラー', `OAuth認証に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setOauthLoading(false);
     }
