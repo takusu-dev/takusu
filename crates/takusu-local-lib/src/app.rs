@@ -986,7 +986,7 @@ impl TakusuApp {
         let from = now - 7 * 24 * 12;
         let until = now + 14 * 24 * 12;
 
-        let mut expected: Vec<(String, String, CoreTask)> = Vec::new();
+        let mut expected: Vec<(String, String, CoreTask, Option<String>)> = Vec::new();
         for row in &active_habits {
             let config = habit_row_to_config(row, tz)?;
             let mut store = takusu_habit::HabitStore::new();
@@ -994,7 +994,7 @@ impl TakusuApp {
             for gt in store.generate(from, until) {
                 let start_point = gt.task.start.unwrap_or(Point(0));
                 let date = iso_date(&point_to_iso(start_point.0));
-                expected.push((row.id.clone(), date, gt.task));
+                expected.push((row.id.clone(), date, gt.task, row.description.clone()));
             }
         }
 
@@ -1016,25 +1016,61 @@ impl TakusuApp {
 
         let mut result: Vec<TaskRow> = Vec::new();
 
-        for (habit_id, date, core_task) in &expected {
+        for (habit_id, date, core_task, habit_desc) in &expected {
             let key = (habit_id.clone(), date.clone());
-            let title = active_habits
-                .iter()
-                .find(|h| h.id == *habit_id)
+            let habit_row = active_habits.iter().find(|h| h.id == *habit_id);
+            let title = habit_row
                 .map(|h| format!("{} ({})", h.title, date))
                 .unwrap_or_else(|| format!("habit:{}", date));
 
             if let Some(existing) = existing_by_key.remove(&key) {
                 if existing.status == "pending" {
+                    // ユーザーが編集していないフィールドだけ habit の値で上書きする。
+                    // 判定: タスクの現在値が habit から生成されたはずの値と一致すれば
+                    //       編集されていないとみなす。
+                    let habit_avg = habit_row.map(|h| h.avg_minutes).unwrap_or(0);
+                    let habit_sigma = habit_row.map(|h| h.sigma_minutes).unwrap_or(0);
+                    let habit_parallelizable = habit_row.map(|h| h.parallelizable).unwrap_or(false);
+                    let habit_allows_parallel = habit_row.map(|h| h.allows_parallel).unwrap_or(false);
+                    let habit_abandon = habit_row.map(|h| h.abandonability).unwrap_or(0.0);
+
                     let update = UpdateTask {
+                        // start_at/end_at は habit の周期・時刻から算出されるため
+                        // 常に上書き (habit 側でスケジュール変更した場合に追従)。
                         start_at: core_task.start.map(|p| point_to_iso(p.0)),
                         end_at: Some(point_to_iso(core_task.end.0)),
-                        title: Some(title),
-                        avg_minutes: Some(core_task.cost_estimate.avg as i64 * 5),
-                        sigma_minutes: Some(core_task.cost_estimate.sigma as i64 * 5),
-                        parallelizable: Some(core_task.parallelizable),
-                        allows_parallel: Some(core_task.allows_parallel),
-                        abandonability: Some(core_task.abandonability),
+                        // ユーザー編集を尊重: habit 値と同じなら上書き、違うなら保持。
+                        title: if existing.title == title { Some(title) } else { None },
+                        description: if existing.description.as_deref() == habit_desc.as_deref() {
+                            habit_desc.clone()
+                        } else {
+                            None
+                        },
+                        avg_minutes: if existing.avg_minutes == habit_avg {
+                            Some(core_task.cost_estimate.avg as i64 * 5)
+                        } else {
+                            None
+                        },
+                        sigma_minutes: if existing.sigma_minutes == habit_sigma {
+                            Some(core_task.cost_estimate.sigma as i64 * 5)
+                        } else {
+                            None
+                        },
+                        parallelizable: if existing.parallelizable == habit_parallelizable {
+                            Some(core_task.parallelizable)
+                        } else {
+                            None
+                        },
+                        allows_parallel: if existing.allows_parallel == habit_allows_parallel {
+                            Some(core_task.allows_parallel)
+                        } else {
+                            None
+                        },
+                        abandonability: if (existing.abandonability - habit_abandon).abs() < 1e-9 {
+                            Some(core_task.abandonability)
+                        } else {
+                            None
+                        },
                         ..Default::default()
                     };
                     let updated = self
@@ -1057,7 +1093,7 @@ impl TakusuApp {
                     parallelizable: Some(core_task.parallelizable),
                     allows_parallel: Some(core_task.allows_parallel),
                     abandonability: Some(core_task.abandonability),
-                    description: None,
+                    description: habit_desc.clone(),
                     ical_uid: None,
                     habit_id: Some(habit_id.clone()),
                 };
