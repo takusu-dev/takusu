@@ -15,6 +15,7 @@ const MIGRATION_002: &str = include_str!("../migrations/002_google_cal.sql");
 const MIGRATION_003: &str = include_str!("../migrations/003_settings.sql");
 const MIGRATION_004: &str = include_str!("../migrations/004_indexes.sql");
 const MIGRATION_005: &str = include_str!("../migrations/005_task_display_id.sql");
+const MIGRATION_006: &str = include_str!("../migrations/006_user_edited.sql");
 
 pub struct SqliteStorage {
     pool: SqlitePool,
@@ -54,6 +55,14 @@ impl SqliteStorage {
         .await?;
         if !has_display_id {
             sqlx::raw_sql(MIGRATION_005).execute(&pool).await?;
+        }
+        let has_user_edited: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name = 'user_edited'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        if !has_user_edited {
+            sqlx::raw_sql(MIGRATION_006).execute(&pool).await?;
         }
 
         Ok(Self { pool, root_token })
@@ -219,7 +228,7 @@ impl Storage for SqliteStorage {
         }
 
         sqlx::query(
-            "UPDATE tasks SET title=COALESCE(?,title), description=COALESCE(?,description), start_at=COALESCE(?,start_at), end_at=COALESCE(?,end_at), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), depends=COALESCE(?,depends), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), status=?, habit_id=COALESCE(?,habit_id), updated_at=datetime('now') WHERE id = ?"
+            "UPDATE tasks SET title=COALESCE(?,title), description=COALESCE(?,description), start_at=COALESCE(?,start_at), end_at=COALESCE(?,end_at), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), depends=COALESCE(?,depends), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), status=?, habit_id=COALESCE(?,habit_id), user_edited=COALESCE(?,user_edited), updated_at=datetime('now') WHERE id = ?"
         )
         .bind(body.title.as_ref())
         .bind(body.description.as_ref())
@@ -233,6 +242,7 @@ impl Storage for SqliteStorage {
         .bind(body.abandonability)
         .bind(status)
         .bind(body.habit_id.as_ref())
+        .bind(body.user_edited)
         .bind(&full)
         .execute(&self.pool)
         .await

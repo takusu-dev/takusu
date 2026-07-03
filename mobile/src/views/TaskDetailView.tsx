@@ -84,6 +84,7 @@ export function TaskDetailView() {
   const [depModalVisible, setDepModalVisible] = useState(false);
   const [depSearch, setDepSearch] = useState('');
   const [status, setStatus] = useState<TaskStatus>('pending');
+  const [menuVisible, setMenuVisible] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!client || !id) return;
@@ -286,6 +287,79 @@ export function TaskDetailView() {
     await refresh();
   }
 
+  async function revertToHabit() {
+    setMenuVisible(false);
+    if (!client || !task || !task.habit_id) return;
+    const prev = { ...task };
+    try {
+      await client.updateTask(task.id, { user_edited: false });
+    } catch (e) {
+      showError(e, 'habitへの追従設定に失敗');
+      return;
+    }
+    undoRedo.push({
+      description: `revert to habit: ${task.title}`,
+      undo: async () => {
+        await client.updateTask(task.id, {
+          title: prev.title,
+          description: prev.description,
+          avg_minutes: prev.avg_minutes,
+          sigma_minutes: prev.sigma_minutes,
+          start_at: prev.start_at,
+          end_at: prev.end_at,
+          parallelizable: prev.parallelizable,
+          allows_parallel: prev.allows_parallel,
+          abandonability: prev.abandonability,
+          user_edited: true,
+        });
+        await refresh();
+      },
+      redo: async () => {
+        await client.updateTask(task.id, { user_edited: false });
+        await refresh();
+      },
+    });
+    await refresh();
+  }
+
+  async function deleteTask() {
+    setMenuVisible(false);
+    if (!client || !task) return;
+    let currentId = task.id;
+    try {
+      await client.deleteTask(currentId);
+    } catch (e) {
+      showError(e, 'タスクの削除に失敗');
+      return;
+    }
+    undoRedo.push({
+      description: `delete task: ${task.title}`,
+      undo: async () => {
+        const recreated = await client.createTask({
+          title: task.title,
+          description: task.description,
+          start_at: task.start_at,
+          end_at: task.end_at,
+          avg_minutes: task.avg_minutes,
+          sigma_minutes: task.sigma_minutes,
+          depends: parseDepends(task.depends),
+          parallelizable: task.parallelizable,
+          allows_parallel: task.allows_parallel,
+          abandonability: task.abandonability,
+          habit_id: task.habit_id,
+        });
+        currentId = recreated.id;
+        if (task.user_edited) {
+          await client.updateTask(currentId, { user_edited: true });
+        }
+      },
+      redo: async () => {
+        await client.deleteTask(currentId);
+      },
+    });
+    router.back();
+  }
+
   if (!task) {
     return (
       <View style={[styles.container, { backgroundColor: colors.white }]}>
@@ -321,6 +395,32 @@ export function TaskDetailView() {
             {editing ? '保存' : '編集'}
           </Button>
         </View>
+        <View style={{ flex: 1 }} />
+        <Menu
+          visible={menuVisible}
+          onDismiss={() => setMenuVisible(false)}
+          anchor={
+            <IconButton
+              icon="dots-vertical"
+              iconColor={BRAND_COLOR}
+              size={24}
+              onPress={() => setMenuVisible(true)}
+            />
+          }
+        >
+          {task.habit_id && task.user_edited && (
+            <Menu.Item
+              onPress={revertToHabit}
+              title="habitの設定に戻す"
+              leadingIcon="restore"
+            />
+          )}
+          <Menu.Item
+            onPress={deleteTask}
+            title="削除"
+            leadingIcon="trash-can-outline"
+          />
+        </Menu>
       </View>
 
       <ScrollView

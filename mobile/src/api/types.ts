@@ -18,6 +18,7 @@ export interface TaskRow {
   status: TaskStatus;
   habit_id?: string;
   ical_uid?: string;
+  user_edited: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -49,6 +50,7 @@ export interface UpdateTask {
   allows_parallel?: boolean;
   abandonability?: number;
   status?: TaskStatus;
+  user_edited?: boolean;
 }
 
 export interface TaskQuery {

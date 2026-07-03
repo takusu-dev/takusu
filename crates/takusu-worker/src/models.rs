@@ -50,6 +50,8 @@ pub struct TaskRow {
     pub status: String,
     pub habit_id: Option<String>,
     pub ical_uid: Option<String>,
+    #[serde(with = "bool_compat", default)]
+    pub user_edited: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -105,6 +107,8 @@ pub struct UpdateTask {
     pub status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub habit_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_edited: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

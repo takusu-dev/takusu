@@ -120,6 +120,7 @@ pub fn parse_edited_task(content: &str) -> Option<UpdateTask> {
         abandonability,
         status,
         habit_id: None,
+        user_edited: None,
     })
 }
 

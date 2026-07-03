@@ -148,8 +148,9 @@ pub fn install() {
     use tracing_subscriber::util::SubscriberInitExt;
     use tracing_subscriber::{EnvFilter, fmt};
 
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("error,takusu_android=info,takusu_local=info,takusu_local_lib=info"));
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new("error,takusu_android=info,takusu_local=info,takusu_local_lib=info")
+    });
 
     // The buffer layer formats each event into a single line and appends it.
     let buffer_layer = fmt::layer()
