@@ -27,7 +27,7 @@ import * as Clipboard from 'expo-clipboard';
 import Constants from 'expo-constants';
 import { useServer, saveWorkersUrl, saveWorkersToken } from '@/src/api/ServerProvider';
 import { setOAuthCallbackListener } from '@/src/api/oauthCallback';
-import type { GoogleCalSettings } from '@/src/api/types';
+import type { GoogleCalSettings, SettingsRow } from '@/src/api/types';
 import { useColors, BRAND_COLOR } from '@/src/theme';
 import type { NotificationSettings } from '@/src/notifications/settings';
 import { formatTime, minutesToTime, timeToMinutes } from '@/src/notifications/settings';
@@ -36,7 +36,7 @@ import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { haptic } from '@/src/components/haptics';
 import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
 
-type SettingsCategory = 'general' | 'notifications' | 'worker' | 'google' | 'info';
+type SettingsCategory = 'general' | 'sleep' | 'notifications' | 'worker' | 'google' | 'info';
 
 const OAUTH_REDIRECT_URI = Linking.createURL('oauth/callback');
 
@@ -61,6 +61,15 @@ export function SettingsView() {
   const [notifPickerField, setNotifPickerField] = useState<
     'morningBriefing' | 'eveningSummary' | 'habitReminder' | null
   >(null);
+
+  // Sleep tab state
+  const [sleepSettings, setSleepSettings] = useState<SettingsRow | null>(null);
+  const [sleepTz, setSleepTz] = useState('');
+  const [sleepStart, setSleepStart] = useState('22:00');
+  const [sleepEnd, setSleepEnd] = useState('06:00');
+  const [sleepLoading, setSleepLoading] = useState(false);
+  const [sleepSaving, setSleepSaving] = useState(false);
+  const [sleepPickerField, setSleepPickerField] = useState<'start' | 'end' | null>(null);
 
   // Worker tab state
   const [workerUrl, setWorkerUrl] = useState(savedUrl);
@@ -136,6 +145,30 @@ export function SettingsView() {
     }
   }, [category, loadGcalSettings]);
 
+  // Load sleep/planner settings when entering sleep tab
+  const loadSleepSettings = useCallback(async () => {
+    if (!client) return;
+    setSleepLoading(true);
+    try {
+      const s = await client.getSettings();
+      setSleepSettings(s);
+      setSleepTz(s.tz);
+      setSleepStart(s.sleep_start);
+      setSleepEnd(s.sleep_end);
+    } catch {
+      // fall back to defaults so the user can still set something
+      setSleepSettings(null);
+    } finally {
+      setSleepLoading(false);
+    }
+  }, [client]);
+
+  useEffect(() => {
+    if (category === 'sleep') {
+      loadSleepSettings();
+    }
+  }, [category, loadSleepSettings]);
+
   // OAuth callback listener — registered when google tab is active
   // Guard against double-firing: if startOAuth already handled the code
   // via openAuthSessionAsync result, the deep link listener is skipped.
@@ -174,6 +207,34 @@ export function SettingsView() {
   async function handleRestartServer() {
     await saveWorkerSettings();
     await restartServer(workerUrl, workerKey);
+  }
+
+  async function saveSleepSettings() {
+    if (!client) return;
+    // Guard against overwriting server values with defaults when the initial
+    // load failed (sleepSettings stays null and the form shows defaults).
+    if (!sleepSettings) {
+      Alert.alert('エラー', '設定の読み込みに失敗しています。タブを開き直してください');
+      return;
+    }
+    setSleepSaving(true);
+    try {
+      const s = await client.updateSettings({
+        tz: sleepTz || undefined,
+        sleep_start: sleepStart,
+        sleep_end: sleepEnd,
+      });
+      setSleepSettings(s);
+      setSleepTz(s.tz);
+      setSleepStart(s.sleep_start);
+      setSleepEnd(s.sleep_end);
+      haptic.success();
+      Alert.alert('保存しました', '睡眠設定を保存しました');
+    } catch (e) {
+      Alert.alert('エラー', `保存に失敗: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSleepSaving(false);
+    }
   }
 
   async function saveGcalSettings() {
@@ -325,6 +386,7 @@ export function SettingsView() {
 
   const categories: { key: SettingsCategory; label: string }[] = [
     { key: 'general', label: '一般' },
+    { key: 'sleep', label: '睡眠' },
     { key: 'notifications', label: '通知' },
     { key: 'worker', label: 'Worker' },
     { key: 'google', label: 'Google Calendar' },
@@ -403,6 +465,95 @@ export function SettingsView() {
                   placeholderTextColor={colors.gray}
                 />
               </View>
+            </>
+          )}
+
+          {category === 'sleep' && (
+            <>
+              {sleepLoading ? (
+                <ActivityIndicator color={BRAND_COLOR} style={styles.loader} />
+              ) : (
+                <>
+                  {sleepSettings && (
+                    <View style={[styles.statusBox, { backgroundColor: colors.grayLight + '20' }]}>
+                      <Text style={[styles.label, { color: colors.gray }]}>現在の設定</Text>
+                      <Text style={[styles.value, { color: colors.black }]}>
+                        タイムゾーン: {sleepSettings.tz}{'\n'}
+                        就寝: {sleepSettings.sleep_start}{'\n'}
+                        起床: {sleepSettings.sleep_end}
+                      </Text>
+                    </View>
+                  )}
+
+                  <View style={styles.field}>
+                    <Text style={[styles.label, { color: colors.gray }]}>
+                      タイムゾーン
+                    </Text>
+                    <TextInput
+                      style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+                      value={sleepTz}
+                      onChangeText={setSleepTz}
+                      placeholder="Asia/Tokyo"
+                      placeholderTextColor={colors.gray}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                    <Pressable
+                      style={[styles.actionButton, { backgroundColor: colors.grayLight }]}
+                      onPress={() => {
+                        haptic.light();
+                        // Intl is available in Hermes (recent RN) — no native module needed
+                        try {
+                          const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                          if (tz) setSleepTz(tz);
+                        } catch {
+                          // ignore — device doesn't expose timezone via Intl
+                        }
+                      }}
+                    >
+                      <Text style={[styles.actionButtonText, { color: colors.black }]}>
+                        デバイスのタイムゾーンを使用
+                      </Text>
+                    </Pressable>
+                  </View>
+
+                  <View style={styles.notifGroup}>
+                    <Text style={[styles.label, { color: colors.gray }]}>就寝時刻</Text>
+                    <Pressable
+                      style={[styles.timeField, { borderColor: colors.separator }]}
+                      onPress={() => { haptic.select(); setSleepPickerField('start'); }}
+                    >
+                      <Text style={[styles.timeText, { color: colors.black }]}>
+                        {sleepStart}
+                      </Text>
+                    </Pressable>
+                  </View>
+
+                  <View style={styles.notifGroup}>
+                    <Text style={[styles.label, { color: colors.gray }]}>起床時刻</Text>
+                    <Pressable
+                      style={[styles.timeField, { borderColor: colors.separator }]}
+                      onPress={() => { haptic.select(); setSleepPickerField('end'); }}
+                    >
+                      <Text style={[styles.timeText, { color: colors.black }]}>
+                        {sleepEnd}
+                      </Text>
+                    </Pressable>
+                  </View>
+
+                  <Pressable
+                    style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
+                    onPress={() => { haptic.medium(); saveSleepSettings(); }}
+                    disabled={sleepSaving || !client}
+                  >
+                    {sleepSaving ? (
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.actionButtonText}>設定を保存</Text>
+                    )}
+                  </Pressable>
+                </>
+              )}
             </>
           )}
 
@@ -933,6 +1084,38 @@ export function SettingsView() {
             setNotifPickerField(null);
           }}
           onCancel={() => setNotifPickerField(null)}
+        />
+      )}
+
+      {/* Sleep time picker modal */}
+      {sleepPickerField && (
+        <DateTimePickerModal
+          visible={true}
+          mode="time"
+          label={sleepPickerField === 'start' ? '就寝時刻' : '起床時刻'}
+          value={(() => {
+            const s = sleepPickerField === 'start' ? sleepStart : sleepEnd;
+            const [h, m] = s.split(':').map((n) => parseInt(n, 10) || 0);
+            const d = new Date();
+            d.setHours(h, m, 0, 0);
+            return d;
+          })()}
+          onConfirm={(date) => {
+            if (!date) {
+              setSleepPickerField(null);
+              return;
+            }
+            const hh = date.getHours().toString().padStart(2, '0');
+            const mm = date.getMinutes().toString().padStart(2, '0');
+            const formatted = `${hh}:${mm}`;
+            if (sleepPickerField === 'start') {
+              setSleepStart(formatted);
+            } else {
+              setSleepEnd(formatted);
+            }
+            setSleepPickerField(null);
+          }}
+          onCancel={() => setSleepPickerField(null)}
         />
       )}
     </View>
