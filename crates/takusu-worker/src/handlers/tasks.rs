@@ -61,7 +61,7 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
     let resolved_depends = resolve_depends(&database, body.depends.as_deref()).await?;
     let depends_json =
         serde_json::to_string(&resolved_depends).unwrap_or_else(|_| "[]".to_string());
-    let sigma = body.sigma_minutes.unwrap_or(0);
+    let sigma = body.sigma_minutes.unwrap_or((body.avg_minutes / 5).max(1));
     let parallelizable = body.parallelizable.unwrap_or(false);
     let allows_parallel = body.allows_parallel.unwrap_or(false);
     let abandonability = body.abandonability.unwrap_or(0.5);
@@ -204,7 +204,7 @@ pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, W
     let full = resolve_task_id(&database, id).await?;
     let resolved_depends = resolve_depends(&database, body.depends.as_deref()).await?;
     let depends_json = serde_json::to_string(&resolved_depends).unwrap_or_else(|_| "[]".into());
-    let sigma = body.sigma_minutes.unwrap_or(0);
+    let sigma = body.sigma_minutes.unwrap_or((body.avg_minutes / 5).max(1));
     let parallelizable = body.parallelizable.unwrap_or(false);
     let allows_parallel = body.allows_parallel.unwrap_or(false);
     let abandonability = body.abandonability.unwrap_or(0.5);

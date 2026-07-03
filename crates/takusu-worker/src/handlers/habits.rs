@@ -28,7 +28,7 @@ pub async fn create(mut req: worker::Request, env: Env) -> Result<Response, Work
     let body: CreateHabit = parse_json(&mut req).await?;
     let database = db(&env)?;
     let id = uuid::Uuid::now_v7().to_string();
-    let sigma = body.sigma_minutes.unwrap_or(0);
+    let sigma = body.sigma_minutes.unwrap_or((body.avg_minutes / 5).max(1));
     let parallelizable = body.parallelizable.unwrap_or(false);
     let allows_parallel = body.allows_parallel.unwrap_or(false);
     let abandonability = body.abandonability.unwrap_or(0.5);
@@ -126,7 +126,7 @@ pub async fn replace(
 ) -> Result<Response, WorkerError> {
     let body: CreateHabit = parse_json(&mut req).await?;
     let database = db(&env)?;
-    let sigma = body.sigma_minutes.unwrap_or(0);
+    let sigma = body.sigma_minutes.unwrap_or((body.avg_minutes / 5).max(1));
     let parallelizable = body.parallelizable.unwrap_or(false);
     let allows_parallel = body.allows_parallel.unwrap_or(false);
     let abandonability = body.abandonability.unwrap_or(0.5);
