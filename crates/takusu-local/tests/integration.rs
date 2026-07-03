@@ -314,7 +314,7 @@ async fn habit_crud() {
         json!({
             "title": "朝のランニング",
             "description": "30分走る",
-            "recurrence": "daily",
+            "recurrence": r#"{"freq":"daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#,
             "start_time": "06:00",
             "end_time": "07:00",
             "avg_minutes": 30,
@@ -334,7 +334,10 @@ async fn habit_crud() {
     assert_eq!(res.status(), StatusCode::OK);
     let habit: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
     assert_eq!(habit["title"], "朝のランニング");
-    assert_eq!(habit["recurrence"], "daily");
+    assert_eq!(
+        habit["recurrence"],
+        r#"{"freq":"daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#
+    );
 
     let update_req = auth_req_body(
         Method::PATCH,
@@ -1031,4 +1034,418 @@ async fn generate_schedule_excludes_completed_in_progress_skipped() {
     assert!(task_ids.contains(&"p1"));
     assert!(task_ids.contains(&"s1"));
     assert!(!task_ids.contains(&"c1"));
+}
+
+#[tokio::test]
+async fn habit_sync_marks_generated_task_unedited() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let create_req = auth_req_body(
+        Method::POST,
+        "/api/habits",
+        json!({
+            "title": "朝のランニング",
+            "recurrence": r#"{"freq":"daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#,
+            "start_time": "06:00",
+            "end_time": "07:00",
+            "avg_minutes": 30,
+            "sigma_minutes": 5,
+            "parallelizable": false,
+            "allows_parallel": false,
+            "abandonability": 0.1
+        }),
+    );
+    let res = app.clone().oneshot(create_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let habit_id = body["id"].as_str().unwrap();
+
+    let gen_req = auth_req_body(
+        Method::POST,
+        "/api/schedule/generate",
+        json!({
+            "until": "2030-01-01T23:59:59Z",
+            "sleep": "disabled"
+        }),
+    );
+    let res = app.clone().oneshot(gen_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let list_req = auth_req(Method::GET, &format!("/api/tasks?habit_id={habit_id}"));
+    let res = app.clone().oneshot(list_req).await.unwrap();
+    let tasks: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(!tasks.is_empty());
+    for t in &tasks {
+        assert_eq!(t["user_edited"], false);
+    }
+}
+
+#[tokio::test]
+async fn task_edit_marks_habit_task_user_edited() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let create_req = auth_req_body(
+        Method::POST,
+        "/api/habits",
+        json!({
+            "title": "朝のランニング",
+            "recurrence": r#"{"freq":"daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#,
+            "start_time": "06:00",
+            "end_time": "07:00",
+            "avg_minutes": 30,
+            "sigma_minutes": 5,
+            "parallelizable": false,
+            "allows_parallel": false,
+            "abandonability": 0.1
+        }),
+    );
+    let res = app.clone().oneshot(create_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let habit_id = body["id"].as_str().unwrap();
+
+    let gen_req = auth_req_body(
+        Method::POST,
+        "/api/schedule/generate",
+        json!({
+            "until": "2030-01-01T23:59:59Z",
+            "sleep": "disabled"
+        }),
+    );
+    let res = app.clone().oneshot(gen_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let list_req = auth_req(Method::GET, &format!("/api/tasks?habit_id={habit_id}"));
+    let res = app.clone().oneshot(list_req).await.unwrap();
+    let tasks: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let task_id = tasks[0]["id"].as_str().unwrap();
+    assert_eq!(tasks[0]["user_edited"], false);
+
+    let edit_req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{task_id}"),
+        json!({ "title": " edited" }),
+    );
+    let res = app.clone().oneshot(edit_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let updated: serde_json::Value =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(updated["user_edited"], true);
+}
+
+#[tokio::test]
+async fn task_status_update_keeps_user_edited_false() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let create_req = auth_req_body(
+        Method::POST,
+        "/api/habits",
+        json!({
+            "title": "朝のランニング",
+            "recurrence": r#"{"freq":"daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#,
+            "start_time": "06:00",
+            "end_time": "07:00",
+            "avg_minutes": 30,
+            "sigma_minutes": 5,
+            "parallelizable": false,
+            "allows_parallel": false,
+            "abandonability": 0.1
+        }),
+    );
+    let res = app.clone().oneshot(create_req).await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let habit_id = body["id"].as_str().unwrap();
+
+    let gen_req = auth_req_body(
+        Method::POST,
+        "/api/schedule/generate",
+        json!({
+            "until": "2030-01-01T23:59:59Z",
+            "sleep": "disabled"
+        }),
+    );
+    let res = app.clone().oneshot(gen_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let list_req = auth_req(Method::GET, &format!("/api/tasks?habit_id={habit_id}"));
+    let res = app.clone().oneshot(list_req).await.unwrap();
+    let tasks: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let task_id = tasks[0]["id"].as_str().unwrap();
+
+    let status_req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{task_id}"),
+        json!({ "status": "completed" }),
+    );
+    let res = app.clone().oneshot(status_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let updated: serde_json::Value =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(updated["user_edited"], false);
+}
+
+#[tokio::test]
+async fn habit_change_respects_user_edited_flag() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let create_req = auth_req_body(
+        Method::POST,
+        "/api/habits",
+        json!({
+            "title": "朝のランニング",
+            "recurrence": r#"{"freq":"daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#,
+            "start_time": "06:00",
+            "end_time": "07:00",
+            "avg_minutes": 30,
+            "sigma_minutes": 5,
+            "parallelizable": false,
+            "allows_parallel": false,
+            "abandonability": 0.1
+        }),
+    );
+    let res = app.clone().oneshot(create_req).await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let habit_id = body["id"].as_str().unwrap();
+
+    let gen_req = auth_req_body(
+        Method::POST,
+        "/api/schedule/generate",
+        json!({
+            "until": "2030-01-01T23:59:59Z",
+            "sleep": "disabled"
+        }),
+    );
+    let res = app.clone().oneshot(gen_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let list_req = auth_req(Method::GET, &format!("/api/tasks?habit_id={habit_id}"));
+    let res = app.clone().oneshot(list_req).await.unwrap();
+    let tasks: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(tasks.len() >= 3, "expected at least 3 generated tasks");
+    // Pick tasks near the middle of the generated range so they are included
+    // in both sync runs even if the exact window shifts slightly.
+    let task_id = tasks[tasks.len() / 3]["id"].as_str().unwrap();
+    let other_id = tasks[tasks.len() * 2 / 3]["id"].as_str().unwrap();
+
+    // After generation tasks are scheduled; sync only mutates pending tasks.
+    // Set both targets back to pending so the next sync can update them.
+    let pend_req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{task_id}"),
+        json!({ "status": "pending" }),
+    );
+    let res = app.clone().oneshot(pend_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let pend_req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{other_id}"),
+        json!({ "status": "pending" }),
+    );
+    let res = app.clone().oneshot(pend_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let edit_req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{task_id}"),
+        json!({ "avg_minutes": 99 }),
+    );
+    let res = app.clone().oneshot(edit_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let habit_update = auth_req_body(
+        Method::PATCH,
+        &format!("/api/habits/{habit_id}"),
+        json!({ "avg_minutes": 45 }),
+    );
+    let res = app.clone().oneshot(habit_update).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let gen_req = auth_req_body(
+        Method::POST,
+        "/api/schedule/generate",
+        json!({
+            "until": "2030-01-01T23:59:59Z",
+            "sleep": "disabled"
+        }),
+    );
+    let res = app.clone().oneshot(gen_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let get_req = auth_req(Method::GET, &format!("/api/tasks/{task_id}"));
+    let res = app.clone().oneshot(get_req).await.unwrap();
+    let edited: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(edited["avg_minutes"], 99);
+    assert_eq!(edited["user_edited"], true);
+
+    let get_req = auth_req(Method::GET, &format!("/api/tasks/{other_id}"));
+    let res = app.clone().oneshot(get_req).await.unwrap();
+    let other: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(other["avg_minutes"], 45);
+    assert_eq!(other["user_edited"], false);
+}
+
+#[tokio::test]
+async fn revert_to_habit_clears_user_edited_flag() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let create_req = auth_req_body(
+        Method::POST,
+        "/api/habits",
+        json!({
+            "title": "朝のランニング",
+            "recurrence": r#"{"freq":"daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#,
+            "start_time": "06:00",
+            "end_time": "07:00",
+            "avg_minutes": 30,
+            "sigma_minutes": 5,
+            "parallelizable": false,
+            "allows_parallel": false,
+            "abandonability": 0.1
+        }),
+    );
+    let res = app.clone().oneshot(create_req).await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let habit_id = body["id"].as_str().unwrap();
+
+    let gen_req = auth_req_body(
+        Method::POST,
+        "/api/schedule/generate",
+        json!({
+            "until": "2030-01-01T23:59:59Z",
+            "sleep": "disabled"
+        }),
+    );
+    let res = app.clone().oneshot(gen_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let list_req = auth_req(Method::GET, &format!("/api/tasks?habit_id={habit_id}"));
+    let res = app.clone().oneshot(list_req).await.unwrap();
+    let tasks: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(tasks.len() >= 3, "expected at least 3 generated tasks");
+    // Pick a task near the middle of the generated range to survive both syncs.
+    let task_id = tasks[tasks.len() / 2]["id"].as_str().unwrap();
+
+    // sync only mutates pending tasks; set target back to pending before the next sync.
+    let pend_req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{task_id}"),
+        json!({ "status": "pending" }),
+    );
+    let res = app.clone().oneshot(pend_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let edit_req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{task_id}"),
+        json!({ "avg_minutes": 99 }),
+    );
+    let res = app.clone().oneshot(edit_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let revert_req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{task_id}"),
+        json!({ "user_edited": false }),
+    );
+    let res = app.clone().oneshot(revert_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let reverted: serde_json::Value =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(reverted["user_edited"], false);
+
+    let habit_update = auth_req_body(
+        Method::PATCH,
+        &format!("/api/habits/{habit_id}"),
+        json!({ "avg_minutes": 45 }),
+    );
+    let res = app.clone().oneshot(habit_update).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let gen_req = auth_req_body(
+        Method::POST,
+        "/api/schedule/generate",
+        json!({
+            "until": "2030-01-01T23:59:59Z",
+            "sleep": "disabled"
+        }),
+    );
+    let res = app.clone().oneshot(gen_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let get_req = auth_req(Method::GET, &format!("/api/tasks/{task_id}"));
+    let res = app.clone().oneshot(get_req).await.unwrap();
+    let task: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(task["avg_minutes"], 45);
+}
+
+#[tokio::test]
+async fn stale_user_edited_task_is_not_deleted() {
+    let (state, pool) = setup().await;
+    let app = build_router(state);
+
+    let create_req = auth_req_body(
+        Method::POST,
+        "/api/habits",
+        json!({
+            "title": "朝のランニング",
+            "recurrence": r#"{"freq":"daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#,
+            "start_time": "06:00",
+            "end_time": "07:00",
+            "avg_minutes": 30,
+            "sigma_minutes": 5,
+            "parallelizable": false,
+            "allows_parallel": false,
+            "abandonability": 0.1
+        }),
+    );
+    let res = app.clone().oneshot(create_req).await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let habit_id = body["id"].as_str().unwrap();
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, user_edited, start_at) VALUES ('stale1', 'Stale edited', '2030-01-01T18:00:00Z', 30, 0, '[]', 0, 0, 0.5, 'pending', ?, 1, '2030-01-01T09:00:00Z')",
+    )
+    .bind(habit_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Use a different date so the two stale tasks do not collide in the
+    // (habit_id, date) key used by sync_habit_tasks.
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, user_edited, start_at) VALUES ('stale2', 'Stale unedited', '2030-01-02T18:00:00Z', 30, 0, '[]', 0, 0, 0.5, 'pending', ?, 0, '2030-01-02T09:00:00Z')",
+    )
+    .bind(habit_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let gen_req = auth_req_body(
+        Method::POST,
+        "/api/schedule/generate",
+        json!({
+            "until": "2030-01-01T23:59:59Z",
+            "sleep": "disabled"
+        }),
+    );
+    let res = app.clone().oneshot(gen_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let get_req = auth_req(Method::GET, "/api/tasks/stale1");
+    let res = app.clone().oneshot(get_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let get_req = auth_req(Method::GET, "/api/tasks/stale2");
+    let res = app.clone().oneshot(get_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }

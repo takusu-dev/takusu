@@ -687,6 +687,7 @@ async fn run_task(
                 abandonability,
                 status,
                 habit_id: None,
+                user_edited: None,
             };
             let task = app.update_task(&id, &body).await?;
             match mode {

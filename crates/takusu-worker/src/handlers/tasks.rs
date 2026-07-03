@@ -7,7 +7,7 @@ use crate::handlers::d1::safe_all;
 use crate::handlers::tokens::{json_created, json_ok, parse_json};
 use crate::models::{CreateTask, TaskRow, UpdateTask};
 
-const TASK_COLS: &str = "id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, created_at, updated_at";
+const TASK_COLS: &str = "id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, created_at, updated_at";
 
 fn select_tasks() -> String {
     format!("SELECT {TASK_COLS} FROM tasks")
@@ -142,7 +142,7 @@ pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, Wo
     };
 
     let stmt = database.prepare(
-        "UPDATE tasks SET title=COALESCE(?1,title), description=COALESCE(?2,description), start_at=COALESCE(?3,start_at), end_at=COALESCE(?4,end_at), avg_minutes=COALESCE(?5,avg_minutes), sigma_minutes=COALESCE(?6,sigma_minutes), depends=COALESCE(?7,depends), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), status=?11, habit_id=COALESCE(?13,habit_id), updated_at=datetime('now') WHERE id = ?12"
+        "UPDATE tasks SET title=COALESCE(?1,title), description=COALESCE(?2,description), start_at=COALESCE(?3,start_at), end_at=COALESCE(?4,end_at), avg_minutes=COALESCE(?5,avg_minutes), sigma_minutes=COALESCE(?6,sigma_minutes), depends=COALESCE(?7,depends), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), status=?11, habit_id=COALESCE(?13,habit_id), user_edited=COALESCE(?14,user_edited), updated_at=datetime('now') WHERE id = ?12"
     );
     stmt.bind(&[
         body.title
@@ -185,6 +185,9 @@ pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, Wo
         body.habit_id
             .as_deref()
             .map(JsValue::from_str)
+            .unwrap_or(JsValue::NULL),
+        body.user_edited
+            .map(JsValue::from_bool)
             .unwrap_or(JsValue::NULL),
     ])?
     .run()
