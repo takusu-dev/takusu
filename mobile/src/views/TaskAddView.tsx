@@ -21,6 +21,7 @@ import type { TaskRow } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
+import { haptic } from '@/src/components/haptics';
 
 interface TaskAddViewProps {
   /** Called when the view requests closing (back button / successful save).
@@ -81,6 +82,7 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
 
   async function create() {
     if (!client || !title || !endAt || saving) return;
+    haptic.medium();
     setSaving(true);
     try {
       const task = await client.createTask({
@@ -122,7 +124,7 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
       <View style={[styles.topBar, { paddingTop: 8 + (embedded ? 0 : insets.top) }]}>
-        <Pressable style={styles.backButton} onPress={close}>
+        <Pressable style={styles.backButton} onPress={() => { haptic.light(); close(); }}>
           <Ionicons name="chevron-back" size={28} color={BRAND_COLOR} />
         </Pressable>
         <Text style={[styles.title, { color: colors.black }]}>新規タスク</Text>
@@ -157,7 +159,7 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
           <Text style={[styles.label, { color: colors.gray }]}>開始日時 (任意)</Text>
           <Pressable
             style={[styles.dateField, { borderColor: colors.separator, backgroundColor: colors.white }]}
-            onPress={() => setPickerField('start')}
+            onPress={() => { haptic.select(); setPickerField('start'); }}
           >
             <Ionicons name="calendar-outline" size={20} color={BRAND_COLOR} />
             <Text style={[styles.dateText, { color: startAt ? colors.black : colors.grayLight }]}>
@@ -166,7 +168,7 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
             {startAt && (
               <Pressable
                 style={styles.clearIcon}
-                onPress={() => setStartAt(null)}
+                onPress={() => { haptic.light(); setStartAt(null); }}
               >
                 <Ionicons name="close-circle" size={18} color={colors.grayLight} />
               </Pressable>
@@ -178,7 +180,7 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
           <Text style={[styles.label, { color: colors.gray }]}>期限日時 (必須)</Text>
           <Pressable
             style={[styles.dateField, { borderColor: colors.separator, backgroundColor: colors.white }]}
-            onPress={() => setPickerField('end')}
+            onPress={() => { haptic.select(); setPickerField('end'); }}
           >
             <Ionicons name="calendar-outline" size={20} color={BRAND_COLOR} />
             <Text style={[styles.dateText, { color: endAt ? colors.black : colors.grayLight }]}>
@@ -239,6 +241,7 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
             <Pressable
               style={styles.addDepButton}
               onPress={() => {
+                haptic.light();
                 loadTasks();
                 setDepSearch('');
                 setShowDepPicker(true);
@@ -256,9 +259,10 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
                   {depTask ? `#${depTask.display_id} ${depTask.title}` : depId.slice(0, 8)}
                 </Text>
                 <Pressable
-                  onPress={() =>
-                    setSelectedDeps(selectedDeps.filter((d) => d !== depId))
-                  }
+                  onPress={() => {
+                    haptic.light();
+                    setSelectedDeps(selectedDeps.filter((d) => d !== depId));
+                  }}
                 >
                   <Ionicons name="close" size={18} color={COLORS.red} />
                 </Pressable>
@@ -278,7 +282,7 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
             ]}
           >
             <Text style={[styles.depPickerTitle, { color: colors.black }]}>依存先を選択</Text>
-            <Pressable onPress={() => setShowDepPicker(false)}>
+            <Pressable onPress={() => { haptic.light(); setShowDepPicker(false); }}>
               <Text style={styles.depPickerClose}>閉じる</Text>
             </Pressable>
           </View>
@@ -293,7 +297,7 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
               autoFocus
             />
             {depSearch.length > 0 && (
-              <Pressable onPress={() => setDepSearch('')}>
+              <Pressable onPress={() => { haptic.light(); setDepSearch(''); }}>
                 <Ionicons name="close-circle" size={18} color={colors.grayLight} />
               </Pressable>
             )}
@@ -311,6 +315,7 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
                   key={t.id}
                   style={[styles.depPickerItem, { borderBottomColor: colors.separator }]}
                   onPress={() => {
+                    haptic.medium();
                     setSelectedDeps([...selectedDeps, t.id]);
                     setShowDepPicker(false);
                   }}

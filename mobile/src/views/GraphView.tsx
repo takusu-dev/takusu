@@ -15,6 +15,7 @@ import type { TaskRow } from '@/src/api/types';
 import { parseDepends } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { haptic } from '@/src/components/haptics';
 
 interface GraphViewProps {
   client: TakusuClient | null;
@@ -288,12 +289,14 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
     const msg = JSON.parse(event.nativeEvent.data);
 
     if (msg.type === 'tapNode') {
+      haptic.light();
       if (onTaskPress) {
         onTaskPress(msg.id);
       } else {
         onBack();
       }
     } else if (msg.type === 'cutEdge') {
+      haptic.medium();
       const targetTask = tasks.find((t) => t.id === msg.target);
       if (targetTask) {
         const deps = parseDepends(targetTask.depends).filter(
@@ -305,6 +308,7 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
           .catch((e) => showError(e, '依存関係の削除に失敗'));
       }
     } else if (msg.type === 'addEdge') {
+      haptic.medium();
       const targetTask = tasks.find((t) => t.id === msg.target);
       if (targetTask) {
         const deps = parseDepends(targetTask.depends);
@@ -321,6 +325,7 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
 
   function toggleEditMode() {
     const newMode = !editMode;
+    haptic.medium();
     setEditMode(newMode);
     webViewRef.current?.injectJavaScript(
       `window.setEditMode(${newMode});`,
@@ -335,7 +340,7 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
             icon="chevron-left"
             iconColor={BRAND_COLOR}
             size={28}
-            onPress={onBack}
+            onPress={() => { haptic.light(); onBack(); }}
           />
         </View>
         <View style={styles.topBarCenter}>

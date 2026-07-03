@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { Snackbar } from 'react-native-paper';
 import { undoRedo } from '@/src/api/undoRedo';
 import { BRAND_COLOR } from '@/src/theme';
+import { haptic } from '@/src/components/haptics';
 
 export function UndoRedoToast() {
   const [visible, setVisible] = useState(false);
@@ -13,10 +14,12 @@ export function UndoRedoToast() {
 
   useEffect(() => {
     function showUndo(description: string) {
+      haptic.success();
       setMessage(`Undo: ${description}`);
       setVisible(true);
     }
     function showRedo(description: string) {
+      haptic.success();
       setMessage(`Redo: ${description}`);
       setVisible(true);
     }

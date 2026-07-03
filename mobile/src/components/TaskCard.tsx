@@ -7,7 +7,6 @@
 
 import { memo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import * as Haptics from 'expo-haptics';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Reanimated, {
   useSharedValue,
@@ -18,6 +17,7 @@ import Reanimated, {
 import type { TaskRow } from '@/src/api/types';
 import { parseDepends } from '@/src/api/types';
 import { abandonabilityColor, COLORS } from '@/src/theme';
+import { haptic } from '@/src/components/haptics';
 
 interface TaskCardProps {
   task: TaskRow;
@@ -73,7 +73,7 @@ function TaskCardImpl({
     })
     .onEnd((e) => {
       if (e.translationX > 80 && onDone) {
-        runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Light);
+        runOnJS(haptic.light)();
         runOnJS(onDone)();
       }
       translateX.value = withSpring(0);
@@ -86,7 +86,7 @@ function TaskCardImpl({
     })
     .onEnd((e) => {
       if (e.translationX < -80 && onDelete) {
-        runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Medium);
+        runOnJS(haptic.medium)();
         runOnJS(onDelete)();
       }
       translateX.value = withSpring(0);
@@ -98,6 +98,23 @@ function TaskCardImpl({
 
   const bgColor = abandonabilityColor(task.abandonability);
   const deps = parseDepends(task.depends);
+
+  const handlePress = () => {
+    haptic.light();
+    onPress();
+  };
+  const handleLongPress = onLongPress
+    ? () => {
+        haptic.medium();
+        onLongPress();
+      }
+    : undefined;
+  const handleParallelPress = onParallelPress
+    ? () => {
+        haptic.light();
+        onParallelPress();
+      }
+    : undefined;
 
   // Parallel receiver task (left side, 1:3 width ratio)
   if (parallelTask) {
@@ -117,7 +134,7 @@ function TaskCardImpl({
                 })
                 .onEnd((e) => {
                   if (e.translationX > 80 && onParallelDone) {
-                    runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Light);
+                    runOnJS(haptic.light)();
                     runOnJS(onParallelDone)();
                   }
                   translateX.value = withSpring(0);
@@ -128,7 +145,7 @@ function TaskCardImpl({
                 })
                 .onEnd((e) => {
                   if (e.translationX < -80 && onParallelDelete) {
-                    runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Medium);
+                    runOnJS(haptic.medium)();
                     runOnJS(onParallelDelete)();
                   }
                   translateX.value = withSpring(0);
@@ -137,7 +154,7 @@ function TaskCardImpl({
           >
             <Reanimated.View style={[styles.parallelCard, { backgroundColor: parallelBgColor }, animatedStyle]}>
               <Pressable
-                onPress={onParallelPress}
+                onPress={handleParallelPress}
                 style={styles.parallelPressable}
               >
                 <Text
@@ -166,8 +183,8 @@ function TaskCardImpl({
               { backgroundColor: bgColor },
               pressed && styles.pressed,
             ]}
-            onPress={onPress}
-            onLongPress={onLongPress}
+            onPress={handlePress}
+            onLongPress={handleLongPress}
           >
             <View style={styles.times}>
               <Text style={styles.timeText}>{formatTime(scheduleStart)}</Text>
@@ -211,8 +228,8 @@ function TaskCardImpl({
             { backgroundColor: bgColor },
             pressed && styles.pressed,
           ]}
-          onPress={onPress}
-          onLongPress={onLongPress}
+          onPress={handlePress}
+          onLongPress={handleLongPress}
         >
           {/* Left: times */}
           <View style={styles.times}>

@@ -9,6 +9,7 @@ import DateTimePicker, { type DateTimePickerEvent } from '@react-native-communit
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, BRAND_COLOR } from '@/src/theme';
+import { haptic } from '@/src/components/haptics';
 
 interface DateTimePickerModalProps {
   visible: boolean;
@@ -46,6 +47,7 @@ export function DateTimePickerModal({
   }, [visible, value]);
 
   function openPicker(pMode: 'date' | 'time') {
+    haptic.select();
     setPickerMode(pMode);
     setShowPicker(true);
   }
@@ -76,7 +78,7 @@ export function DateTimePickerModal({
         <Pressable style={[styles.sheet, { paddingBottom: 32 + insets.bottom }]} onPress={(e) => e.stopPropagation()}>
           <View style={styles.header}>
             <Text style={styles.title}>{label}</Text>
-            <Pressable onPress={onCancel}>
+            <Pressable onPress={() => { haptic.light(); onCancel(); }}>
               <Ionicons name="close" size={24} color={COLORS.gray} />
             </Pressable>
           </View>
@@ -123,7 +125,7 @@ export function DateTimePickerModal({
           {optional && (
             <Pressable
               style={styles.clearButton}
-              onPress={() => onConfirm(null)}
+              onPress={() => { haptic.light(); onConfirm(null); }}
             >
               <Ionicons name="trash-outline" size={16} color={COLORS.red} />
               <Text style={styles.clearText}>クリア</Text>
@@ -131,12 +133,12 @@ export function DateTimePickerModal({
           )}
 
           <View style={styles.actionRow}>
-            <Pressable style={styles.cancelButton} onPress={onCancel}>
+            <Pressable style={styles.cancelButton} onPress={() => { haptic.light(); onCancel(); }}>
               <Text style={styles.cancelText}>キャンセル</Text>
             </Pressable>
             <Pressable
               style={styles.confirmButton}
-              onPress={() => onConfirm(tempDate)}
+              onPress={() => { haptic.medium(); onConfirm(tempDate); }}
             >
               <Text style={styles.confirmText}>設定</Text>
             </Pressable>

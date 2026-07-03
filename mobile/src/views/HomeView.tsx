@@ -38,6 +38,7 @@ import Reanimated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useColors, COLORS, BRAND_COLOR } from '@/src/theme';
+import { haptic } from '@/src/components/haptics';
 import {
   rescheduleFromRaw,
   postInProgressNotification,
@@ -134,6 +135,7 @@ export function HomeView() {
     transform: [{ rotate: `${chevronRotate.value}deg` }],
   }));
   function togglePast() {
+    haptic.select();
     setShowPast((v) => {
       const next = !v;
       chevronRotate.value = withTiming(next ? 180 : 0, { duration: 250 });
@@ -763,7 +765,7 @@ export function HomeView() {
         />
         <Pressable
           style={({ pressed }) => [styles.topButton, pressed && styles.topButtonPressed]}
-          onPress={() => setSearchOpen(!searchOpen)}
+          onPress={() => { haptic.light(); setSearchOpen(!searchOpen); }}
         >
           <Ionicons name="search-outline" size={22} color={BRAND_COLOR} />
         </Pressable>
@@ -789,6 +791,7 @@ export function HomeView() {
           style={({ pressed }) => [styles.topButton, pressed && styles.topButtonPressed]}
           onPress={async () => {
             if (!client) return;
+            haptic.medium();
             try {
               await withStatus('スケジュール生成中', () =>
                 client.generateSchedule({
@@ -878,6 +881,7 @@ export function HomeView() {
               (t) => t.status === 'scheduled' || t.status === 'pending',
             );
             if (next) {
+              haptic.medium();
               if (client && next.status !== 'in_progress') {
                 try {
                   await client.updateTask(next.id, { status: 'in_progress' });

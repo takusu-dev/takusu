@@ -28,6 +28,7 @@ import type { TaskRow, HabitRow, ScheduleEntry, TaskStatus } from '@/src/api/typ
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
+import { haptic } from '@/src/components/haptics';
 import {
   postInProgressNotification,
   dismissInProgressNotification,
@@ -308,12 +309,20 @@ export function TaskDetailView() {
           icon="chevron-left"
           iconColor={BRAND_COLOR}
           size={28}
-          onPress={() => router.back()}
+          onPress={() => { haptic.light(); router.back(); }}
         />
         <View style={styles.centerButtonContainer} pointerEvents="box-none">
           <Button
             mode={editing ? 'contained' : 'outlined'}
-            onPress={() => (editing ? save() : setEditing(true))}
+            onPress={() => {
+              if (editing) {
+                haptic.medium();
+                save();
+              } else {
+                haptic.light();
+                setEditing(true);
+              }
+            }}
             textColor={editing ? COLORS.white : BRAND_COLOR}
             buttonColor={editing ? BRAND_COLOR : undefined}
             compact
@@ -351,7 +360,7 @@ export function TaskDetailView() {
             anchor={
               <Pressable
                 style={[styles.statusRow, { borderColor: colors.separator }]}
-                onPress={() => setStatusMenuVisible(true)}
+                onPress={() => { haptic.light(); setStatusMenuVisible(true); }}
               >
                 <Ionicons
                   name={STATUS_ICONS[editing ? status : task.status]}
@@ -368,7 +377,7 @@ export function TaskDetailView() {
             {(Object.keys(STATUS_LABELS) as TaskStatus[]).map((s) => (
               <Menu.Item
                 key={s}
-                onPress={() => changeStatus(s)}
+                onPress={() => { haptic.medium(); changeStatus(s); }}
                 title={STATUS_LABELS[s]}
                 leadingIcon={STATUS_ICONS[s] as string}
               />
@@ -384,21 +393,21 @@ export function TaskDetailView() {
               <View style={styles.timeEditContainer}>
                 <Pressable
                   style={[styles.dateField, { borderColor: colors.separator }]}
-                  onPress={() => setPickerField('start')}
+                  onPress={() => { haptic.select(); setPickerField('start'); }}
                 >
                   <Ionicons name="calendar-outline" size={18} color={BRAND_COLOR} />
                   <Text style={[styles.dateText, { color: startAt ? colors.black : colors.grayLight }]}>
                     {formatDate(startAt)}
                   </Text>
                   {startAt && (
-                    <Pressable onPress={() => setStartAt(null)}>
+                    <Pressable onPress={() => { haptic.light(); setStartAt(null); }}>
                       <Ionicons name="close-circle" size={16} color={colors.grayLight} />
                     </Pressable>
                   )}
                 </Pressable>
                 <Pressable
                   style={[styles.dateField, { borderColor: colors.separator }]}
-                  onPress={() => setPickerField('end')}
+                  onPress={() => { haptic.select(); setPickerField('end'); }}
                 >
                   <Ionicons name="calendar-outline" size={18} color={BRAND_COLOR} />
                   <Text style={[styles.dateText, { color: endAt ? colors.black : colors.grayLight }]}>
@@ -419,7 +428,7 @@ export function TaskDetailView() {
           <View style={styles.section}>
             <Text style={[styles.sectionLabel, { color: colors.gray }]}>並列タスク</Text>
             {parallelTask ? (
-              <Pressable onPress={() => router.push(`/task/${parallelTask.id}`)}>
+              <Pressable onPress={() => { haptic.light(); router.push(`/task/${parallelTask.id}`); }}>
                 <Text style={styles.habitLink}>{parallelTask.title} ›</Text>
               </Pressable>
             ) : (
@@ -493,7 +502,7 @@ export function TaskDetailView() {
         {habit && (
           <Pressable
             style={styles.section}
-            onPress={() => router.push(`/habit/${habit.id}`)}
+            onPress={() => { haptic.light(); router.push(`/habit/${habit.id}`); }}
           >
             <Text style={[styles.sectionLabel, { color: colors.gray }]}>Habit</Text>
             <Text style={styles.habitLink}>{habit.title} ›</Text>
@@ -530,7 +539,7 @@ export function TaskDetailView() {
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>parallelizable</Text>
                 <Switch
                   value={parallelizable}
-                  onValueChange={setParallelizable}
+                  onValueChange={(v) => { haptic.select(); setParallelizable(v); }}
                   color={BRAND_COLOR}
                 />
               </View>
@@ -538,7 +547,7 @@ export function TaskDetailView() {
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>allows_parallel</Text>
                 <Switch
                   value={allowsParallel}
-                  onValueChange={setAllowsParallel}
+                  onValueChange={(v) => { haptic.select(); setAllowsParallel(v); }}
                   color={BRAND_COLOR}
                 />
               </View>
@@ -562,6 +571,7 @@ export function TaskDetailView() {
                 mode="text"
                 compact
                 onPress={() => {
+                  haptic.light();
                   setDepSearch('');
                   setDepModalVisible(true);
                 }}
@@ -578,7 +588,7 @@ export function TaskDetailView() {
                 <View key={depId} style={styles.depRow}>
                   <Pressable
                     style={{ flex: 1 }}
-                    onPress={() => !editing && router.push(`/task/${depId}`)}
+                    onPress={() => { if (!editing) { haptic.light(); router.push(`/task/${depId}`); } }}
                   >
                     <Text style={styles.depLink}>
                       • {depTask ? `#${depTask.display_id} ${depTask.title}` : depId.slice(0, 8) + '...'} ›
@@ -589,7 +599,7 @@ export function TaskDetailView() {
                       icon="close"
                       size={18}
                       iconColor={COLORS.red}
-                      onPress={() => setDeps(deps.filter((d) => d !== depId))}
+                      onPress={() => { haptic.light(); setDeps(deps.filter((d) => d !== depId)); }}
                     />
                   )}
                 </View>
@@ -608,7 +618,7 @@ export function TaskDetailView() {
               {reverseDeps.map((rd) => (
                 <Pressable
                   key={rd.id}
-                  onPress={() => !editing && router.push(`/task/${rd.id}`)}
+                  onPress={() => { if (!editing) { haptic.light(); router.push(`/task/${rd.id}`); } }}
                 >
                   <Text style={styles.depLink}>← {rd.title} ›</Text>
                 </Pressable>
@@ -667,7 +677,7 @@ export function TaskDetailView() {
               autoFocus
             />
             {depSearch.length > 0 && (
-              <Pressable onPress={() => setDepSearch('')}>
+              <Pressable onPress={() => { haptic.light(); setDepSearch(''); }}>
                 <Ionicons name="close-circle" size={18} color={colors.grayLight} />
               </Pressable>
             )}
@@ -690,6 +700,7 @@ export function TaskDetailView() {
                     title={t.title}
                     description={`#${t.display_id}${t.status !== 'pending' ? ' · ' + STATUS_LABELS[t.status] : ''}`}
                     onPress={() => {
+                      haptic.medium();
                       setDeps([...deps, t.id]);
                       setDepModalVisible(false);
                     }}
@@ -703,7 +714,7 @@ export function TaskDetailView() {
           <Divider />
           <Button
             mode="text"
-            onPress={() => setDepModalVisible(false)}
+            onPress={() => { haptic.light(); setDepModalVisible(false); }}
             textColor={BRAND_COLOR}
             style={styles.depModalClose}
           >

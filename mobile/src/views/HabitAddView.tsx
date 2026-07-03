@@ -19,6 +19,7 @@ import { showError } from '@/src/api/errors';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RruleBuilderModal } from '@/src/components/RruleBuilderModal';
+import { haptic } from '@/src/components/haptics';
 import { defaultRule, parseRule, serializeRule, summarizeRule } from '@/src/api/rrule';
 
 export function HabitAddView() {
@@ -39,6 +40,7 @@ export function HabitAddView() {
 
   async function create() {
     if (!client || !title || saving) return;
+    haptic.medium();
     setSaving(true);
     try {
       const habit = await client.createHabit({
@@ -78,7 +80,7 @@ export function HabitAddView() {
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
       <View style={[styles.topBar, { paddingTop: 8 + insets.top }]}>
-        <Pressable style={styles.backButton} onPress={() => router.back()}>
+        <Pressable style={styles.backButton} onPress={() => { haptic.light(); router.back(); }}>
           <Ionicons name="chevron-back" size={28} color={BRAND_COLOR} />
         </Pressable>
         <Text style={[styles.title, { color: colors.black }]}>New Habit</Text>
@@ -111,7 +113,7 @@ export function HabitAddView() {
             <Text style={[styles.label, { color: colors.gray }]}>周期 (RRULE)</Text>
             <Pressable
               style={styles.helpButton}
-              onPress={() => setShowRruleBuilder(true)}
+              onPress={() => { haptic.light(); setShowRruleBuilder(true); }}
               hitSlop={8}
             >
               <Ionicons name="help-circle-outline" size={18} color={BRAND_COLOR} />
@@ -119,7 +121,7 @@ export function HabitAddView() {
           </View>
           <Pressable
             style={[styles.dateField, { borderColor: colors.separator, backgroundColor: colors.white }]}
-            onPress={() => setShowRruleBuilder(true)}
+            onPress={() => { haptic.light(); setShowRruleBuilder(true); }}
           >
             <Ionicons name="repeat" size={20} color={BRAND_COLOR} />
             <Text

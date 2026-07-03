@@ -33,6 +33,7 @@ import type { NotificationSettings } from '@/src/notifications/settings';
 import { formatTime, minutesToTime, timeToMinutes } from '@/src/notifications/settings';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
+import { haptic } from '@/src/components/haptics';
 import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
 
 type SettingsCategory = 'general' | 'notifications' | 'worker' | 'google' | 'info';
@@ -313,6 +314,7 @@ export function SettingsView() {
       }
       const content = lines.join('\n');
       await Clipboard.setStringAsync(content);
+      haptic.success();
       Alert.alert('コピーしました', `${lines.length} 行のログをクリップボードにコピーしました`);
     } catch (e) {
       Alert.alert('エラー', `ログコピーに失敗: ${e instanceof Error ? e.message : String(e)}`);
@@ -342,7 +344,7 @@ export function SettingsView() {
           { borderBottomColor: colors.separator, paddingTop: 8 + insets.top },
         ]}
       >
-        <Pressable style={styles.backButton} onPress={() => router.back()}>
+        <Pressable style={styles.backButton} onPress={() => { haptic.light(); router.back(); }}>
           <Text style={[styles.backButtonText, { color: BRAND_COLOR }]}>‹</Text>
         </Pressable>
         <Text style={[styles.title, { color: colors.black }]}>設定</Text>
@@ -355,7 +357,7 @@ export function SettingsView() {
             <Pressable
               key={c.key}
               style={[styles.tab, category === c.key && { borderBottomColor: BRAND_COLOR }]}
-              onPress={() => setCategory(c.key)}
+              onPress={() => { if (category !== c.key) haptic.select(); setCategory(c.key); }}
             >
               <Text
                 style={[
@@ -381,7 +383,7 @@ export function SettingsView() {
                 </Text>
                 <Switch
                   value={darkMode}
-                  onValueChange={(v) => setDarkMode(v)}
+                  onValueChange={(v) => { haptic.select(); setDarkMode(v); }}
                   trackColor={{ true: BRAND_COLOR }}
                 />
               </View>
@@ -413,9 +415,10 @@ export function SettingsView() {
                 </Text>
                 <Switch
                   value={notifications.enabled}
-                  onValueChange={(v) =>
-                    setNotifications({ ...notifications, enabled: v })
-                  }
+                  onValueChange={(v) => {
+                    haptic.select();
+                    setNotifications({ ...notifications, enabled: v });
+                  }}
                   trackColor={{ true: BRAND_COLOR }}
                 />
               </View>
@@ -430,16 +433,17 @@ export function SettingsView() {
                       </Text>
                       <Switch
                         value={notifications.morningBriefing}
-                        onValueChange={(v) =>
-                          setNotifications({ ...notifications, morningBriefing: v })
-                        }
+                        onValueChange={(v) => {
+                          haptic.select();
+                          setNotifications({ ...notifications, morningBriefing: v });
+                        }}
                         trackColor={{ true: BRAND_COLOR }}
                       />
                     </View>
                     {notifications.morningBriefing && (
                       <Pressable
                         style={[styles.timeField, { borderColor: colors.separator }]}
-                        onPress={() => setNotifPickerField('morningBriefing')}
+                        onPress={() => { haptic.select(); setNotifPickerField('morningBriefing'); }}
                       >
                         <Text style={[styles.timeText, { color: colors.black }]}>
                           {formatTime(notifications.morningBriefingTime)}
@@ -456,9 +460,10 @@ export function SettingsView() {
                       </Text>
                       <Switch
                         value={notifications.preStartReminder}
-                        onValueChange={(v) =>
-                          setNotifications({ ...notifications, preStartReminder: v })
-                        }
+                        onValueChange={(v) => {
+                          haptic.select();
+                          setNotifications({ ...notifications, preStartReminder: v });
+                        }}
                         trackColor={{ true: BRAND_COLOR }}
                       />
                     </View>
@@ -494,9 +499,10 @@ export function SettingsView() {
                     </Text>
                     <Switch
                       value={notifications.startOverdue}
-                      onValueChange={(v) =>
-                        setNotifications({ ...notifications, startOverdue: v })
-                      }
+                      onValueChange={(v) => {
+                        haptic.select();
+                        setNotifications({ ...notifications, startOverdue: v });
+                      }}
                       trackColor={{ true: BRAND_COLOR }}
                     />
                   </View>
@@ -509,9 +515,10 @@ export function SettingsView() {
                       </Text>
                       <Switch
                         value={notifications.unscheduledIdle}
-                        onValueChange={(v) =>
-                          setNotifications({ ...notifications, unscheduledIdle: v })
-                        }
+                        onValueChange={(v) => {
+                          haptic.select();
+                          setNotifications({ ...notifications, unscheduledIdle: v });
+                        }}
                         trackColor={{ true: BRAND_COLOR }}
                       />
                     </View>
@@ -547,9 +554,10 @@ export function SettingsView() {
                     </Text>
                     <Switch
                       value={notifications.inProgress}
-                      onValueChange={(v) =>
-                        setNotifications({ ...notifications, inProgress: v })
-                      }
+                      onValueChange={(v) => {
+                        haptic.select();
+                        setNotifications({ ...notifications, inProgress: v });
+                      }}
                       trackColor={{ true: BRAND_COLOR }}
                     />
                   </View>
@@ -562,16 +570,17 @@ export function SettingsView() {
                       </Text>
                       <Switch
                         value={notifications.eveningSummary}
-                        onValueChange={(v) =>
-                          setNotifications({ ...notifications, eveningSummary: v })
-                        }
+                        onValueChange={(v) => {
+                          haptic.select();
+                          setNotifications({ ...notifications, eveningSummary: v });
+                        }}
                         trackColor={{ true: BRAND_COLOR }}
                       />
                     </View>
                     {notifications.eveningSummary && (
                       <Pressable
                         style={[styles.timeField, { borderColor: colors.separator }]}
-                        onPress={() => setNotifPickerField('eveningSummary')}
+                        onPress={() => { haptic.select(); setNotifPickerField('eveningSummary'); }}
                       >
                         <Text style={[styles.timeText, { color: colors.black }]}>
                           {formatTime(notifications.eveningSummaryTime)}
@@ -588,16 +597,17 @@ export function SettingsView() {
                       </Text>
                       <Switch
                         value={notifications.habitReminder}
-                        onValueChange={(v) =>
-                          setNotifications({ ...notifications, habitReminder: v })
-                        }
+                        onValueChange={(v) => {
+                          haptic.select();
+                          setNotifications({ ...notifications, habitReminder: v });
+                        }}
                         trackColor={{ true: BRAND_COLOR }}
                       />
                     </View>
                     {notifications.habitReminder && (
                       <Pressable
                         style={[styles.timeField, { borderColor: colors.separator }]}
-                        onPress={() => setNotifPickerField('habitReminder')}
+                        onPress={() => { haptic.select(); setNotifPickerField('habitReminder'); }}
                       >
                         <Text style={[styles.timeText, { color: colors.black }]}>
                           {formatTime(notifications.habitReminderTime)}
@@ -654,7 +664,7 @@ export function SettingsView() {
 
               <Pressable
                 style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
-                onPress={handleRestartServer}
+                onPress={() => { haptic.medium(); handleRestartServer(); }}
                 disabled={restarting}
               >
                 {restarting ? (
@@ -671,7 +681,7 @@ export function SettingsView() {
 
               <Pressable
                 style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
-                onPress={checkLocalHealth}
+                onPress={() => { haptic.light(); checkLocalHealth(); }}
                 disabled={localHealthLoading || !client}
               >
                 {localHealthLoading ? (
@@ -693,7 +703,7 @@ export function SettingsView() {
 
               <Pressable
                 style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
-                onPress={checkWorkerHealth}
+                onPress={() => { haptic.light(); checkWorkerHealth(); }}
                 disabled={workerHealthLoading || !client}
               >
                 {workerHealthLoading ? (
@@ -739,7 +749,7 @@ export function SettingsView() {
                 </Text>
                 <Switch
                   value={gcalEnabled}
-                  onValueChange={setGcalEnabled}
+                  onValueChange={(v) => { haptic.select(); setGcalEnabled(v); }}
                   trackColor={{ true: BRAND_COLOR }}
                 />
               </View>
@@ -792,14 +802,14 @@ export function SettingsView() {
 
               <Pressable
                 style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
-                onPress={saveGcalSettings}
+                onPress={() => { haptic.medium(); saveGcalSettings(); }}
               >
                 <Text style={styles.actionButtonText}>設定を保存</Text>
               </Pressable>
 
               <Pressable
                 style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
-                onPress={startOAuth}
+                onPress={() => { haptic.medium(); startOAuth(); }}
                 disabled={oauthLoading || !gcalSettings?.has_client_secret}
               >
                 {oauthLoading ? (
@@ -811,7 +821,7 @@ export function SettingsView() {
 
               <Pressable
                 style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
-                onPress={triggerSync}
+                onPress={() => { haptic.medium(); triggerSync(); }}
                 disabled={syncLoading || !gcalSettings?.has_refresh_token}
               >
                 {syncLoading ? (
@@ -849,7 +859,7 @@ export function SettingsView() {
 
               <Pressable
                 style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
-                onPress={exportLogs}
+                onPress={() => { haptic.light(); exportLogs(); }}
                 disabled={logExportLoading || Platform.OS !== 'android'}
               >
                 {logExportLoading ? (
@@ -863,7 +873,7 @@ export function SettingsView() {
 
               <Pressable
                 style={[styles.actionButton, { backgroundColor: colors.grayLight }]}
-                onPress={copyLogs}
+                onPress={() => { haptic.light(); copyLogs(); }}
                 disabled={logCopyLoading || logExportLoading || Platform.OS !== 'android'}
               >
                 {logCopyLoading ? (
@@ -877,7 +887,7 @@ export function SettingsView() {
 
               <Pressable
                 style={[styles.actionButton, { backgroundColor: colors.grayLight }]}
-                onPress={clearLogs}
+                onPress={() => { haptic.medium(); clearLogs(); }}
                 disabled={Platform.OS !== 'android'}
               >
                 <Text style={[styles.actionButtonText, { color: colors.black }]}>
