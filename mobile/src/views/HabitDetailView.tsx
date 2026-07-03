@@ -29,7 +29,7 @@ export function HabitDetailView() {
     try {
       setHabit(await client.getHabit(id));
     } catch (e) {
-      showError(e, 'ハビットの取得に失敗');
+      showError(e, 'Habitの取得に失敗');
       return;
     }
     try {

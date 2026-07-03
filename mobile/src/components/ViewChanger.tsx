@@ -22,7 +22,7 @@ const ICONS: Record<ViewType, keyof typeof Ionicons.glyphMap> = {
 const LABELS: Record<ViewType, string> = {
   task: 'タスク',
   graph: 'グラフ',
-  habit: 'ハビット',
+  habit: 'Habit',
 };
 
 export function ViewChanger({ current, onChange }: ViewChangerProps) {

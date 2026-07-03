@@ -584,7 +584,7 @@ export function SettingsView() {
                   <View style={styles.notifGroup}>
                     <View style={styles.settingRow}>
                       <Text style={[styles.settingLabel, { color: colors.black }]}>
-                        ハビット未完了リマインダー
+                        Habit未完了リマインダー
                       </Text>
                       <Switch
                         value={notifications.habitReminder}

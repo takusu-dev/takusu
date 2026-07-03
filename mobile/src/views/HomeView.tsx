@@ -152,7 +152,7 @@ export function HomeView() {
           return null;
         }),
         client.listHabits().catch((e) => {
-          logError('ハビット取得', e);
+          logError('Habit取得', e);
           return [] as HabitRow[];
         }),
       ]);
@@ -1037,11 +1037,12 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
+    height: 40,
     borderWidth: 1,
     borderColor: COLORS.separator,
     borderRadius: 12,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 0,
     fontSize: 16,
   },
   listContent: {

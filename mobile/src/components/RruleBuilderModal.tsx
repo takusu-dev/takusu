@@ -38,6 +38,18 @@ import {
   summarizeRule,
 } from '@/src/api/rrule';
 
+/** Split an array into rows of `size` elements for grid layout. */
+function chunk<T>(arr: T[], size: number): T[][] {
+  const rows: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    rows.push(arr.slice(i, i + size));
+  }
+  return rows;
+}
+
+const MONTH_DAYS = Array.from({ length: 31 }, (_, i) => i + 1);
+const MONTH_DAY_ROWS = chunk(MONTH_DAYS, 7);
+
 interface RruleBuilderModalProps {
   visible: boolean;
   value: string; // current JSON recurrence string
@@ -186,14 +198,14 @@ export function RruleBuilderModal({
             {rule.freq === 'weekly' && (
               <View style={styles.section}>
                 <Text style={[styles.sectionLabel, { color: colors.gray }]}>曜日</Text>
-                <View style={styles.chips}>
+                <View style={styles.weekdayChips}>
                   {WEEKDAYS.map((wd) => {
                     const on = rule.by_day.some((d) => d.n === null && d.weekday === wd);
                     return (
                       <Pressable
                         key={wd}
                         style={[
-                          styles.chip,
+                          styles.weekdayChip,
                           { borderColor: on ? BRAND_COLOR : colors.separator },
                           on && { backgroundColor: BRAND_COLOR },
                         ]}
@@ -218,32 +230,36 @@ export function RruleBuilderModal({
             {rule.freq === 'monthly' && (
               <View style={styles.section}>
                 <Text style={[styles.sectionLabel, { color: colors.gray }]}>実行日</Text>
-                <View style={styles.chips}>
-                  {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => {
-                    const on = rule.by_month_day.includes(d);
-                    return (
-                      <Pressable
-                        key={d}
-                        style={[
-                          styles.chip,
-                          styles.chipSmall,
-                          { borderColor: on ? BRAND_COLOR : colors.separator },
-                          on && { backgroundColor: BRAND_COLOR },
-                        ]}
-                        onPress={() => toggleMonthDay(d)}
-                      >
-                        <Text
+                {MONTH_DAY_ROWS.map((row, ri) => (
+                  <View key={ri} style={styles.dayRow}>
+                    {row.map((d) => {
+                      const on = rule.by_month_day.includes(d);
+                      return (
+                        <Pressable
+                          key={d}
                           style={[
-                            styles.chipText,
-                            { color: on ? COLORS.white : colors.black },
+                            styles.dayChip,
+                            { borderColor: on ? BRAND_COLOR : colors.separator },
+                            on && { backgroundColor: BRAND_COLOR },
                           ]}
+                          onPress={() => toggleMonthDay(d)}
                         >
-                          {d}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
+                          <Text
+                            style={[
+                              styles.chipText,
+                              { color: on ? COLORS.white : colors.black },
+                            ]}
+                          >
+                            {d}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                    {Array.from({ length: 7 - row.length }, (_, i) => (
+                      <View key={`pad-${i}`} style={styles.dayChipPlaceholder} />
+                    ))}
+                  </View>
+                ))}
               </View>
             )}
 
@@ -279,32 +295,36 @@ export function RruleBuilderModal({
                 <Text style={[styles.sectionLabel, { color: colors.gray, marginTop: 12 }]}>
                   実行日
                 </Text>
-                <View style={styles.chips}>
-                  {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => {
-                    const on = rule.by_month_day.includes(d);
-                    return (
-                      <Pressable
-                        key={d}
-                        style={[
-                          styles.chip,
-                          styles.chipSmall,
-                          { borderColor: on ? BRAND_COLOR : colors.separator },
-                          on && { backgroundColor: BRAND_COLOR },
-                        ]}
-                        onPress={() => toggleMonthDay(d)}
-                      >
-                        <Text
+                {MONTH_DAY_ROWS.map((row, ri) => (
+                  <View key={ri} style={styles.dayRow}>
+                    {row.map((d) => {
+                      const on = rule.by_month_day.includes(d);
+                      return (
+                        <Pressable
+                          key={d}
                           style={[
-                            styles.chipText,
-                            { color: on ? COLORS.white : colors.black },
+                            styles.dayChip,
+                            { borderColor: on ? BRAND_COLOR : colors.separator },
+                            on && { backgroundColor: BRAND_COLOR },
                           ]}
+                          onPress={() => toggleMonthDay(d)}
                         >
-                          {d}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
+                          <Text
+                            style={[
+                              styles.chipText,
+                              { color: on ? COLORS.white : colors.black },
+                            ]}
+                          >
+                            {d}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                    {Array.from({ length: 7 - row.length }, (_, i) => (
+                      <View key={`pad-${i}`} style={styles.dayChipPlaceholder} />
+                    ))}
+                  </View>
+                ))}
               </View>
             )}
 
@@ -458,6 +478,35 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     minWidth: 36,
     alignItems: 'center',
+  },
+  // Weekday chips: 7 across, evenly spaced (no wrap)
+  weekdayChips: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  weekdayChip: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  // Month-day chips: 7 per row, evenly spaced
+  dayRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginBottom: 6,
+  },
+  dayChip: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  // Invisible spacer to keep incomplete last row aligned with 7-column rows
+  dayChipPlaceholder: {
+    flex: 1,
   },
   chipText: {
     fontSize: 14,

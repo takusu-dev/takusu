@@ -330,25 +330,28 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
       <View style={[styles.topBar, { paddingTop: 4 + insets.top }]}>
-        <IconButton
-          icon="chevron-left"
-          iconColor={BRAND_COLOR}
-          size={28}
-          onPress={onBack}
-        />
-        <View style={{ flex: 1 }} />
-        <Button
-          mode={editMode ? 'contained' : 'outlined'}
-          onPress={toggleEditMode}
-          textColor={editMode ? COLORS.white : BRAND_COLOR}
-          buttonColor={editMode ? BRAND_COLOR : undefined}
-          style={styles.editButton}
-          labelStyle={styles.editButtonLabel}
-          contentStyle={styles.editButtonContent}
-        >
-          {editMode ? '編集中' : '編集'}
-        </Button>
-        <View style={{ flex: 1 }} />
+        <View style={styles.topBarLeft}>
+          <IconButton
+            icon="chevron-left"
+            iconColor={BRAND_COLOR}
+            size={28}
+            onPress={onBack}
+          />
+        </View>
+        <View style={styles.topBarCenter}>
+          <Button
+            mode={editMode ? 'contained' : 'outlined'}
+            onPress={toggleEditMode}
+            textColor={editMode ? COLORS.white : BRAND_COLOR}
+            buttonColor={editMode ? BRAND_COLOR : undefined}
+            style={styles.editButton}
+            labelStyle={styles.editButtonLabel}
+            contentStyle={styles.editButtonContent}
+          >
+            {editMode ? '編集中' : '編集'}
+          </Button>
+        </View>
+        <View style={styles.topBarRight} />
       </View>
 
       <WebView
@@ -375,6 +378,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 4,
     paddingBottom: 4,
+  },
+  topBarLeft: {
+    width: 48,
+    alignItems: 'flex-start',
+  },
+  topBarCenter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  topBarRight: {
+    width: 48,
   },
   editButton: {
     borderRadius: 4,

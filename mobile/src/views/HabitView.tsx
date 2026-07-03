@@ -40,7 +40,7 @@ export function HabitView({ client }: HabitViewProps) {
     try {
       setHabits(await client.listHabits());
     } catch (e) {
-      showError(e, 'ハビット一覧の取得に失敗');
+      showError(e, 'Habit一覧の取得に失敗');
     } finally {
       setRefreshing(false);
     }
@@ -65,7 +65,7 @@ export function HabitView({ client }: HabitViewProps) {
       }
     }
     if (failed > 0) {
-      showError(`${failed}件の削除に失敗しました`, 'ハビットの削除');
+      showError(`${failed}件の削除に失敗しました`, 'Habitの削除');
     }
     if (deleted.length === 0) return;
     // Track the ids assigned by the server when undo recreates the habits,
@@ -128,7 +128,7 @@ export function HabitView({ client }: HabitViewProps) {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
-      <View style={[styles.topBar, { paddingTop: 4 + insets.top }]}>
+      <View style={[styles.topBar, { paddingTop: 8 + insets.top }]}>
         <ContextMenu
           hasSelection={selected.size > 0}
           onSettings={() => router.push('/settings')}
@@ -142,14 +142,17 @@ export function HabitView({ client }: HabitViewProps) {
           onClearSelection={() => setSelected(new Set())}
           onDeleteSelected={deleteSelected}
         />
-        <Text style={[styles.title, { color: colors.black }]}>ハビット</Text>
-        <View style={{ flex: 1 }} />
+        <View style={{ width: 40 }} />
+        <View style={styles.topBarCenter}>
+          <Text style={[styles.title, { color: colors.black }]}>Habit</Text>
+        </View>
         <IconButton
           icon="plus"
           iconColor={COLORS.white}
           size={24}
           containerColor={BRAND_COLOR}
           onPress={() => router.push('/habit/add')}
+          style={styles.addButton}
         />
       </View>
 
@@ -160,7 +163,7 @@ export function HabitView({ client }: HabitViewProps) {
           <Pressable
             style={[
               styles.habitCard,
-              { backgroundColor: '#F8F5FC' },
+              { backgroundColor: colors.surface, borderColor: colors.separator },
               selected.has(h.id) && styles.habitCardSelected,
             ]}
             onPress={() => {
@@ -207,13 +210,23 @@ const styles = StyleSheet.create({
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 4,
-    paddingBottom: 4,
+    paddingHorizontal: 8,
+    paddingBottom: 8,
+    gap: 4,
+  },
+  topBarCenter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   title: {
     fontSize: 18,
     fontWeight: '600',
-    marginLeft: 4,
+  },
+  addButton: {
+    width: 40,
+    height: 40,
+    margin: 0,
   },
   listContent: {
     padding: 12,
@@ -223,6 +236,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
     gap: 4,
+    borderWidth: 1,
   },
   habitCardSelected: {
     borderWidth: 2,

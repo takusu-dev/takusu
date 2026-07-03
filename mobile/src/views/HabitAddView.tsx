@@ -69,7 +69,7 @@ export function HabitAddView() {
       });
       router.back();
     } catch (e) {
-      showError(e, 'ハビットの追加に失敗');
+      showError(e, 'Habitの追加に失敗');
     } finally {
       setSaving(false);
     }
@@ -81,7 +81,7 @@ export function HabitAddView() {
         <Pressable style={styles.backButton} onPress={() => router.back()}>
           <Ionicons name="chevron-back" size={28} color={BRAND_COLOR} />
         </Pressable>
-        <Text style={[styles.title, { color: colors.black }]}>新規ハビット</Text>
+        <Text style={[styles.title, { color: colors.black }]}>New Habit</Text>
         <View style={{ flex: 1 }} />
         <Pressable
           style={[styles.saveButton, (!title || saving) && styles.saveButtonDisabled]}
@@ -101,7 +101,7 @@ export function HabitAddView() {
             style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
             value={title}
             onChangeText={setTitle}
-            placeholder="ハビット名"
+            placeholder="Habit name"
             placeholderTextColor={colors.grayLight}
           />
         </View>

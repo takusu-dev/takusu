@@ -288,8 +288,8 @@ export async function rescheduleNotifications(data: ScheduleData): Promise<void>
         CHANNELS.habitReminder,
         hour,
         minute,
-        'ハビットリマインダー',
-        `今日のハビットが${incompleteCount}個未完了です`,
+        'Habitリマインダー',
+        `今日のHabitが${incompleteCount}個未完了です`,
         { url: '/' },
       );
     }
