@@ -17,7 +17,7 @@ import Reanimated, {
 } from 'react-native-reanimated';
 import type { TaskRow } from '@/src/api/types';
 import { parseDepends } from '@/src/api/types';
-import { abandonabilityColor, COLORS } from '@/src/theme';
+import { abandonabilityColorFor, BRAND_COLOR, useTheme } from '@/src/theme';
 
 interface TaskCardProps {
   task: TaskRow;
@@ -65,6 +65,7 @@ function TaskCardImpl({
   onParallelDelete,
 }: TaskCardProps) {
   const translateX = useSharedValue(0);
+  const { dark, colors } = useTheme();
 
   const flingRight = Gesture.Pan()
     .onStart(() => {})
@@ -96,12 +97,12 @@ function TaskCardImpl({
     transform: [{ translateX: translateX.value }],
   }));
 
-  const bgColor = abandonabilityColor(task.abandonability);
+  const bgColor = abandonabilityColorFor(task.abandonability, dark);
   const deps = parseDepends(task.depends);
 
   // Parallel receiver task (left side, 1:3 width ratio)
   if (parallelTask) {
-    const parallelBgColor = abandonabilityColor(parallelTask.abandonability);
+    const parallelBgColor = abandonabilityColorFor(parallelTask.abandonability, dark);
     const parallelDone =
       parallelTask.status === 'completed' || parallelTask.status === 'skipped';
 
@@ -143,16 +144,17 @@ function TaskCardImpl({
                 <Text
                   style={[
                     styles.parallelTitle,
+                    { color: colors.black },
                     parallelDone && {
                       textDecorationLine: 'line-through',
-                      color: COLORS.done,
+                      color: colors.done,
                     },
                   ]}
                   numberOfLines={3}
                 >
                   {parallelTask.title}
                 </Text>
-                <Text style={styles.parallelTime}>
+                <Text style={[styles.parallelTime, { color: colors.grayDark }]}>
                   {formatTime(parallelScheduleStart)}
                 </Text>
               </Pressable>
@@ -170,16 +172,17 @@ function TaskCardImpl({
             onLongPress={onLongPress}
           >
             <View style={styles.times}>
-              <Text style={styles.timeText}>{formatTime(scheduleStart)}</Text>
-              <Text style={styles.timeText}>{formatTime(scheduleEnd)}</Text>
+              <Text style={[styles.timeText, { color: colors.grayDark }]}>{formatTime(scheduleStart)}</Text>
+              <Text style={[styles.timeText, { color: colors.grayDark }]}>{formatTime(scheduleEnd)}</Text>
             </View>
             <View style={styles.titleContainer}>
               <Text
                 style={[
                   styles.title,
+                  { color: colors.black },
                   isDone && {
                     textDecorationLine: 'line-through',
-                    color: COLORS.done,
+                    color: colors.done,
                   },
                 ]}
                 numberOfLines={2}
@@ -187,12 +190,12 @@ function TaskCardImpl({
                 {task.title}
               </Text>
               {deps.length > 0 && (
-                <Text style={styles.depsCount}>↳ {deps.length} deps</Text>
+                <Text style={[styles.depsCount, { color: colors.gray }]}>↳ {deps.length} deps</Text>
               )}
               {selected && <Text style={styles.selectedIndicator}>✓</Text>}
             </View>
             <View style={styles.cost}>
-              <Text style={styles.costText}>
+              <Text style={[styles.costText, { color: colors.gray }]}>
                 {task.avg_minutes}m ±{task.sigma_minutes}
               </Text>
             </View>
@@ -216,8 +219,8 @@ function TaskCardImpl({
         >
           {/* Left: times */}
           <View style={styles.times}>
-            <Text style={styles.timeText}>{formatTime(scheduleStart)}</Text>
-            <Text style={styles.timeText}>{formatTime(scheduleEnd)}</Text>
+            <Text style={[styles.timeText, { color: colors.grayDark }]}>{formatTime(scheduleStart)}</Text>
+            <Text style={[styles.timeText, { color: colors.grayDark }]}>{formatTime(scheduleEnd)}</Text>
           </View>
 
           {/* Center: title */}
@@ -225,21 +228,22 @@ function TaskCardImpl({
             <Text
               style={[
                 styles.title,
-                isDone && { textDecorationLine: 'line-through', color: COLORS.done },
+                { color: colors.black },
+                isDone && { textDecorationLine: 'line-through', color: colors.done },
               ]}
               numberOfLines={2}
             >
               {task.title}
             </Text>
             {deps.length > 0 && (
-              <Text style={styles.depsCount}>↳ {deps.length} deps</Text>
+              <Text style={[styles.depsCount, { color: colors.gray }]}>↳ {deps.length} deps</Text>
             )}
             {selected && <Text style={styles.selectedIndicator}>✓</Text>}
           </View>
 
           {/* Right-bottom: cost */}
           <View style={styles.cost}>
-            <Text style={styles.costText}>
+            <Text style={[styles.costText, { color: colors.gray }]}>
               {task.avg_minutes}m ±{task.sigma_minutes}
             </Text>
           </View>
@@ -280,12 +284,10 @@ const styles = StyleSheet.create({
   },
   parallelTitle: {
     fontSize: 11,
-    color: COLORS.black,
     fontWeight: '500',
   },
   parallelTime: {
     fontSize: 10,
-    color: COLORS.grayDark,
     fontVariant: ['tabular-nums'],
   },
   mainCard: {
@@ -305,7 +307,6 @@ const styles = StyleSheet.create({
   },
   timeText: {
     fontSize: 12,
-    color: COLORS.grayDark,
     fontVariant: ['tabular-nums'],
   },
   titleContainer: {
@@ -318,15 +319,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
     flex: 1,
-    color: COLORS.black,
   },
   depsCount: {
     fontSize: 11,
-    color: COLORS.gray,
   },
   selectedIndicator: {
     fontSize: 16,
-    color: COLORS.brand,
+    color: BRAND_COLOR,
     fontWeight: 'bold',
   },
   cost: {
@@ -334,7 +333,6 @@ const styles = StyleSheet.create({
   },
   costText: {
     fontSize: 11,
-    color: COLORS.gray,
     fontVariant: ['tabular-nums'],
   },
 });

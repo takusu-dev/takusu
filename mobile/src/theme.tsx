@@ -19,6 +19,24 @@ export function abandonabilityColor(abandonability: number): string {
   return '#F0E0E0'; // reddish — must do
 }
 
+// Dark-theme variant: dimmer, lower-saturation tints on a dark surface
+export function abandonabilityColorDark(abandonability: number): string {
+  if (abandonability >= 0.75) return '#2A2438'; // muted purple
+  if (abandonability >= 0.5) return '#2A2A2E'; // neutral dark
+  if (abandonability >= 0.25) return '#2E2826'; // warm dark
+  return '#2E2424'; // reddish dark — must do
+}
+
+// Theme-aware helper: picks the light or dark palette based on `dark`.
+export function abandonabilityColorFor(
+  abandonability: number,
+  dark: boolean,
+): string {
+  return dark
+    ? abandonabilityColorDark(abandonability)
+    : abandonabilityColor(abandonability);
+}
+
 export const ABANDON_STEPS = [0.0, 0.25, 0.5, 0.75, 1.0] as const;
 
 // Light theme colors (default, backward-compatible export)
