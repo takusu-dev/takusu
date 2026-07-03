@@ -15,7 +15,7 @@ pub struct OAuthUrlRequest {
 #[derive(Debug, Deserialize)]
 pub struct OAuthCallbackRequest {
     pub code: String,
-    pub redirect_uri: String,
+    pub redirect_uri: Option<String>,
 }
 
 pub async fn get_settings(
@@ -47,7 +47,7 @@ pub async fn oauth_callback(
 ) -> Result<Json<serde_json::Value>, HttpError> {
     state
         .app
-        .oauth_callback(&body.code, &body.redirect_uri)
+        .oauth_callback(&body.code, body.redirect_uri.as_deref())
         .await?;
     Ok(Json(serde_json::json!({ "refresh_token_set": true })))
 }

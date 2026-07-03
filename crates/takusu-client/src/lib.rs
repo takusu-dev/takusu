@@ -446,9 +446,13 @@ impl Client {
     pub async fn oauth_callback(
         &self,
         code: &str,
-        redirect_uri: &str,
+        redirect_uri: Option<&str>,
     ) -> Result<serde_json::Value, ClientError> {
-        let body = serde_json::json!({ "code": code, "redirect_uri": redirect_uri });
+        let body = if let Some(uri) = redirect_uri {
+            serde_json::json!({ "code": code, "redirect_uri": uri })
+        } else {
+            serde_json::json!({ "code": code })
+        };
         let resp = self
             .request(reqwest::Method::POST, "/api/sync/oauth/callback")
             .await

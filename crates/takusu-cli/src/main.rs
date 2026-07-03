@@ -1059,7 +1059,7 @@ async fn run_sync(app: &TakusuApp, cmd: SyncCommands) -> Result<(), AppError> {
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         SyncCommands::OauthCallback { code, redirect_uri } => {
-            app.oauth_callback(&code, &redirect_uri).await?;
+            app.oauth_callback(&code, Some(&redirect_uri)).await?;
             println!("OAuth callback completed successfully.");
         }
         SyncCommands::Trigger => {

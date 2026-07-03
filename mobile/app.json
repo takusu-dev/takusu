@@ -18,7 +18,6 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      "expo-web-browser",
       "expo-file-system",
       "expo-sharing",
       "@react-native-community/datetimepicker",

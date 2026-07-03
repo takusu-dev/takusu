@@ -18,6 +18,9 @@
 #   7. Disable system-enforced navigation/status bar contrast scrim so
 #      app content shows through the transparent system bars without
 #      a translucent black overlay (Android 15+ edge-to-edge).
+#   8. Inject release signing config from env vars (TAKUSU_KEYSTORE_PATH,
+#      TAKUSU_STORE_PASSWORD, TAKUSU_KEY_ALIAS, TAKUSU_KEY_PASSWORD).
+#      Falls back to the debug signing config when not set (local builds).
 
 set -euo pipefail
 
@@ -99,6 +102,83 @@ STYLES_XML="$ANDROID_DIR/app/src/main/res/values/styles.xml"
 if [ -f "$STYLES_XML" ] && ! grep -q 'enforceNavigationBarContrast' "$STYLES_XML"; then
   sed -i '/android:navigationBarColor/a\    <item name="android:enforceNavigationBarContrast" tools:targetApi="q">false</item>\n    <item name="android:enforceStatusBarContrast" tools:targetApi="q">false</item>' "$STYLES_XML"
   echo "  Disabled navigation/status bar contrast scrim"
+fi
+
+# 8. Inject release signing config from env vars.
+#    When TAKUSU_KEYSTORE_PATH is set, add a release signingConfig and
+#    wire it into the existing buildTypes.release block. When not set
+#    (local builds), fall back to the debug signing config so
+#    assembleRelease still produces a signed APK for testing.
+APP_GRADLE="$ANDROID_DIR/app/build.gradle"
+
+if [ -n "${TAKUSU_KEYSTORE_PATH:-}" ]; then
+  # Production signing: inject a release signingConfig block.
+  # Check for 'signingConfigs.release' specifically (not just
+  # 'signingConfigs') so Expo's debug signingConfigs block doesn't
+  # cause us to silently skip injection.
+  if ! grep -q 'signingConfigs.release' "$APP_GRADLE"; then
+    sed -i '/android {/a\
+    signingConfigs {\
+        release {\
+            storeFile file(System.getenv("TAKUSU_KEYSTORE_PATH") ?: "'"$TAKUSU_KEYSTORE_PATH"'")\
+            storePassword System.getenv("TAKUSU_STORE_PASSWORD") ?: ""\
+            keyAlias System.getenv("TAKUSU_KEY_ALIAS") ?: "takusu"\
+            keyPassword System.getenv("TAKUSU_KEY_PASSWORD") ?: ""\
+        }\
+    }' "$APP_GRADLE"
+    echo "  Injected release signingConfig (production keystore)"
+  else
+    echo "  release signingConfig already present, skipping injection"
+  fi
+  SIGNING_REF="signingConfigs.release"
+else
+  # Local build: use debug signing so assembleRelease works without a keystore
+  SIGNING_REF="signingConfigs.debug"
+  echo "  Using debug signing config for local release build"
+fi
+
+# Wire the signingConfig into buildTypes.release. Expo prebuild
+# generates a buildTypes block with release { ... } that already
+# contains a 'signingConfig signingConfigs.debug' line. We replace
+# that line with our desired signingConfig so the last-assignment-wins
+# semantics of Gradle don't override our injection. If Expo didn't
+# generate buildTypes, inject a minimal block after 'android {'.
+if grep -q 'buildTypes' "$APP_GRADLE"; then
+  # Use awk to replace the existing signingConfig line inside the
+  # release { } block under buildTypes. If there is no existing
+  # signingConfig line, insert one after 'release {'.
+  awk -v ref="$SIGNING_REF" '
+    /buildTypes/ { in_buildtypes = 1 }
+    in_buildtypes && /release \{/ {
+      in_release = 1
+      print
+      next
+    }
+    in_release && /signingConfig / {
+      print "            signingConfig " ref
+      replaced = 1
+      next
+    }
+    in_release && /^[[:space:]]*\}/ {
+      if (!replaced) {
+        print "            signingConfig " ref
+      }
+      in_release = 0
+      in_buildtypes = 0
+      print
+      next
+    }
+    { print }
+  ' "$APP_GRADLE" > "$APP_GRADLE.tmp" && mv "$APP_GRADLE.tmp" "$APP_GRADLE"
+  echo "  Wired $SIGNING_REF into existing buildTypes.release"
+else
+  sed -i '/android {/a\
+    buildTypes {\
+        release {\
+            signingConfig '"$SIGNING_REF"'\
+        }\
+    }' "$APP_GRADLE"
+  echo "  Injected buildTypes.release with $SIGNING_REF"
 fi
 
 echo "Post-prebuild fixes applied successfully."

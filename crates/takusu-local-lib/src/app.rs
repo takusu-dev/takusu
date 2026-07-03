@@ -784,7 +784,7 @@ impl TakusuApp {
         Ok(google_cal::oauth_url(&row.client_id, redirect_uri))
     }
 
-    pub async fn oauth_callback(&self, code: &str, redirect_uri: &str) -> Result<(), AppError> {
+    pub async fn oauth_callback(&self, code: &str, redirect_uri: Option<&str>) -> Result<(), AppError> {
         let row = self
             .storage
             .get_gcal_settings()

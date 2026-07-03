@@ -74,18 +74,21 @@ pub async fn exchange_code(
     client_id: &str,
     client_secret: &str,
     code: &str,
-    redirect_uri: &str,
+    redirect_uri: Option<&str>,
 ) -> Result<OAuthTokens> {
     let http = reqwest::Client::new();
+    let mut form = vec![
+        ("code", code.to_string()),
+        ("client_id", client_id.to_string()),
+        ("client_secret", client_secret.to_string()),
+        ("grant_type", "authorization_code".to_string()),
+    ];
+    if let Some(uri) = redirect_uri {
+        form.push(("redirect_uri", uri.to_string()));
+    }
     let resp = http
         .post(GOOGLE_TOKEN_URL)
-        .form(&[
-            ("code", code),
-            ("client_id", client_id),
-            ("client_secret", client_secret),
-            ("redirect_uri", redirect_uri),
-            ("grant_type", "authorization_code"),
-        ])
+        .form(&form)
         .send()
         .await?;
 
@@ -95,9 +98,12 @@ pub async fn exchange_code(
     }
 
     let token: TokenResponse = resp.json().await?;
+    let refresh_token = token.refresh_token.ok_or_else(|| {
+        Error::OAuth2("token response did not include a refresh_token".into())
+    })?;
     Ok(OAuthTokens {
         access_token: token.access_token,
-        refresh_token: token.refresh_token.unwrap_or_default(),
+        refresh_token,
         expires_in: token.expires_in,
     })
 }
