@@ -143,12 +143,12 @@ const styles = StyleSheet.create({
   },
   handleContainer: {
     alignItems: 'center',
-    paddingVertical: 12,
-    minHeight: 32,
+    paddingVertical: 16,
+    minHeight: 48,
   },
   handle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
+    width: 48,
+    height: 5,
+    borderRadius: 3,
   },
 });

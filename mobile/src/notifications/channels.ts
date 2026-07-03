@@ -39,8 +39,8 @@ export async function setupNotificationChannels(): Promise<void> {
       importance: Notifications.AndroidImportance.DEFAULT,
     }),
     Notifications.setNotificationChannelAsync(CHANNELS.habitReminder, {
-      name: 'ハビットリマインダー',
-      description: 'ハビット未完了のリマインダー',
+      name: 'Habitリマインダー',
+      description: 'Habit未完了のリマインダー',
       importance: Notifications.AndroidImportance.DEFAULT,
     }),
   ]);

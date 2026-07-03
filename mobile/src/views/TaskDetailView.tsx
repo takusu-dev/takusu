@@ -495,7 +495,7 @@ export function TaskDetailView() {
             style={styles.section}
             onPress={() => router.push(`/habit/${habit.id}`)}
           >
-            <Text style={[styles.sectionLabel, { color: colors.gray }]}>ハビット</Text>
+            <Text style={[styles.sectionLabel, { color: colors.gray }]}>Habit</Text>
             <Text style={styles.habitLink}>{habit.title} ›</Text>
           </Pressable>
         )}

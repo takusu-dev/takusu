@@ -15,6 +15,9 @@
 #      only cross-compiled for aarch64 (see flake.nix androidTargets), so
 #      building CMake for other ABIs wastes time and fails without their .so.
 #   6. Enable Gradle parallel + build cache for faster incremental builds.
+#   7. Disable system-enforced navigation/status bar contrast scrim so
+#      app content shows through the transparent system bars without
+#      a translucent black overlay (Android 15+ edge-to-edge).
 
 set -euo pipefail
 
@@ -86,5 +89,16 @@ for prop in "org.gradle.parallel=true" "org.gradle.caching=true"; do
   fi
 done
 echo "  Enabled Gradle parallel + build cache"
+
+# 7. Disable system-enforced contrast scrim on navigation/status bar.
+#    Expo prebuild sets navigationBarColor and statusBarColor to transparent,
+#    but Android 15+ enforces a translucent black scrim in edge-to-edge mode.
+#    Adding enforceNavigationBarContrast=false and enforceStatusBarContrast=false
+#    to AppTheme removes the scrim so app content shows through cleanly.
+STYLES_XML="$ANDROID_DIR/app/src/main/res/values/styles.xml"
+if [ -f "$STYLES_XML" ] && ! grep -q 'enforceNavigationBarContrast' "$STYLES_XML"; then
+  sed -i '/android:navigationBarColor/a\    <item name="android:enforceNavigationBarContrast" tools:targetApi="q">false</item>\n    <item name="android:enforceStatusBarContrast" tools:targetApi="q">false</item>' "$STYLES_XML"
+  echo "  Disabled navigation/status bar contrast scrim"
+fi
 
 echo "Post-prebuild fixes applied successfully."
