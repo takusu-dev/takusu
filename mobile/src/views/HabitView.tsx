@@ -134,10 +134,16 @@ export function HabitView({ client }: HabitViewProps) {
           hasSelection={selected.size > 0}
           onSettings={() => router.push('/settings')}
           onUndo={() =>
-            undoRedo.undo().then(refresh).catch((e) => showError(e, 'アンドゥに失敗'))
+            undoRedo
+              .undo()
+              .then(refresh)
+              .catch((e) => showError(e, 'アンドゥに失敗'))
           }
           onRedo={() =>
-            undoRedo.redo().then(refresh).catch((e) => showError(e, 'リドゥに失敗'))
+            undoRedo
+              .redo()
+              .then(refresh)
+              .catch((e) => showError(e, 'リドゥに失敗'))
           }
           onSelectAll={() => setSelected(new Set(habits.map((h) => h.id)))}
           onClearSelection={() => setSelected(new Set())}
@@ -152,7 +158,10 @@ export function HabitView({ client }: HabitViewProps) {
           iconColor={COLORS.white}
           size={24}
           containerColor={BRAND_COLOR}
-          onPress={() => { haptic.light(); router.push('/habit/add'); }}
+          onPress={() => {
+            haptic.light();
+            router.push('/habit/add');
+          }}
           style={styles.addButton}
         />
       </View>
@@ -164,7 +173,10 @@ export function HabitView({ client }: HabitViewProps) {
           <Pressable
             style={[
               styles.habitCard,
-              { backgroundColor: colors.surface, borderColor: colors.separator },
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.separator,
+              },
               selected.has(h.id) && styles.habitCardSelected,
             ]}
             onPress={() => {
@@ -176,14 +188,21 @@ export function HabitView({ client }: HabitViewProps) {
                 router.push(`/habit/${h.id}`);
               }
             }}
-            onLongPress={() => { haptic.medium(); toggleSelection(h.id); }}
+            onLongPress={() => {
+              haptic.medium();
+              toggleSelection(h.id);
+            }}
           >
             <View style={styles.habitHeader}>
               <Text style={[styles.habitTitle, { color: colors.black }]}>
                 {h.title}
               </Text>
               {selected.has(h.id) && (
-                <Ionicons name="checkmark-circle" size={20} color={BRAND_COLOR} />
+                <Ionicons
+                  name="checkmark-circle"
+                  size={20}
+                  color={BRAND_COLOR}
+                />
               )}
             </View>
             <Text style={[styles.habitRecurrence, { color: colors.gray }]}>
@@ -200,7 +219,10 @@ export function HabitView({ client }: HabitViewProps) {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={refresh} />
         }
-        contentContainerStyle={[styles.listContent, { paddingBottom: 100 + insets.bottom }]}
+        contentContainerStyle={[
+          styles.listContent,
+          { paddingBottom: 100 + insets.bottom },
+        ]}
       />
     </View>
   );

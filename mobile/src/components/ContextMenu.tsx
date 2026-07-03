@@ -67,12 +67,53 @@ export function ContextMenu({
 
   const selectionItems: MenuItem[] = hasSelection
     ? [
-        ...(onSelectAll ? [{ label: 'すべて選択', icon: 'checkbox-outline' as const, onPress: onSelectAll }] : []),
-        { label: '選択解除', icon: 'close-circle-outline', onPress: onClearSelection },
-        ...(onRescheduleOthers ? [{ label: '選択以外をreschedule', icon: 'calendar-outline' as const, onPress: onRescheduleOthers }] : []),
-        ...(onRescheduleSelected ? [{ label: '選択をreschedule', icon: 'calendar-number-outline' as const, onPress: onRescheduleSelected }] : []),
-        ...(onCreateDependent ? [{ label: '依存とする新規タスク作成', icon: 'git-branch-outline' as const, onPress: onCreateDependent }] : []),
-        { label: '削除', icon: 'trash-outline', onPress: onDeleteSelected, danger: true },
+        ...(onSelectAll
+          ? [
+              {
+                label: 'すべて選択',
+                icon: 'checkbox-outline' as const,
+                onPress: onSelectAll,
+              },
+            ]
+          : []),
+        {
+          label: '選択解除',
+          icon: 'close-circle-outline',
+          onPress: onClearSelection,
+        },
+        ...(onRescheduleOthers
+          ? [
+              {
+                label: '選択以外をreschedule',
+                icon: 'calendar-outline' as const,
+                onPress: onRescheduleOthers,
+              },
+            ]
+          : []),
+        ...(onRescheduleSelected
+          ? [
+              {
+                label: '選択をreschedule',
+                icon: 'calendar-number-outline' as const,
+                onPress: onRescheduleSelected,
+              },
+            ]
+          : []),
+        ...(onCreateDependent
+          ? [
+              {
+                label: '依存とする新規タスク作成',
+                icon: 'git-branch-outline' as const,
+                onPress: onCreateDependent,
+              },
+            ]
+          : []),
+        {
+          label: '削除',
+          icon: 'trash-outline',
+          onPress: onDeleteSelected,
+          danger: true,
+        },
       ]
     : [];
 
@@ -96,7 +137,9 @@ export function ContextMenu({
         <Ionicons
           name={item.icon}
           size={20}
-          color={item.danger ? COLORS.red : item.disabled ? colors.gray : BRAND_COLOR}
+          color={
+            item.danger ? COLORS.red : item.disabled ? colors.gray : BRAND_COLOR
+          }
         />
         <Text
           style={[
@@ -114,7 +157,10 @@ export function ContextMenu({
   return (
     <>
       <Pressable
-        style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
+        style={({ pressed }) => [
+          styles.button,
+          pressed && styles.buttonPressed,
+        ]}
         onPress={() => {
           haptic.light();
           setOpen(true);
@@ -127,7 +173,14 @@ export function ContextMenu({
         <Pressable style={styles.overlay} onPress={() => setOpen(false)}>
           <View style={[styles.menu, { backgroundColor: colors.white }]}>
             {alwaysItems.map(renderItem)}
-            {hasSelection && <View style={[styles.separator, { backgroundColor: colors.separator }]} />}
+            {hasSelection && (
+              <View
+                style={[
+                  styles.separator,
+                  { backgroundColor: colors.separator },
+                ]}
+              />
+            )}
             {selectionItems.map(renderItem)}
           </View>
         </Pressable>

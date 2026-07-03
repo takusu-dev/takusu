@@ -20,8 +20,7 @@ interface TakusuServerModuleType extends NativeModule {
   pushLog(line: string): Promise<boolean>;
 }
 
-const TakusuServerModule = requireNativeModule<TakusuServerModuleType>(
-  'TakusuServer',
-);
+const TakusuServerModule =
+  requireNativeModule<TakusuServerModuleType>('TakusuServer');
 
 export default TakusuServerModule;

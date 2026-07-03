@@ -23,7 +23,15 @@ export interface RecurrenceRule {
   exdates: string[]; // "YYYY-MM-DD"
 }
 
-export const WEEKDAYS: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+export const WEEKDAYS: Weekday[] = [
+  'mon',
+  'tue',
+  'wed',
+  'thu',
+  'fri',
+  'sat',
+  'sun',
+];
 
 export const WEEKDAY_LABELS: Record<Weekday, string> = {
   mon: '月',
@@ -37,7 +45,12 @@ export const WEEKDAY_LABELS: Record<Weekday, string> = {
 
 export const MONTHS = Array.from({ length: 12 }, (_, i) => i + 1);
 
-export const FREQUENCIES: Frequency[] = ['daily', 'weekly', 'monthly', 'yearly'];
+export const FREQUENCIES: Frequency[] = [
+  'daily',
+  'weekly',
+  'monthly',
+  'yearly',
+];
 
 export const FREQUENCY_LABELS: Record<Frequency, string> = {
   daily: '毎日',
@@ -108,39 +121,66 @@ export function serializeRule(r: RecurrenceRule): string {
 export function validateRule(r: RecurrenceRule): string | null {
   const validFreqs: Frequency[] = ['daily', 'weekly', 'monthly', 'yearly'];
   if (!validFreqs.includes(r.freq)) return `不正な freq: ${r.freq}`;
-  if (!Number.isInteger(r.interval) || r.interval < 1) return 'interval は 1 以上の整数が必要です';
+  if (!Number.isInteger(r.interval) || r.interval < 1)
+    return 'interval は 1 以上の整数が必要です';
   if (r.count !== null && (!Number.isInteger(r.count) || r.count < 1))
     return 'count は 1 以上の整数が必要です';
   for (const m of r.by_month) {
-    if (!Number.isInteger(m) || m < 1 || m > 12) return `by_month の値が不正です: ${m}`;
+    if (!Number.isInteger(m) || m < 1 || m > 12)
+      return `by_month の値が不正です: ${m}`;
   }
   for (const d of r.by_month_day) {
     if (!Number.isInteger(d) || d === 0 || d > 31 || d < -31)
       return `by_month_day の値が不正です: ${d}`;
   }
   for (const nw of r.by_day) {
-    const validWds: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
-    if (!validWds.includes(nw.weekday)) return `by_day の weekday が不正です: ${nw.weekday}`;
-    if (nw.n !== null && (!Number.isInteger(nw.n) || nw.n === 0 || nw.n > 5 || nw.n < -5))
+    const validWds: Weekday[] = [
+      'mon',
+      'tue',
+      'wed',
+      'thu',
+      'fri',
+      'sat',
+      'sun',
+    ];
+    if (!validWds.includes(nw.weekday))
+      return `by_day の weekday が不正です: ${nw.weekday}`;
+    if (
+      nw.n !== null &&
+      (!Number.isInteger(nw.n) || nw.n === 0 || nw.n > 5 || nw.n < -5)
+    )
       return `by_day の n が不正です: ${nw.n}`;
   }
   const dateRe = /^\d{4}-\d{2}-\d{2}$/;
   for (const ex of r.exdates) {
-    if (!dateRe.test(ex)) return `exdates の日付形式が不正です: ${ex} (YYYY-MM-DD が必要)`;
+    if (!dateRe.test(ex))
+      return `exdates の日付形式が不正です: ${ex} (YYYY-MM-DD が必要)`;
   }
   return null;
 }
 
 const MONTH_LABELS = [
-  '1月', '2月', '3月', '4月', '5月', '6月',
-  '7月', '8月', '9月', '10月', '11月', '12月',
+  '1月',
+  '2月',
+  '3月',
+  '4月',
+  '5月',
+  '6月',
+  '7月',
+  '8月',
+  '9月',
+  '10月',
+  '11月',
+  '12月',
 ];
 
 /** Format a single NWeekday in Japanese (e.g. "第2月曜", "最終金曜", "水曜"). */
 function formatNWeekday(nw: NWeekday): string {
   const wd = WEEKDAY_LABELS[nw.weekday] + '曜';
   if (nw.n === null) return wd;
-  const prefix = NTH_LABELS[nw.n] ?? `${nw.n > 0 ? `第${nw.n}` : `最終${Math.abs(nw.n) - 1 > 0 ? `-${Math.abs(nw.n) - 1}` : ''}`}`;
+  const prefix =
+    NTH_LABELS[nw.n] ??
+    `${nw.n > 0 ? `第${nw.n}` : `最終${Math.abs(nw.n) - 1 > 0 ? `-${Math.abs(nw.n) - 1}` : ''}`}`;
   return `${prefix}${wd}`;
 }
 
@@ -153,8 +193,16 @@ function formatMonthDay(d: number): string {
 
 /** Human-readable Japanese summary of a recurrence rule. */
 export function summarizeRule(r: RecurrenceRule): string {
-  const unit = r.freq === 'daily' ? '日' : r.freq === 'weekly' ? '週' : r.freq === 'monthly' ? '月' : '年';
-  const base = r.interval === 1 ? FREQUENCY_LABELS[r.freq] : `${r.interval}${unit}ごと`;
+  const unit =
+    r.freq === 'daily'
+      ? '日'
+      : r.freq === 'weekly'
+        ? '週'
+        : r.freq === 'monthly'
+          ? '月'
+          : '年';
+  const base =
+    r.interval === 1 ? FREQUENCY_LABELS[r.freq] : `${r.interval}${unit}ごと`;
 
   const parts: string[] = [base];
 

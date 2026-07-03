@@ -6,7 +6,9 @@ type OAuthCallbackListener = (code: string) => void;
 
 let listener: OAuthCallbackListener | null = null;
 
-export function setOAuthCallbackListener(fn: OAuthCallbackListener | null): void {
+export function setOAuthCallbackListener(
+  fn: OAuthCallbackListener | null,
+): void {
   listener = fn;
 }
 

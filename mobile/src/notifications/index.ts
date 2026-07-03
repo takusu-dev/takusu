@@ -1,6 +1,9 @@
 // Notification module — re-exports and setup helpers.
 
-export { type NotificationSettings, DEFAULT_NOTIFICATION_SETTINGS } from './settings';
+export {
+  type NotificationSettings,
+  DEFAULT_NOTIFICATION_SETTINGS,
+} from './settings';
 export {
   loadNotificationSettings,
   saveNotificationSettings,

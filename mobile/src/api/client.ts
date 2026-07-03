@@ -147,7 +147,10 @@ export class TakusuClient {
     return this.request('POST', '/api/schedule/reschedule', body);
   }
 
-  async moveEntry(taskId: string, body: MoveEntryRequest): Promise<ScheduleRow> {
+  async moveEntry(
+    taskId: string,
+    body: MoveEntryRequest,
+  ): Promise<ScheduleRow> {
     return this.request('PATCH', `/api/schedule/entries/${taskId}`, body);
   }
 
@@ -189,7 +192,9 @@ export class TakusuClient {
   }
 
   async getOAuthUrl(redirectUri: string): Promise<OAuthUrlResponse> {
-    return this.request('POST', '/api/sync/oauth/url', { redirect_uri: redirectUri });
+    return this.request('POST', '/api/sync/oauth/url', {
+      redirect_uri: redirectUri,
+    });
   }
 
   async oauthCallback(

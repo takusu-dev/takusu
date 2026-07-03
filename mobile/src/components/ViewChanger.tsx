@@ -20,12 +20,6 @@ const ICONS: Record<ViewType, keyof typeof Ionicons.glyphMap> = {
   habit: 'repeat-outline',
 };
 
-const LABELS: Record<ViewType, string> = {
-  task: 'タスク',
-  graph: 'グラフ',
-  habit: 'Habit',
-};
-
 export function ViewChanger({ current, onChange }: ViewChangerProps) {
   const colors = useColors();
   const insets = useSafeAreaInsets();

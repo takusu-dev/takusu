@@ -37,7 +37,9 @@ Notifications.setNotificationHandler({
 const VALID_ROUTE_PREFIXES = ['/task/', '/habit/', '/settings'];
 
 function isValidRoute(url: string): boolean {
-  return url === '/' || VALID_ROUTE_PREFIXES.some((prefix) => url.startsWith(prefix));
+  return (
+    url === '/' || VALID_ROUTE_PREFIXES.some((prefix) => url.startsWith(prefix))
+  );
 }
 
 function ThemedApp() {
@@ -72,7 +74,8 @@ function ThemedApp() {
       const lastResponse = Notifications.getLastNotificationResponse();
       if (
         lastResponse?.notification &&
-        lastResponse.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER
+        lastResponse.actionIdentifier ===
+          Notifications.DEFAULT_ACTION_IDENTIFIER
       ) {
         redirect(lastResponse.notification);
       }
@@ -87,14 +90,18 @@ function ThemedApp() {
         if (actionId === ACTION_DONE || actionId === ACTION_CANCEL) {
           const taskId = response.notification.request.content.data?.taskId;
           if (typeof taskId === 'string' && taskId && client) {
-            const newStatus = actionId === ACTION_DONE ? 'completed' : 'skipped';
+            const newStatus =
+              actionId === ACTION_DONE ? 'completed' : 'skipped';
             if (actionId === ACTION_DONE) haptic.success();
             else haptic.warning();
             client
               .updateTask(taskId, { status: newStatus })
-              .catch((err) => console.warn('Notification action: updateTask failed', err));
-            dismissInProgressNotification(taskId)
-              .catch((err) => console.warn('Notification action: dismiss failed', err));
+              .catch((err) =>
+                console.warn('Notification action: updateTask failed', err),
+              );
+            dismissInProgressNotification(taskId).catch((err) =>
+              console.warn('Notification action: dismiss failed', err),
+            );
           }
           return;
         }

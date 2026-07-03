@@ -25,18 +25,31 @@ import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as Clipboard from 'expo-clipboard';
 import Constants from 'expo-constants';
-import { useServer, saveWorkersUrl, saveWorkersToken } from '@/src/api/ServerProvider';
+import {
+  useServer,
+  saveWorkersUrl,
+  saveWorkersToken,
+} from '@/src/api/ServerProvider';
 import { setOAuthCallbackListener } from '@/src/api/oauthCallback';
 import type { GoogleCalSettings, SettingsRow } from '@/src/api/types';
 import { useColors, BRAND_COLOR } from '@/src/theme';
-import type { NotificationSettings } from '@/src/notifications/settings';
-import { formatTime, minutesToTime, timeToMinutes } from '@/src/notifications/settings';
+import {
+  formatTime,
+  minutesToTime,
+  timeToMinutes,
+} from '@/src/notifications/settings';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { haptic } from '@/src/components/haptics';
 import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
 
-type SettingsCategory = 'general' | 'sleep' | 'notifications' | 'worker' | 'google' | 'info';
+type SettingsCategory =
+  | 'general'
+  | 'sleep'
+  | 'notifications'
+  | 'worker'
+  | 'google'
+  | 'info';
 
 const OAUTH_REDIRECT_URI = Linking.createURL('oauth/callback');
 
@@ -69,7 +82,9 @@ export function SettingsView() {
   const [sleepEnd, setSleepEnd] = useState('06:00');
   const [sleepLoading, setSleepLoading] = useState(false);
   const [sleepSaving, setSleepSaving] = useState(false);
-  const [sleepPickerField, setSleepPickerField] = useState<'start' | 'end' | null>(null);
+  const [sleepPickerField, setSleepPickerField] = useState<
+    'start' | 'end' | null
+  >(null);
 
   // Worker tab state
   const [workerUrl, setWorkerUrl] = useState(savedUrl);
@@ -81,7 +96,9 @@ export function SettingsView() {
   const [undoStepsInput, setUndoStepsInput] = useState(String(undoSteps));
 
   // Google Calendar state
-  const [gcalSettings, setGcalSettings] = useState<GoogleCalSettings | null>(null);
+  const [gcalSettings, setGcalSettings] = useState<GoogleCalSettings | null>(
+    null,
+  );
   const [gcalEnabled, setGcalEnabled] = useState(false);
   const [gcalCalendarId, setGcalCalendarId] = useState('');
   const [gcalClientId, setGcalClientId] = useState('');
@@ -92,9 +109,13 @@ export function SettingsView() {
 
   // Health check state (info tab)
   const [localHealthLoading, setLocalHealthLoading] = useState(false);
-  const [localHealthResult, setLocalHealthResult] = useState<string | null>(null);
+  const [localHealthResult, setLocalHealthResult] = useState<string | null>(
+    null,
+  );
   const [workerHealthLoading, setWorkerHealthLoading] = useState(false);
-  const [workerHealthResult, setWorkerHealthResult] = useState<string | null>(null);
+  const [workerHealthResult, setWorkerHealthResult] = useState<string | null>(
+    null,
+  );
   const [logExportLoading, setLogExportLoading] = useState(false);
   const [logCopyLoading, setLogCopyLoading] = useState(false);
 
@@ -187,7 +208,10 @@ export function SettingsView() {
         await loadGcalSettings();
         Alert.alert('成功', 'Google Calendar認証が完了しました');
       } catch (e) {
-        Alert.alert('エラー', `OAuth認証に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+        Alert.alert(
+          'エラー',
+          `OAuth認証に失敗しました: ${e instanceof Error ? e.message : String(e)}`,
+        );
       } finally {
         setOauthLoading(false);
       }
@@ -214,7 +238,10 @@ export function SettingsView() {
     // Guard against overwriting server values with defaults when the initial
     // load failed (sleepSettings stays null and the form shows defaults).
     if (!sleepSettings) {
-      Alert.alert('エラー', '設定の読み込みに失敗しています。タブを開き直してください');
+      Alert.alert(
+        'エラー',
+        '設定の読み込みに失敗しています。タブを開き直してください',
+      );
       return;
     }
     setSleepSaving(true);
@@ -231,7 +258,10 @@ export function SettingsView() {
       haptic.success();
       Alert.alert('保存しました', '睡眠設定を保存しました');
     } catch (e) {
-      Alert.alert('エラー', `保存に失敗: ${e instanceof Error ? e.message : String(e)}`);
+      Alert.alert(
+        'エラー',
+        `保存に失敗: ${e instanceof Error ? e.message : String(e)}`,
+      );
     } finally {
       setSleepSaving(false);
     }
@@ -250,7 +280,10 @@ export function SettingsView() {
       setGcalClientSecret('');
       Alert.alert('保存しました', 'Google Calendar設定を保存しました');
     } catch (e) {
-      Alert.alert('エラー', `保存に失敗: ${e instanceof Error ? e.message : String(e)}`);
+      Alert.alert(
+        'エラー',
+        `保存に失敗: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 
@@ -260,7 +293,10 @@ export function SettingsView() {
     oauthHandledRef.current = false;
     try {
       const { url } = await client.getOAuthUrl(OAUTH_REDIRECT_URI);
-      const result = await WebBrowser.openAuthSessionAsync(url, OAUTH_REDIRECT_URI);
+      const result = await WebBrowser.openAuthSessionAsync(
+        url,
+        OAUTH_REDIRECT_URI,
+      );
       // On Android, openAuthSessionAsync may return the redirect URL directly
       if (result.type === 'success' && result.url) {
         const parsed = Linking.parse(result.url);
@@ -274,7 +310,10 @@ export function SettingsView() {
       }
       // If result.type is not 'success', the deep link listener will handle it
     } catch (e) {
-      Alert.alert('エラー', `OAuth開始に失敗: ${e instanceof Error ? e.message : String(e)}`);
+      Alert.alert(
+        'エラー',
+        `OAuth開始に失敗: ${e instanceof Error ? e.message : String(e)}`,
+      );
     } finally {
       setOauthLoading(false);
     }
@@ -287,7 +326,10 @@ export function SettingsView() {
       await client.triggerSync();
       Alert.alert('同期完了', 'Google Calendarへ同期しました');
     } catch (e) {
-      Alert.alert('エラー', `同期に失敗: ${e instanceof Error ? e.message : String(e)}`);
+      Alert.alert(
+        'エラー',
+        `同期に失敗: ${e instanceof Error ? e.message : String(e)}`,
+      );
     } finally {
       setSyncLoading(false);
     }
@@ -350,7 +392,10 @@ export function SettingsView() {
         Alert.alert('エクスポート完了', `ログを保存しました:\n${file.uri}`);
       }
     } catch (e) {
-      Alert.alert('エラー', `ログエクスポートに失敗: ${e instanceof Error ? e.message : String(e)}`);
+      Alert.alert(
+        'エラー',
+        `ログエクスポートに失敗: ${e instanceof Error ? e.message : String(e)}`,
+      );
     } finally {
       setLogExportLoading(false);
     }
@@ -361,7 +406,10 @@ export function SettingsView() {
       await TakusuServerModule.clearLogs();
       Alert.alert('消去しました', 'ログバッファをクリアしました');
     } catch (e) {
-      Alert.alert('エラー', `ログクリアに失敗: ${e instanceof Error ? e.message : String(e)}`);
+      Alert.alert(
+        'エラー',
+        `ログクリアに失敗: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 
@@ -376,9 +424,15 @@ export function SettingsView() {
       const content = lines.join('\n');
       await Clipboard.setStringAsync(content);
       haptic.success();
-      Alert.alert('コピーしました', `${lines.length} 行のログをクリップボードにコピーしました`);
+      Alert.alert(
+        'コピーしました',
+        `${lines.length} 行のログをクリップボードにコピーしました`,
+      );
     } catch (e) {
-      Alert.alert('エラー', `ログコピーに失敗: ${e instanceof Error ? e.message : String(e)}`);
+      Alert.alert(
+        'エラー',
+        `ログコピーに失敗: ${e instanceof Error ? e.message : String(e)}`,
+      );
     } finally {
       setLogCopyLoading(false);
     }
@@ -406,7 +460,13 @@ export function SettingsView() {
           { borderBottomColor: colors.separator, paddingTop: 8 + insets.top },
         ]}
       >
-        <Pressable style={styles.backButton} onPress={() => { haptic.light(); router.back(); }}>
+        <Pressable
+          style={styles.backButton}
+          onPress={() => {
+            haptic.light();
+            router.back();
+          }}
+        >
           <Text style={[styles.backButtonText, { color: BRAND_COLOR }]}>‹</Text>
         </Pressable>
         <Text style={[styles.title, { color: colors.black }]}>設定</Text>
@@ -418,14 +478,23 @@ export function SettingsView() {
           {categories.map((c) => (
             <Pressable
               key={c.key}
-              style={[styles.tab, category === c.key && { borderBottomColor: BRAND_COLOR }]}
-              onPress={() => { if (category !== c.key) haptic.select(); setCategory(c.key); }}
+              style={[
+                styles.tab,
+                category === c.key && { borderBottomColor: BRAND_COLOR },
+              ]}
+              onPress={() => {
+                if (category !== c.key) haptic.select();
+                setCategory(c.key);
+              }}
             >
               <Text
                 style={[
                   styles.tabText,
                   { color: colors.gray },
-                  category === c.key && { color: BRAND_COLOR, fontWeight: '600' },
+                  category === c.key && {
+                    color: BRAND_COLOR,
+                    fontWeight: '600',
+                  },
                 ]}
               >
                 {c.label}
@@ -435,7 +504,10 @@ export function SettingsView() {
         </View>
 
         <ScrollView
-          contentContainerStyle={[styles.content, { paddingBottom: 16 + insets.bottom }]}
+          contentContainerStyle={[
+            styles.content,
+            { paddingBottom: 16 + insets.bottom },
+          ]}
         >
           {category === 'general' && (
             <>
@@ -445,7 +517,10 @@ export function SettingsView() {
                 </Text>
                 <Switch
                   value={darkMode}
-                  onValueChange={(v) => { haptic.select(); setDarkMode(v); }}
+                  onValueChange={(v) => {
+                    haptic.select();
+                    setDarkMode(v);
+                  }}
                   trackColor={{ true: BRAND_COLOR }}
                 />
               </View>
@@ -455,7 +530,10 @@ export function SettingsView() {
                   アンドゥ履歴の上限 (ステップ数)
                 </Text>
                 <TextInput
-                  style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+                  style={[
+                    styles.input,
+                    { borderColor: colors.separator, color: colors.black },
+                  ]}
                   value={undoStepsInput}
                   onChangeText={setUndoStepsInput}
                   onBlur={commitUndoSteps}
@@ -475,11 +553,20 @@ export function SettingsView() {
               ) : (
                 <>
                   {sleepSettings && (
-                    <View style={[styles.statusBox, { backgroundColor: colors.grayLight + '20' }]}>
-                      <Text style={[styles.label, { color: colors.gray }]}>現在の設定</Text>
+                    <View
+                      style={[
+                        styles.statusBox,
+                        { backgroundColor: colors.grayLight + '20' },
+                      ]}
+                    >
+                      <Text style={[styles.label, { color: colors.gray }]}>
+                        現在の設定
+                      </Text>
                       <Text style={[styles.value, { color: colors.black }]}>
-                        タイムゾーン: {sleepSettings.tz}{'\n'}
-                        就寝: {sleepSettings.sleep_start}{'\n'}
+                        タイムゾーン: {sleepSettings.tz}
+                        {'\n'}
+                        就寝: {sleepSettings.sleep_start}
+                        {'\n'}
                         起床: {sleepSettings.sleep_end}
                       </Text>
                     </View>
@@ -490,7 +577,10 @@ export function SettingsView() {
                       タイムゾーン
                     </Text>
                     <TextInput
-                      style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+                      style={[
+                        styles.input,
+                        { borderColor: colors.separator, color: colors.black },
+                      ]}
                       value={sleepTz}
                       onChangeText={setSleepTz}
                       placeholder="Asia/Tokyo"
@@ -499,29 +589,46 @@ export function SettingsView() {
                       autoCorrect={false}
                     />
                     <Pressable
-                      style={[styles.actionButton, { backgroundColor: colors.grayLight }]}
+                      style={[
+                        styles.actionButton,
+                        { backgroundColor: colors.grayLight },
+                      ]}
                       onPress={() => {
                         haptic.light();
                         // Intl is available in Hermes (recent RN) — no native module needed
                         try {
-                          const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                          const tz =
+                            Intl.DateTimeFormat().resolvedOptions().timeZone;
                           if (tz) setSleepTz(tz);
                         } catch {
                           // ignore — device doesn't expose timezone via Intl
                         }
                       }}
                     >
-                      <Text style={[styles.actionButtonText, { color: colors.black }]}>
+                      <Text
+                        style={[
+                          styles.actionButtonText,
+                          { color: colors.black },
+                        ]}
+                      >
                         デバイスのタイムゾーンを使用
                       </Text>
                     </Pressable>
                   </View>
 
                   <View style={styles.notifGroup}>
-                    <Text style={[styles.label, { color: colors.gray }]}>就寝時刻</Text>
+                    <Text style={[styles.label, { color: colors.gray }]}>
+                      就寝時刻
+                    </Text>
                     <Pressable
-                      style={[styles.timeField, { borderColor: colors.separator }]}
-                      onPress={() => { haptic.select(); setSleepPickerField('start'); }}
+                      style={[
+                        styles.timeField,
+                        { borderColor: colors.separator },
+                      ]}
+                      onPress={() => {
+                        haptic.select();
+                        setSleepPickerField('start');
+                      }}
                     >
                       <Text style={[styles.timeText, { color: colors.black }]}>
                         {sleepStart}
@@ -530,10 +637,18 @@ export function SettingsView() {
                   </View>
 
                   <View style={styles.notifGroup}>
-                    <Text style={[styles.label, { color: colors.gray }]}>起床時刻</Text>
+                    <Text style={[styles.label, { color: colors.gray }]}>
+                      起床時刻
+                    </Text>
                     <Pressable
-                      style={[styles.timeField, { borderColor: colors.separator }]}
-                      onPress={() => { haptic.select(); setSleepPickerField('end'); }}
+                      style={[
+                        styles.timeField,
+                        { borderColor: colors.separator },
+                      ]}
+                      onPress={() => {
+                        haptic.select();
+                        setSleepPickerField('end');
+                      }}
                     >
                       <Text style={[styles.timeText, { color: colors.black }]}>
                         {sleepEnd}
@@ -542,8 +657,14 @@ export function SettingsView() {
                   </View>
 
                   <Pressable
-                    style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
-                    onPress={() => { haptic.medium(); saveSleepSettings(); }}
+                    style={[
+                      styles.actionButton,
+                      { backgroundColor: BRAND_COLOR },
+                    ]}
+                    onPress={() => {
+                      haptic.medium();
+                      saveSleepSettings();
+                    }}
                     disabled={sleepSaving || !client}
                   >
                     {sleepSaving ? (
@@ -579,24 +700,37 @@ export function SettingsView() {
                   {/* Morning briefing */}
                   <View style={styles.notifGroup}>
                     <View style={styles.settingRow}>
-                      <Text style={[styles.settingLabel, { color: colors.black }]}>
+                      <Text
+                        style={[styles.settingLabel, { color: colors.black }]}
+                      >
                         朝のブリーフィング
                       </Text>
                       <Switch
                         value={notifications.morningBriefing}
                         onValueChange={(v) => {
                           haptic.select();
-                          setNotifications({ ...notifications, morningBriefing: v });
+                          setNotifications({
+                            ...notifications,
+                            morningBriefing: v,
+                          });
                         }}
                         trackColor={{ true: BRAND_COLOR }}
                       />
                     </View>
                     {notifications.morningBriefing && (
                       <Pressable
-                        style={[styles.timeField, { borderColor: colors.separator }]}
-                        onPress={() => { haptic.select(); setNotifPickerField('morningBriefing'); }}
+                        style={[
+                          styles.timeField,
+                          { borderColor: colors.separator },
+                        ]}
+                        onPress={() => {
+                          haptic.select();
+                          setNotifPickerField('morningBriefing');
+                        }}
                       >
-                        <Text style={[styles.timeText, { color: colors.black }]}>
+                        <Text
+                          style={[styles.timeText, { color: colors.black }]}
+                        >
                           {formatTime(notifications.morningBriefingTime)}
                         </Text>
                       </Pressable>
@@ -606,14 +740,19 @@ export function SettingsView() {
                   {/* Pre-start reminder */}
                   <View style={styles.notifGroup}>
                     <View style={styles.settingRow}>
-                      <Text style={[styles.settingLabel, { color: colors.black }]}>
+                      <Text
+                        style={[styles.settingLabel, { color: colors.black }]}
+                      >
                         開始直前リマインダー
                       </Text>
                       <Switch
                         value={notifications.preStartReminder}
                         onValueChange={(v) => {
                           haptic.select();
-                          setNotifications({ ...notifications, preStartReminder: v });
+                          setNotifications({
+                            ...notifications,
+                            preStartReminder: v,
+                          });
                         }}
                         trackColor={{ true: BRAND_COLOR }}
                       />
@@ -624,7 +763,13 @@ export function SettingsView() {
                           何分前から通知するか
                         </Text>
                         <TextInput
-                          style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+                          style={[
+                            styles.input,
+                            {
+                              borderColor: colors.separator,
+                              color: colors.black,
+                            },
+                          ]}
                           value={String(notifications.preStartReminderMinutes)}
                           onChangeText={(v) => {
                             const n = parseInt(v, 10);
@@ -645,7 +790,9 @@ export function SettingsView() {
 
                   {/* Start overdue */}
                   <View style={styles.settingRow}>
-                    <Text style={[styles.settingLabel, { color: colors.black }]}>
+                    <Text
+                      style={[styles.settingLabel, { color: colors.black }]}
+                    >
                       開始時間到着通知
                     </Text>
                     <Switch
@@ -661,14 +808,19 @@ export function SettingsView() {
                   {/* Unscheduled idle */}
                   <View style={styles.notifGroup}>
                     <View style={styles.settingRow}>
-                      <Text style={[styles.settingLabel, { color: colors.black }]}>
+                      <Text
+                        style={[styles.settingLabel, { color: colors.black }]}
+                      >
                         未スケジュール放置通知
                       </Text>
                       <Switch
                         value={notifications.unscheduledIdle}
                         onValueChange={(v) => {
                           haptic.select();
-                          setNotifications({ ...notifications, unscheduledIdle: v });
+                          setNotifications({
+                            ...notifications,
+                            unscheduledIdle: v,
+                          });
                         }}
                         trackColor={{ true: BRAND_COLOR }}
                       />
@@ -679,7 +831,13 @@ export function SettingsView() {
                           何時間放置で通知 (時間)
                         </Text>
                         <TextInput
-                          style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+                          style={[
+                            styles.input,
+                            {
+                              borderColor: colors.separator,
+                              color: colors.black,
+                            },
+                          ]}
                           value={String(notifications.unscheduledIdleHours)}
                           onChangeText={(v) => {
                             const n = parseInt(v, 10);
@@ -700,7 +858,9 @@ export function SettingsView() {
 
                   {/* In-progress */}
                   <View style={styles.settingRow}>
-                    <Text style={[styles.settingLabel, { color: colors.black }]}>
+                    <Text
+                      style={[styles.settingLabel, { color: colors.black }]}
+                    >
                       タスク実行中通知
                     </Text>
                     <Switch
@@ -716,24 +876,37 @@ export function SettingsView() {
                   {/* Evening summary */}
                   <View style={styles.notifGroup}>
                     <View style={styles.settingRow}>
-                      <Text style={[styles.settingLabel, { color: colors.black }]}>
+                      <Text
+                        style={[styles.settingLabel, { color: colors.black }]}
+                      >
                         夕方サマリー
                       </Text>
                       <Switch
                         value={notifications.eveningSummary}
                         onValueChange={(v) => {
                           haptic.select();
-                          setNotifications({ ...notifications, eveningSummary: v });
+                          setNotifications({
+                            ...notifications,
+                            eveningSummary: v,
+                          });
                         }}
                         trackColor={{ true: BRAND_COLOR }}
                       />
                     </View>
                     {notifications.eveningSummary && (
                       <Pressable
-                        style={[styles.timeField, { borderColor: colors.separator }]}
-                        onPress={() => { haptic.select(); setNotifPickerField('eveningSummary'); }}
+                        style={[
+                          styles.timeField,
+                          { borderColor: colors.separator },
+                        ]}
+                        onPress={() => {
+                          haptic.select();
+                          setNotifPickerField('eveningSummary');
+                        }}
                       >
-                        <Text style={[styles.timeText, { color: colors.black }]}>
+                        <Text
+                          style={[styles.timeText, { color: colors.black }]}
+                        >
                           {formatTime(notifications.eveningSummaryTime)}
                         </Text>
                       </Pressable>
@@ -743,24 +916,37 @@ export function SettingsView() {
                   {/* Habit reminder */}
                   <View style={styles.notifGroup}>
                     <View style={styles.settingRow}>
-                      <Text style={[styles.settingLabel, { color: colors.black }]}>
+                      <Text
+                        style={[styles.settingLabel, { color: colors.black }]}
+                      >
                         Habit未完了リマインダー
                       </Text>
                       <Switch
                         value={notifications.habitReminder}
                         onValueChange={(v) => {
                           haptic.select();
-                          setNotifications({ ...notifications, habitReminder: v });
+                          setNotifications({
+                            ...notifications,
+                            habitReminder: v,
+                          });
                         }}
                         trackColor={{ true: BRAND_COLOR }}
                       />
                     </View>
                     {notifications.habitReminder && (
                       <Pressable
-                        style={[styles.timeField, { borderColor: colors.separator }]}
-                        onPress={() => { haptic.select(); setNotifPickerField('habitReminder'); }}
+                        style={[
+                          styles.timeField,
+                          { borderColor: colors.separator },
+                        ]}
+                        onPress={() => {
+                          haptic.select();
+                          setNotifPickerField('habitReminder');
+                        }}
                       >
-                        <Text style={[styles.timeText, { color: colors.black }]}>
+                        <Text
+                          style={[styles.timeText, { color: colors.black }]}
+                        >
                           {formatTime(notifications.habitReminderTime)}
                         </Text>
                       </Pressable>
@@ -778,7 +964,10 @@ export function SettingsView() {
                   エンドポイント
                 </Text>
                 <TextInput
-                  style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+                  style={[
+                    styles.input,
+                    { borderColor: colors.separator, color: colors.black },
+                  ]}
                   value={workerUrl}
                   onChangeText={(v) => {
                     setWorkerUrl(v);
@@ -793,7 +982,10 @@ export function SettingsView() {
               <View style={styles.field}>
                 <Text style={[styles.label, { color: colors.gray }]}>キー</Text>
                 <TextInput
-                  style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+                  style={[
+                    styles.input,
+                    { borderColor: colors.separator, color: colors.black },
+                  ]}
                   value={workerKey}
                   onChangeText={(v) => {
                     setWorkerKey(v);
@@ -815,7 +1007,10 @@ export function SettingsView() {
 
               <Pressable
                 style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
-                onPress={() => { haptic.medium(); handleRestartServer(); }}
+                onPress={() => {
+                  haptic.medium();
+                  handleRestartServer();
+                }}
                 disabled={restarting}
               >
                 {restarting ? (
@@ -827,12 +1022,17 @@ export function SettingsView() {
 
               {/* Health checks */}
               <View style={styles.field}>
-                <Text style={[styles.label, { color: colors.gray }]}>ヘルスチェック</Text>
+                <Text style={[styles.label, { color: colors.gray }]}>
+                  ヘルスチェック
+                </Text>
               </View>
 
               <Pressable
                 style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
-                onPress={() => { haptic.light(); checkLocalHealth(); }}
+                onPress={() => {
+                  haptic.light();
+                  checkLocalHealth();
+                }}
                 disabled={localHealthLoading || !client}
               >
                 {localHealthLoading ? (
@@ -845,7 +1045,11 @@ export function SettingsView() {
                 <Text
                   style={[
                     styles.healthResult,
-                    { color: localHealthResult.startsWith('✓') ? colors.black : colors.red },
+                    {
+                      color: localHealthResult.startsWith('✓')
+                        ? colors.black
+                        : colors.red,
+                    },
                   ]}
                 >
                   {localHealthResult}
@@ -854,7 +1058,10 @@ export function SettingsView() {
 
               <Pressable
                 style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
-                onPress={() => { haptic.light(); checkWorkerHealth(); }}
+                onPress={() => {
+                  haptic.light();
+                  checkWorkerHealth();
+                }}
                 disabled={workerHealthLoading || !client}
               >
                 {workerHealthLoading ? (
@@ -867,7 +1074,11 @@ export function SettingsView() {
                 <Text
                   style={[
                     styles.healthResult,
-                    { color: workerHealthResult.startsWith('✓') ? colors.black : colors.red },
+                    {
+                      color: workerHealthResult.startsWith('✓')
+                        ? colors.black
+                        : colors.red,
+                    },
                   ]}
                 >
                   {workerHealthResult}
@@ -883,13 +1094,23 @@ export function SettingsView() {
               )}
 
               {gcalSettings && (
-                <View style={[styles.statusBox, { backgroundColor: colors.grayLight + '20' }]}>
-                  <Text style={[styles.label, { color: colors.gray }]}>状態</Text>
+                <View
+                  style={[
+                    styles.statusBox,
+                    { backgroundColor: colors.grayLight + '20' },
+                  ]}
+                >
+                  <Text style={[styles.label, { color: colors.gray }]}>
+                    状態
+                  </Text>
                   <Text style={[styles.value, { color: colors.black }]}>
                     有効: {gcalSettings.enabled ? 'はい' : 'いいえ'}
-                    {'\n'}client_id: {gcalSettings.client_id ? '設定済み' : '未設定'}
-                    {'\n'}client_secret: {gcalSettings.has_client_secret ? '設定済み' : '未設定'}
-                    {'\n'}refresh_token: {gcalSettings.has_refresh_token ? '設定済み' : '未設定'}
+                    {'\n'}client_id:{' '}
+                    {gcalSettings.client_id ? '設定済み' : '未設定'}
+                    {'\n'}client_secret:{' '}
+                    {gcalSettings.has_client_secret ? '設定済み' : '未設定'}
+                    {'\n'}refresh_token:{' '}
+                    {gcalSettings.has_refresh_token ? '設定済み' : '未設定'}
                   </Text>
                 </View>
               )}
@@ -900,7 +1121,10 @@ export function SettingsView() {
                 </Text>
                 <Switch
                   value={gcalEnabled}
-                  onValueChange={(v) => { haptic.select(); setGcalEnabled(v); }}
+                  onValueChange={(v) => {
+                    haptic.select();
+                    setGcalEnabled(v);
+                  }}
                   trackColor={{ true: BRAND_COLOR }}
                 />
               </View>
@@ -910,7 +1134,10 @@ export function SettingsView() {
                   Calendar ID
                 </Text>
                 <TextInput
-                  style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+                  style={[
+                    styles.input,
+                    { borderColor: colors.separator, color: colors.black },
+                  ]}
                   value={gcalCalendarId}
                   onChangeText={setGcalCalendarId}
                   placeholder="primary"
@@ -925,7 +1152,10 @@ export function SettingsView() {
                   Client ID
                 </Text>
                 <TextInput
-                  style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+                  style={[
+                    styles.input,
+                    { borderColor: colors.separator, color: colors.black },
+                  ]}
                   value={gcalClientId}
                   onChangeText={setGcalClientId}
                   placeholder="xxxxx.apps.googleusercontent.com"
@@ -940,10 +1170,17 @@ export function SettingsView() {
                   Client Secret
                 </Text>
                 <TextInput
-                  style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+                  style={[
+                    styles.input,
+                    { borderColor: colors.separator, color: colors.black },
+                  ]}
                   value={gcalClientSecret}
                   onChangeText={setGcalClientSecret}
-                  placeholder={gcalSettings?.has_client_secret ? '設定済み (入力で上書き)' : 'GOCSPX-...'}
+                  placeholder={
+                    gcalSettings?.has_client_secret
+                      ? '設定済み (入力で上書き)'
+                      : 'GOCSPX-...'
+                  }
                   placeholderTextColor={colors.gray}
                   secureTextEntry
                   autoCapitalize="none"
@@ -953,14 +1190,20 @@ export function SettingsView() {
 
               <Pressable
                 style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
-                onPress={() => { haptic.medium(); saveGcalSettings(); }}
+                onPress={() => {
+                  haptic.medium();
+                  saveGcalSettings();
+                }}
               >
                 <Text style={styles.actionButtonText}>設定を保存</Text>
               </Pressable>
 
               <Pressable
                 style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
-                onPress={() => { haptic.medium(); startOAuth(); }}
+                onPress={() => {
+                  haptic.medium();
+                  startOAuth();
+                }}
                 disabled={oauthLoading || !gcalSettings?.has_client_secret}
               >
                 {oauthLoading ? (
@@ -972,7 +1215,10 @@ export function SettingsView() {
 
               <Pressable
                 style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
-                onPress={() => { haptic.medium(); triggerSync(); }}
+                onPress={() => {
+                  haptic.medium();
+                  triggerSync();
+                }}
                 disabled={syncLoading || !gcalSettings?.has_refresh_token}
               >
                 {syncLoading ? (
@@ -987,7 +1233,9 @@ export function SettingsView() {
           {category === 'info' && (
             <>
               <View style={styles.field}>
-                <Text style={[styles.label, { color: colors.gray }]}>バージョン</Text>
+                <Text style={[styles.label, { color: colors.gray }]}>
+                  バージョン
+                </Text>
                 <Text style={[styles.value, { color: colors.black }]}>
                   {appVersion} (build {buildVersion})
                 </Text>
@@ -999,7 +1247,9 @@ export function SettingsView() {
                 </Text>
               </View>
               <View style={styles.field}>
-                <Text style={[styles.label, { color: colors.gray }]}>ライセンス</Text>
+                <Text style={[styles.label, { color: colors.gray }]}>
+                  ライセンス
+                </Text>
                 <Text style={[styles.value, { color: colors.black }]}>MIT</Text>
               </View>
 
@@ -1010,38 +1260,63 @@ export function SettingsView() {
 
               <Pressable
                 style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
-                onPress={() => { haptic.light(); exportLogs(); }}
+                onPress={() => {
+                  haptic.light();
+                  exportLogs();
+                }}
                 disabled={logExportLoading || Platform.OS !== 'android'}
               >
                 {logExportLoading ? (
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
                   <Text style={styles.actionButtonText}>
-                    {Platform.OS === 'android' ? 'ログをエクスポート' : 'ログ (Androidのみ)'}
+                    {Platform.OS === 'android'
+                      ? 'ログをエクスポート'
+                      : 'ログ (Androidのみ)'}
                   </Text>
                 )}
               </Pressable>
 
               <Pressable
-                style={[styles.actionButton, { backgroundColor: colors.grayLight }]}
-                onPress={() => { haptic.light(); copyLogs(); }}
-                disabled={logCopyLoading || logExportLoading || Platform.OS !== 'android'}
+                style={[
+                  styles.actionButton,
+                  { backgroundColor: colors.grayLight },
+                ]}
+                onPress={() => {
+                  haptic.light();
+                  copyLogs();
+                }}
+                disabled={
+                  logCopyLoading ||
+                  logExportLoading ||
+                  Platform.OS !== 'android'
+                }
               >
                 {logCopyLoading ? (
                   <ActivityIndicator color={colors.black} />
                 ) : (
-                  <Text style={[styles.actionButtonText, { color: colors.black }]}>
+                  <Text
+                    style={[styles.actionButtonText, { color: colors.black }]}
+                  >
                     ログをコピー
                   </Text>
                 )}
               </Pressable>
 
               <Pressable
-                style={[styles.actionButton, { backgroundColor: colors.grayLight }]}
-                onPress={() => { haptic.medium(); clearLogs(); }}
+                style={[
+                  styles.actionButton,
+                  { backgroundColor: colors.grayLight },
+                ]}
+                onPress={() => {
+                  haptic.medium();
+                  clearLogs();
+                }}
                 disabled={Platform.OS !== 'android'}
               >
-                <Text style={[styles.actionButtonText, { color: colors.black }]}>
+                <Text
+                  style={[styles.actionButtonText, { color: colors.black }]}
+                >
                   ログを消去
                 </Text>
               </Pressable>
@@ -1075,11 +1350,20 @@ export function SettingsView() {
             }
             const minutes = timeToMinutes(date.getHours(), date.getMinutes());
             if (notifPickerField === 'morningBriefing') {
-              setNotifications({ ...notifications, morningBriefingTime: minutes });
+              setNotifications({
+                ...notifications,
+                morningBriefingTime: minutes,
+              });
             } else if (notifPickerField === 'eveningSummary') {
-              setNotifications({ ...notifications, eveningSummaryTime: minutes });
+              setNotifications({
+                ...notifications,
+                eveningSummaryTime: minutes,
+              });
             } else if (notifPickerField === 'habitReminder') {
-              setNotifications({ ...notifications, habitReminderTime: minutes });
+              setNotifications({
+                ...notifications,
+                habitReminderTime: minutes,
+              });
             }
             setNotifPickerField(null);
           }}

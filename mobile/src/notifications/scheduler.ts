@@ -8,10 +8,7 @@
 import * as Notifications from 'expo-notifications';
 import type { TaskRow, ScheduleEntry, HabitRow } from '@/src/api/types';
 import { parseSchedule } from '@/src/api/types';
-import {
-  type NotificationSettings,
-  minutesToTime,
-} from './settings';
+import { type NotificationSettings, minutesToTime } from './settings';
 import { CHANNELS } from './channels';
 import { CATEGORY_TASK_IN_PROGRESS } from './categories';
 
@@ -54,10 +51,7 @@ function isFuture(date: Date): boolean {
 }
 
 // Count tasks scheduled for today
-function countTodaysTasks(
-  tasks: TaskRow[],
-  schedule: ScheduleEntry[],
-): number {
+function countTodaysTasks(tasks: TaskRow[], schedule: ScheduleEntry[]): number {
   const scheduleMap = new Map<string, ScheduleEntry>();
   for (const e of schedule) scheduleMap.set(e.task_id, e);
 
@@ -67,11 +61,19 @@ function countTodaysTasks(
   todayEnd.setHours(23, 59, 59, 999);
 
   return tasks.filter((t) => {
-    if (t.status === 'pending' || t.status === 'completed' || t.status === 'skipped') {
+    if (
+      t.status === 'pending' ||
+      t.status === 'completed' ||
+      t.status === 'skipped'
+    ) {
       return false;
     }
     const entry = scheduleMap.get(t.id);
-    const start = entry ? new Date(entry.start_at) : t.start_at ? new Date(t.start_at) : null;
+    const start = entry
+      ? new Date(entry.start_at)
+      : t.start_at
+        ? new Date(t.start_at)
+        : null;
     if (!start) return false;
     return start >= todayStart && start <= todayEnd;
   }).length;
@@ -92,7 +94,10 @@ function countCompletedToday(tasks: TaskRow[]): number {
 }
 
 // Count pending tasks idle for more than threshold hours
-function countIdlePendingTasks(tasks: TaskRow[], thresholdHours: number): number {
+function countIdlePendingTasks(
+  tasks: TaskRow[],
+  thresholdHours: number,
+): number {
   const threshold = Date.now() - thresholdHours * 60 * 60 * 1000;
   return tasks.filter((t) => {
     if (t.status !== 'pending') return false;
@@ -101,10 +106,7 @@ function countIdlePendingTasks(tasks: TaskRow[], thresholdHours: number): number
 }
 
 // Count active habits that don't have a completed task today
-function countIncompleteHabits(
-  tasks: TaskRow[],
-  habits: HabitRow[],
-): number {
+function countIncompleteHabits(tasks: TaskRow[], habits: HabitRow[]): number {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
   const todayEnd = new Date();
@@ -144,7 +146,10 @@ async function scheduleNextOccurrence(
   today.setHours(hour, minute, 0, 0);
 
   // If the time has already passed today, schedule for tomorrow
-  const target = today.getTime() > now.getTime() ? today : new Date(today.getTime() + 24 * 60 * 60 * 1000);
+  const target =
+    today.getTime() > now.getTime()
+      ? today
+      : new Date(today.getTime() + 24 * 60 * 60 * 1000);
 
   await scheduleAt(channelId, target, title, body, data);
 }
@@ -173,7 +178,9 @@ async function scheduleAt(
   });
 }
 
-export async function rescheduleNotifications(data: ScheduleData): Promise<void> {
+export async function rescheduleNotifications(
+  data: ScheduleData,
+): Promise<void> {
   const { tasks, schedule, habits, settings } = data;
 
   if (!settings.enabled) {
@@ -191,7 +198,8 @@ export async function rescheduleNotifications(data: ScheduleData): Promise<void>
   if (settings.morningBriefing) {
     const { hour, minute } = minutesToTime(settings.morningBriefingTime);
     const count = countTodaysTasks(tasks, schedule);
-    const title = count === 0 ? 'おはようございます' : `今日は${count}個のタスクがあります`;
+    const title =
+      count === 0 ? 'おはようございます' : `今日は${count}個のタスクがあります`;
     const body = count === 0 ? 'タスクを追加しましょう' : 'タップして確認';
     await scheduleNextOccurrence(
       CHANNELS.taskSummary,
@@ -226,7 +234,9 @@ export async function rescheduleNotifications(data: ScheduleData): Promise<void>
 
     // Pre-start reminder
     if (settings.preStartReminder) {
-      const reminderDate = new Date(startDate.getTime() - settings.preStartReminderMinutes * 60 * 1000);
+      const reminderDate = new Date(
+        startDate.getTime() - settings.preStartReminderMinutes * 60 * 1000,
+      );
       if (isFuture(reminderDate)) {
         await scheduleAt(
           CHANNELS.taskReminders,
@@ -252,7 +262,10 @@ export async function rescheduleNotifications(data: ScheduleData): Promise<void>
 
   // ── 4. Unscheduled idle (next occurrence at noon) ──
   if (settings.unscheduledIdle) {
-    const idleCount = countIdlePendingTasks(tasks, settings.unscheduledIdleHours);
+    const idleCount = countIdlePendingTasks(
+      tasks,
+      settings.unscheduledIdleHours,
+    );
     if (idleCount > 0) {
       await scheduleNextOccurrence(
         CHANNELS.taskIdle,
@@ -311,7 +324,9 @@ export async function postInProgressNotification(task: TaskRow): Promise<void> {
   });
 }
 
-export async function dismissInProgressNotification(taskId: string): Promise<void> {
+export async function dismissInProgressNotification(
+  taskId: string,
+): Promise<void> {
   // Dismiss all presented notifications for this task
   // expo-notifications doesn't support dismissing by data, so we dismiss all
   // from the in-progress channel. This is acceptable since only one task

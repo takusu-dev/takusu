@@ -7,7 +7,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { Ionicons } from '@expo/vector-icons';
 import { Button, IconButton } from 'react-native-paper';
 import type { TakusuClient } from '@/src/api/client';
 import { showError } from '@/src/api/errors';
@@ -220,9 +219,7 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
   // the background is handled by the native WebView style (transparent body).
   useEffect(() => {
     const brand = JSON.stringify(BRAND_COLOR);
-    webViewRef.current?.injectJavaScript(
-      `window.applyTheme(${brand}); true;`,
-    );
+    webViewRef.current?.injectJavaScript(`window.applyTheme(${brand}); true;`);
   }, [colors.white]);
 
   const refresh = useCallback(async () => {
@@ -327,9 +324,7 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
     const newMode = !editMode;
     haptic.medium();
     setEditMode(newMode);
-    webViewRef.current?.injectJavaScript(
-      `window.setEditMode(${newMode});`,
-    );
+    webViewRef.current?.injectJavaScript(`window.setEditMode(${newMode});`);
   }
 
   return (
@@ -340,7 +335,10 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
             icon="chevron-left"
             iconColor={BRAND_COLOR}
             size={28}
-            onPress={() => { haptic.light(); onBack(); }}
+            onPress={() => {
+              haptic.light();
+              onBack();
+            }}
           />
         </View>
         <View style={styles.topBarCenter}>

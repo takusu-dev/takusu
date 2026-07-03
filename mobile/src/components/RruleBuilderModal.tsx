@@ -106,7 +106,9 @@ export function RruleBuilderModal({
   const [manualError, setManualError] = useState<string | null>(null);
 
   // nth-weekday editor: which weekday is being edited (null = none)
-  const [editingNthWeekday, setEditingNthWeekday] = useState<Weekday | null>(null);
+  const [editingNthWeekday, setEditingNthWeekday] = useState<Weekday | null>(
+    null,
+  );
 
   // exdate picker
   const [showExdatePicker, setShowExdatePicker] = useState(false);
@@ -233,7 +235,10 @@ export function RruleBuilderModal({
         exdates: parsed.exdates ?? [],
       };
       const err = validateRule(r);
-      if (err) { setManualError(err); return; }
+      if (err) {
+        setManualError(err);
+        return;
+      }
       setRule(r);
       setManualError(null);
       setManualMode(false);
@@ -257,7 +262,10 @@ export function RruleBuilderModal({
           exdates: parsed.exdates ?? [],
         };
         const err = validateRule(r);
-        if (err) { setManualError(err); return; }
+        if (err) {
+          setManualError(err);
+          return;
+        }
         onConfirm(serializeRule(r));
       } catch {
         setManualError('JSON のパースに失敗しました');
@@ -267,7 +275,14 @@ export function RruleBuilderModal({
     }
   }
 
-  const unit = rule.freq === 'daily' ? '日' : rule.freq === 'weekly' ? '週' : rule.freq === 'monthly' ? '月' : '年';
+  const unit =
+    rule.freq === 'daily'
+      ? '日'
+      : rule.freq === 'weekly'
+        ? '週'
+        : rule.freq === 'monthly'
+          ? '月'
+          : '年';
 
   // Show month-day grid for monthly and yearly
   const showMonthDays = rule.freq === 'monthly' || rule.freq === 'yearly';
@@ -278,9 +293,11 @@ export function RruleBuilderModal({
   // The engine evaluates by_day / by_month / by_month_day for all frequencies,
   // so these are valid — but the user may not notice them when the UI is hidden.
   const hiddenMonthDays = !showMonthDays && rule.by_month_day.length > 0;
-  const hiddenMonths = !alwaysShowMonths && !showAdvanced && rule.by_month.length > 0;
+  const hiddenMonths =
+    !alwaysShowMonths && !showAdvanced && rule.by_month.length > 0;
   const hiddenFields: string[] = [];
-  if (hiddenMonthDays) hiddenFields.push(`実行日 ${rule.by_month_day.length}件`);
+  if (hiddenMonthDays)
+    hiddenFields.push(`実行日 ${rule.by_month_day.length}件`);
   if (hiddenMonths) hiddenFields.push(`月 ${rule.by_month.length}件`);
   const hasHiddenFields = hiddenFields.length > 0;
 
@@ -289,16 +306,27 @@ export function RruleBuilderModal({
       <Modal visible={visible} transparent animationType="slide">
         <Pressable style={styles.overlay} onPress={onCancel}>
           <Pressable
-            style={[styles.sheet, { backgroundColor: colors.white, paddingBottom: 32 + insets.bottom }]}
+            style={[
+              styles.sheet,
+              {
+                backgroundColor: colors.white,
+                paddingBottom: 32 + insets.bottom,
+              },
+            ]}
             onPress={(e) => e.stopPropagation()}
           >
             {/* Header */}
             <View style={styles.header}>
               <View style={styles.headerLeft}>
-                <Text style={[styles.title, { color: colors.black }]}>周期 (RRULE)</Text>
+                <Text style={[styles.title, { color: colors.black }]}>
+                  周期 (RRULE)
+                </Text>
                 <Pressable
                   style={styles.iconButton}
-                  onPress={() => { haptic.light(); setShowHelp((v) => !v); }}
+                  onPress={() => {
+                    haptic.light();
+                    setShowHelp((v) => !v);
+                  }}
                   hitSlop={8}
                 >
                   <Ionicons
@@ -315,12 +343,20 @@ export function RruleBuilderModal({
                   hitSlop={8}
                 >
                   <Ionicons
-                    name={manualMode ? 'construct-outline' : 'code-slash-outline'}
+                    name={
+                      manualMode ? 'construct-outline' : 'code-slash-outline'
+                    }
                     size={20}
                     color={BRAND_COLOR}
                   />
                 </Pressable>
-                <Pressable onPress={() => { haptic.light(); onCancel(); }} hitSlop={8}>
+                <Pressable
+                  onPress={() => {
+                    haptic.light();
+                    onCancel();
+                  }}
+                  hitSlop={8}
+                >
                   <Ionicons name="close" size={24} color={colors.gray} />
                 </Pressable>
               </View>
@@ -343,7 +379,10 @@ export function RruleBuilderModal({
               </View>
             )}
 
-            <ScrollView style={styles.body} showsVerticalScrollIndicator={false}>
+            <ScrollView
+              style={styles.body}
+              showsVerticalScrollIndicator={false}
+            >
               {manualMode ? (
                 /* ---- Manual JSON mode ---- */
                 <View style={styles.section}>
@@ -353,10 +392,18 @@ export function RruleBuilderModal({
                   <TextInput
                     style={[
                       styles.manualInput,
-                      { borderColor: manualError ? COLORS.red : colors.separator, color: colors.black },
+                      {
+                        borderColor: manualError
+                          ? COLORS.red
+                          : colors.separator,
+                        color: colors.black,
+                      },
                     ]}
                     value={manualText}
-                    onChangeText={(t) => { setManualText(t); setManualError(null); }}
+                    onChangeText={(t) => {
+                      setManualText(t);
+                      setManualError(null);
+                    }}
                     multiline
                     autoCapitalize="none"
                     autoCorrect={false}
@@ -370,8 +417,17 @@ export function RruleBuilderModal({
                     style={[styles.advancedToggle, { marginTop: 8 }]}
                     onPress={switchToBuilder}
                   >
-                    <Ionicons name="construct-outline" size={14} color={BRAND_COLOR} />
-                    <Text style={[styles.advancedToggleText, { color: BRAND_COLOR }]}>
+                    <Ionicons
+                      name="construct-outline"
+                      size={14}
+                      color={BRAND_COLOR}
+                    />
+                    <Text
+                      style={[
+                        styles.advancedToggleText,
+                        { color: BRAND_COLOR },
+                      ]}
+                    >
                       ビルダーに戻る (バリデーション後)
                     </Text>
                   </Pressable>
@@ -380,14 +436,19 @@ export function RruleBuilderModal({
                 /* ---- Builder mode ---- */
                 <>
                   {/* Frequency */}
-                  <Text style={[styles.sectionLabel, { color: colors.gray }]}>頻度</Text>
+                  <Text style={[styles.sectionLabel, { color: colors.gray }]}>
+                    頻度
+                  </Text>
                   <View style={styles.segmented}>
                     {FREQUENCIES.map((f) => (
                       <Pressable
                         key={f}
                         style={[
                           styles.segment,
-                          { borderColor: rule.freq === f ? BRAND_COLOR : colors.separator },
+                          {
+                            borderColor:
+                              rule.freq === f ? BRAND_COLOR : colors.separator,
+                          },
                           rule.freq === f && { backgroundColor: BRAND_COLOR },
                         ]}
                         onPress={() => {
@@ -400,7 +461,10 @@ export function RruleBuilderModal({
                         <Text
                           style={[
                             styles.segmentText,
-                            { color: rule.freq === f ? COLORS.white : colors.black },
+                            {
+                              color:
+                                rule.freq === f ? COLORS.white : colors.black,
+                            },
                           ]}
                         >
                           {FREQUENCY_LABELS[f]}
@@ -411,10 +475,25 @@ export function RruleBuilderModal({
 
                   {/* Hidden-fields notice */}
                   {hasHiddenFields && (
-                    <View style={[styles.hiddenNotice, { backgroundColor: '#FFF6E6', borderColor: '#E0B040' }]}>
-                      <Ionicons name="information-circle-outline" size={14} color="#B07A00" />
-                      <Text style={[styles.hiddenNoticeText, { color: colors.grayDark }]}>
-                        非表示フィールドに選択が残っています: {hiddenFields.join('・')} (プレビューで確認)
+                    <View
+                      style={[
+                        styles.hiddenNotice,
+                        { backgroundColor: '#FFF6E6', borderColor: '#E0B040' },
+                      ]}
+                    >
+                      <Ionicons
+                        name="information-circle-outline"
+                        size={14}
+                        color="#B07A00"
+                      />
+                      <Text
+                        style={[
+                          styles.hiddenNoticeText,
+                          { color: colors.grayDark },
+                        ]}
+                      >
+                        非表示フィールドに選択が残っています:{' '}
+                        {hiddenFields.join('・')} (プレビューで確認)
                       </Text>
                       <Pressable
                         style={styles.hiddenNoticeClear}
@@ -426,19 +505,37 @@ export function RruleBuilderModal({
                           update(patch);
                         }}
                       >
-                        <Text style={[styles.hiddenNoticeClearText, { color: BRAND_COLOR }]}>クリア</Text>
+                        <Text
+                          style={[
+                            styles.hiddenNoticeClearText,
+                            { color: BRAND_COLOR },
+                          ]}
+                        >
+                          クリア
+                        </Text>
                       </Pressable>
                     </View>
                   )}
 
                   {/* Interval */}
-                  <Text style={[styles.sectionLabel, { color: colors.gray, marginTop: 16 }]}>
+                  <Text
+                    style={[
+                      styles.sectionLabel,
+                      { color: colors.gray, marginTop: 16 },
+                    ]}
+                  >
                     間隔 ({unit}ごと)
                   </Text>
                   <View style={styles.stepper}>
                     <Pressable
-                      style={[styles.stepBtn, { borderColor: colors.separator }]}
-                      onPress={() => { haptic.select(); update({ interval: Math.max(1, rule.interval - 1) }); }}
+                      style={[
+                        styles.stepBtn,
+                        { borderColor: colors.separator },
+                      ]}
+                      onPress={() => {
+                        haptic.select();
+                        update({ interval: Math.max(1, rule.interval - 1) });
+                      }}
                     >
                       <Ionicons name="remove" size={20} color={BRAND_COLOR} />
                     </Pressable>
@@ -446,8 +543,14 @@ export function RruleBuilderModal({
                       {rule.interval}
                     </Text>
                     <Pressable
-                      style={[styles.stepBtn, { borderColor: colors.separator }]}
-                      onPress={() => { haptic.select(); update({ interval: rule.interval + 1 }); }}
+                      style={[
+                        styles.stepBtn,
+                        { borderColor: colors.separator },
+                      ]}
+                      onPress={() => {
+                        haptic.select();
+                        update({ interval: rule.interval + 1 });
+                      }}
                     >
                       <Ionicons name="add" size={20} color={BRAND_COLOR} />
                     </Pressable>
@@ -456,7 +559,10 @@ export function RruleBuilderModal({
                   {/* Weekday chips (all frequencies) */}
                   <View style={styles.section}>
                     <Text style={[styles.sectionLabel, { color: colors.gray }]}>
-                      曜日{rule.freq !== 'daily' && rule.freq !== 'weekly' ? ' (オプション)' : ''}
+                      曜日
+                      {rule.freq !== 'daily' && rule.freq !== 'weekly'
+                        ? ' (オプション)'
+                        : ''}
                     </Text>
                     <View style={styles.weekdayChips}>
                       {WEEKDAYS.map((wd) => {
@@ -468,7 +574,11 @@ export function RruleBuilderModal({
                             key={wd}
                             style={[
                               styles.weekdayChip,
-                              { borderColor: on ? BRAND_COLOR : colors.separator },
+                              {
+                                borderColor: on
+                                  ? BRAND_COLOR
+                                  : colors.separator,
+                              },
                               on && { backgroundColor: BRAND_COLOR },
                             ]}
                             onPress={() => {
@@ -478,7 +588,12 @@ export function RruleBuilderModal({
                               // For daily: tap always toggles.
                               const entry = on ? weekdayEntry(wd) : null;
                               const hasNth = entry !== null && entry.n !== null;
-                              if (on && (rule.freq === 'monthly' || rule.freq === 'yearly' || hasNth)) {
+                              if (
+                                on &&
+                                (rule.freq === 'monthly' ||
+                                  rule.freq === 'yearly' ||
+                                  hasNth)
+                              ) {
                                 haptic.light();
                                 setEditingNthWeekday(isEditing ? null : wd);
                               } else {
@@ -495,7 +610,12 @@ export function RruleBuilderModal({
                               {WEEKDAY_LABELS[wd]}
                             </Text>
                             {on && entry.n !== null && (
-                              <Text style={[styles.chipSubText, { color: COLORS.white }]}>
+                              <Text
+                                style={[
+                                  styles.chipSubText,
+                                  { color: COLORS.white },
+                                ]}
+                              >
                                 {NTH_LABELS[entry.n] ?? String(entry.n)}
                               </Text>
                             )}
@@ -505,71 +625,121 @@ export function RruleBuilderModal({
                     </View>
 
                     {/* nth weekday picker (shown when editingNthWeekday is set and freq allows it) */}
-                    {editingNthWeekday !== null && weekdayEntry(editingNthWeekday) && (
-                      <View style={[styles.nthPicker, { borderColor: colors.separator }]}>
-                        <Text style={[styles.nthPickerLabel, { color: colors.gray }]}>
-                          {WEEKDAY_LABELS[editingNthWeekday]}曜日: 何番目?
-                        </Text>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                          <View style={styles.nthOptions}>
-                            {NTH_OPTIONS.map((n) => {
-                              const current = weekdayEntry(editingNthWeekday)?.n ?? null;
-                              const selected = current === n;
-                              return (
-                                <Pressable
-                                  key={n === null ? 'every' : n}
-                                  style={[
-                                    styles.nthChip,
-                                    { borderColor: selected ? BRAND_COLOR : colors.separator },
-                                    selected && { backgroundColor: BRAND_COLOR },
-                                  ]}
-                                  onPress={() => setNth(editingNthWeekday, n)}
-                                >
-                                  <Text
+                    {editingNthWeekday !== null &&
+                      weekdayEntry(editingNthWeekday) && (
+                        <View
+                          style={[
+                            styles.nthPicker,
+                            { borderColor: colors.separator },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.nthPickerLabel,
+                              { color: colors.gray },
+                            ]}
+                          >
+                            {WEEKDAY_LABELS[editingNthWeekday]}曜日: 何番目?
+                          </Text>
+                          <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                          >
+                            <View style={styles.nthOptions}>
+                              {NTH_OPTIONS.map((n) => {
+                                const current =
+                                  weekdayEntry(editingNthWeekday)?.n ?? null;
+                                const selected = current === n;
+                                return (
+                                  <Pressable
+                                    key={n === null ? 'every' : n}
                                     style={[
-                                      styles.chipText,
-                                      { color: selected ? COLORS.white : colors.black },
+                                      styles.nthChip,
+                                      {
+                                        borderColor: selected
+                                          ? BRAND_COLOR
+                                          : colors.separator,
+                                      },
+                                      selected && {
+                                        backgroundColor: BRAND_COLOR,
+                                      },
                                     ]}
+                                    onPress={() => setNth(editingNthWeekday, n)}
                                   >
-                                    {nthLabel(n)}
-                                  </Text>
-                                </Pressable>
-                              );
-                            })}
+                                    <Text
+                                      style={[
+                                        styles.chipText,
+                                        {
+                                          color: selected
+                                            ? COLORS.white
+                                            : colors.black,
+                                        },
+                                      ]}
+                                    >
+                                      {nthLabel(n)}
+                                    </Text>
+                                  </Pressable>
+                                );
+                              })}
+                            </View>
+                          </ScrollView>
+                          <View style={styles.nthActions}>
+                            <Pressable
+                              style={styles.nthClose}
+                              onPress={() => {
+                                haptic.light();
+                                setEditingNthWeekday(null);
+                              }}
+                            >
+                              <Text
+                                style={[
+                                  styles.nthCloseText,
+                                  { color: BRAND_COLOR },
+                                ]}
+                              >
+                                閉じる
+                              </Text>
+                            </Pressable>
+                            <Pressable
+                              style={styles.nthRemove}
+                              onPress={() => {
+                                haptic.select();
+                                update({
+                                  by_day: rule.by_day.filter(
+                                    (d) => d.weekday !== editingNthWeekday,
+                                  ),
+                                });
+                                setEditingNthWeekday(null);
+                              }}
+                            >
+                              <Ionicons
+                                name="trash-outline"
+                                size={14}
+                                color={COLORS.red}
+                              />
+                              <Text
+                                style={[
+                                  styles.nthRemoveText,
+                                  { color: COLORS.red },
+                                ]}
+                              >
+                                この曜日を削除
+                              </Text>
+                            </Pressable>
                           </View>
-                        </ScrollView>
-                        <View style={styles.nthActions}>
-                          <Pressable
-                            style={styles.nthClose}
-                            onPress={() => { haptic.light(); setEditingNthWeekday(null); }}
-                          >
-                            <Text style={[styles.nthCloseText, { color: BRAND_COLOR }]}>閉じる</Text>
-                          </Pressable>
-                          <Pressable
-                            style={styles.nthRemove}
-                            onPress={() => {
-                              haptic.select();
-                              update({
-                                by_day: rule.by_day.filter((d) => d.weekday !== editingNthWeekday),
-                              });
-                              setEditingNthWeekday(null);
-                            }}
-                          >
-                            <Ionicons name="trash-outline" size={14} color={COLORS.red} />
-                            <Text style={[styles.nthRemoveText, { color: COLORS.red }]}>
-                              この曜日を削除
-                            </Text>
-                          </Pressable>
                         </View>
-                      </View>
-                    )}
+                      )}
                   </View>
 
                   {/* Month chips */}
                   {alwaysShowMonths ? (
                     // Always visible for yearly
                     <View style={styles.section}>
-                      <Text style={[styles.sectionLabel, { color: colors.gray }]}>月</Text>
+                      <Text
+                        style={[styles.sectionLabel, { color: colors.gray }]}
+                      >
+                        月
+                      </Text>
                       <View style={styles.chips}>
                         {MONTHS.map((m) => {
                           const on = rule.by_month.includes(m);
@@ -578,7 +748,11 @@ export function RruleBuilderModal({
                               key={m}
                               style={[
                                 styles.chip,
-                                { borderColor: on ? BRAND_COLOR : colors.separator },
+                                {
+                                  borderColor: on
+                                    ? BRAND_COLOR
+                                    : colors.separator,
+                                },
                                 on && { backgroundColor: BRAND_COLOR },
                               ]}
                               onPress={() => toggleMonth(m)}
@@ -601,15 +775,28 @@ export function RruleBuilderModal({
                     <View style={styles.section}>
                       <Pressable
                         style={styles.advancedToggle}
-                        onPress={() => { haptic.light(); setShowAdvanced((v) => !v); }}
+                        onPress={() => {
+                          haptic.light();
+                          setShowAdvanced((v) => !v);
+                        }}
                       >
                         <Ionicons
-                          name={showAdvanced ? 'chevron-down' : 'chevron-forward'}
+                          name={
+                            showAdvanced ? 'chevron-down' : 'chevron-forward'
+                          }
                           size={14}
                           color={BRAND_COLOR}
                         />
-                        <Text style={[styles.advancedToggleText, { color: BRAND_COLOR }]}>
-                          月フィルタ (詳細){rule.by_month.length > 0 ? ` · ${rule.by_month.length}件選択中` : ''}
+                        <Text
+                          style={[
+                            styles.advancedToggleText,
+                            { color: BRAND_COLOR },
+                          ]}
+                        >
+                          月フィルタ (詳細)
+                          {rule.by_month.length > 0
+                            ? ` · ${rule.by_month.length}件選択中`
+                            : ''}
                         </Text>
                       </Pressable>
                       {showAdvanced && (
@@ -621,7 +808,11 @@ export function RruleBuilderModal({
                                 key={m}
                                 style={[
                                   styles.chip,
-                                  { borderColor: on ? BRAND_COLOR : colors.separator },
+                                  {
+                                    borderColor: on
+                                      ? BRAND_COLOR
+                                      : colors.separator,
+                                  },
                                   on && { backgroundColor: BRAND_COLOR },
                                 ]}
                                 onPress={() => toggleMonth(m)}
@@ -645,21 +836,35 @@ export function RruleBuilderModal({
                   {/* Month-day chips (monthly / yearly) */}
                   {showMonthDays && (
                     <View style={styles.section}>
-                      <Text style={[styles.sectionLabel, { color: colors.gray }]}>実行日</Text>
+                      <Text
+                        style={[styles.sectionLabel, { color: colors.gray }]}
+                      >
+                        実行日
+                      </Text>
                       {/* "月末" chip */}
                       <View style={[styles.dayRow, { marginBottom: 8 }]}>
                         <Pressable
                           style={[
                             styles.lastDayChip,
-                            { borderColor: rule.by_month_day.includes(-1) ? BRAND_COLOR : colors.separator },
-                            rule.by_month_day.includes(-1) && { backgroundColor: BRAND_COLOR },
+                            {
+                              borderColor: rule.by_month_day.includes(-1)
+                                ? BRAND_COLOR
+                                : colors.separator,
+                            },
+                            rule.by_month_day.includes(-1) && {
+                              backgroundColor: BRAND_COLOR,
+                            },
                           ]}
                           onPress={toggleLastDay}
                         >
                           <Text
                             style={[
                               styles.chipText,
-                              { color: rule.by_month_day.includes(-1) ? COLORS.white : colors.black },
+                              {
+                                color: rule.by_month_day.includes(-1)
+                                  ? COLORS.white
+                                  : colors.black,
+                              },
                             ]}
                           >
                             月末
@@ -676,7 +881,11 @@ export function RruleBuilderModal({
                                 key={d}
                                 style={[
                                   styles.dayChip,
-                                  { borderColor: on ? BRAND_COLOR : colors.separator },
+                                  {
+                                    borderColor: on
+                                      ? BRAND_COLOR
+                                      : colors.separator,
+                                  },
                                   on && { backgroundColor: BRAND_COLOR },
                                 ]}
                                 onPress={() => toggleMonthDay(d)}
@@ -693,7 +902,10 @@ export function RruleBuilderModal({
                             );
                           })}
                           {Array.from({ length: 7 - row.length }, (_, i) => (
-                            <View key={`pad-${i}`} style={styles.dayChipPlaceholder} />
+                            <View
+                              key={`pad-${i}`}
+                              style={styles.dayChipPlaceholder}
+                            />
                           ))}
                         </View>
                       ))}
@@ -706,11 +918,17 @@ export function RruleBuilderModal({
                       回数 (任意・空欄で無限)
                     </Text>
                     <TextInput
-                      style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+                      style={[
+                        styles.input,
+                        { borderColor: colors.separator, color: colors.black },
+                      ]}
                       value={rule.count === null ? '' : String(rule.count)}
                       onChangeText={(t) => {
                         const n = parseInt(t, 10);
-                        update({ count: Number.isNaN(n) || t === '' ? null : Math.max(1, n) });
+                        update({
+                          count:
+                            Number.isNaN(n) || t === '' ? null : Math.max(1, n),
+                        });
                       }}
                       keyboardType="numeric"
                       placeholder="例: 10"
@@ -721,33 +939,69 @@ export function RruleBuilderModal({
                   {/* Exdates */}
                   <View style={styles.section}>
                     <View style={styles.exdateHeader}>
-                      <Text style={[styles.sectionLabel, { color: colors.gray, marginBottom: 0 }]}>
+                      <Text
+                        style={[
+                          styles.sectionLabel,
+                          { color: colors.gray, marginBottom: 0 },
+                        ]}
+                      >
                         除外日
                       </Text>
                       <Pressable
-                        style={[styles.addExdateBtn, { borderColor: BRAND_COLOR }]}
-                        onPress={() => { haptic.light(); setShowExdatePicker(true); }}
+                        style={[
+                          styles.addExdateBtn,
+                          { borderColor: BRAND_COLOR },
+                        ]}
+                        onPress={() => {
+                          haptic.light();
+                          setShowExdatePicker(true);
+                        }}
                       >
                         <Ionicons name="add" size={16} color={BRAND_COLOR} />
-                        <Text style={[styles.addExdateBtnText, { color: BRAND_COLOR }]}>追加</Text>
+                        <Text
+                          style={[
+                            styles.addExdateBtnText,
+                            { color: BRAND_COLOR },
+                          ]}
+                        >
+                          追加
+                        </Text>
                       </Pressable>
                     </View>
                     {rule.exdates.length === 0 ? (
-                      <Text style={[styles.emptyNote, { color: colors.grayLight }]}>
+                      <Text
+                        style={[styles.emptyNote, { color: colors.grayLight }]}
+                      >
                         除外する日がある場合は追加してください
                       </Text>
                     ) : (
                       rule.exdates.map((ex) => (
                         <View
                           key={ex}
-                          style={[styles.exdateRow, { backgroundColor: '#F8F5FC' }]}
+                          style={[
+                            styles.exdateRow,
+                            { backgroundColor: '#F8F5FC' },
+                          ]}
                         >
-                          <Ionicons name="calendar-clear-outline" size={16} color={BRAND_COLOR} />
-                          <Text style={[styles.exdateText, { color: colors.black }]}>
+                          <Ionicons
+                            name="calendar-clear-outline"
+                            size={16}
+                            color={BRAND_COLOR}
+                          />
+                          <Text
+                            style={[styles.exdateText, { color: colors.black }]}
+                          >
                             {formatExdate(ex)}
                           </Text>
-                          <Pressable onPress={() => removeExdate(ex)} hitSlop={8}>
-                            <Ionicons name="close-circle" size={18} color={colors.gray} />
+                          <Pressable
+                            onPress={() => removeExdate(ex)}
+                            hitSlop={8}
+                          >
+                            <Ionicons
+                              name="close-circle"
+                              size={18}
+                              color={colors.gray}
+                            />
                           </Pressable>
                         </View>
                       ))
@@ -760,7 +1014,9 @@ export function RruleBuilderModal({
             {/* Summary */}
             {!manualMode && (
               <View style={[styles.summary, { backgroundColor: '#F8F5FC' }]}>
-                <Text style={[styles.summaryLabel, { color: colors.gray }]}>プレビュー</Text>
+                <Text style={[styles.summaryLabel, { color: colors.gray }]}>
+                  プレビュー
+                </Text>
                 <Text style={[styles.summaryText, { color: colors.black }]}>
                   {summarizeRule(rule)}
                 </Text>
@@ -768,20 +1024,24 @@ export function RruleBuilderModal({
             )}
 
             {manualError && manualMode && (
-              <Text style={[styles.errorText, { marginBottom: 4 }]}>{manualError}</Text>
+              <Text style={[styles.errorText, { marginBottom: 4 }]}>
+                {manualError}
+              </Text>
             )}
 
             <View style={styles.actionRow}>
               <Pressable
                 style={[styles.cancelButton, { borderColor: colors.separator }]}
-                onPress={() => { haptic.light(); onCancel(); }}
+                onPress={() => {
+                  haptic.light();
+                  onCancel();
+                }}
               >
-                <Text style={[styles.cancelText, { color: colors.grayDark }]}>キャンセル</Text>
+                <Text style={[styles.cancelText, { color: colors.grayDark }]}>
+                  キャンセル
+                </Text>
               </Pressable>
-              <Pressable
-                style={styles.confirmButton}
-                onPress={handleConfirm}
-              >
+              <Pressable style={styles.confirmButton} onPress={handleConfirm}>
                 <Text style={styles.confirmText}>設定</Text>
               </Pressable>
             </View>
