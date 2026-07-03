@@ -277,6 +277,7 @@ impl TakusuApp {
     }
 
     pub async fn update_task(&self, id: &str, body: &UpdateTask) -> Result<TaskRow, AppError> {
+        let mut body = body.clone();
         if let Some(dep_ids) = &body.depends {
             let tasks = self
                 .storage
@@ -305,16 +306,32 @@ impl TakusuApp {
                 .filter_map(|did| id_to_idx.get(did).copied())
                 .collect();
             detect_cycle(&adj)?;
-            let mut body = body.clone();
             body.depends = Some(resolved);
-            return self
-                .storage
-                .update_task(id, &body)
-                .await
-                .map_err(storage_to_app);
         }
+
+        // User-edited flag: for habit-derived tasks, mark as user-edited when
+        // habit-managed fields are touched by an HTTP request, unless the
+        // caller explicitly set user_edited (e.g. "revert to habit" sets false).
+        if body.user_edited.is_none() {
+            let existing = self.storage.get_task(id).await.map_err(storage_to_app)?;
+            if existing.habit_id.is_some() {
+                let touched = body.title.is_some()
+                    || body.description.is_some()
+                    || body.start_at.is_some()
+                    || body.end_at.is_some()
+                    || body.avg_minutes.is_some()
+                    || body.sigma_minutes.is_some()
+                    || body.parallelizable.is_some()
+                    || body.allows_parallel.is_some()
+                    || body.abandonability.is_some();
+                if touched {
+                    body.user_edited = Some(true);
+                }
+            }
+        }
+
         self.storage
-            .update_task(id, body)
+            .update_task(id, &body)
             .await
             .map_err(storage_to_app)
     }
@@ -1024,53 +1041,19 @@ impl TakusuApp {
                 .unwrap_or_else(|| format!("habit:{}", date));
 
             if let Some(existing) = existing_by_key.remove(&key) {
-                if existing.status == "pending" {
-                    // ユーザーが編集していないフィールドだけ habit の値で上書きする。
-                    // 判定: タスクの現在値が habit から生成されたはずの値と一致すれば
-                    //       編集されていないとみなす。
-                    let habit_avg = habit_row.map(|h| h.avg_minutes).unwrap_or(0);
-                    let habit_sigma = habit_row.map(|h| h.sigma_minutes).unwrap_or(0);
-                    let habit_parallelizable = habit_row.map(|h| h.parallelizable).unwrap_or(false);
-                    let habit_allows_parallel = habit_row.map(|h| h.allows_parallel).unwrap_or(false);
-                    let habit_abandon = habit_row.map(|h| h.abandonability).unwrap_or(0.0);
-
+                if existing.status == "pending" && !existing.user_edited {
+                    // ユーザーが habit 由来タスクを編集していない場合は、
+                    // habit の現在値で全フィールドを上書きする。
                     let update = UpdateTask {
-                        // start_at/end_at は habit の周期・時刻から算出されるため
-                        // 常に上書き (habit 側でスケジュール変更した場合に追従)。
                         start_at: core_task.start.map(|p| point_to_iso(p.0)),
                         end_at: Some(point_to_iso(core_task.end.0)),
-                        // ユーザー編集を尊重: habit 値と同じなら上書き、違うなら保持。
-                        title: if existing.title == title { Some(title) } else { None },
-                        description: if existing.description.as_deref() == habit_desc.as_deref() {
-                            habit_desc.clone()
-                        } else {
-                            None
-                        },
-                        avg_minutes: if existing.avg_minutes == habit_avg {
-                            Some(core_task.cost_estimate.avg as i64 * 5)
-                        } else {
-                            None
-                        },
-                        sigma_minutes: if existing.sigma_minutes == habit_sigma {
-                            Some(core_task.cost_estimate.sigma as i64 * 5)
-                        } else {
-                            None
-                        },
-                        parallelizable: if existing.parallelizable == habit_parallelizable {
-                            Some(core_task.parallelizable)
-                        } else {
-                            None
-                        },
-                        allows_parallel: if existing.allows_parallel == habit_allows_parallel {
-                            Some(core_task.allows_parallel)
-                        } else {
-                            None
-                        },
-                        abandonability: if (existing.abandonability - habit_abandon).abs() < 1e-9 {
-                            Some(core_task.abandonability)
-                        } else {
-                            None
-                        },
+                        title: Some(title),
+                        description: habit_desc.clone(),
+                        avg_minutes: Some(core_task.cost_estimate.avg as i64 * 5),
+                        sigma_minutes: Some(core_task.cost_estimate.sigma as i64 * 5),
+                        parallelizable: Some(core_task.parallelizable),
+                        allows_parallel: Some(core_task.allows_parallel),
+                        abandonability: Some(core_task.abandonability),
                         ..Default::default()
                     };
                     let updated = self
@@ -1080,6 +1063,7 @@ impl TakusuApp {
                         .map_err(storage_to_app)?;
                     result.push(updated);
                 } else {
+                    // 非 pending またはユーザーが編集済みの場合は何も変更しない。
                     result.push(existing.clone());
                 }
             } else {
@@ -1107,10 +1091,11 @@ impl TakusuApp {
         }
 
         // 過去の生成で作られたが、今回期待されなくなった習慣タスクを削除。
-        // ただし pending のものだけ: ユーザーが手動で status 変更したタスク
-        // (scheduled, in_progress, completed, skipped) は削除しない。
+        // ただし pending かつユーザーが編集していないものだけ:
+        // 手動で status 変更したタスク (scheduled, in_progress, completed, skipped) および
+        // ユーザーが編集したタスクは削除しない。
         for (_, task) in existing_by_key {
-            if task.status == "pending" {
+            if task.status == "pending" && !task.user_edited {
                 self.storage
                     .delete_task(&task.id)
                     .await
