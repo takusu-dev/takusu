@@ -10,6 +10,7 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { undoRedo } from '@/src/api/undoRedo';
+import { haptic } from '@/src/components/haptics';
 
 interface ContextMenuProps {
   hasSelection: boolean;
@@ -86,6 +87,8 @@ export function ContextMenu({
         ]}
         disabled={item.disabled}
         onPress={() => {
+          if (item.danger) haptic.medium();
+          else haptic.light();
           setOpen(false);
           item.onPress();
         }}
@@ -112,7 +115,10 @@ export function ContextMenu({
     <>
       <Pressable
         style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
-        onPress={() => setOpen(true)}
+        onPress={() => {
+          haptic.light();
+          setOpen(true);
+        }}
       >
         <Ionicons name="menu" size={24} color={BRAND_COLOR} />
       </Pressable>

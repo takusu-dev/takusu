@@ -23,6 +23,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
+import { haptic } from '@/src/components/haptics';
 import {
   type Frequency,
   type RecurrenceRule,
@@ -77,6 +78,7 @@ export function RruleBuilderModal({
   }
 
   function toggleWeekday(wd: Weekday) {
+    haptic.select();
     const has = rule.by_day.some((d) => d.n === null && d.weekday === wd);
     if (has) {
       update({ by_day: rule.by_day.filter((d) => !(d.n === null && d.weekday === wd)) });
@@ -86,6 +88,7 @@ export function RruleBuilderModal({
   }
 
   function toggleMonthDay(day: number) {
+    haptic.select();
     const has = rule.by_month_day.includes(day);
     update({
       by_month_day: has
@@ -95,6 +98,7 @@ export function RruleBuilderModal({
   }
 
   function toggleMonth(m: number) {
+    haptic.select();
     const has = rule.by_month.includes(m);
     update({
       by_month: has
@@ -117,7 +121,7 @@ export function RruleBuilderModal({
               <Text style={[styles.title, { color: colors.black }]}>周期 (RRULE)</Text>
               <Pressable
                 style={styles.helpButton}
-                onPress={() => setShowHelp((v) => !v)}
+                onPress={() => { haptic.light(); setShowHelp((v) => !v); }}
                 hitSlop={8}
               >
                 <Ionicons
@@ -127,7 +131,7 @@ export function RruleBuilderModal({
                 />
               </Pressable>
             </View>
-            <Pressable onPress={onCancel} hitSlop={8}>
+            <Pressable onPress={() => { haptic.light(); onCancel(); }} hitSlop={8}>
               <Ionicons name="close" size={24} color={colors.gray} />
             </Pressable>
           </View>
@@ -158,7 +162,7 @@ export function RruleBuilderModal({
                     { borderColor: rule.freq === f ? BRAND_COLOR : colors.separator },
                     rule.freq === f && { backgroundColor: BRAND_COLOR },
                   ]}
-                  onPress={() => update({ freq: f as Frequency })}
+                  onPress={() => { if (rule.freq !== f) haptic.select(); update({ freq: f as Frequency }); }}
                 >
                   <Text
                     style={[
@@ -179,7 +183,7 @@ export function RruleBuilderModal({
             <View style={styles.stepper}>
               <Pressable
                 style={[styles.stepBtn, { borderColor: colors.separator }]}
-                onPress={() => update({ interval: Math.max(1, rule.interval - 1) })}
+                onPress={() => { haptic.select(); update({ interval: Math.max(1, rule.interval - 1) }); }}
               >
                 <Ionicons name="remove" size={20} color={BRAND_COLOR} />
               </Pressable>
@@ -188,7 +192,7 @@ export function RruleBuilderModal({
               </Text>
               <Pressable
                 style={[styles.stepBtn, { borderColor: colors.separator }]}
-                onPress={() => update({ interval: rule.interval + 1 })}
+                onPress={() => { haptic.select(); update({ interval: rule.interval + 1 }); }}
               >
                 <Ionicons name="add" size={20} color={BRAND_COLOR} />
               </Pressable>
@@ -358,13 +362,13 @@ export function RruleBuilderModal({
           <View style={styles.actionRow}>
             <Pressable
               style={[styles.cancelButton, { borderColor: colors.separator }]}
-              onPress={onCancel}
+              onPress={() => { haptic.light(); onCancel(); }}
             >
               <Text style={[styles.cancelText, { color: colors.grayDark }]}>キャンセル</Text>
             </Pressable>
             <Pressable
               style={styles.confirmButton}
-              onPress={() => onConfirm(serializeRule(rule))}
+              onPress={() => { haptic.medium(); onConfirm(serializeRule(rule)); }}
             >
               <Text style={styles.confirmText}>設定</Text>
             </Pressable>

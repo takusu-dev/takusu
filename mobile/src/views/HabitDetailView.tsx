@@ -15,6 +15,7 @@ import type { HabitRow, TaskRow } from '@/src/api/types';
 import { COLORS, BRAND_COLOR } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { parseRule, summarizeRule } from '@/src/api/rrule';
+import { haptic } from '@/src/components/haptics';
 
 export function HabitDetailView() {
   const { client } = useServer();
@@ -57,7 +58,7 @@ export function HabitDetailView() {
   return (
     <View style={styles.container}>
       <View style={[styles.topBar, { paddingTop: 8 + insets.top }]}>
-        <Pressable style={styles.backButton} onPress={() => router.back()}>
+        <Pressable style={styles.backButton} onPress={() => { haptic.light(); router.back(); }}>
           <Text style={styles.backButtonText}>‹</Text>
         </Pressable>
         <Text style={styles.title}>{habit.title}</Text>
@@ -117,7 +118,7 @@ export function HabitDetailView() {
               <Pressable
                 key={t.id}
                 style={styles.taskItem}
-                onPress={() => router.push(`/task/${t.id}`)}
+                onPress={() => { haptic.light(); router.push(`/task/${t.id}`); }}
               >
                 <Text style={styles.taskItemTitle}>{t.title}</Text>
                 <Text style={styles.taskItemStatus}>{t.status}</Text>

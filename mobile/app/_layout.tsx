@@ -11,6 +11,7 @@ import { ServerProvider, useServer } from '@/src/api/ServerProvider';
 import { installGlobalErrorHandler } from '@/src/api/installGlobalErrorHandler';
 import { ThemeProvider } from '@/src/theme';
 import { UndoRedoToast } from '@/src/components/UndoRedoToast';
+import { haptic } from '@/src/components/haptics';
 import { emitOAuthCallback } from '@/src/api/oauthCallback';
 import {
   setupNotificationCategories,
@@ -87,6 +88,8 @@ function ThemedApp() {
           const taskId = response.notification.request.content.data?.taskId;
           if (typeof taskId === 'string' && taskId && client) {
             const newStatus = actionId === ACTION_DONE ? 'completed' : 'skipped';
+            if (actionId === ACTION_DONE) haptic.success();
+            else haptic.warning();
             client
               .updateTask(taskId, { status: newStatus })
               .catch((err) => console.warn('Notification action: updateTask failed', err));

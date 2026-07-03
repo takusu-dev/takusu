@@ -10,6 +10,7 @@ import { useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/src/theme';
+import { haptic } from '@/src/components/haptics';
 
 interface NavigationButtonsProps {
   onScrollUpByDay?: () => void;
@@ -48,13 +49,16 @@ export function NavigationButtons({
   ).getDay();
 
   function prevMonth() {
+    haptic.select();
     setCalMonth(new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1));
   }
   function nextMonth() {
+    haptic.select();
     setCalMonth(new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 1));
   }
 
   function selectDay(day: number) {
+    haptic.medium();
     const date = new Date(calMonth.getFullYear(), calMonth.getMonth(), day);
     onJumpToDate?.(date);
     setCalendarOpen(false);
@@ -74,7 +78,15 @@ export function NavigationButtons({
         <NavButton icon="chevron-up" onPress={onScrollUpByPage} color={colors.brand} bgColor={colors.surface} />
         <NavButton icon="chevron-down" onPress={onScrollDownByPage} color={colors.brand} bgColor={colors.surface} />
         <NavButton icon="arrow-down" onPress={onScrollDownByDay} color={colors.brand} bgColor={colors.surface} />
-        <NavButton icon="calendar" onPress={() => setCalendarOpen(true)} color={colors.brand} bgColor={colors.surface} />
+        <NavButton
+          icon="calendar"
+          onPress={() => {
+            haptic.light();
+            setCalendarOpen(true);
+          }}
+          color={colors.brand}
+          bgColor={colors.surface}
+        />
       </View>
 
       <Modal visible={calendarOpen} transparent animationType="fade">
@@ -155,7 +167,12 @@ function NavButton({
         { backgroundColor: bgColor },
         pressed && styles.navButtonPressed,
       ]}
-      onPress={onPress}
+      onPress={() => {
+        if (onPress) {
+          haptic.light();
+          onPress();
+        }
+      }}
     >
       <Ionicons name={icon} size={20} color={color} />
     </Pressable>

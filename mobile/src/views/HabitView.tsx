@@ -19,6 +19,7 @@ import type { HabitRow } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ContextMenu } from '@/src/components/ContextMenu';
+import { haptic } from '@/src/components/haptics';
 import { undoRedo } from '@/src/api/undoRedo';
 import { parseRule, summarizeRule } from '@/src/api/rrule';
 
@@ -151,7 +152,7 @@ export function HabitView({ client }: HabitViewProps) {
           iconColor={COLORS.white}
           size={24}
           containerColor={BRAND_COLOR}
-          onPress={() => router.push('/habit/add')}
+          onPress={() => { haptic.light(); router.push('/habit/add'); }}
           style={styles.addButton}
         />
       </View>
@@ -168,12 +169,14 @@ export function HabitView({ client }: HabitViewProps) {
             ]}
             onPress={() => {
               if (selected.size > 0) {
+                haptic.light();
                 toggleSelection(h.id);
               } else {
+                haptic.light();
                 router.push(`/habit/${h.id}`);
               }
             }}
-            onLongPress={() => toggleSelection(h.id)}
+            onLongPress={() => { haptic.medium(); toggleSelection(h.id); }}
           >
             <View style={styles.habitHeader}>
               <Text style={[styles.habitTitle, { color: colors.black }]}>

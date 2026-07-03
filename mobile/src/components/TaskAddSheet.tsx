@@ -24,6 +24,7 @@ import Reanimated, {
 } from 'react-native-reanimated';
 import { TaskAddView } from '@/src/views/TaskAddView';
 import { BRAND_COLOR, useColors } from '@/src/theme';
+import { haptic } from '@/src/components/haptics';
 
 /** Drag distance (px) past which a release commits the sheet to closed. */
 const CLOSE_COMMIT_THRESHOLD = 80;
@@ -83,6 +84,7 @@ export function TaskAddSheet({
     .onEnd((e) => {
       if (e.translationY > CLOSE_COMMIT_THRESHOLD) {
         sheetY.value = withTiming(screenHeight, { duration: 200 });
+        runOnJS(haptic.light)();
         runOnJS(onClose)();
       } else {
         sheetY.value = withTiming(0, { duration: 200 });
@@ -97,7 +99,7 @@ export function TaskAddSheet({
       {/* Scrim — tap to close (only when open) */}
       <Pressable
         style={StyleSheet.absoluteFill}
-        onPress={open ? onClose : undefined}
+        onPress={open ? () => { haptic.light(); onClose(); } : undefined}
       >
         <Reanimated.View
           style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }, scrimStyle]}

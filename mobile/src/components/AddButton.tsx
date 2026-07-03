@@ -19,6 +19,7 @@ import Reanimated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import { BRAND_COLOR, COLORS } from '@/src/theme';
+import { haptic } from '@/src/components/haptics';
 
 /** Multiplier: 1px of finger drag → DRAG_SCALE px of sheet reveal. */
 const DRAG_SCALE = 4;
@@ -66,6 +67,7 @@ export function AddButton({
     .onEnd((e) => {
       const committed = e.translationY < -COMMIT_THRESHOLD;
       if (committed) {
+        runOnJS(haptic.light)();
         runOnJS(onSlideUp)();
       }
       runOnJS(onDragEnd ?? (() => {}))(committed);
@@ -92,6 +94,7 @@ export function AddButton({
   }));
 
   function handleTap() {
+    haptic.light();
     Alert.alert('未実装', '音声アシスタントは今後実装予定です');
   }
 

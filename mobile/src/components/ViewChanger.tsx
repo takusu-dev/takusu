@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
+import { haptic } from '@/src/components/haptics';
 
 export type ViewType = 'task' | 'graph' | 'habit';
 
@@ -40,7 +41,10 @@ export function ViewChanger({ current, onChange }: ViewChangerProps) {
             current === v && styles.buttonActive,
             pressed && { opacity: 0.7 },
           ]}
-          onPress={() => onChange(v)}
+          onPress={() => {
+            if (current !== v) haptic.select();
+            onChange(v);
+          }}
         >
           <Ionicons
             name={ICONS[v]}
