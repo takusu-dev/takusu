@@ -18,7 +18,7 @@ export interface RecurrenceRule {
   interval: number;
   by_day: NWeekday[];
   by_month: number[]; // 1..12
-  by_month_day: number[]; // 1..31, negative = from end
+  by_month_day: number[]; // 1..31, negative = from end (-1 = last day)
   count: number | null;
   exdates: string[]; // "YYYY-MM-DD"
 }
@@ -44,6 +44,17 @@ export const FREQUENCY_LABELS: Record<Frequency, string> = {
   weekly: '毎週',
   monthly: '毎月',
   yearly: '毎年',
+};
+
+// Ordinal labels for nth-weekday: 1..5 = 第1〜第5、-1 = 最終
+export const NTH_LABELS: Record<number, string> = {
+  1: '第1',
+  2: '第2',
+  3: '第3',
+  4: '第4',
+  5: '第5',
+  [-1]: '最終',
+  [-2]: '最終-1',
 };
 
 export function defaultRule(): RecurrenceRule {
@@ -90,10 +101,55 @@ export function serializeRule(r: RecurrenceRule): string {
   });
 }
 
+/**
+ * Validate a RecurrenceRule and return an error message, or null if valid.
+ * Used for manual JSON input validation.
+ */
+export function validateRule(r: RecurrenceRule): string | null {
+  const validFreqs: Frequency[] = ['daily', 'weekly', 'monthly', 'yearly'];
+  if (!validFreqs.includes(r.freq)) return `不正な freq: ${r.freq}`;
+  if (!Number.isInteger(r.interval) || r.interval < 1) return 'interval は 1 以上の整数が必要です';
+  if (r.count !== null && (!Number.isInteger(r.count) || r.count < 1))
+    return 'count は 1 以上の整数が必要です';
+  for (const m of r.by_month) {
+    if (!Number.isInteger(m) || m < 1 || m > 12) return `by_month の値が不正です: ${m}`;
+  }
+  for (const d of r.by_month_day) {
+    if (!Number.isInteger(d) || d === 0 || d > 31 || d < -31)
+      return `by_month_day の値が不正です: ${d}`;
+  }
+  for (const nw of r.by_day) {
+    const validWds: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+    if (!validWds.includes(nw.weekday)) return `by_day の weekday が不正です: ${nw.weekday}`;
+    if (nw.n !== null && (!Number.isInteger(nw.n) || nw.n === 0 || nw.n > 5 || nw.n < -5))
+      return `by_day の n が不正です: ${nw.n}`;
+  }
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  for (const ex of r.exdates) {
+    if (!dateRe.test(ex)) return `exdates の日付形式が不正です: ${ex} (YYYY-MM-DD が必要)`;
+  }
+  return null;
+}
+
 const MONTH_LABELS = [
   '1月', '2月', '3月', '4月', '5月', '6月',
   '7月', '8月', '9月', '10月', '11月', '12月',
 ];
+
+/** Format a single NWeekday in Japanese (e.g. "第2月曜", "最終金曜", "水曜"). */
+function formatNWeekday(nw: NWeekday): string {
+  const wd = WEEKDAY_LABELS[nw.weekday] + '曜';
+  if (nw.n === null) return wd;
+  const prefix = NTH_LABELS[nw.n] ?? `${nw.n > 0 ? `第${nw.n}` : `最終${Math.abs(nw.n) - 1 > 0 ? `-${Math.abs(nw.n) - 1}` : ''}`}`;
+  return `${prefix}${wd}`;
+}
+
+/** Format a single by_month_day value (e.g. 15 → "15日", -1 → "月末"). */
+function formatMonthDay(d: number): string {
+  if (d === -1) return '月末';
+  if (d < 0) return `月末から${Math.abs(d)}日目`;
+  return `${d}日`;
+}
 
 /** Human-readable Japanese summary of a recurrence rule. */
 export function summarizeRule(r: RecurrenceRule): string {
@@ -102,27 +158,25 @@ export function summarizeRule(r: RecurrenceRule): string {
 
   const parts: string[] = [base];
 
-  if (r.freq === 'weekly' && r.by_day.length > 0) {
-    const days = r.by_day
-      .filter((d) => d.n === null)
-      .map((d) => WEEKDAY_LABELS[d.weekday]);
-    if (days.length > 0) parts.push(days.join('・'));
+  // by_day: show for all frequencies, including nth weekdays
+  if (r.by_day.length > 0) {
+    const dayLabels = r.by_day.map(formatNWeekday);
+    parts.push(dayLabels.join('・'));
   }
 
-  if (r.freq === 'monthly' && r.by_month_day.length > 0) {
-    parts.push(r.by_month_day.map((d) => `${d}日`).join('・'));
+  // by_month: show for all frequencies
+  if (r.by_month.length > 0) {
+    parts.push(r.by_month.map((m) => MONTH_LABELS[m - 1]).join('・'));
   }
 
-  if (r.freq === 'yearly') {
-    if (r.by_month.length > 0) {
-      parts.push(r.by_month.map((m) => MONTH_LABELS[m - 1]).join('・'));
-    }
-    if (r.by_month_day.length > 0) {
-      parts.push(r.by_month_day.map((d) => `${d}日`).join('・'));
-    }
+  // by_month_day: show for monthly/yearly (including negative = from end)
+  if (r.by_month_day.length > 0) {
+    parts.push(r.by_month_day.map(formatMonthDay).join('・'));
   }
 
   if (r.count !== null) parts.push(`× ${r.count}回`);
+
+  if (r.exdates.length > 0) parts.push(`除外 ${r.exdates.length}日`);
 
   return parts.join(' ');
 }
