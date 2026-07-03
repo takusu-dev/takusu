@@ -20,7 +20,12 @@ import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RruleBuilderModal } from '@/src/components/RruleBuilderModal';
 import { haptic } from '@/src/components/haptics';
-import { defaultRule, parseRule, serializeRule, summarizeRule } from '@/src/api/rrule';
+import {
+  defaultRule,
+  parseRule,
+  serializeRule,
+  summarizeRule,
+} from '@/src/api/rrule';
 
 export function HabitAddView() {
   const { client } = useServer();
@@ -84,27 +89,44 @@ export function HabitAddView() {
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
       <View style={[styles.topBar, { paddingTop: 8 + insets.top }]}>
-        <Pressable style={styles.backButton} onPress={() => { haptic.light(); router.back(); }}>
+        <Pressable
+          style={styles.backButton}
+          onPress={() => {
+            haptic.light();
+            router.back();
+          }}
+        >
           <Ionicons name="chevron-back" size={28} color={BRAND_COLOR} />
         </Pressable>
         <Text style={[styles.title, { color: colors.black }]}>New Habit</Text>
         <View style={{ flex: 1 }} />
         <Pressable
-          style={[styles.saveButton, (!title || saving) && styles.saveButtonDisabled]}
+          style={[
+            styles.saveButton,
+            (!title || saving) && styles.saveButtonDisabled,
+          ]}
           onPress={create}
           disabled={!title || saving}
         >
-          <Text style={styles.saveButtonText}>{saving ? '保存中…' : '追加'}</Text>
+          <Text style={styles.saveButtonText}>
+            {saving ? '保存中…' : '追加'}
+          </Text>
         </Pressable>
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: 40 + insets.bottom }]}
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: 40 + insets.bottom },
+        ]}
       >
         <View style={styles.field}>
           <Text style={[styles.label, { color: colors.gray }]}>タイトル</Text>
           <TextInput
-            style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+            style={[
+              styles.input,
+              { borderColor: colors.separator, color: colors.black },
+            ]}
             value={title}
             onChangeText={setTitle}
             placeholder="Habit name"
@@ -114,18 +136,33 @@ export function HabitAddView() {
 
         <View style={styles.field}>
           <View style={styles.rruleHeader}>
-            <Text style={[styles.label, { color: colors.gray }]}>周期 (RRULE)</Text>
+            <Text style={[styles.label, { color: colors.gray }]}>
+              周期 (RRULE)
+            </Text>
             <Pressable
               style={styles.helpButton}
-              onPress={() => { haptic.light(); setShowRruleBuilder(true); }}
+              onPress={() => {
+                haptic.light();
+                setShowRruleBuilder(true);
+              }}
               hitSlop={8}
             >
-              <Ionicons name="help-circle-outline" size={18} color={BRAND_COLOR} />
+              <Ionicons
+                name="help-circle-outline"
+                size={18}
+                color={BRAND_COLOR}
+              />
             </Pressable>
           </View>
           <Pressable
-            style={[styles.dateField, { borderColor: colors.separator, backgroundColor: colors.white }]}
-            onPress={() => { haptic.light(); setShowRruleBuilder(true); }}
+            style={[
+              styles.dateField,
+              { borderColor: colors.separator, backgroundColor: colors.white },
+            ]}
+            onPress={() => {
+              haptic.light();
+              setShowRruleBuilder(true);
+            }}
           >
             <Ionicons name="repeat" size={20} color={BRAND_COLOR} />
             <Text
@@ -134,7 +171,11 @@ export function HabitAddView() {
             >
               {summarizeRule(parseRule(recurrence))}
             </Text>
-            <Ionicons name="chevron-forward" size={18} color={colors.grayLight} />
+            <Ionicons
+              name="chevron-forward"
+              size={18}
+              color={colors.grayLight}
+            />
           </Pressable>
         </View>
 
@@ -142,7 +183,10 @@ export function HabitAddView() {
           <View style={[styles.field, { flex: 1 }]}>
             <Text style={[styles.label, { color: colors.gray }]}>開始時刻</Text>
             <TextInput
-              style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+              style={[
+                styles.input,
+                { borderColor: colors.separator, color: colors.black },
+              ]}
               value={startTime}
               onChangeText={setStartTime}
               placeholder="09:00"
@@ -152,7 +196,10 @@ export function HabitAddView() {
           <View style={[styles.field, { flex: 1 }]}>
             <Text style={[styles.label, { color: colors.gray }]}>終了時刻</Text>
             <TextInput
-              style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+              style={[
+                styles.input,
+                { borderColor: colors.separator, color: colors.black },
+              ]}
               value={endTime}
               onChangeText={setEndTime}
               placeholder="10:00"
@@ -165,16 +212,24 @@ export function HabitAddView() {
           <View style={[styles.field, { flex: 1 }]}>
             <Text style={[styles.label, { color: colors.gray }]}>avg (分)</Text>
             <TextInput
-              style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+              style={[
+                styles.input,
+                { borderColor: colors.separator, color: colors.black },
+              ]}
               value={avgMinutes}
               onChangeText={setAvgMinutes}
               keyboardType="numeric"
             />
           </View>
           <View style={[styles.field, { flex: 1 }]}>
-            <Text style={[styles.label, { color: colors.gray }]}>sigma (分)</Text>
+            <Text style={[styles.label, { color: colors.gray }]}>
+              sigma (分)
+            </Text>
             <TextInput
-              style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+              style={[
+                styles.input,
+                { borderColor: colors.separator, color: colors.black },
+              ]}
               value={sigmaMinutes}
               onChangeText={setSigmaMinutes}
               keyboardType="numeric"

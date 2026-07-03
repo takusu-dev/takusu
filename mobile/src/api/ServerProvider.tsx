@@ -150,10 +150,13 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({ ...prev, undoSteps: n }));
   }, []);
 
-  const setNotifications = useCallback(async (settings: NotificationSettings) => {
-    await saveNotificationSettings(settings);
-    setState((prev) => ({ ...prev, notifications: settings }));
-  }, []);
+  const setNotifications = useCallback(
+    async (settings: NotificationSettings) => {
+      await saveNotificationSettings(settings);
+      setState((prev) => ({ ...prev, notifications: settings }));
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;

@@ -59,7 +59,6 @@ function TaskCardImpl({
   selected,
   parallelTask,
   parallelScheduleStart,
-  parallelScheduleEnd,
   onParallelPress,
   onParallelDone,
   onParallelDelete,
@@ -119,7 +118,10 @@ function TaskCardImpl({
 
   // Parallel receiver task (left side, 1:3 width ratio)
   if (parallelTask) {
-    const parallelBgColor = abandonabilityColorFor(parallelTask.abandonability, dark);
+    const parallelBgColor = abandonabilityColorFor(
+      parallelTask.abandonability,
+      dark,
+    );
     const parallelDone =
       parallelTask.status === 'completed' || parallelTask.status === 'skipped';
 
@@ -153,7 +155,13 @@ function TaskCardImpl({
                 }),
             )}
           >
-            <Reanimated.View style={[styles.parallelCard, { backgroundColor: parallelBgColor }, animatedStyle]}>
+            <Reanimated.View
+              style={[
+                styles.parallelCard,
+                { backgroundColor: parallelBgColor },
+                animatedStyle,
+              ]}
+            >
               <Pressable
                 onPress={handleParallelPress}
                 style={styles.parallelPressable}
@@ -189,8 +197,12 @@ function TaskCardImpl({
             onLongPress={handleLongPress}
           >
             <View style={styles.times}>
-              <Text style={[styles.timeText, { color: colors.grayDark }]}>{formatTime(scheduleStart)}</Text>
-              <Text style={[styles.timeText, { color: colors.grayDark }]}>{formatTime(scheduleEnd)}</Text>
+              <Text style={[styles.timeText, { color: colors.grayDark }]}>
+                {formatTime(scheduleStart)}
+              </Text>
+              <Text style={[styles.timeText, { color: colors.grayDark }]}>
+                {formatTime(scheduleEnd)}
+              </Text>
             </View>
             <View style={styles.titleContainer}>
               <Text
@@ -207,7 +219,9 @@ function TaskCardImpl({
                 {task.title}
               </Text>
               {deps.length > 0 && (
-                <Text style={[styles.depsCount, { color: colors.gray }]}>↳ {deps.length} deps</Text>
+                <Text style={[styles.depsCount, { color: colors.gray }]}>
+                  ↳ {deps.length} deps
+                </Text>
               )}
               {selected && <Text style={styles.selectedIndicator}>✓</Text>}
             </View>
@@ -236,8 +250,12 @@ function TaskCardImpl({
         >
           {/* Left: times */}
           <View style={styles.times}>
-            <Text style={[styles.timeText, { color: colors.grayDark }]}>{formatTime(scheduleStart)}</Text>
-            <Text style={[styles.timeText, { color: colors.grayDark }]}>{formatTime(scheduleEnd)}</Text>
+            <Text style={[styles.timeText, { color: colors.grayDark }]}>
+              {formatTime(scheduleStart)}
+            </Text>
+            <Text style={[styles.timeText, { color: colors.grayDark }]}>
+              {formatTime(scheduleEnd)}
+            </Text>
           </View>
 
           {/* Center: title */}
@@ -246,14 +264,19 @@ function TaskCardImpl({
               style={[
                 styles.title,
                 { color: colors.black },
-                isDone && { textDecorationLine: 'line-through', color: colors.done },
+                isDone && {
+                  textDecorationLine: 'line-through',
+                  color: colors.done,
+                },
               ]}
               numberOfLines={2}
             >
               {task.title}
             </Text>
             {deps.length > 0 && (
-              <Text style={[styles.depsCount, { color: colors.gray }]}>↳ {deps.length} deps</Text>
+              <Text style={[styles.depsCount, { color: colors.gray }]}>
+                ↳ {deps.length} deps
+              </Text>
             )}
             {selected && <Text style={styles.selectedIndicator}>✓</Text>}
           </View>

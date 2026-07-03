@@ -137,6 +137,14 @@ jobs:
         working-directory: mobile
         run: npm install --legacy-peer-deps
 
+      - name: Oxlint
+        working-directory: mobile
+        run: npx oxlint
+
+      - name: Oxfmt
+        working-directory: mobile
+        run: npx oxfmt --check
+
       - name: Typecheck
         working-directory: mobile
         run: npx tsc --noEmit

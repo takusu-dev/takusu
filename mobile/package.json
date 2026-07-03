@@ -1,7 +1,16 @@
 {
   "name": "mobile",
   "version": "0.20260702.3",
+  "private": true,
   "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check"
+  },
   "dependencies": {
     "@expo/ui": "~56.0.18",
     "@expo/vector-icons": "^15.0.2",
@@ -37,11 +46,8 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "oxfmt": "0.56.0",
+    "oxlint": "1.71.0",
     "typescript": "~6.0.3"
-  },
-  "scripts": {
-    "start": "expo start",
-    "android": "expo run:android"
-  },
-  "private": true
+  }
 }

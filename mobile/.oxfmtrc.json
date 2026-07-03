@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "semi": true,
+  "singleQuote": true,
+  "trailingComma": "all",
+  "printWidth": 80,
+  "tabWidth": 2,
+  "ignorePatterns": [
+    "node_modules/",
+    "android/",
+    "ios/",
+    ".expo/",
+    "dist/",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "*.md"
+  ]
+}

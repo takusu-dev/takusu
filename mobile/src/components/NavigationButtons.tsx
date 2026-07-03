@@ -74,10 +74,30 @@ export function NavigationButtons({
   return (
     <>
       <View style={styles.container}>
-        <NavButton icon="arrow-up" onPress={onScrollUpByDay} color={colors.brand} bgColor={colors.surface} />
-        <NavButton icon="chevron-up" onPress={onScrollUpByPage} color={colors.brand} bgColor={colors.surface} />
-        <NavButton icon="chevron-down" onPress={onScrollDownByPage} color={colors.brand} bgColor={colors.surface} />
-        <NavButton icon="arrow-down" onPress={onScrollDownByDay} color={colors.brand} bgColor={colors.surface} />
+        <NavButton
+          icon="arrow-up"
+          onPress={onScrollUpByDay}
+          color={colors.brand}
+          bgColor={colors.surface}
+        />
+        <NavButton
+          icon="chevron-up"
+          onPress={onScrollUpByPage}
+          color={colors.brand}
+          bgColor={colors.surface}
+        />
+        <NavButton
+          icon="chevron-down"
+          onPress={onScrollDownByPage}
+          color={colors.brand}
+          bgColor={colors.surface}
+        />
+        <NavButton
+          icon="arrow-down"
+          onPress={onScrollDownByDay}
+          color={colors.brand}
+          bgColor={colors.surface}
+        />
         <NavButton
           icon="calendar"
           onPress={() => {
@@ -90,10 +110,16 @@ export function NavigationButtons({
       </View>
 
       <Modal visible={calendarOpen} transparent animationType="fade">
-        <Pressable style={styles.overlay} onPress={() => setCalendarOpen(false)}>
+        <Pressable
+          style={styles.overlay}
+          onPress={() => setCalendarOpen(false)}
+        >
           {/* Inner Pressable stops tap-through so tapping white space inside
               the calendar no longer dismisses it (Issue #30). */}
-          <Pressable style={[styles.calendar, { backgroundColor: colors.white }]} onPress={() => {}}>
+          <Pressable
+            style={[styles.calendar, { backgroundColor: colors.white }]}
+            onPress={() => {}}
+          >
             <View style={styles.calHeader}>
               <Pressable
                 onPress={prevMonth}
@@ -102,7 +128,9 @@ export function NavigationButtons({
               >
                 <Text style={[styles.calNav, { color: colors.brand }]}>‹</Text>
               </Pressable>
-              <Text style={[styles.calMonthLabel, { color: colors.black }]}>{monthLabel}</Text>
+              <Text style={[styles.calMonthLabel, { color: colors.black }]}>
+                {monthLabel}
+              </Text>
               <Pressable
                 onPress={nextMonth}
                 style={styles.calNavButton}
@@ -113,7 +141,10 @@ export function NavigationButtons({
             </View>
             <View style={styles.calGrid}>
               {['日', '月', '火', '水', '木', '金', '土'].map((d) => (
-                <Text key={d} style={[styles.calWeekday, { color: colors.gray }]}>
+                <Text
+                  key={d}
+                  style={[styles.calWeekday, { color: colors.gray }]}
+                >
                   {d}
                 </Text>
               ))}
@@ -126,7 +157,10 @@ export function NavigationButtons({
                 return (
                   <Pressable
                     key={day}
-                    style={[styles.calDay, marked && { backgroundColor: colors.brand }]}
+                    style={[
+                      styles.calDay,
+                      marked && { backgroundColor: colors.brand },
+                    ]}
                     onPress={() => selectDay(day)}
                   >
                     <Text

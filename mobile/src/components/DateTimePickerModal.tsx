@@ -5,7 +5,9 @@
 
 import { useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
-import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import DateTimePicker, {
+  type DateTimePickerEvent,
+} from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, BRAND_COLOR } from '@/src/theme';
@@ -75,32 +77,54 @@ export function DateTimePickerModal({
   return (
     <Modal visible={visible} transparent animationType="slide">
       <Pressable style={styles.overlay} onPress={onCancel}>
-        <Pressable style={[styles.sheet, { paddingBottom: 32 + insets.bottom }]} onPress={(e) => e.stopPropagation()}>
+        <Pressable
+          style={[styles.sheet, { paddingBottom: 32 + insets.bottom }]}
+          onPress={(e) => e.stopPropagation()}
+        >
           <View style={styles.header}>
             <Text style={styles.title}>{label}</Text>
-            <Pressable onPress={() => { haptic.light(); onCancel(); }}>
+            <Pressable
+              onPress={() => {
+                haptic.light();
+                onCancel();
+              }}
+            >
               <Ionicons name="close" size={24} color={COLORS.gray} />
             </Pressable>
           </View>
 
           {mode === 'time' ? (
-            <Pressable style={styles.fieldRow} onPress={() => openPicker('time')}>
+            <Pressable
+              style={styles.fieldRow}
+              onPress={() => openPicker('time')}
+            >
               <Ionicons name="time-outline" size={20} color={BRAND_COLOR} />
               <Text style={styles.fieldLabel}>時刻</Text>
-              <Text style={styles.fieldValue}>
-                {formatDisplay(tempDate)}
-              </Text>
-              <Ionicons name="chevron-forward" size={18} color={COLORS.grayLight} />
+              <Text style={styles.fieldValue}>{formatDisplay(tempDate)}</Text>
+              <Ionicons
+                name="chevron-forward"
+                size={18}
+                color={COLORS.grayLight}
+              />
             </Pressable>
           ) : (
             <>
-              <Pressable style={styles.fieldRow} onPress={() => openPicker('date')}>
-                <Ionicons name="calendar-outline" size={20} color={BRAND_COLOR} />
+              <Pressable
+                style={styles.fieldRow}
+                onPress={() => openPicker('date')}
+              >
+                <Ionicons
+                  name="calendar-outline"
+                  size={20}
+                  color={BRAND_COLOR}
+                />
                 <Text style={styles.fieldLabel}>日付</Text>
-                <Text style={styles.fieldValue}>
-                  {formatDisplay(tempDate)}
-                </Text>
-                <Ionicons name="chevron-forward" size={18} color={COLORS.grayLight} />
+                <Text style={styles.fieldValue}>{formatDisplay(tempDate)}</Text>
+                <Ionicons
+                  name="chevron-forward"
+                  size={18}
+                  color={COLORS.grayLight}
+                />
               </Pressable>
 
               {mode === 'datetime' && (
@@ -109,14 +133,29 @@ export function DateTimePickerModal({
                   onPress={() => openPicker('time')}
                   disabled={!tempDate}
                 >
-                  <Ionicons name="time-outline" size={20} color={tempDate ? BRAND_COLOR : COLORS.grayLight} />
-                  <Text style={[styles.fieldLabel, !tempDate && { color: COLORS.grayLight }]}>時間</Text>
+                  <Ionicons
+                    name="time-outline"
+                    size={20}
+                    color={tempDate ? BRAND_COLOR : COLORS.grayLight}
+                  />
+                  <Text
+                    style={[
+                      styles.fieldLabel,
+                      !tempDate && { color: COLORS.grayLight },
+                    ]}
+                  >
+                    時間
+                  </Text>
                   <Text style={styles.fieldValue}>
                     {tempDate
                       ? `${tempDate.getHours().toString().padStart(2, '0')}:${tempDate.getMinutes().toString().padStart(2, '0')}`
                       : '—'}
                   </Text>
-                  <Ionicons name="chevron-forward" size={18} color={tempDate ? COLORS.gray : COLORS.grayLight} />
+                  <Ionicons
+                    name="chevron-forward"
+                    size={18}
+                    color={tempDate ? COLORS.gray : COLORS.grayLight}
+                  />
                 </Pressable>
               )}
             </>
@@ -125,7 +164,10 @@ export function DateTimePickerModal({
           {optional && (
             <Pressable
               style={styles.clearButton}
-              onPress={() => { haptic.light(); onConfirm(null); }}
+              onPress={() => {
+                haptic.light();
+                onConfirm(null);
+              }}
             >
               <Ionicons name="trash-outline" size={16} color={COLORS.red} />
               <Text style={styles.clearText}>クリア</Text>
@@ -133,12 +175,21 @@ export function DateTimePickerModal({
           )}
 
           <View style={styles.actionRow}>
-            <Pressable style={styles.cancelButton} onPress={() => { haptic.light(); onCancel(); }}>
+            <Pressable
+              style={styles.cancelButton}
+              onPress={() => {
+                haptic.light();
+                onCancel();
+              }}
+            >
               <Text style={styles.cancelText}>キャンセル</Text>
             </Pressable>
             <Pressable
               style={styles.confirmButton}
-              onPress={() => { haptic.medium(); onConfirm(tempDate); }}
+              onPress={() => {
+                haptic.medium();
+                onConfirm(tempDate);
+              }}
             >
               <Text style={styles.confirmText}>設定</Text>
             </Pressable>

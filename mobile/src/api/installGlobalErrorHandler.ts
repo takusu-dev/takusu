@@ -26,7 +26,9 @@ export function installGlobalErrorHandler(): void {
   // formatted error is also pushed to the ring buffer.
   const g = globalThis as unknown as {
     ErrorUtils?: {
-      setGlobalHandler?: (handler: (e: Error, isFatal?: boolean) => void) => void;
+      setGlobalHandler?: (
+        handler: (e: Error, isFatal?: boolean) => void,
+      ) => void;
       getGlobalHandler?: () => (e: Error, isFatal?: boolean) => void;
     };
   };
@@ -47,9 +49,17 @@ export function installGlobalErrorHandler(): void {
     Promise?: { onUnhandledRejection?: (id: number, reason: unknown) => void };
   };
   if (promiseGlobal.Promise?.onUnhandledRejection !== undefined) {
-    const orig = promiseGlobal.Promise.onUnhandledRejection.bind(promiseGlobal.Promise);
-    promiseGlobal.Promise.onUnhandledRejection = (id: number, reason: unknown) => {
-      const msg = reason instanceof Error ? reason.stack ?? reason.message : String(reason);
+    const orig = promiseGlobal.Promise.onUnhandledRejection.bind(
+      promiseGlobal.Promise,
+    );
+    promiseGlobal.Promise.onUnhandledRejection = (
+      id: number,
+      reason: unknown,
+    ) => {
+      const msg =
+        reason instanceof Error
+          ? (reason.stack ?? reason.message)
+          : String(reason);
       pushClientLog(`[client][error] unhandled rejection: ${msg}`);
       orig(id, reason);
     };

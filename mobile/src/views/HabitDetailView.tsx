@@ -1,13 +1,7 @@
 // HabitDetailView — view and edit a habit + recent generated tasks
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -99,7 +93,8 @@ export function HabitDetailView() {
     if (!client || !habit || saving) return;
     const updates: Record<string, unknown> = {};
     if (title !== habit.title) updates.title = title;
-    if (description !== (habit.description ?? '')) updates.description = description;
+    if (description !== (habit.description ?? ''))
+      updates.description = description;
     if (recurrence !== habit.recurrence) updates.recurrence = recurrence;
     if (startTime !== habit.start_time) updates.start_time = startTime;
     if (endTime !== habit.end_time) updates.end_time = endTime;
@@ -111,9 +106,12 @@ export function HabitDetailView() {
       const v = parseInt(sigmaMinutes, 10);
       if (!isNaN(v) && v >= 0) updates.sigma_minutes = v;
     }
-    if (abandonability !== habit.abandonability) updates.abandonability = abandonability;
-    if (parallelizable !== habit.parallelizable) updates.parallelizable = parallelizable;
-    if (allowsParallel !== habit.allows_parallel) updates.allows_parallel = allowsParallel;
+    if (abandonability !== habit.abandonability)
+      updates.abandonability = abandonability;
+    if (parallelizable !== habit.parallelizable)
+      updates.parallelizable = parallelizable;
+    if (allowsParallel !== habit.allows_parallel)
+      updates.allows_parallel = allowsParallel;
     if (active !== habit.active) updates.active = active;
 
     if (Object.keys(updates).length === 0) {
@@ -226,7 +224,9 @@ export function HabitDetailView() {
   if (!habit) {
     return (
       <View style={[styles.container, { backgroundColor: colors.white }]}>
-        <Text style={[styles.loading, { color: colors.gray }]}>読み込み中...</Text>
+        <Text style={[styles.loading, { color: colors.gray }]}>
+          読み込み中...
+        </Text>
       </View>
     );
   }
@@ -238,7 +238,10 @@ export function HabitDetailView() {
           icon="chevron-left"
           iconColor={BRAND_COLOR}
           size={28}
-          onPress={() => { haptic.light(); router.back(); }}
+          onPress={() => {
+            haptic.light();
+            router.back();
+          }}
         />
         <View style={styles.centerButtonContainer} pointerEvents="box-none">
           <Button
@@ -267,7 +270,9 @@ export function HabitDetailView() {
           <Menu.Item
             onPress={toggleActive}
             title={habit.active ? '無効化' : '有効化'}
-            leadingIcon={habit.active ? 'pause-circle-outline' : 'play-circle-outline'}
+            leadingIcon={
+              habit.active ? 'pause-circle-outline' : 'play-circle-outline'
+            }
           />
           <Menu.Item
             onPress={deleteHabit}
@@ -278,7 +283,10 @@ export function HabitDetailView() {
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: 16 + insets.bottom }]}
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: 16 + insets.bottom },
+        ]}
       >
         {/* Title */}
         {editing ? (
@@ -293,7 +301,9 @@ export function HabitDetailView() {
             contentStyle={{ fontSize: 20, fontWeight: '600' }}
           />
         ) : (
-          <Text style={[styles.title, { color: colors.black }]}>{habit.title}</Text>
+          <Text style={[styles.title, { color: colors.black }]}>
+            {habit.title}
+          </Text>
         )}
 
         {/* Description */}
@@ -320,20 +330,32 @@ export function HabitDetailView() {
         {/* Recurrence */}
         <View style={styles.section}>
           <View style={styles.rruleHeader}>
-            <Text style={[styles.label, { color: colors.gray }]}>周期 (RRULE)</Text>
+            <Text style={[styles.label, { color: colors.gray }]}>
+              周期 (RRULE)
+            </Text>
             {editing && (
               <Pressable
                 style={styles.helpButton}
                 onPress={() => setShowRruleBuilder(true)}
                 hitSlop={8}
               >
-                <Ionicons name="help-circle-outline" size={18} color={BRAND_COLOR} />
+                <Ionicons
+                  name="help-circle-outline"
+                  size={18}
+                  color={BRAND_COLOR}
+                />
               </Pressable>
             )}
           </View>
           {editing ? (
             <Pressable
-              style={[styles.dateField, { borderColor: colors.separator, backgroundColor: colors.white }]}
+              style={[
+                styles.dateField,
+                {
+                  borderColor: colors.separator,
+                  backgroundColor: colors.white,
+                },
+              ]}
               onPress={() => setShowRruleBuilder(true)}
             >
               <Ionicons name="repeat" size={20} color={BRAND_COLOR} />
@@ -343,7 +365,11 @@ export function HabitDetailView() {
               >
                 {summarizeRule(parseRule(recurrence))}
               </Text>
-              <Ionicons name="chevron-forward" size={18} color={colors.grayLight} />
+              <Ionicons
+                name="chevron-forward"
+                size={18}
+                color={colors.grayLight}
+              />
             </Pressable>
           ) : (
             <Text style={[styles.value, { color: colors.black }]}>
@@ -426,7 +452,9 @@ export function HabitDetailView() {
 
         {/* Abandonability */}
         <View style={styles.section}>
-          <Text style={[styles.label, { color: colors.gray }]}>abandonability</Text>
+          <Text style={[styles.label, { color: colors.gray }]}>
+            abandonability
+          </Text>
           {editing ? (
             <View style={styles.sliderContainer}>
               <Slider
@@ -454,7 +482,9 @@ export function HabitDetailView() {
           {editing ? (
             <View style={styles.toggleRow}>
               <View style={styles.toggleItem}>
-                <Text style={[styles.toggleLabel, { color: colors.black }]}>parallelizable</Text>
+                <Text style={[styles.toggleLabel, { color: colors.black }]}>
+                  parallelizable
+                </Text>
                 <Switch
                   value={parallelizable}
                   onValueChange={setParallelizable}
@@ -462,7 +492,9 @@ export function HabitDetailView() {
                 />
               </View>
               <View style={styles.toggleItem}>
-                <Text style={[styles.toggleLabel, { color: colors.black }]}>allows_parallel</Text>
+                <Text style={[styles.toggleLabel, { color: colors.black }]}>
+                  allows_parallel
+                </Text>
                 <Switch
                   value={allowsParallel}
                   onValueChange={setAllowsParallel}
@@ -501,7 +533,9 @@ export function HabitDetailView() {
 
         {/* Recent generated tasks */}
         <View style={styles.section}>
-          <Text style={[styles.label, { color: colors.gray }]}>直近のタスク</Text>
+          <Text style={[styles.label, { color: colors.gray }]}>
+            直近のタスク
+          </Text>
           {tasks.length === 0 ? (
             <Text style={[styles.value, { color: colors.black }]}>(なし)</Text>
           ) : (
@@ -509,7 +543,10 @@ export function HabitDetailView() {
               <Pressable
                 key={t.id}
                 style={[styles.taskItem, { backgroundColor: colors.surface }]}
-                onPress={() => { haptic.light(); router.push(`/task/${t.id}`); }}
+                onPress={() => {
+                  haptic.light();
+                  router.push(`/task/${t.id}`);
+                }}
               >
                 <Text style={[styles.taskItemTitle, { color: colors.black }]}>
                   {t.title}

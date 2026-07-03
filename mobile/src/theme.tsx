@@ -1,10 +1,6 @@
 // Brand color and theme constants
 
-import {
-  createContext,
-  useContext,
-  type ReactNode,
-} from 'react';
+import { createContext, useContext, type ReactNode } from 'react';
 
 export const BRAND_COLOR = '#7261A3';
 export const BRAND_COLOR_LIGHT = '#9B8BC4';

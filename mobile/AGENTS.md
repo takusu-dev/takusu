@@ -30,11 +30,11 @@ The stable app uses application ID `dev.satler.takusu`. To install a dev build
 alongside it on the same physical device, build with
 `TAKUSU_BUILD_VARIANT=dev`. `mobile/app.config.js` then switches to:
 
-| Field | Stable | Dev |
-|-------|--------|-----|
-| `android.package` | `dev.satler.takusu` | `dev.satler.takusu.dev` |
-| `name` (launcher label) | `takusu` | `takusu dev` |
-| `scheme` (deep link) | `takusu` | `takusu-dev` |
+| Field                   | Stable              | Dev                     |
+| ----------------------- | ------------------- | ----------------------- |
+| `android.package`       | `dev.satler.takusu` | `dev.satler.takusu.dev` |
+| `name` (launcher label) | `takusu`            | `takusu dev`            |
+| `scheme` (deep link)    | `takusu`            | `takusu-dev`            |
 
 ```sh
 # One command (sets TAKUSU_BUILD_VARIANT=dev internally):
@@ -52,6 +52,7 @@ Expo module), so **Expo Go is not supported**. Use a Development Build with
 for interactive on-device debugging with Metro hot reload.
 
 Prerequisites:
+
 - Physical Android device with **USB debugging** enabled and connected
 - `nix develop` shell (provides `adb`, Android SDK, NDK, Java)
 
@@ -79,6 +80,7 @@ TAKUSU_BUILD_VARIANT=dev nix develop --command bash -c "npx expo start"
 ```
 
 Rebuild with `npx expo run:android` again only after:
+
 - adding/removing a native library
 - changing `app.json` / `app.config.js` / a config plugin
 - changing the Rust crate (`./scripts/build-android.sh` first, then re-run)
@@ -88,17 +90,32 @@ to end), use `nix run .#build-android-apk-dev` then `adb install -r`.
 
 ### Known Issues & Workarounds
 
-| Issue | Fix |
-|-------|-----|
-| Gradle 9.x breaks React Native (`IBM_SEMERU` removed) | Pin to Gradle 8.13 in `gradle-wrapper.properties` |
-| NDK 27.1.12297006 not in Nix store | Override `ext.ndkVersion = "29.0.14206865"` before `expo-root-project` plugin |
-| build-tools 35 / platform 35 needed by some RN modules | Included in flake.nix `composeAndroidPackages` |
-| CMake 3.22.1 needed by react-native-worklets/screens | Included in flake.nix `cmakeVersions` |
-| `react-native-worklets` must be 0.8.x for Reanimated 4.x | Pinned in package.json |
-| UniFFI Kotlin `message` field conflicts with `Throwable.message` | Renamed to `detail` in Rust error enum |
-| Expo Go unsupported (custom native modules + .so) | Use Development Build via `npx expo run:android` |
+| Issue                                                            | Fix                                                                           |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Gradle 9.x breaks React Native (`IBM_SEMERU` removed)            | Pin to Gradle 8.13 in `gradle-wrapper.properties`                             |
+| NDK 27.1.12297006 not in Nix store                               | Override `ext.ndkVersion = "29.0.14206865"` before `expo-root-project` plugin |
+| build-tools 35 / platform 35 needed by some RN modules           | Included in flake.nix `composeAndroidPackages`                                |
+| CMake 3.22.1 needed by react-native-worklets/screens             | Included in flake.nix `cmakeVersions`                                         |
+| `react-native-worklets` must be 0.8.x for Reanimated 4.x         | Pinned in package.json                                                        |
+| UniFFI Kotlin `message` field conflicts with `Throwable.message` | Renamed to `detail` in Rust error enum                                        |
+| Expo Go unsupported (custom native modules + .so)                | Use Development Build via `npx expo run:android`                              |
+
+### Linting & Formatting
+
+The mobile app uses [oxlint](https://oxc.rs/docs/guide/usage/linter.html) and
+[oxfmt](https://oxc.rs/docs/guide/usage/formatter.html) (the Oxc toolchain).
+Configs live at `mobile/.oxlintrc.json` and `mobile/.oxfmtrc.json`.
+
+| Command | Description |
+|---------|-------------|
+| `npm run lint` | Run oxlint (errors fail, warnings do not) |
+| `npm run lint:fix` | Run oxlint with auto-fix |
+| `npm run fmt` | Format all JS/TS files with oxfmt |
+| `npm run fmt:check` | Check formatting without writing (CI uses this) |
+
+Run these from the `mobile/` directory.
 
 ### CI/CD
 
-- `ci.yaml`: `android-build` job builds `.so` for aarch64; `expo-check` job runs TypeScript typecheck
+- `ci.yaml`: `android-build` job builds `.so` for aarch64; `expo-check` job runs oxlint, oxfmt (`--check`), and TypeScript typecheck
 - `release.yaml`: `build-android-apk` job builds all ABIs, prebuilds, and uploads APK to GitHub Releases on tag push

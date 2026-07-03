@@ -214,7 +214,9 @@ export function HomeView() {
   // Find parallel receiver task (allows_parallel=true) that overlaps in schedule time
   // for a given parallelizable=true task
   const findParallelTask = useCallback(
-    (task: TaskRow): {
+    (
+      task: TaskRow,
+    ): {
       parallelTask: TaskRow;
       parallelScheduleStart?: string;
       parallelScheduleEnd?: string;
@@ -228,7 +230,8 @@ export function HomeView() {
       for (const other of tasks) {
         if (other.id === task.id) continue;
         if (!other.allows_parallel) continue;
-        if (other.status === 'completed' || other.status === 'skipped') continue;
+        if (other.status === 'completed' || other.status === 'skipped')
+          continue;
         const otherEntry = scheduleMap.get(other.id);
         if (!otherEntry) continue;
         const otherStart = new Date(otherEntry.start_at).getTime();
@@ -494,7 +497,10 @@ export function HomeView() {
   // Run an async operation while showing a status label in the top-bar
   // center. The label is cleared when the operation finishes (success or
   // failure).
-  async function withStatus<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  async function withStatus<T>(
+    label: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
     setStatusLabel(label);
     try {
       return await fn();
@@ -505,9 +511,7 @@ export function HomeView() {
 
   async function rescheduleSelected() {
     if (!client) return;
-    const pinned = tasks
-      .filter((t) => !selected.has(t.id))
-      .map((t) => t.id);
+    const pinned = tasks.filter((t) => !selected.has(t.id)).map((t) => t.id);
     const until = new Date();
     until.setDate(until.getDate() + 7);
     try {
@@ -635,7 +639,10 @@ export function HomeView() {
   function createDependent() {
     const deps = Array.from(selected);
     setSelected(new Set());
-    router.push({ pathname: '/task/add', params: { deps: JSON.stringify(deps) } });
+    router.push({
+      pathname: '/task/add',
+      params: { deps: JSON.stringify(deps) },
+    });
   }
 
   // ── Bottom-sheet preview handlers (AddButton drag → TaskAddSheet) ──
@@ -743,10 +750,16 @@ export function HomeView() {
           hasSelection={selected.size > 0}
           onSettings={() => router.push('/settings')}
           onUndo={() =>
-            undoRedo.undo().then(refresh).catch((e) => showError(e, 'アンドゥに失敗'))
+            undoRedo
+              .undo()
+              .then(refresh)
+              .catch((e) => showError(e, 'アンドゥに失敗'))
           }
           onRedo={() =>
-            undoRedo.redo().then(refresh).catch((e) => showError(e, 'リドゥに失敗'))
+            undoRedo
+              .redo()
+              .then(refresh)
+              .catch((e) => showError(e, 'リドゥに失敗'))
           }
           onSelectAll={() =>
             setSelected(
@@ -764,14 +777,23 @@ export function HomeView() {
           onClearSelection={() => setSelected(new Set())}
         />
         <Pressable
-          style={({ pressed }) => [styles.topButton, pressed && styles.topButtonPressed]}
-          onPress={() => { haptic.light(); setSearchOpen(!searchOpen); }}
+          style={({ pressed }) => [
+            styles.topButton,
+            pressed && styles.topButtonPressed,
+          ]}
+          onPress={() => {
+            haptic.light();
+            setSearchOpen(!searchOpen);
+          }}
         >
           <Ionicons name="search-outline" size={22} color={BRAND_COLOR} />
         </Pressable>
         {searchOpen && (
           <TextInput
-            style={[styles.searchInput, { borderColor: colors.separator, color: colors.black }]}
+            style={[
+              styles.searchInput,
+              { borderColor: colors.separator, color: colors.black },
+            ]}
             value={searchQuery}
             onChangeText={setSearchQuery}
             placeholder="検索..."
@@ -788,7 +810,10 @@ export function HomeView() {
           )}
         </View>
         <Pressable
-          style={({ pressed }) => [styles.topButton, pressed && styles.topButtonPressed]}
+          style={({ pressed }) => [
+            styles.topButton,
+            pressed && styles.topButtonPressed,
+          ]}
           onPress={async () => {
             if (!client) return;
             haptic.medium();
@@ -798,9 +823,9 @@ export function HomeView() {
               );
               // Trigger Google Calendar sync (no-op if not configured)
               await withStatus('GCal同期中', () =>
-                client.triggerSync().catch((e) =>
-                  logError('Google Calendar同期', e),
-                ),
+                client
+                  .triggerSync()
+                  .catch((e) => logError('Google Calendar同期', e)),
               );
             } catch (e) {
               showError(e, 'スケジュール生成に失敗');
@@ -822,31 +847,23 @@ export function HomeView() {
         renderItem={({ item }) => renderItem(item)}
         ListHeaderComponent={
           pastCount > 0 ? (
-            <Pressable
-              style={styles.pastToggle}
-              onPress={togglePast}
-            >
+            <Pressable style={styles.pastToggle} onPress={togglePast}>
               <Reanimated.View style={chevronStyle}>
-                <Ionicons
-                  name="chevron-down"
-                  size={16}
-                  color={BRAND_COLOR}
-                />
+                <Ionicons name="chevron-down" size={16} color={BRAND_COLOR} />
               </Reanimated.View>
               <Text style={styles.pastToggleText}>
                 {showPast ? '過去を隠す' : '過去を表示'}
               </Text>
-              <View style={[styles.pastBadge, { backgroundColor: BRAND_COLOR }]}>
+              <View
+                style={[styles.pastBadge, { backgroundColor: BRAND_COLOR }]}
+              >
                 <Text style={styles.pastBadgeText}>{pastCount}</Text>
               </View>
             </Pressable>
           ) : null
         }
         refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={refresh}
-          />
+          <RefreshControl refreshing={refreshing} onRefresh={refresh} />
         }
         onScroll={(e) => {
           scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
@@ -859,7 +876,10 @@ export function HomeView() {
             animated: true,
           });
         }}
-        contentContainerStyle={[styles.listContent, { paddingBottom: 100 + insets.bottom }]}
+        contentContainerStyle={[
+          styles.listContent,
+          { paddingBottom: 100 + insets.bottom },
+        ]}
       />
 
       {/* Bottom bar */}

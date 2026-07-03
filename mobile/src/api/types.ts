@@ -1,6 +1,11 @@
 // Types mirroring takusu-client/src/lib.rs and takusu-storage/src/model.rs
 
-export type TaskStatus = 'pending' | 'scheduled' | 'in_progress' | 'completed' | 'skipped';
+export type TaskStatus =
+  | 'pending'
+  | 'scheduled'
+  | 'in_progress'
+  | 'completed'
+  | 'skipped';
 
 export interface TaskRow {
   id: string;

@@ -23,7 +23,7 @@ import Reanimated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import { TaskAddView } from '@/src/views/TaskAddView';
-import { BRAND_COLOR, useColors } from '@/src/theme';
+import { useColors } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
 
 /** Drag distance (px) past which a release commits the sheet to closed. */
@@ -79,7 +79,10 @@ export function TaskAddSheet({
     .onUpdate((e) => {
       // Only allow downward movement (positive translationY) so an upward
       // flick can't push the sheet past the top of the screen.
-      sheetY.value = Math.max(0, Math.min(screenHeight, startY.value + e.translationY));
+      sheetY.value = Math.max(
+        0,
+        Math.min(screenHeight, startY.value + e.translationY),
+      );
     })
     .onEnd((e) => {
       if (e.translationY > CLOSE_COMMIT_THRESHOLD) {
@@ -99,10 +102,21 @@ export function TaskAddSheet({
       {/* Scrim — tap to close (only when open) */}
       <Pressable
         style={StyleSheet.absoluteFill}
-        onPress={open ? () => { haptic.light(); onClose(); } : undefined}
+        onPress={
+          open
+            ? () => {
+                haptic.light();
+                onClose();
+              }
+            : undefined
+        }
       >
         <Reanimated.View
-          style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }, scrimStyle]}
+          style={[
+            StyleSheet.absoluteFill,
+            { backgroundColor: '#000' },
+            scrimStyle,
+          ]}
         />
       </Pressable>
 
@@ -117,8 +131,12 @@ export function TaskAddSheet({
         {/* Grabber handle — drag down to close (inverse of slide-up to open).
             Padded below the status bar so it stays touchable in edge-to-edge. */}
         <GestureDetector gesture={closeGesture}>
-          <View style={[styles.handleContainer, { paddingTop: 12 + insets.top }]}>
-            <View style={[styles.handle, { backgroundColor: colors.grayLight }]} />
+          <View
+            style={[styles.handleContainer, { paddingTop: 12 + insets.top }]}
+          >
+            <View
+              style={[styles.handle, { backgroundColor: colors.grayLight }]}
+            />
           </View>
         </GestureDetector>
 

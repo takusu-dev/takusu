@@ -35,7 +35,11 @@ interface TaskAddViewProps {
   embedded?: boolean;
 }
 
-export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }: TaskAddViewProps = {}) {
+export function TaskAddView({
+  onClose,
+  initialDeps: propDeps,
+  embedded = false,
+}: TaskAddViewProps = {}) {
   const { client } = useServer();
   const router = useRouter();
   const colors = useColors();
@@ -127,8 +131,16 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
 
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
-      <View style={[styles.topBar, { paddingTop: 8 + (embedded ? 0 : insets.top) }]}>
-        <Pressable style={styles.backButton} onPress={() => { haptic.light(); close(); }}>
+      <View
+        style={[styles.topBar, { paddingTop: 8 + (embedded ? 0 : insets.top) }]}
+      >
+        <Pressable
+          style={styles.backButton}
+          onPress={() => {
+            haptic.light();
+            close();
+          }}
+        >
           <Ionicons name="chevron-back" size={28} color={BRAND_COLOR} />
         </Pressable>
         <Text style={[styles.title, { color: colors.black }]}>新規タスク</Text>
@@ -141,17 +153,25 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
           onPress={create}
           disabled={!title || !endAt || saving}
         >
-          <Text style={styles.saveButtonText}>{saving ? '保存中…' : '追加'}</Text>
+          <Text style={styles.saveButtonText}>
+            {saving ? '保存中…' : '追加'}
+          </Text>
         </Pressable>
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: 40 + insets.bottom }]}
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: 40 + insets.bottom },
+        ]}
       >
         <View style={styles.field}>
           <Text style={[styles.label, { color: colors.gray }]}>タイトル</Text>
           <TextInput
-            style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+            style={[
+              styles.input,
+              { borderColor: colors.separator, color: colors.black },
+            ]}
             value={title}
             onChangeText={setTitle}
             placeholder="タスク名"
@@ -160,34 +180,67 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
         </View>
 
         <View style={styles.field}>
-          <Text style={[styles.label, { color: colors.gray }]}>開始日時 (任意)</Text>
+          <Text style={[styles.label, { color: colors.gray }]}>
+            開始日時 (任意)
+          </Text>
           <Pressable
-            style={[styles.dateField, { borderColor: colors.separator, backgroundColor: colors.white }]}
-            onPress={() => { haptic.select(); setPickerField('start'); }}
+            style={[
+              styles.dateField,
+              { borderColor: colors.separator, backgroundColor: colors.white },
+            ]}
+            onPress={() => {
+              haptic.select();
+              setPickerField('start');
+            }}
           >
             <Ionicons name="calendar-outline" size={20} color={BRAND_COLOR} />
-            <Text style={[styles.dateText, { color: startAt ? colors.black : colors.grayLight }]}>
+            <Text
+              style={[
+                styles.dateText,
+                { color: startAt ? colors.black : colors.grayLight },
+              ]}
+            >
               {formatDate(startAt)}
             </Text>
             {startAt && (
               <Pressable
                 style={styles.clearIcon}
-                onPress={() => { haptic.light(); setStartAt(null); }}
+                onPress={() => {
+                  haptic.light();
+                  setStartAt(null);
+                }}
               >
-                <Ionicons name="close-circle" size={18} color={colors.grayLight} />
+                <Ionicons
+                  name="close-circle"
+                  size={18}
+                  color={colors.grayLight}
+                />
               </Pressable>
             )}
           </Pressable>
         </View>
 
         <View style={styles.field}>
-          <Text style={[styles.label, { color: colors.gray }]}>期限日時 (必須)</Text>
+          <Text style={[styles.label, { color: colors.gray }]}>
+            期限日時 (必須)
+          </Text>
           <Pressable
-            style={[styles.dateField, { borderColor: colors.separator, backgroundColor: colors.white }]}
-            onPress={() => { haptic.select(); setPickerField('end'); }}
+            style={[
+              styles.dateField,
+              { borderColor: colors.separator, backgroundColor: colors.white },
+            ]}
+            onPress={() => {
+              haptic.select();
+              setPickerField('end');
+            }}
           >
             <Ionicons name="calendar-outline" size={20} color={BRAND_COLOR} />
-            <Text style={[styles.dateText, { color: endAt ? colors.black : colors.grayLight }]}>
+            <Text
+              style={[
+                styles.dateText,
+                { color: endAt ? colors.black : colors.grayLight },
+              ]}
+            >
               {formatDate(endAt)}
             </Text>
           </Pressable>
@@ -197,16 +250,24 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
           <View style={[styles.field, { flex: 1 }]}>
             <Text style={[styles.label, { color: colors.gray }]}>avg (分)</Text>
             <TextInput
-              style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+              style={[
+                styles.input,
+                { borderColor: colors.separator, color: colors.black },
+              ]}
               value={avgMinutes}
               onChangeText={setAvgMinutes}
               keyboardType="numeric"
             />
           </View>
           <View style={[styles.field, { flex: 1 }]}>
-            <Text style={[styles.label, { color: colors.gray }]}>sigma (分)</Text>
+            <Text style={[styles.label, { color: colors.gray }]}>
+              sigma (分)
+            </Text>
             <TextInput
-              style={[styles.input, { borderColor: colors.separator, color: colors.black }]}
+              style={[
+                styles.input,
+                { borderColor: colors.separator, color: colors.black },
+              ]}
               value={sigmaMinutes}
               onChangeText={setSigmaMinutes}
               keyboardType="numeric"
@@ -222,7 +283,9 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
         </View>
 
         <View style={styles.field}>
-          <Text style={[styles.label, { color: colors.gray }]}>abandonability: {abandonability.toFixed(2)}</Text>
+          <Text style={[styles.label, { color: colors.gray }]}>
+            abandonability: {abandonability.toFixed(2)}
+          </Text>
           <Slider
             value={abandonability}
             onValueChange={setAbandonability}
@@ -236,7 +299,11 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
         <View style={styles.field}>
           <Text style={[styles.label, { color: colors.gray }]}>説明</Text>
           <TextInput
-            style={[styles.input, styles.multiline, { borderColor: colors.separator, color: colors.black }]}
+            style={[
+              styles.input,
+              styles.multiline,
+              { borderColor: colors.separator, color: colors.black },
+            ]}
             value={description}
             onChangeText={setDescription}
             multiline
@@ -248,7 +315,9 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
         {/* Dependencies */}
         <View style={styles.field}>
           <View style={styles.depHeader}>
-            <Text style={[styles.label, { color: colors.gray }]}>依存先タスク ({selectedDeps.length})</Text>
+            <Text style={[styles.label, { color: colors.gray }]}>
+              依存先タスク ({selectedDeps.length})
+            </Text>
             <Pressable
               style={styles.addDepButton}
               onPress={() => {
@@ -265,9 +334,14 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
           {selectedDeps.map((depId) => {
             const depTask = allTasks.find((t) => t.id === depId);
             return (
-              <View key={depId} style={[styles.depItem, { backgroundColor: '#F8F5FC' }]}>
+              <View
+                key={depId}
+                style={[styles.depItem, { backgroundColor: '#F8F5FC' }]}
+              >
                 <Text style={[styles.depItemText, { color: colors.black }]}>
-                  {depTask ? `#${depTask.display_id} ${depTask.title}` : depId.slice(0, 8)}
+                  {depTask
+                    ? `#${depTask.display_id} ${depTask.title}`
+                    : depId.slice(0, 8)}
                 </Text>
                 <Pressable
                   onPress={() => {
@@ -289,15 +363,30 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
           <View
             style={[
               styles.depPickerHeader,
-              { borderBottomColor: colors.separator, paddingTop: 16 + (embedded ? 0 : insets.top) },
+              {
+                borderBottomColor: colors.separator,
+                paddingTop: 16 + (embedded ? 0 : insets.top),
+              },
             ]}
           >
-            <Text style={[styles.depPickerTitle, { color: colors.black }]}>依存先を選択</Text>
-            <Pressable onPress={() => { haptic.light(); setShowDepPicker(false); }}>
+            <Text style={[styles.depPickerTitle, { color: colors.black }]}>
+              依存先を選択
+            </Text>
+            <Pressable
+              onPress={() => {
+                haptic.light();
+                setShowDepPicker(false);
+              }}
+            >
               <Text style={styles.depPickerClose}>閉じる</Text>
             </Pressable>
           </View>
-          <View style={[styles.depSearchContainer, { borderBottomColor: colors.separator }]}>
+          <View
+            style={[
+              styles.depSearchContainer,
+              { borderBottomColor: colors.separator },
+            ]}
+          >
             <Ionicons name="search" size={18} color={colors.gray} />
             <TextInput
               style={[styles.depSearchInput, { color: colors.black }]}
@@ -308,8 +397,17 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
               autoFocus
             />
             {depSearch.length > 0 && (
-              <Pressable onPress={() => { haptic.light(); setDepSearch(''); }}>
-                <Ionicons name="close-circle" size={18} color={colors.grayLight} />
+              <Pressable
+                onPress={() => {
+                  haptic.light();
+                  setDepSearch('');
+                }}
+              >
+                <Ionicons
+                  name="close-circle"
+                  size={18}
+                  color={colors.grayLight}
+                />
               </Pressable>
             )}
           </View>
@@ -324,17 +422,24 @@ export function TaskAddView({ onClose, initialDeps: propDeps, embedded = false }
               .map((t) => (
                 <Pressable
                   key={t.id}
-                  style={[styles.depPickerItem, { borderBottomColor: colors.separator }]}
+                  style={[
+                    styles.depPickerItem,
+                    { borderBottomColor: colors.separator },
+                  ]}
                   onPress={() => {
                     haptic.medium();
                     setSelectedDeps([...selectedDeps, t.id]);
                     setShowDepPicker(false);
                   }}
                 >
-                  <Text style={[styles.depPickerItemId, { color: colors.gray }]}>
+                  <Text
+                    style={[styles.depPickerItemId, { color: colors.gray }]}
+                  >
                     #{t.display_id}
                   </Text>
-                  <Text style={[styles.depPickerItemText, { color: colors.black }]}>
+                  <Text
+                    style={[styles.depPickerItemText, { color: colors.black }]}
+                  >
                     {t.title}
                   </Text>
                 </Pressable>
