@@ -199,12 +199,11 @@ export class TakusuClient {
 
   async oauthCallback(
     code: string,
-    redirectUri: string,
+    redirectUri?: string,
   ): Promise<OAuthCallbackResponse> {
-    return this.request('POST', '/api/sync/oauth/callback', {
-      code,
-      redirect_uri: redirectUri,
-    });
+    const body: Record<string, string> = { code };
+    if (redirectUri) body.redirect_uri = redirectUri;
+    return this.request('POST', '/api/sync/oauth/callback', body);
   }
 
   async triggerSync(): Promise<SyncTriggerResponse> {

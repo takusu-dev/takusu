@@ -19,5 +19,9 @@ opencode.json
 **/*.class
 **/*.h
 
+# Release keystore (never commit signing credentials)
+*.keystore
+*.jks
+
 # UniFFI generated headers (build artifact)
 crates/takusu-android/generated/

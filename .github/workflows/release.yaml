@@ -19,6 +19,10 @@ on:
 #   CLOUDFLARE_API_TOKEN  - Cloudflare API token (needs Workers & D1 write)
 #   CLOUDFLARE_ACCOUNT_ID - Cloudflare account ID
 #   D1_DATABASE_ID        - D1 database UUID (overrides placeholder in wrangler.toml)
+#   TAKUSU_KEYSTORE_BASE64 - base64-encoded release keystore file
+#   TAKUSU_STORE_PASSWORD  - keystore store password
+#   TAKUSU_KEY_PASSWORD    - keystore key password
+#   TAKUSU_KEY_ALIAS       - keystore key alias (e.g. "takusu")
 
 env:
   WORKER_DIR: crates/takusu-worker
@@ -171,6 +175,13 @@ jobs:
         working-directory: mobile
         run: npm install --legacy-peer-deps
 
+      - name: Decode release keystore
+        env:
+          TAKUSU_KEYSTORE_BASE64: ${{ secrets.TAKUSU_KEYSTORE_BASE64 }}
+        run: |
+          echo "$TAKUSU_KEYSTORE_BASE64" | base64 -d > mobile/android-release.keystore
+          echo "Keystore decoded: $(stat -c%s mobile/android-release.keystore) bytes"
+
       - name: Determine APK version
         id: version
         env:
@@ -189,6 +200,10 @@ jobs:
         env:
           EXPO_PUBLIC_WORKERS_URL: ${{ secrets.EXPO_PUBLIC_WORKERS_URL }}
           EXPO_PUBLIC_ROOT_TOKEN: ${{ secrets.EXPO_PUBLIC_ROOT_TOKEN }}
+          TAKUSU_KEYSTORE_PATH: ${{ github.workspace }}/mobile/android-release.keystore
+          TAKUSU_STORE_PASSWORD: ${{ secrets.TAKUSU_STORE_PASSWORD }}
+          TAKUSU_KEY_PASSWORD: ${{ secrets.TAKUSU_KEY_PASSWORD }}
+          TAKUSU_KEY_ALIAS: ${{ secrets.TAKUSU_KEY_ALIAS }}
 
       # Rename the APK to include the version so Obtainium can identify and
       # filter it (e.g. takusu-v0.1.0.apk).

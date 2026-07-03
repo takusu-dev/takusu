@@ -238,7 +238,9 @@ export function HabitAddView() {
             />
             {(!sigmaMinutes || sigmaMinutes === '0') && (
               <Text style={[styles.hint, { color: colors.grayLight }]}>
-                auto: {Math.max(1, Math.round((parseInt(avgMinutes, 10) || 60) / 5))}m (avg/5)
+                auto:{' '}
+                {Math.max(1, Math.round((parseInt(avgMinutes, 10) || 60) / 5))}m
+                (avg/5)
               </Text>
             )}
           </View>
