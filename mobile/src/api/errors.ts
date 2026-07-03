@@ -32,6 +32,22 @@ export function formatError(e: unknown): string {
 }
 
 /**
+ * Format an error for the log buffer, including the stack trace when
+ * available. The stack trace is essential for debugging exported logs
+ * (issue #90).
+ */
+function formatErrorForLog(e: unknown): string {
+  const base = formatError(e);
+  if (e instanceof Error && e.stack && e.stack !== `Error: ${e.message}`) {
+    return `${base}\n${e.stack}`;
+  }
+  if (e instanceof ApiError && e.stack) {
+    return `${base}\n${e.stack}`;
+  }
+  return base;
+}
+
+/**
  * Forward a log line to the native ring buffer (Android only).
  * Silently no-ops on non-Android platforms or if the native module is
  * unavailable.
@@ -51,7 +67,7 @@ function pushClientLog(level: string, context: string, message: string): void {
  */
 export function showError(e: unknown, title = 'エラー'): void {
   const msg = formatError(e);
-  pushClientLog('error', title, msg);
+  pushClientLog('error', title, formatErrorForLog(e));
   Alert.alert(title, msg);
 }
 
@@ -61,6 +77,6 @@ export function showError(e: unknown, title = 'エラー'): void {
  */
 export function logError(context: string, e: unknown): void {
   const msg = formatError(e);
-  pushClientLog('warn', context, msg);
+  pushClientLog('warn', context, formatErrorForLog(e));
   console.warn(`${context}:`, msg);
 }

@@ -23,6 +23,7 @@ import * as Linking from 'expo-linking';
 import * as Application from 'expo-application';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import * as Clipboard from 'expo-clipboard';
 import Constants from 'expo-constants';
 import { useServer, saveWorkersUrl, saveWorkersToken } from '@/src/api/ServerProvider';
 import { setOAuthCallbackListener } from '@/src/api/oauthCallback';
@@ -85,6 +86,7 @@ export function SettingsView() {
   const [workerHealthLoading, setWorkerHealthLoading] = useState(false);
   const [workerHealthResult, setWorkerHealthResult] = useState<string | null>(null);
   const [logExportLoading, setLogExportLoading] = useState(false);
+  const [logCopyLoading, setLogCopyLoading] = useState(false);
 
   // Sync worker input with saved values when they change
   useEffect(() => {
@@ -298,6 +300,24 @@ export function SettingsView() {
       Alert.alert('消去しました', 'ログバッファをクリアしました');
     } catch (e) {
       Alert.alert('エラー', `ログクリアに失敗: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  async function copyLogs() {
+    setLogCopyLoading(true);
+    try {
+      const lines = await TakusuServerModule.getLogs();
+      if (lines.length === 0) {
+        Alert.alert('ログなし', 'コピーするログがありません');
+        return;
+      }
+      const content = lines.join('\n');
+      await Clipboard.setStringAsync(content);
+      Alert.alert('コピーしました', `${lines.length} 行のログをクリップボードにコピーしました`);
+    } catch (e) {
+      Alert.alert('エラー', `ログコピーに失敗: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setLogCopyLoading(false);
     }
   }
 
@@ -837,6 +857,20 @@ export function SettingsView() {
                 ) : (
                   <Text style={styles.actionButtonText}>
                     {Platform.OS === 'android' ? 'ログをエクスポート' : 'ログ (Androidのみ)'}
+                  </Text>
+                )}
+              </Pressable>
+
+              <Pressable
+                style={[styles.actionButton, { backgroundColor: colors.grayLight }]}
+                onPress={copyLogs}
+                disabled={logCopyLoading || logExportLoading || Platform.OS !== 'android'}
+              >
+                {logCopyLoading ? (
+                  <ActivityIndicator color={colors.black} />
+                ) : (
+                  <Text style={[styles.actionButtonText, { color: colors.black }]}>
+                    ログをコピー
                   </Text>
                 )}
               </Pressable>

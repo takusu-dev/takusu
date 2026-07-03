@@ -4,9 +4,11 @@
 //! bounded `VecDeque` so the mobile app can export them via UniFFI without
 //! needing access to stderr/logcat.
 
+use std::backtrace::Backtrace;
 use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
 
+use tracing::Level;
 use tracing_subscriber::fmt::MakeWriter;
 
 /// Maximum number of log lines retained in the ring buffer.
@@ -48,8 +50,13 @@ fn buffer() -> &'static Mutex<LogBuffer> {
 /// Writer that accumulates a single formatted log line and appends it to
 /// the ring buffer when dropped (tracing_subscriber drops the writer after
 /// each event is fully written).
+///
+/// When `backtrace` is `Some`, the captured `Backtrace` is appended to the
+/// log line on drop. This is used for ERROR-level events so exported logs
+/// include a stack trace for debugging (issue #90).
 pub struct BufferWriter {
     buf: String,
+    backtrace: Option<Backtrace>,
 }
 
 impl std::io::Write for BufferWriter {
@@ -67,23 +74,66 @@ impl Drop for BufferWriter {
     fn drop(&mut self) {
         // tracing_subscriber fmt layer writes a trailing newline; strip it
         // so each stored line is a single logical log entry.
-        let line = self.buf.trim_end_matches('\n').to_string();
-        if !line.is_empty()
-            && let Ok(mut g) = buffer().lock()
-        {
+        let mut line = self.buf.trim_end_matches('\n').to_string();
+        if line.is_empty() {
+            return;
+        }
+        // Append backtrace for ERROR-level events.
+        if let Some(bt) = self.backtrace.take() {
+            let bt_str = format!("{bt}");
+            // Skip the first frame (this drop) and filter out tracing-
+            // subscriber internals to keep the backtrace concise.
+            let filtered: Vec<&str> = bt_str
+                .lines()
+                .filter(|l| {
+                    !l.contains("tracing_subscriber")
+                        && !l.contains("tracing_core")
+                        && !l.contains("log_buffer.rs")
+                        && !l.contains("BufferWriter")
+                })
+                .collect();
+            if !filtered.is_empty() {
+                line.push_str("\n  backtrace:\n");
+                for f in &filtered {
+                    line.push_str("    ");
+                    line.push_str(f);
+                    line.push('\n');
+                }
+                line.pop(); // remove trailing newline
+            }
+        }
+        if let Ok(mut g) = buffer().lock() {
             g.push(line);
         }
     }
 }
 
 /// `MakeWriter` implementation that hands each log event a `BufferWriter`.
+/// For ERROR-level events, a `Backtrace` is captured at writer-creation
+/// time (which is before the event is formatted and written, so the call
+/// stack includes the original `tracing::error!` call site).
 pub struct BufferMakeWriter;
 
 impl<'a> MakeWriter<'a> for BufferMakeWriter {
     type Writer = BufferWriter;
 
     fn make_writer(&'a self) -> Self::Writer {
-        BufferWriter { buf: String::new() }
+        BufferWriter {
+            buf: String::new(),
+            backtrace: None,
+        }
+    }
+
+    fn make_writer_for(&'a self, meta: &tracing::Metadata<'_>) -> Self::Writer {
+        let backtrace = if meta.level() == &Level::ERROR {
+            Some(Backtrace::force_capture())
+        } else {
+            None
+        };
+        BufferWriter {
+            buf: String::new(),
+            backtrace,
+        }
     }
 }
 
@@ -99,7 +149,7 @@ pub fn install() {
     use tracing_subscriber::{EnvFilter, fmt};
 
     let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("error,takusu_local=info,takusu_local_lib=info"));
+        .unwrap_or_else(|_| EnvFilter::new("error,takusu_android=info,takusu_local=info,takusu_local_lib=info"));
 
     // The buffer layer formats each event into a single line and appends it.
     let buffer_layer = fmt::layer()
