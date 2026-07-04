@@ -5,9 +5,9 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import {
+  Checkbox,
   IconButton,
   Menu,
-  Switch,
   TextInput as PaperTextInput,
 } from 'react-native-paper';
 import Slider from '@expo/ui/community/slider';
@@ -551,9 +551,9 @@ export function HabitDetailView() {
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>
                   parallelizable
                 </Text>
-                <Switch
-                  value={parallelizable}
-                  onValueChange={setParallelizable}
+                <Checkbox
+                  status={parallelizable ? 'checked' : 'unchecked'}
+                  onPress={() => setParallelizable(!parallelizable)}
                   color={BRAND_COLOR}
                 />
               </View>
@@ -561,18 +561,36 @@ export function HabitDetailView() {
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>
                   allows_parallel
                 </Text>
-                <Switch
-                  value={allowsParallel}
-                  onValueChange={setAllowsParallel}
+                <Checkbox
+                  status={allowsParallel ? 'checked' : 'unchecked'}
+                  onPress={() => setAllowsParallel(!allowsParallel)}
                   color={BRAND_COLOR}
                 />
               </View>
             </View>
           ) : (
-            <Text style={[styles.value, { color: colors.black }]}>
-              parallelizable: {habit.parallelizable ? 'はい' : 'いいえ'}
-              {'\n'}allows_parallel: {habit.allows_parallel ? 'はい' : 'いいえ'}
-            </Text>
+            <View style={styles.toggleRow}>
+              <View style={styles.toggleItem}>
+                <Text style={[styles.toggleLabel, { color: colors.black }]}>
+                  parallelizable
+                </Text>
+                <Checkbox
+                  status={habit.parallelizable ? 'checked' : 'unchecked'}
+                  disabled
+                  color={BRAND_COLOR}
+                />
+              </View>
+              <View style={styles.toggleItem}>
+                <Text style={[styles.toggleLabel, { color: colors.black }]}>
+                  allows_parallel
+                </Text>
+                <Checkbox
+                  status={habit.allows_parallel ? 'checked' : 'unchecked'}
+                  disabled
+                  color={BRAND_COLOR}
+                />
+              </View>
+            </View>
           )}
         </View>
 
@@ -580,20 +598,17 @@ export function HabitDetailView() {
         <View style={styles.section}>
           <Text style={[styles.label, { color: colors.gray }]}>アクティブ</Text>
           {editing ? (
-            <View style={styles.toggleItem}>
-              <Text style={[styles.toggleLabel, { color: colors.black }]}>
-                {active ? 'はい' : 'いいえ'}
-              </Text>
-              <Switch
-                value={active}
-                onValueChange={setActive}
-                color={BRAND_COLOR}
-              />
-            </View>
+            <Checkbox
+              status={active ? 'checked' : 'unchecked'}
+              onPress={() => setActive(!active)}
+              color={BRAND_COLOR}
+            />
           ) : (
-            <Text style={[styles.value, { color: colors.black }]}>
-              {habit.active ? 'はい' : 'いいえ'}
-            </Text>
+            <Checkbox
+              status={habit.active ? 'checked' : 'unchecked'}
+              disabled
+              color={BRAND_COLOR}
+            />
           )}
         </View>
 

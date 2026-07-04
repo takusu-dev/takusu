@@ -10,12 +10,12 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import {
   Button,
+  Checkbox,
   IconButton,
   List,
   Menu,
   Modal,
   Portal,
-  Switch,
   TextInput as PaperTextInput,
   Divider,
 } from 'react-native-paper';
@@ -741,11 +741,11 @@ export function TaskDetailView() {
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>
                   parallelizable
                 </Text>
-                <Switch
-                  value={parallelizable}
-                  onValueChange={(v) => {
+                <Checkbox
+                  status={parallelizable ? 'checked' : 'unchecked'}
+                  onPress={() => {
                     haptic.select();
-                    setParallelizable(v);
+                    setParallelizable(!parallelizable);
                   }}
                   color={BRAND_COLOR}
                 />
@@ -754,21 +754,39 @@ export function TaskDetailView() {
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>
                   allows_parallel
                 </Text>
-                <Switch
-                  value={allowsParallel}
-                  onValueChange={(v) => {
+                <Checkbox
+                  status={allowsParallel ? 'checked' : 'unchecked'}
+                  onPress={() => {
                     haptic.select();
-                    setAllowsParallel(v);
+                    setAllowsParallel(!allowsParallel);
                   }}
                   color={BRAND_COLOR}
                 />
               </View>
             </View>
           ) : (
-            <Text style={[styles.sectionValue, { color: colors.black }]}>
-              parallelizable: {task.parallelizable ? 'はい' : 'いいえ'}
-              {'\n'}allows_parallel: {task.allows_parallel ? 'はい' : 'いいえ'}
-            </Text>
+            <View style={styles.toggleRow}>
+              <View style={styles.toggleItem}>
+                <Text style={[styles.toggleLabel, { color: colors.black }]}>
+                  parallelizable
+                </Text>
+                <Checkbox
+                  status={task.parallelizable ? 'checked' : 'unchecked'}
+                  disabled
+                  color={BRAND_COLOR}
+                />
+              </View>
+              <View style={styles.toggleItem}>
+                <Text style={[styles.toggleLabel, { color: colors.black }]}>
+                  allows_parallel
+                </Text>
+                <Checkbox
+                  status={task.allows_parallel ? 'checked' : 'unchecked'}
+                  disabled
+                  color={BRAND_COLOR}
+                />
+              </View>
+            </View>
           )}
         </View>
 
