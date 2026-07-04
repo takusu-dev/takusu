@@ -6,13 +6,13 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { Checkbox } from 'react-native-paper';
 import Slider from '@expo/ui/community/slider';
 import { useServer } from '@/src/api/ServerProvider';
 import { undoRedo } from '@/src/api/undoRedo';
@@ -303,20 +303,20 @@ export function HabitAddView() {
               <Text style={[styles.toggleLabel, { color: colors.black }]}>
                 parallelizable
               </Text>
-              <Switch
-                value={parallelizable}
-                onValueChange={setParallelizable}
-                trackColor={{ false: colors.separator, true: BRAND_COLOR }}
+              <Checkbox
+                status={parallelizable ? 'checked' : 'unchecked'}
+                onPress={() => setParallelizable(!parallelizable)}
+                color={BRAND_COLOR}
               />
             </View>
             <View style={styles.toggleItem}>
               <Text style={[styles.toggleLabel, { color: colors.black }]}>
                 allows_parallel
               </Text>
-              <Switch
-                value={allowsParallel}
-                onValueChange={setAllowsParallel}
-                trackColor={{ false: colors.separator, true: BRAND_COLOR }}
+              <Checkbox
+                status={allowsParallel ? 'checked' : 'unchecked'}
+                onPress={() => setAllowsParallel(!allowsParallel)}
+                color={BRAND_COLOR}
               />
             </View>
           </View>
