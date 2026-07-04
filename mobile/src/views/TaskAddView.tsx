@@ -83,8 +83,7 @@ export function TaskAddView({
   }
 
   function toISO(d: Date): string {
-    const tzOffset = d.getTimezoneOffset() * 60000;
-    return new Date(d.getTime() - tzOffset).toISOString().slice(0, -1);
+    return d.toISOString();
   }
 
   async function create() {

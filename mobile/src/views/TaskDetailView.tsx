@@ -172,8 +172,7 @@ export function TaskDetailView() {
   }, [refresh]);
 
   function toISO(d: Date): string {
-    const tzOffset = d.getTimezoneOffset() * 60000;
-    return new Date(d.getTime() - tzOffset).toISOString().slice(0, -1);
+    return d.toISOString();
   }
 
   function formatDate(d: Date | null): string {
