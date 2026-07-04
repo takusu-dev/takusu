@@ -91,6 +91,10 @@ export function TaskDetailView() {
   const [depSearch, setDepSearch] = useState('');
   const [status, setStatus] = useState<TaskStatus>('pending');
   const [menuVisible, setMenuVisible] = useState(false);
+  // Double-tap detection ref — must be before the early return to satisfy
+  // React's Rules of Hooks (hooks must be called unconditionally).
+  const lastTapRef = useRef(0);
+  const lastSectionRef = useRef('');
 
   const refresh = useCallback(async () => {
     if (!client || !id) return;
@@ -394,20 +398,21 @@ export function TaskDetailView() {
   );
 
   // Double-tap (or single tap on a section) enters edit mode.
-  const lastTapRef = useRef(0);
   function enterEdit() {
     if (!editing) {
       haptic.light();
       setEditing(true);
     }
   }
-  function handleSectionTap() {
+  function handleSectionTap(section: string) {
     const now = Date.now();
-    if (now - lastTapRef.current < 300) {
+    if (now - lastTapRef.current < 300 && lastSectionRef.current === section) {
       enterEdit();
       lastTapRef.current = 0;
+      lastSectionRef.current = '';
     } else {
       lastTapRef.current = now;
+      lastSectionRef.current = section;
     }
   }
 
@@ -487,7 +492,7 @@ export function TaskDetailView() {
             contentStyle={{ fontSize: 20, fontWeight: '600' }}
           />
         ) : (
-          <Pressable onPress={handleSectionTap}>
+          <Pressable onPress={() => handleSectionTap('title')}>
             <Text style={[styles.title, { color: colors.black }]}>
               {task.title}
             </Text>
@@ -608,7 +613,7 @@ export function TaskDetailView() {
                 </Pressable>
               </View>
             ) : (
-              <Pressable onPress={handleSectionTap}>
+              <Pressable onPress={() => handleSectionTap('time')}>
                 <Text style={[styles.timeText, { color: colors.gray }]}>
                   {formatTime(task.start_at)} → {formatTime(task.end_at)}
                 </Text>
@@ -679,7 +684,7 @@ export function TaskDetailView() {
               </View>
             </View>
           ) : (
-            <Pressable onPress={handleSectionTap}>
+            <Pressable onPress={() => handleSectionTap('cost')}>
               <Text style={[styles.sectionValue, { color: colors.black }]}>
                 avg: {task.avg_minutes}m, sigma:{' '}
                 {task.sigma_minutes > 0 ? (
@@ -713,7 +718,7 @@ export function TaskDetailView() {
               </Text>
             </View>
           ) : (
-            <Pressable onPress={handleSectionTap}>
+            <Pressable onPress={() => handleSectionTap('abandonability')}>
               <Text style={[styles.sectionValue, { color: colors.black }]}>
                 {task.abandonability.toFixed(2)}
               </Text>
@@ -754,7 +759,7 @@ export function TaskDetailView() {
               style={styles.descriptionInput}
             />
           ) : (
-            <Pressable onPress={handleSectionTap}>
+            <Pressable onPress={() => handleSectionTap('description')}>
               <Text style={[styles.sectionValue, { color: colors.black }]}>
                 {task.description || '(なし)'}
               </Text>
@@ -797,7 +802,10 @@ export function TaskDetailView() {
               </View>
             </View>
           ) : (
-            <Pressable style={styles.toggleRow} onPress={handleSectionTap}>
+            <Pressable
+              style={styles.toggleRow}
+              onPress={() => handleSectionTap('parallel')}
+            >
               <View style={styles.toggleItem}>
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>
                   parallelizable
