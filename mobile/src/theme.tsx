@@ -52,6 +52,7 @@ export const COLORS = {
   red: '#E07070',
   green: '#70B070',
   surface: '#FFFFFF',
+  surfaceTint: '#F8F5FC', // brand-tinted surface (dep items, etc.)
 } as const;
 
 // Dark theme colors
@@ -69,6 +70,7 @@ export const DARK_COLORS = {
   red: '#E07070',
   green: '#70B070',
   surface: '#2A2A45', // elevated surface (buttons, cards) — lighter than bg
+  surfaceTint: '#2A2438', // brand-tinted dark surface
 } as const;
 
 export type ColorSet = {
@@ -85,6 +87,7 @@ export type ColorSet = {
   red: string;
   green: string;
   surface: string;
+  surfaceTint: string;
 };
 
 // ── Theme Context ──

@@ -172,10 +172,7 @@ export function DateTimePickerModal({
 
           {mode === 'time' ? (
             <Pressable
-              style={[
-                styles.fieldRow,
-                { backgroundColor: dark ? '#1E1E32' : '#F8F5FC' },
-              ]}
+              style={[styles.fieldRow, { backgroundColor: colors.surfaceTint }]}
               onPress={() => openPicker('time')}
             >
               <Ionicons name="time-outline" size={20} color={BRAND_COLOR} />
@@ -196,7 +193,7 @@ export function DateTimePickerModal({
               <Pressable
                 style={[
                   styles.fieldRow,
-                  { backgroundColor: dark ? '#1E1E32' : '#F8F5FC' },
+                  { backgroundColor: colors.surfaceTint },
                 ]}
                 onPress={() => openPicker('date')}
               >
@@ -222,7 +219,7 @@ export function DateTimePickerModal({
                 <Pressable
                   style={[
                     styles.fieldRow,
-                    { backgroundColor: dark ? '#1E1E32' : '#F8F5FC' },
+                    { backgroundColor: colors.surfaceTint },
                   ]}
                   onPress={() => openPicker('time')}
                   disabled={!tempDate}

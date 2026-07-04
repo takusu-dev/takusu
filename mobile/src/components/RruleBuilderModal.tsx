@@ -406,7 +406,12 @@ export function RruleBuilderModal({
 
             {/* Help box */}
             {showHelp && (
-              <View style={[styles.helpBox, { backgroundColor: '#F8F5FC' }]}>
+              <View
+                style={[
+                  styles.helpBox,
+                  { backgroundColor: colors.surfaceTint },
+                ]}
+              >
                 <Text style={[styles.helpText, { color: colors.grayDark }]}>
                   RRULEは繰り返しルールの標準形式です。{'\n'}
                   ・頻度: 毎日・毎週・毎月・毎年{'\n'}
@@ -943,7 +948,7 @@ export function RruleBuilderModal({
                           key={ex}
                           style={[
                             styles.exdateRow,
-                            { backgroundColor: '#F8F5FC' },
+                            { backgroundColor: colors.surfaceTint },
                           ]}
                         >
                           <Ionicons
@@ -976,7 +981,12 @@ export function RruleBuilderModal({
 
             {/* Summary */}
             {!manualMode && (
-              <View style={[styles.summary, { backgroundColor: '#F8F5FC' }]}>
+              <View
+                style={[
+                  styles.summary,
+                  { backgroundColor: colors.surfaceTint },
+                ]}
+              >
                 <Text style={[styles.summaryLabel, { color: colors.gray }]}>
                   プレビュー
                 </Text>

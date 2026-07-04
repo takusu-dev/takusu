@@ -23,6 +23,7 @@ import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { haptic } from '@/src/components/haptics';
+import { formatDate } from '@/src/formatDate';
 
 interface TaskAddViewProps {
   /** Called when the view requests closing (back button / successful save).
@@ -73,13 +74,6 @@ export function TaskAddView({
   async function loadTasks() {
     if (!client) return;
     setAllTasks(await client.listTasks());
-  }
-
-  function formatDate(d: Date | null): string {
-    if (!d) return '未設定';
-    const dateStr = `${d.getFullYear()}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}`;
-    const timeStr = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-    return `${dateStr} ${timeStr}`;
   }
 
   function toISO(d: Date): string {
@@ -368,7 +362,10 @@ export function TaskAddView({
             return (
               <View
                 key={depId}
-                style={[styles.depItem, { backgroundColor: '#F8F5FC' }]}
+                style={[
+                  styles.depItem,
+                  { backgroundColor: colors.surfaceTint },
+                ]}
               >
                 <Text style={[styles.depItemText, { color: colors.black }]}>
                   {depTask
