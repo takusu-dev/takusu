@@ -201,7 +201,6 @@ export function TaskDetailView() {
     ) {
       const v = parseInt(sigmaMinutes, 10);
       if (!isNaN(v) && v >= 0) updates.sigma_minutes = v;
-      else if (sigmaMinutes === '') updates.sigma_minutes = 0;
     }
     const prevStart = task.start_at ? new Date(task.start_at) : null;
     if (startAt?.getTime() !== prevStart?.getTime()) {
@@ -646,13 +645,9 @@ export function TaskDetailView() {
                   activeOutlineColor={BRAND_COLOR}
                   dense
                 />
-                {(!sigmaMinutes || sigmaMinutes === '0') && (
+                {sigmaMinutes === '' && (
                   <Text style={[styles.costHint, { color: colors.grayLight }]}>
-                    {Math.max(
-                      1,
-                      Math.round((parseInt(avgMinutes, 10) || 60) / 5),
-                    )}
-                    m (avg/5)
+                    {task.sigma_minutes}m
                   </Text>
                 )}
               </View>
@@ -663,9 +658,7 @@ export function TaskDetailView() {
               {task.sigma_minutes > 0 ? (
                 `${task.sigma_minutes}m`
               ) : (
-                <Text style={{ color: colors.grayLight }}>
-                  {Math.max(1, Math.round(task.avg_minutes / 5))}m (avg/5)
-                </Text>
+                <Text style={{ color: colors.grayLight }}>0m</Text>
               )}
             </Text>
           )}
