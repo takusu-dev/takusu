@@ -549,7 +549,7 @@ export function HabitDetailView() {
             <View style={styles.toggleRow}>
               <View style={styles.toggleItem}>
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>
-                  parallelizable
+                  並列実行可能
                 </Text>
                 <Checkbox
                   status={parallelizable ? 'checked' : 'unchecked'}
@@ -559,7 +559,7 @@ export function HabitDetailView() {
               </View>
               <View style={styles.toggleItem}>
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>
-                  allows_parallel
+                  並列受け入れ
                 </Text>
                 <Checkbox
                   status={allowsParallel ? 'checked' : 'unchecked'}
@@ -572,7 +572,7 @@ export function HabitDetailView() {
             <View style={styles.toggleRow}>
               <View style={styles.toggleItem}>
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>
-                  parallelizable
+                  並列実行可能
                 </Text>
                 <Checkbox
                   status={habit.parallelizable ? 'checked' : 'unchecked'}
@@ -582,7 +582,7 @@ export function HabitDetailView() {
               </View>
               <View style={styles.toggleItem}>
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>
-                  allows_parallel
+                  並列受け入れ
                 </Text>
                 <Checkbox
                   status={habit.allows_parallel ? 'checked' : 'unchecked'}

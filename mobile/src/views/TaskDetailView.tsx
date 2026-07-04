@@ -770,7 +770,7 @@ export function TaskDetailView() {
             <View style={styles.toggleRow}>
               <View style={styles.toggleItem}>
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>
-                  parallelizable
+                  並列実行可能
                 </Text>
                 <Checkbox
                   status={parallelizable ? 'checked' : 'unchecked'}
@@ -783,7 +783,7 @@ export function TaskDetailView() {
               </View>
               <View style={styles.toggleItem}>
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>
-                  allows_parallel
+                  並列受け入れ
                 </Text>
                 <Checkbox
                   status={allowsParallel ? 'checked' : 'unchecked'}
@@ -802,7 +802,7 @@ export function TaskDetailView() {
             >
               <View style={styles.toggleItem}>
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>
-                  parallelizable
+                  並列実行可能
                 </Text>
                 <Checkbox
                   status={task.parallelizable ? 'checked' : 'unchecked'}
@@ -812,7 +812,7 @@ export function TaskDetailView() {
               </View>
               <View style={styles.toggleItem}>
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>
-                  allows_parallel
+                  並列受け入れ
                 </Text>
                 <Checkbox
                   status={task.allows_parallel ? 'checked' : 'unchecked'}

@@ -4,7 +4,6 @@
 // Slide right = done (weak haptics), slide left = delete (strong haptics)
 // Slide actions show a background preview with icon
 // Done tasks: strikethrough + gray
-// allows_parallel: shows receiver task on left (1:3 width ratio)
 
 import { memo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -36,13 +35,6 @@ interface TaskCardProps {
   onDelete?: () => void;
   onLongPress?: () => void;
   selected?: boolean;
-  // Receiver task (allows_parallel=true) that overlaps in schedule time
-  parallelTask?: TaskRow;
-  parallelScheduleStart?: string;
-  parallelScheduleEnd?: string;
-  onParallelPress?: () => void;
-  onParallelDone?: () => void;
-  onParallelDelete?: () => void;
 }
 
 function formatTime(iso?: string): string {
@@ -64,11 +56,6 @@ function TaskCardImpl({
   onDelete,
   onLongPress,
   selected,
-  parallelTask,
-  parallelScheduleStart,
-  onParallelPress,
-  onParallelDone,
-  onParallelDelete,
 }: TaskCardProps) {
   const translateX = useSharedValue(0);
   const { dark, colors } = useTheme();
@@ -124,163 +111,6 @@ function TaskCardImpl({
         onLongPress();
       }
     : undefined;
-  const handleParallelPress = onParallelPress
-    ? () => {
-        haptic.light();
-        onParallelPress();
-      }
-    : undefined;
-
-  // Parallel receiver task (left side, 1:3 width ratio)
-  if (parallelTask) {
-    const parallelBgColor = abandonabilityColorFor(
-      parallelTask.abandonability,
-      dark,
-    );
-    const parallelDone =
-      parallelTask.status === 'completed' || parallelTask.status === 'skipped';
-
-    return (
-      <View style={styles.container}>
-        <View style={styles.parallelContainer}>
-          {/* Left: receiver task (1:3 ratio → 25%) */}
-          <GestureDetector
-            gesture={Gesture.Race(
-              Gesture.Pan()
-                .onUpdate((e) => {
-                  translateX.value = Math.max(0, e.translationX);
-                })
-                .onEnd((e) => {
-                  if (e.translationX > 80 && onParallelDone) {
-                    runOnJS(haptic.light)();
-                    runOnJS(onParallelDone)();
-                  }
-                  translateX.value = withSpring(0);
-                }),
-              Gesture.Pan()
-                .onUpdate((e) => {
-                  translateX.value = Math.min(0, e.translationX);
-                })
-                .onEnd((e) => {
-                  if (e.translationX < -80 && onParallelDelete) {
-                    runOnJS(haptic.medium)();
-                    runOnJS(onParallelDelete)();
-                  }
-                  translateX.value = withSpring(0);
-                }),
-            )}
-          >
-            <View style={styles.parallelCardWrap}>
-              <Reanimated.View
-                style={[
-                  styles.doneBg,
-                  { backgroundColor: parallelDone ? COLORS.red : COLORS.green },
-                  doneBgStyle,
-                ]}
-                pointerEvents="none"
-              >
-                <Ionicons
-                  name={parallelDone ? 'refresh' : 'checkmark'}
-                  size={24}
-                  color={COLORS.white}
-                />
-              </Reanimated.View>
-              <Reanimated.View
-                style={[
-                  styles.deleteBg,
-                  { backgroundColor: COLORS.red },
-                  deleteBgStyle,
-                ]}
-                pointerEvents="none"
-              >
-                <Ionicons name="trash" size={24} color={COLORS.white} />
-              </Reanimated.View>
-              <Reanimated.View
-                style={[
-                  styles.parallelCard,
-                  { backgroundColor: parallelBgColor },
-                  animatedStyle,
-                ]}
-              >
-                <Pressable
-                  onPress={handleParallelPress}
-                  style={styles.parallelPressable}
-                >
-                  <Text
-                    style={[
-                      styles.parallelTitle,
-                      { color: colors.black },
-                      parallelDone && {
-                        textDecorationLine: 'line-through',
-                        color: colors.done,
-                      },
-                    ]}
-                    numberOfLines={3}
-                  >
-                    {parallelTask.title}
-                  </Text>
-                  <Text
-                    style={[styles.parallelTime, { color: colors.grayDark }]}
-                  >
-                    {formatTime(parallelScheduleStart)}
-                  </Text>
-                </Pressable>
-              </Reanimated.View>
-            </View>
-          </GestureDetector>
-
-          {/* Right: main task (3:4 ratio → 75%) */}
-          <Pressable
-            style={({ pressed }) => [
-              styles.mainCard,
-              { backgroundColor: bgColor },
-              pressed && styles.pressed,
-              selected && styles.cardSelected,
-            ]}
-            onPress={handlePress}
-            onLongPress={handleLongPress}
-          >
-            <View style={styles.times}>
-              <Text style={[styles.timeText, { color: colors.grayDark }]}>
-                {formatTime(scheduleStart)}
-              </Text>
-              <Text style={[styles.timeText, { color: colors.grayDark }]}>
-                {formatTime(scheduleEnd)}
-              </Text>
-            </View>
-            <View style={styles.titleContainer}>
-              <Text style={[styles.taskId, { color: colors.gray }]}>
-                #{task.display_id}
-              </Text>
-              <Text
-                style={[
-                  styles.title,
-                  { color: colors.black },
-                  isDone && {
-                    textDecorationLine: 'line-through',
-                    color: colors.done,
-                  },
-                ]}
-                numberOfLines={2}
-              >
-                {task.title}
-              </Text>
-              {deps.length > 0 && (
-                <Text style={[styles.depsCount, { color: colors.gray }]}>
-                  ↳ {deps.length} deps
-                </Text>
-              )}
-            </View>
-            <View style={styles.cost}>
-              <Text style={[styles.costText, { color: colors.gray }]}>
-                {task.avg_minutes}m ±{task.sigma_minutes}
-              </Text>
-            </View>
-          </Pressable>
-        </View>
-      </View>
-    );
-  }
 
   return (
     <View style={styles.container}>
@@ -415,40 +245,6 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     paddingRight: 20,
   },
-  parallelContainer: {
-    flexDirection: 'row',
-    borderRadius: 12,
-    overflow: 'hidden',
-    minHeight: 72,
-  },
-  parallelCardWrap: {
-    width: '25%',
-    position: 'relative',
-  },
-  parallelCard: {
-    padding: 6,
-    borderRadius: 0,
-  },
-  parallelPressable: {
-    flex: 1,
-    justifyContent: 'center',
-    gap: 2,
-  },
-  parallelTitle: {
-    fontSize: 11,
-    fontWeight: '500',
-  },
-  parallelTime: {
-    fontSize: 10,
-    fontVariant: ['tabular-nums'],
-  },
-  mainCard: {
-    flex: 1,
-    flexDirection: 'row',
-    padding: 12,
-    alignItems: 'center',
-    gap: 12,
-  },
   pressed: {
     opacity: 0.8,
   },
@@ -489,3 +285,311 @@ const styles = StyleSheet.create({
 });
 
 export const TaskCard = memo(TaskCardImpl);
+
+// ── ParallelGroupCard ──
+// Renders a parallel task group: host (allows_parallel) on the left (25%),
+// guests (parallelizable) stacked on the right (75%).
+// A single slide gesture applies to the whole group:
+//   slide right → complete all, slide left → delete all (#194).
+
+interface ParallelGroupCardProps {
+  host: TaskRow;
+  guests: TaskRow[];
+  hostScheduleStart?: string;
+  hostScheduleEnd?: string;
+  guestScheduleStarts: (string | undefined)[];
+  isDone: boolean;
+  selected?: boolean;
+  onHostPress: () => void;
+  onGuestPress: (index: number) => void;
+  onLongPress: () => void;
+  onDone?: () => void;
+  onDelete?: () => void;
+}
+
+function ParallelGroupCardImpl({
+  host,
+  guests,
+  hostScheduleStart,
+  hostScheduleEnd,
+  guestScheduleStarts,
+  isDone,
+  selected,
+  onHostPress,
+  onGuestPress,
+  onLongPress,
+  onDone,
+  onDelete,
+}: ParallelGroupCardProps) {
+  const translateX = useSharedValue(0);
+  const { dark, colors } = useTheme();
+
+  const flingRight = Gesture.Pan()
+    .onUpdate((e) => {
+      translateX.value = Math.max(0, e.translationX);
+    })
+    .onEnd((e) => {
+      if (e.translationX > 80 && onDone) {
+        runOnJS(haptic.light)();
+        runOnJS(onDone)();
+      }
+      translateX.value = withSpring(0);
+    });
+
+  const flingLeft = Gesture.Pan()
+    .onUpdate((e) => {
+      translateX.value = Math.min(0, e.translationX);
+    })
+    .onEnd((e) => {
+      if (e.translationX < -80 && onDelete) {
+        runOnJS(haptic.medium)();
+        runOnJS(onDelete)();
+      }
+      translateX.value = withSpring(0);
+    });
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
+  const doneBgStyle = useAnimatedStyle(() => ({
+    opacity: Math.min(1, Math.max(0, translateX.value / 80)),
+  }));
+  const deleteBgStyle = useAnimatedStyle(() => ({
+    opacity: Math.min(1, Math.max(0, -translateX.value / 80)),
+  }));
+
+  const hostBgColor = abandonabilityColorFor(host.abandonability, dark);
+  const hostDone = host.status === 'completed' || host.status === 'skipped';
+
+  const handleHostPress = () => {
+    haptic.light();
+    onHostPress();
+  };
+  const handleLongPress = () => {
+    haptic.medium();
+    onLongPress();
+  };
+
+  return (
+    <View style={groupStyles.container}>
+      {/* Slide action preview backgrounds */}
+      <Reanimated.View
+        style={[
+          styles.doneBg,
+          { backgroundColor: isDone ? COLORS.red : COLORS.green },
+          doneBgStyle,
+        ]}
+        pointerEvents="none"
+      >
+        <Ionicons
+          name={isDone ? 'refresh' : 'checkmark'}
+          size={28}
+          color={COLORS.white}
+        />
+      </Reanimated.View>
+      <Reanimated.View
+        style={[
+          styles.deleteBg,
+          { backgroundColor: COLORS.red },
+          deleteBgStyle,
+        ]}
+        pointerEvents="none"
+      >
+        <Ionicons name="trash" size={28} color={COLORS.white} />
+      </Reanimated.View>
+
+      <GestureDetector gesture={Gesture.Race(flingRight, flingLeft)}>
+        <Reanimated.View
+          style={[
+            groupStyles.groupContainer,
+            selected && styles.cardSelected,
+            animatedStyle,
+          ]}
+        >
+          {/* Left: host (25%) */}
+          <Pressable
+            style={({ pressed }) => [
+              groupStyles.hostCard,
+              { backgroundColor: hostBgColor },
+              pressed && styles.pressed,
+            ]}
+            onPress={handleHostPress}
+            onLongPress={handleLongPress}
+          >
+            <Text style={[groupStyles.hostTime, { color: colors.grayDark }]}>
+              {formatTime(hostScheduleStart)}
+            </Text>
+            <Text style={[groupStyles.hostTime, { color: colors.grayDark }]}>
+              {formatTime(hostScheduleEnd)}
+            </Text>
+            <Text
+              style={[
+                groupStyles.hostTitle,
+                { color: colors.black },
+                hostDone && {
+                  textDecorationLine: 'line-through',
+                  color: colors.done,
+                },
+              ]}
+              numberOfLines={4}
+            >
+              {host.title}
+            </Text>
+          </Pressable>
+
+          {/* Right: guests stacked (75%) */}
+          <View style={groupStyles.guestsColumn}>
+            {guests.map((guest, idx) => {
+              const guestDone =
+                guest.status === 'completed' || guest.status === 'skipped';
+              const guestBg = abandonabilityColorFor(
+                guest.abandonability,
+                dark,
+              );
+              const guestDeps = parseDepends(guest.depends);
+              return (
+                <Pressable
+                  key={guest.id}
+                  style={({ pressed }) => [
+                    groupStyles.guestCard,
+                    { backgroundColor: guestBg },
+                    pressed && styles.pressed,
+                  ]}
+                  onPress={() => {
+                    haptic.light();
+                    onGuestPress(idx);
+                  }}
+                >
+                  <View style={groupStyles.guestTimes}>
+                    <Text
+                      style={[
+                        groupStyles.guestTime,
+                        { color: colors.grayDark },
+                      ]}
+                    >
+                      {formatTime(guestScheduleStarts[idx])}
+                    </Text>
+                  </View>
+                  <View style={groupStyles.guestTitleContainer}>
+                    <Text
+                      style={[groupStyles.guestTaskId, { color: colors.gray }]}
+                    >
+                      #{guest.display_id}
+                    </Text>
+                    <Text
+                      style={[
+                        groupStyles.guestTitle,
+                        { color: colors.black },
+                        guestDone && {
+                          textDecorationLine: 'line-through',
+                          color: colors.done,
+                        },
+                      ]}
+                      numberOfLines={2}
+                    >
+                      {guest.title}
+                    </Text>
+                    {guestDeps.length > 0 && (
+                      <Text
+                        style={[groupStyles.guestDeps, { color: colors.gray }]}
+                      >
+                        ↳ {guestDeps.length}
+                      </Text>
+                    )}
+                  </View>
+                  <View style={groupStyles.guestCost}>
+                    <Text
+                      style={[
+                        groupStyles.guestCostText,
+                        { color: colors.gray },
+                      ]}
+                    >
+                      {guest.avg_minutes}m
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+        </Reanimated.View>
+      </GestureDetector>
+    </View>
+  );
+}
+
+const groupStyles = StyleSheet.create({
+  container: {
+    marginHorizontal: 12,
+    marginVertical: 4,
+    position: 'relative',
+  },
+  groupContainer: {
+    flexDirection: 'row',
+    borderRadius: 12,
+    overflow: 'hidden',
+    minHeight: 72,
+  },
+  hostCard: {
+    width: '25%',
+    padding: 6,
+    justifyContent: 'center',
+    gap: 2,
+  },
+  hostTime: {
+    fontSize: 10,
+    fontVariant: ['tabular-nums'],
+  },
+  hostTitle: {
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  guestsColumn: {
+    flex: 1,
+    flexDirection: 'column',
+  },
+  guestCard: {
+    flexDirection: 'row',
+    padding: 8,
+    alignItems: 'center',
+    gap: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(0,0,0,0.08)',
+    minHeight: 48,
+  },
+  guestTimes: {
+    width: 36,
+    alignItems: 'center',
+  },
+  guestTime: {
+    fontSize: 10,
+    fontVariant: ['tabular-nums'],
+  },
+  guestTitleContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  guestTaskId: {
+    fontSize: 9,
+    fontVariant: ['tabular-nums'],
+  },
+  guestTitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    flex: 1,
+  },
+  guestDeps: {
+    fontSize: 9,
+  },
+  guestCost: {
+    alignSelf: 'flex-end',
+  },
+  guestCostText: {
+    fontSize: 10,
+    fontVariant: ['tabular-nums'],
+  },
+});
+
+export const ParallelGroupCard = memo(ParallelGroupCardImpl);
