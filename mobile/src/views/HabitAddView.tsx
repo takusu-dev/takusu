@@ -39,7 +39,7 @@ export function HabitAddView() {
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('10:00');
   const [avgMinutes, setAvgMinutes] = useState('60');
-  const [sigmaMinutes, setSigmaMinutes] = useState('0');
+  const [sigmaMinutes, setSigmaMinutes] = useState('');
   const [abandonability, setAbandonability] = useState(0.5);
   const [saving, setSaving] = useState(false);
 
@@ -233,14 +233,12 @@ export function HabitAddView() {
               value={sigmaMinutes}
               onChangeText={setSigmaMinutes}
               keyboardType="numeric"
-              placeholder="auto"
               placeholderTextColor={colors.grayLight}
             />
             {(!sigmaMinutes || sigmaMinutes === '0') && (
               <Text style={[styles.hint, { color: colors.grayLight }]}>
-                auto:{' '}
-                {Math.max(1, Math.round((parseInt(avgMinutes, 10) || 60) / 5))}m
-                (avg/5)
+                {Math.max(1, Math.round((parseInt(avgMinutes, 10) || 60) / 5))}
+                m (avg/5)
               </Text>
             )}
           </View>

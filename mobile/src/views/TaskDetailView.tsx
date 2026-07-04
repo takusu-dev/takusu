@@ -106,7 +106,7 @@ export function TaskDetailView() {
     setDescription(t.description ?? '');
     setAbandonability(t.abandonability);
     setAvgMinutes(String(t.avg_minutes));
-    setSigmaMinutes(String(t.sigma_minutes));
+    setSigmaMinutes(t.sigma_minutes > 0 ? String(t.sigma_minutes) : '');
     setStartAt(t.start_at ? new Date(t.start_at) : null);
     setEndAt(new Date(t.end_at));
     setParallelizable(t.parallelizable);
@@ -195,9 +195,13 @@ export function TaskDetailView() {
       const v = parseInt(avgMinutes, 10);
       if (!isNaN(v) && v > 0) updates.avg_minutes = v;
     }
-    if (sigmaMinutes !== String(task.sigma_minutes)) {
+    if (
+      sigmaMinutes !==
+      (task.sigma_minutes > 0 ? String(task.sigma_minutes) : '')
+    ) {
       const v = parseInt(sigmaMinutes, 10);
       if (!isNaN(v) && v >= 0) updates.sigma_minutes = v;
+      else if (sigmaMinutes === '') updates.sigma_minutes = 0;
     }
     const prevStart = task.start_at ? new Date(task.start_at) : null;
     if (startAt?.getTime() !== prevStart?.getTime()) {
@@ -631,21 +635,38 @@ export function TaskDetailView() {
                 style={styles.costInput}
                 dense
               />
-              <PaperTextInput
-                mode="outlined"
-                label="sigma (分)"
-                value={sigmaMinutes}
-                onChangeText={setSigmaMinutes}
-                keyboardType="numeric"
-                outlineColor={colors.separator}
-                activeOutlineColor={BRAND_COLOR}
-                style={styles.costInput}
-                dense
-              />
+              <View style={styles.costInput}>
+                <PaperTextInput
+                  mode="outlined"
+                  label="sigma (分)"
+                  value={sigmaMinutes}
+                  onChangeText={setSigmaMinutes}
+                  keyboardType="numeric"
+                  outlineColor={colors.separator}
+                  activeOutlineColor={BRAND_COLOR}
+                  dense
+                />
+                {(!sigmaMinutes || sigmaMinutes === '0') && (
+                  <Text style={[styles.costHint, { color: colors.grayLight }]}>
+                    {Math.max(
+                      1,
+                      Math.round((parseInt(avgMinutes, 10) || 60) / 5),
+                    )}
+                    m (avg/5)
+                  </Text>
+                )}
+              </View>
             </View>
           ) : (
             <Text style={[styles.sectionValue, { color: colors.black }]}>
-              avg: {task.avg_minutes}m, sigma: {task.sigma_minutes}m
+              avg: {task.avg_minutes}m, sigma:{' '}
+              {task.sigma_minutes > 0 ? (
+                `${task.sigma_minutes}m`
+              ) : (
+                <Text style={{ color: colors.grayLight }}>
+                  {Math.max(1, Math.round(task.avg_minutes / 5))}m (avg/5)
+                </Text>
+              )}
             </Text>
           )}
         </View>
@@ -1077,6 +1098,11 @@ const styles = StyleSheet.create({
   },
   costInput: {
     flex: 1,
+  },
+  costHint: {
+    fontSize: 11,
+    marginTop: 2,
+    marginLeft: 4,
   },
   toggleRow: {
     flexDirection: 'row',
