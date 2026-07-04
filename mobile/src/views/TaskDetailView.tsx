@@ -34,6 +34,7 @@ import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { haptic } from '@/src/components/haptics';
+import { formatDate } from '@/src/formatDate';
 import {
   postInProgressNotification,
   dismissInProgressNotification,
@@ -177,13 +178,6 @@ export function TaskDetailView() {
 
   function toISO(d: Date): string {
     return d.toISOString();
-  }
-
-  function formatDate(d: Date | null): string {
-    if (!d) return '未設定';
-    const dateStr = `${d.getFullYear()}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}`;
-    const timeStr = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-    return `${dateStr} ${timeStr}`;
   }
 
   async function save() {
