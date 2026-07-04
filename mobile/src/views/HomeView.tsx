@@ -25,7 +25,7 @@ import { undoRedo } from '@/src/api/undoRedo';
 import { showError, logError } from '@/src/api/errors';
 import type { TaskRow, ScheduleEntry } from '@/src/api/types';
 import { parseDepends, parseSchedule } from '@/src/api/types';
-import { TaskCard } from '@/src/components/TaskCard';
+import { TaskCard, ParallelGroupCard } from '@/src/components/TaskCard';
 import { NavigationButtons } from '@/src/components/NavigationButtons';
 import { ViewChanger, type ViewType } from '@/src/components/ViewChanger';
 import { ContextMenu } from '@/src/components/ContextMenu';
@@ -53,10 +53,17 @@ interface TaskItem {
   scheduleEnd?: string;
   isDone: boolean;
   dateKey: string;
-  // Parallel receiver task (allows_parallel=true) overlapping in schedule
-  parallelTask?: TaskRow;
-  parallelScheduleStart?: string;
-  parallelScheduleEnd?: string;
+}
+
+interface ParallelGroupItem {
+  type: 'parallelGroup';
+  host: TaskRow;
+  guests: TaskRow[];
+  hostScheduleStart?: string;
+  hostScheduleEnd?: string;
+  guestScheduleStarts: (string | undefined)[];
+  isDone: boolean; // true if all tasks in the group are done
+  dateKey: string;
 }
 
 interface DateSeparator {
@@ -64,7 +71,7 @@ interface DateSeparator {
   label: string;
 }
 
-type ListItem = TaskItem | DateSeparator;
+type ListItem = TaskItem | ParallelGroupItem | DateSeparator;
 
 function dateKey(iso: string): string {
   return iso.slice(0, 10);
@@ -211,44 +218,58 @@ export function HomeView() {
     return m;
   }, [schedule]);
 
-  // Find parallel receiver task (allows_parallel=true) that overlaps in schedule time
-  // for a given parallelizable=true task
-  const findParallelTask = useCallback(
-    (
-      task: TaskRow,
-    ): {
-      parallelTask: TaskRow;
-      parallelScheduleStart?: string;
-      parallelScheduleEnd?: string;
-    } | null => {
-      if (!task.parallelizable) return null;
-      const taskEntry = scheduleMap.get(task.id);
-      if (!taskEntry) return null;
-      const taskStart = new Date(taskEntry.start_at).getTime();
-      const taskEnd = new Date(taskEntry.end_at).getTime();
-
-      for (const other of tasks) {
-        if (other.id === task.id) continue;
-        if (!other.allows_parallel) continue;
-        if (other.status === 'completed' || other.status === 'skipped')
-          continue;
-        const otherEntry = scheduleMap.get(other.id);
-        if (!otherEntry) continue;
-        const otherStart = new Date(otherEntry.start_at).getTime();
-        const otherEnd = new Date(otherEntry.end_at).getTime();
-        // Check for time overlap
-        if (otherStart < taskEnd && otherEnd > taskStart) {
-          return {
-            parallelTask: other,
-            parallelScheduleStart: otherEntry.start_at,
-            parallelScheduleEnd: otherEntry.end_at,
-          };
+  // Build parallel groups: host (allows_parallel=true) → overlapping guests
+  // (parallelizable=true). Each guest is assigned to at most one host (the
+  // first one found) to avoid duplicate rendering across groups.
+  // Only hosts whose schedule end is in the future (upcoming) form groups —
+  // a past host would render in the past section (no grouping), so its
+  // guests must not be claimed or they'd vanish from the upcoming list.
+  const { parallelGroups, groupedGuestIds } = useMemo(() => {
+    const groups = new Map<string, TaskRow[]>();
+    const guestIds = new Set<string>();
+    const now = Date.now();
+    const hosts = tasks.filter(
+      (t) =>
+        t.allows_parallel &&
+        t.status !== 'pending' &&
+        t.status !== 'completed' &&
+        t.status !== 'skipped' &&
+        new Date(scheduleMap.get(t.id)?.end_at ?? t.end_at).getTime() >= now,
+    );
+    const guests = tasks.filter(
+      (t) =>
+        t.parallelizable &&
+        t.status !== 'pending' &&
+        t.status !== 'completed' &&
+        t.status !== 'skipped',
+    );
+    for (const host of hosts) {
+      // Skip hosts that have already been claimed as a guest by another
+      // host — otherwise their own guests would be orphaned (claimed but
+      // never rendered, since this host is skipped in the upcoming loop).
+      if (guestIds.has(host.id)) continue;
+      const hostEntry = scheduleMap.get(host.id);
+      if (!hostEntry) continue;
+      const hostStart = new Date(hostEntry.start_at).getTime();
+      const hostEnd = new Date(hostEntry.end_at).getTime();
+      const overlapping: TaskRow[] = [];
+      for (const guest of guests) {
+        if (guest.id === host.id) continue;
+        // Skip guests already claimed by another host.
+        if (guestIds.has(guest.id)) continue;
+        const guestEntry = scheduleMap.get(guest.id);
+        if (!guestEntry) continue;
+        const gStart = new Date(guestEntry.start_at).getTime();
+        const gEnd = new Date(guestEntry.end_at).getTime();
+        if (gStart < hostEnd && gEnd > hostStart) {
+          overlapping.push(guest);
+          guestIds.add(guest.id);
         }
       }
-      return null;
-    },
-    [tasks, scheduleMap],
-  );
+      if (overlapping.length > 0) groups.set(host.id, overlapping);
+    }
+    return { parallelGroups: groups, groupedGuestIds: guestIds };
+  }, [tasks, scheduleMap]);
 
   const items: ListItem[] = useMemo(() => {
     const filtered = searchQuery
@@ -289,6 +310,9 @@ export function HomeView() {
       result.push({ type: 'separator', label: '過去' });
       let lastDate = '';
       for (const t of past) {
+        // Skip guests claimed by an upcoming parallel group — they're
+        // rendered inside the group card, not as individual past items.
+        if (groupedGuestIds.has(t.id)) continue;
         const entry = scheduleMap.get(t.id);
         const key = dateKey(entry?.start_at ?? t.end_at);
         if (key !== lastDate) {
@@ -319,29 +343,61 @@ export function HomeView() {
     }
 
     let lastDate = '';
+    // When searching, render all matching tasks individually — parallel
+    // grouping is based on the full task list, so a search-filtered guest
+    // could be invisible if its host doesn't match the query.
+    const skipGrouping = searchQuery.length > 0;
     for (const t of upcoming) {
+      // Skip guests that are part of a parallel group — they're rendered
+      // inside the group item alongside their host.
+      if (!skipGrouping && groupedGuestIds.has(t.id)) continue;
       const entry = scheduleMap.get(t.id);
       const key = dateKey(entry?.start_at ?? t.end_at);
       if (key !== lastDate) {
         result.push({ type: 'separator', label: dateLabel(key) });
         lastDate = key;
       }
-      const parallel = findParallelTask(t);
-      result.push({
-        type: 'task',
-        task: t,
-        scheduleStart: entry?.start_at,
-        scheduleEnd: entry?.end_at,
-        isDone: t.status === 'completed' || t.status === 'skipped',
-        dateKey: key,
-        parallelTask: parallel?.parallelTask,
-        parallelScheduleStart: parallel?.parallelScheduleStart,
-        parallelScheduleEnd: parallel?.parallelScheduleEnd,
-      });
+      // If this task is a host with overlapping guests, render a group
+      // (but not when searching — see skipGrouping above).
+      const groupGuests = !skipGrouping ? parallelGroups.get(t.id) : undefined;
+      if (groupGuests && groupGuests.length > 0) {
+        const allTasks = [t, ...groupGuests];
+        const allDone = allTasks.every(
+          (gt) => gt.status === 'completed' || gt.status === 'skipped',
+        );
+        result.push({
+          type: 'parallelGroup',
+          host: t,
+          guests: groupGuests,
+          hostScheduleStart: entry?.start_at,
+          hostScheduleEnd: entry?.end_at,
+          guestScheduleStarts: groupGuests.map(
+            (g) => scheduleMap.get(g.id)?.start_at,
+          ),
+          isDone: allDone,
+          dateKey: key,
+        });
+      } else {
+        result.push({
+          type: 'task',
+          task: t,
+          scheduleStart: entry?.start_at,
+          scheduleEnd: entry?.end_at,
+          isDone: t.status === 'completed' || t.status === 'skipped',
+          dateKey: key,
+        });
+      }
     }
 
     return result;
-  }, [tasks, scheduleMap, searchQuery, findParallelTask, showPast]);
+  }, [
+    tasks,
+    scheduleMap,
+    searchQuery,
+    groupedGuestIds,
+    parallelGroups,
+    showPast,
+  ]);
 
   // Count of past tasks (for badge in header, always computed)
   const pastCount = useMemo(() => {
@@ -376,7 +432,7 @@ export function HomeView() {
         // Instead, find the first task after this separator to get its dateKey.
         for (let j = i + 1; j < items.length; j++) {
           const next = items[j];
-          if (next.type === 'task') {
+          if (next.type === 'task' || next.type === 'parallelGroup') {
             m.set(next.dateKey, i);
             break;
           }
@@ -446,6 +502,157 @@ export function HomeView() {
       },
       redo: async () => {
         await client.updateTask(task.id, { status: newStatus });
+        await refresh();
+      },
+    });
+    await refresh();
+  }
+
+  // Mark all tasks in a parallel group as done (or undone if all done).
+  // Used by the group card's slide-right gesture (#194).
+  async function markGroupDone(host: TaskRow, guests: TaskRow[]) {
+    if (!client) return;
+    const allTasks = [host, ...guests];
+    const allDone = allTasks.every(
+      (t) => t.status === 'completed' || t.status === 'skipped',
+    );
+    const newStatus = allDone ? 'scheduled' : 'completed';
+    const prevStatuses = new Map(allTasks.map((t) => [t.id, t.status]));
+    // Only modify tasks that are not already in the target state.
+    const toChange = allTasks.filter((t) => {
+      const isDone = t.status === 'completed' || t.status === 'skipped';
+      if (allDone && !isDone) return false; // don't touch non-done when undoing
+      if (!allDone && isDone) return false; // don't touch done ones when completing
+      return true;
+    });
+    const changed: TaskRow[] = [];
+    for (const t of toChange) {
+      try {
+        await client.updateTask(t.id, { status: newStatus });
+        changed.push(t);
+      } catch (e) {
+        showError(e, 'タスクの完了に失敗');
+        // Push a partial undo for tasks that were already changed.
+        if (changed.length > 0) {
+          undoRedo.push({
+            description: `${allDone ? 'undone' : 'mark done'} group (partial): ${host.title}`,
+            undo: async () => {
+              for (const t of changed) {
+                const prev = prevStatuses.get(t.id)!;
+                await client.updateTask(t.id, { status: prev });
+              }
+              await refresh();
+            },
+            redo: async () => {
+              for (const t of changed) {
+                await client.updateTask(t.id, { status: newStatus });
+              }
+              await refresh();
+            },
+          });
+        }
+        await refresh();
+        return;
+      }
+      if (t.status === 'in_progress') {
+        dismissInProgressNotification(t.id).catch((e) =>
+          logError('通知の消去', e),
+        );
+      }
+    }
+    undoRedo.push({
+      description: `${allDone ? 'undone' : 'mark done'} group: ${host.title}`,
+      undo: async () => {
+        for (const t of toChange) {
+          const prev = prevStatuses.get(t.id)!;
+          await client.updateTask(t.id, { status: prev });
+        }
+        await refresh();
+      },
+      redo: async () => {
+        for (const t of toChange) {
+          await client.updateTask(t.id, { status: newStatus });
+        }
+        await refresh();
+      },
+    });
+    await refresh();
+  }
+
+  // Delete all tasks in a parallel group (#194).
+  // Tracks partial success so an undo entry is pushed even if some deletes
+  // fail, and remaps inter-group dependencies on undo (two-pass).
+  async function deleteGroup(host: TaskRow, guests: TaskRow[]) {
+    if (!client) return;
+    const allTasks = [host, ...guests];
+    const deleted: TaskRow[] = [];
+    for (const t of allTasks) {
+      try {
+        await client.deleteTask(t.id);
+        deleted.push(t);
+      } catch (e) {
+        showError(e, 'タスクの削除に失敗');
+        break;
+      }
+    }
+    if (deleted.length === 0) return;
+    // Track the ids assigned by the server when undo recreates the tasks,
+    // so redo deletes the recreated (not the stale original) ids.
+    const currentIds: string[] = [...deleted.map((t) => t.id)];
+    // Track which tasks have been recreated so a retry after partial
+    // failure doesn't create duplicates (mirrors deleteSelected pattern).
+    const createdIdx = new Set<number>();
+    undoRedo.push({
+      description: `delete group: ${host.title}`,
+      undo: async () => {
+        const oldToNew = new Map<string, string>();
+        // First pass: create tasks with no deps, build ID mapping.
+        for (let i = 0; i < deleted.length; i++) {
+          if (createdIdx.has(i)) {
+            // Already recreated on a previous (partial) attempt —
+            // record the mapping so the dep-remap pass can find it.
+            oldToNew.set(deleted[i].id, currentIds[i]);
+            continue;
+          }
+          const t = deleted[i];
+          const recreated = await client.createTask({
+            title: t.title,
+            description: t.description,
+            start_at: t.start_at,
+            end_at: t.end_at,
+            avg_minutes: t.avg_minutes,
+            sigma_minutes: t.sigma_minutes,
+            depends: [],
+            parallelizable: t.parallelizable,
+            allows_parallel: t.allows_parallel,
+            abandonability: t.abandonability,
+            ical_uid: t.ical_uid,
+            habit_id: t.habit_id,
+          });
+          if (t.status !== 'pending') {
+            await client.updateTask(recreated.id, { status: t.status });
+          }
+          currentIds[i] = recreated.id;
+          oldToNew.set(t.id, recreated.id);
+          createdIdx.add(i);
+        }
+        // Second pass: remap inter-group dependencies to new IDs.
+        for (let i = 0; i < deleted.length; i++) {
+          const t = deleted[i];
+          const origDeps = parseDepends(t.depends);
+          if (origDeps.length === 0) continue;
+          const newId = oldToNew.get(t.id);
+          if (!newId) continue;
+          const remapped = origDeps.map((d) => oldToNew.get(d) ?? d);
+          await client.updateTask(newId, { depends: remapped });
+        }
+        await refresh();
+      },
+      redo: async () => {
+        createdIdx.clear();
+        for (const id of currentIds) {
+          await client.deleteTask(id);
+        }
         await refresh();
       },
     });
@@ -690,6 +897,52 @@ export function HomeView() {
         </View>
       );
     }
+    if (item.type === 'parallelGroup') {
+      const allIds = [item.host.id, ...item.guests.map((g) => g.id)];
+      const isSelected = allIds.some((id) => selected.has(id));
+      // Toggle all group IDs atomically: derive add-vs-remove from the
+      // latest state inside the updater to avoid stale closure bugs.
+      function toggleGroupSelection() {
+        setSelected((prev) => {
+          const next = new Set(prev);
+          const allSel = allIds.every((id) => prev.has(id));
+          if (allSel) {
+            for (const id of allIds) next.delete(id);
+          } else {
+            for (const id of allIds) next.add(id);
+          }
+          return next;
+        });
+      }
+      return (
+        <ParallelGroupCard
+          host={item.host}
+          guests={item.guests}
+          hostScheduleStart={item.hostScheduleStart}
+          hostScheduleEnd={item.hostScheduleEnd}
+          guestScheduleStarts={item.guestScheduleStarts}
+          isDone={item.isDone}
+          selected={isSelected}
+          onHostPress={() => {
+            if (selected.size > 0) {
+              toggleGroupSelection();
+            } else {
+              router.push(`/task/${item.host.id}`);
+            }
+          }}
+          onGuestPress={(idx) => {
+            if (selected.size > 0) {
+              toggleGroupSelection();
+            } else {
+              router.push(`/task/${item.guests[idx].id}`);
+            }
+          }}
+          onLongPress={toggleGroupSelection}
+          onDone={() => markGroupDone(item.host, item.guests)}
+          onDelete={() => deleteGroup(item.host, item.guests)}
+        />
+      );
+    }
     const isSelected = selected.has(item.task.id);
     return (
       <TaskCard
@@ -698,9 +951,6 @@ export function HomeView() {
         scheduleEnd={item.scheduleEnd}
         isDone={item.isDone}
         selected={isSelected}
-        parallelTask={item.parallelTask}
-        parallelScheduleStart={item.parallelScheduleStart}
-        parallelScheduleEnd={item.parallelScheduleEnd}
         onPress={() => {
           if (selected.size > 0) {
             toggleSelection(item.task.id);
@@ -711,15 +961,6 @@ export function HomeView() {
         onLongPress={() => toggleSelection(item.task.id)}
         onDone={() => markDone(item.task)}
         onDelete={() => deleteTask(item.task)}
-        onParallelPress={() => {
-          if (item.parallelTask) router.push(`/task/${item.parallelTask.id}`);
-        }}
-        onParallelDone={() => {
-          if (item.parallelTask && client) markDone(item.parallelTask);
-        }}
-        onParallelDelete={() => {
-          if (item.parallelTask && client) deleteTask(item.parallelTask);
-        }}
       />
     );
   }
@@ -766,9 +1007,13 @@ export function HomeView() {
           onSelectAll={() =>
             setSelected(
               new Set(
-                items
-                  .filter((it): it is TaskItem => it.type === 'task')
-                  .map((it) => it.task.id),
+                items.flatMap((it) =>
+                  it.type === 'task'
+                    ? [it.task.id]
+                    : it.type === 'parallelGroup'
+                      ? [it.host.id, ...it.guests.map((g) => g.id)]
+                      : [],
+                ),
               ),
             )
           }
@@ -844,7 +1089,11 @@ export function HomeView() {
         ref={listRef}
         data={items}
         keyExtractor={(item, i) =>
-          item.type === 'separator' ? `sep-${i}` : `task-${item.task.id}`
+          item.type === 'separator'
+            ? `sep-${i}`
+            : item.type === 'parallelGroup'
+              ? `group-${item.host.id}`
+              : `task-${item.task.id}`
         }
         renderItem={({ item }) => renderItem(item)}
         ListHeaderComponent={
