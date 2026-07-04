@@ -54,8 +54,8 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return rows;
 }
 
-// 1..31 positive days only; -1 (月末) is handled separately
-const MONTH_DAYS = Array.from({ length: 31 }, (_, i) => i + 1);
+// 1..31 positive days plus -1 (月末) as the last entry; rendered in the grid
+const MONTH_DAYS = [...Array.from({ length: 31 }, (_, i) => i + 1), -1];
 const MONTH_DAY_ROWS = chunk(MONTH_DAYS, 7);
 
 // Months laid out 6 per row (12 months → 2 rows)
@@ -340,8 +340,15 @@ export function RruleBuilderModal({
   return (
     <>
       <Modal visible={visible} transparent animationType="slide">
-        <Pressable style={styles.overlay} onPress={onCancel}>
+        <View style={styles.overlay}>
           <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => {
+              haptic.light();
+              onCancel();
+            }}
+          />
+          <View
             style={[
               styles.sheet,
               {
@@ -349,7 +356,6 @@ export function RruleBuilderModal({
                 paddingBottom: 32 + insets.bottom,
               },
             ]}
-            onPress={(e) => e.stopPropagation()}
           >
             {/* Header */}
             <View style={styles.header}>
@@ -823,44 +829,15 @@ export function RruleBuilderModal({
                       >
                         実行日
                       </Text>
-                      {/* "月末" chip */}
-                      <View style={[styles.dayRow, { marginBottom: 8 }]}>
-                        <Pressable
-                          style={[
-                            styles.lastDayChip,
-                            {
-                              borderColor: rule.by_month_day.includes(-1)
-                                ? BRAND_COLOR
-                                : colors.separator,
-                            },
-                            rule.by_month_day.includes(-1) && {
-                              backgroundColor: BRAND_COLOR,
-                            },
-                          ]}
-                          onPress={toggleLastDay}
-                        >
-                          <Text
-                            style={[
-                              styles.chipText,
-                              {
-                                color: rule.by_month_day.includes(-1)
-                                  ? COLORS.white
-                                  : colors.black,
-                              },
-                            ]}
-                          >
-                            月末
-                          </Text>
-                        </Pressable>
-                      </View>
-                      {/* 1..31 grid */}
+                      {/* 1..31 grid with 月末 (-1) as the last chip */}
                       {MONTH_DAY_ROWS.map((row, ri) => (
                         <View key={ri} style={styles.dayRow}>
                           {row.map((d) => {
+                            const isLastDay = d === -1;
                             const on = rule.by_month_day.includes(d);
                             return (
                               <Pressable
-                                key={d}
+                                key={isLastDay ? 'last' : d}
                                 style={[
                                   styles.dayChip,
                                   {
@@ -870,7 +847,11 @@ export function RruleBuilderModal({
                                   },
                                   on && { backgroundColor: BRAND_COLOR },
                                 ]}
-                                onPress={() => toggleMonthDay(d)}
+                                onPress={() =>
+                                  isLastDay
+                                    ? toggleLastDay()
+                                    : toggleMonthDay(d)
+                                }
                               >
                                 <Text
                                   style={[
@@ -878,7 +859,7 @@ export function RruleBuilderModal({
                                     { color: on ? COLORS.white : colors.black },
                                   ]}
                                 >
-                                  {d}
+                                  {isLastDay ? '月末' : d}
                                 </Text>
                               </Pressable>
                             );
@@ -1027,8 +1008,8 @@ export function RruleBuilderModal({
                 <Text style={styles.confirmText}>設定</Text>
               </Pressable>
             </View>
-          </Pressable>
-        </Pressable>
+          </View>
+        </View>
       </Modal>
 
       {/* Exdate date picker — rendered outside the main Modal to avoid nesting issues */}
@@ -1261,13 +1242,6 @@ const styles = StyleSheet.create({
   },
   dayChipPlaceholder: {
     flex: 1,
-  },
-  lastDayChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    alignItems: 'center',
   },
   // Exdates
   exdateHeader: {

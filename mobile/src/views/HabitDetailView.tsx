@@ -5,7 +5,6 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  Button,
   IconButton,
   Menu,
   Switch,
@@ -16,7 +15,7 @@ import { useServer } from '@/src/api/ServerProvider';
 import { undoRedo } from '@/src/api/undoRedo';
 import { showError, logError } from '@/src/api/errors';
 import type { HabitRow, TaskRow } from '@/src/api/types';
-import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
+import { BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RruleBuilderModal } from '@/src/components/RruleBuilderModal';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
@@ -261,17 +260,6 @@ export function HabitDetailView() {
             router.back();
           }}
         />
-        <View style={styles.centerButtonContainer} pointerEvents="box-none">
-          <Button
-            mode={editing ? 'contained' : 'outlined'}
-            onPress={() => (editing ? save() : setEditing(true))}
-            textColor={editing ? COLORS.white : BRAND_COLOR}
-            buttonColor={editing ? BRAND_COLOR : undefined}
-            compact
-          >
-            {saving ? '保存中…' : editing ? '保存' : '編集'}
-          </Button>
-        </View>
         <View style={{ flex: 1 }} />
         <Menu
           visible={menuVisible}
@@ -285,18 +273,50 @@ export function HabitDetailView() {
             />
           }
         >
-          <Menu.Item
-            onPress={toggleActive}
-            title={habit.active ? '無効化' : '有効化'}
-            leadingIcon={
-              habit.active ? 'pause-circle-outline' : 'play-circle-outline'
-            }
-          />
-          <Menu.Item
-            onPress={deleteHabit}
-            title="削除"
-            leadingIcon="trash-can-outline"
-          />
+          {editing ? (
+            <>
+              <Menu.Item
+                onPress={() => {
+                  setMenuVisible(false);
+                  save();
+                }}
+                title="保存"
+                leadingIcon="content-save-outline"
+              />
+              <Menu.Item
+                onPress={() => {
+                  setMenuVisible(false);
+                  setEditing(false);
+                  refresh();
+                }}
+                title="キャンセル"
+                leadingIcon="close"
+              />
+            </>
+          ) : (
+            <>
+              <Menu.Item
+                onPress={() => {
+                  setMenuVisible(false);
+                  setEditing(true);
+                }}
+                title="編集"
+                leadingIcon="pencil-outline"
+              />
+              <Menu.Item
+                onPress={toggleActive}
+                title={habit.active ? '無効化' : '有効化'}
+                leadingIcon={
+                  habit.active ? 'pause-circle-outline' : 'play-circle-outline'
+                }
+              />
+              <Menu.Item
+                onPress={deleteHabit}
+                title="削除"
+                leadingIcon="trash-can-outline"
+              />
+            </>
+          )}
         </Menu>
       </View>
 
@@ -509,6 +529,7 @@ export function HabitDetailView() {
                 maximumValue={1}
                 step={0.25}
                 minimumTrackTintColor={BRAND_COLOR}
+                style={styles.slider}
               />
               <Text style={[styles.sliderValue, { color: BRAND_COLOR }]}>
                 {abandonability.toFixed(2)}
@@ -644,12 +665,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     paddingBottom: 4,
   },
-  centerButtonContainer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-  },
   content: {
     padding: 16,
     gap: 16,
@@ -728,6 +743,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  slider: {
+    flex: 1,
   },
   sliderValue: {
     fontSize: 14,
