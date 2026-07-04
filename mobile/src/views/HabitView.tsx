@@ -149,7 +149,6 @@ export function HabitView({ client }: HabitViewProps) {
           onClearSelection={() => setSelected(new Set())}
           onDeleteSelected={deleteSelected}
         />
-        <View style={{ width: 40 }} />
         <View style={styles.topBarCenter}>
           <Text style={[styles.title, { color: colors.black }]}>Habit</Text>
         </View>
