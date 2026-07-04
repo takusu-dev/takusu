@@ -504,17 +504,26 @@ export function TaskDetailView() {
               </Pressable>
             }
           >
-            {(Object.keys(STATUS_LABELS) as TaskStatus[]).map((s) => (
-              <Menu.Item
-                key={s}
-                onPress={() => {
-                  haptic.medium();
-                  changeStatus(s);
-                }}
-                title={STATUS_LABELS[s]}
-                leadingIcon={STATUS_ICONS[s] as string}
-              />
-            ))}
+            {(Object.keys(STATUS_LABELS) as TaskStatus[])
+              .filter((s) => {
+                // pending (未スケジュール) のタスクは done/skip のみ変更可能。
+                // scheduled/in_progress への手動変更はスケジューラの役割。
+                if (task.status === 'pending') {
+                  return s === 'completed' || s === 'skipped';
+                }
+                return true;
+              })
+              .map((s) => (
+                <Menu.Item
+                  key={s}
+                  onPress={() => {
+                    haptic.medium();
+                    changeStatus(s);
+                  }}
+                  title={STATUS_LABELS[s]}
+                  leadingIcon={STATUS_ICONS[s] as string}
+                />
+              ))}
           </Menu>
         </View>
 
