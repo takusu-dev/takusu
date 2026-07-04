@@ -208,6 +208,18 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
   const webViewRef = useRef<WebView>(null);
   const [editMode, setEditMode] = useState(false);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
+  // webReady is tracked as a ref so that refresh()'s identity is stable and
+  // the refresh effect doesn't re-fire when the WebView finishes loading.
+  // The onLoad handler below performs the initial injection instead.
+  const webReadyRef = useRef(false);
+  // Latest elements to (re)inject once the WebView is ready. Captured as a
+  // ref so refresh() can be called before the WebView finishes loading the
+  // HTML (which defines window.initGraph). Without this, the initial
+  // injectJavaScript call silently fails because window.initGraph is undefined.
+  const pendingElementsRef = useRef<{
+    nodes: GraphNode[];
+    edges: GraphEdge[];
+  } | null>(null);
 
   // Build the HTML once — it does not depend on theme colors so the WebView
   // is not reloaded when the theme changes (avoids the flash from Issue #37).
@@ -272,9 +284,12 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
       })),
     };
 
-    webViewRef.current?.injectJavaScript(
-      `window.initGraph(${JSON.stringify({ elements })});`,
-    );
+    pendingElementsRef.current = { nodes, edges };
+    if (webReadyRef.current) {
+      webViewRef.current?.injectJavaScript(
+        `window.initGraph(${JSON.stringify({ elements })});`,
+      );
+    }
   }, [client]);
 
   useEffect(() => {
@@ -361,6 +376,23 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
         ref={webViewRef}
         source={{ html: graphHtml }}
         onMessage={onMessage}
+        onLoad={() => {
+          webReadyRef.current = true;
+          // Inject any elements that were computed before the WebView
+          // finished loading its HTML (where window.initGraph is defined).
+          const pending = pendingElementsRef.current;
+          if (pending) {
+            const elements = {
+              nodes: pending.nodes.map((n) => ({ data: n })),
+              edges: pending.edges.map((e, i) => ({
+                data: { id: `e-${i}`, source: e.source, target: e.target },
+              })),
+            };
+            webViewRef.current?.injectJavaScript(
+              `window.initGraph(${JSON.stringify({ elements })});`,
+            );
+          }
+        }}
         // Match the WebView's native background to the theme so there is no
         // white flash before the HTML body background is applied.
         style={[styles.webview, { backgroundColor: colors.white }]}
