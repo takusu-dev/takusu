@@ -50,12 +50,25 @@ fn parse_sleep(s: &str, settings: &SettingsRow) -> SleepConfig {
 /// AGENTS.md の「point_to_iso hardcoded 5-minute slots」参照。
 /// 変更時は takusu-core, takusu-local-lib, google-cal など全 crate の
 /// 5分前提コードを同時に更新すること。
-fn iso_to_point(iso: &str) -> Result<Point, AppError> {
+///
+/// `tz` はオフセット無しの naive な日時文字列を解釈する際のフォールバック
+/// タイムゾーン。過去にモバイルアプリがオフセットを削除した文字列を保存して
+/// しまった場合などに救済する。
+fn iso_to_point(iso: &str, tz: &jiff::tz::TimeZone) -> Result<Point, AppError> {
     let ts = if iso.eq_ignore_ascii_case("now") {
         Timestamp::now()
     } else {
-        Timestamp::from_str(iso)
-            .map_err(|e| AppError::BadRequest(format!("invalid datetime: {e}")))?
+        match Timestamp::from_str(iso) {
+            Ok(ts) => ts,
+            Err(_) => {
+                // オフセット無しの naive 日時 → tz で解釈するフォールバック
+                let dt = jiff::civil::DateTime::from_str(iso)
+                    .map_err(|e| AppError::BadRequest(format!("invalid datetime: {e}")))?;
+                dt.to_zoned(tz.clone())
+                    .map_err(|e| AppError::BadRequest(format!("invalid datetime: {e}")))?
+                    .timestamp()
+            }
+        }
     };
     Ok(Point::from_timestamp(ts, 5))
 }
@@ -496,7 +509,7 @@ impl TakusuApp {
             // 既に scheduled 状態になっているため、再生成でそれらも対象にする。
             .filter(|t| t.status == "pending" || t.status == "scheduled")
             .collect();
-        let (planner, id_map, _) = self.build_planner(from_point, sleep, &all_rows)?;
+        let (planner, id_map, _) = self.build_planner(from_point, sleep, &all_rows, &tz)?;
 
         let plan = planner.plan();
         let entries = self.plan_to_entries(&plan, &id_map);
@@ -549,14 +562,14 @@ impl TakusuApp {
                 .filter(|t| t.status == "pending" || t.status == "scheduled"),
         );
 
-        let (planner, id_map, id_to_idx) = self.build_planner(now_point, sleep, &active)?;
+        let (planner, id_map, id_to_idx) = self.build_planner(now_point, sleep, &active, &tz)?;
 
         let current_schedule: Vec<(Point, Point, usize)> = entries
             .iter()
             .filter_map(|entry| {
                 let idx = *id_to_idx.get(&entry.task_id)?;
-                let s = iso_to_point(&entry.start_at).ok()?;
-                let e = iso_to_point(&entry.end_at).ok()?;
+                let s = iso_to_point(&entry.start_at, &tz).ok()?;
+                let e = iso_to_point(&entry.end_at, &tz).ok()?;
                 Some((s, e, idx))
             })
             .collect();
@@ -570,8 +583,8 @@ impl TakusuApp {
                     AppError::BadRequest("until is required for range mode".into())
                 })?;
                 let range = RescheduleRange {
-                    from: iso_to_point(from_str)?,
-                    until: iso_to_point(until_str)?,
+                    from: iso_to_point(from_str, &tz)?,
+                    until: iso_to_point(until_str, &tz)?,
                 };
                 let extra_pinned: Vec<usize> = input
                     .pinned
@@ -634,6 +647,9 @@ impl TakusuApp {
             .map(|t| t.id)
             .map_err(storage_to_app)?;
 
+        let settings = self.get_settings_or_default().await?;
+        let tz = jiff::tz::TimeZone::get(&settings.tz).unwrap_or(jiff::tz::TimeZone::UTC);
+
         let schedule_row = self
             .storage
             .get_schedule()
@@ -647,14 +663,14 @@ impl TakusuApp {
             .position(|e| e.task_id == full_task_id)
             .ok_or_else(|| AppError::NotFound(format!("task {task_id} not in schedule")))?;
 
-        let new_start_point = iso_to_point(new_start)?;
+        let new_start_point = iso_to_point(new_start, &tz)?;
         let task_row = self
             .storage
             .get_task(&full_task_id)
             .await
             .map_err(storage_to_app)?;
-        let old_start = iso_to_point(&entries[idx].start_at)?;
-        let old_end = iso_to_point(&entries[idx].end_at)?;
+        let old_start = iso_to_point(&entries[idx].start_at, &tz)?;
+        let old_end = iso_to_point(&entries[idx].end_at, &tz)?;
         let duration = Point::delta(old_end, old_start);
         let new_end = Point(new_start_point.0 + duration);
         let new_entry = ScheduleEntry {
@@ -669,7 +685,7 @@ impl TakusuApp {
         // 自動スケジューラの制約をすべて検証すると自由度が下がるため。
         // force=true で強制上書きも可能。
         let mut warnings = Vec::new();
-        let task_deadline = iso_to_point(&task_row.end_at)?;
+        let task_deadline = iso_to_point(&task_row.end_at, &tz)?;
         if new_end.0 > task_deadline.0 {
             warnings.push("deadline_violation".to_string());
         }
@@ -1129,6 +1145,7 @@ impl TakusuApp {
         start: Point,
         sleep: SleepConfig,
         task_rows: &[TaskRow],
+        tz: &jiff::tz::TimeZone,
     ) -> Result<(Planner, Vec<String>, HashMap<String, usize>), AppError> {
         let mut id_to_idx: HashMap<String, usize> = HashMap::new();
         for (i, row) in task_rows.iter().enumerate() {
@@ -1158,8 +1175,8 @@ impl TakusuApp {
         let mut id_map: Vec<String> = Vec::with_capacity(task_rows.len());
 
         for (i, row) in task_rows.iter().enumerate() {
-            let start_opt = row.start_at.as_ref().map(|s| iso_to_point(s)).transpose()?;
-            let end = iso_to_point(&row.end_at)?;
+            let start_opt = row.start_at.as_ref().map(|s| iso_to_point(s, tz)).transpose()?;
+            let end = iso_to_point(&row.end_at, tz)?;
             let core_task = CoreTask {
                 id: planner.tasks().len(),
                 start: start_opt,
@@ -1192,5 +1209,34 @@ impl TakusuApp {
                 end_at: point_to_iso(e.0),
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn iso_to_point_with_offset() {
+        let tz = jiff::tz::TimeZone::UTC;
+        // オフセット付きはそのままパースできる
+        let p = iso_to_point("2026-07-04T10:00:00Z", &tz).unwrap();
+        let p2 = iso_to_point("2026-07-04T19:00:00+09:00", &tz).unwrap();
+        assert_eq!(p.0, p2.0); // 同一時刻
+    }
+
+    #[test]
+    fn iso_to_point_naive_falls_back_to_tz() {
+        let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+        // オフセット無しの naive 日時は tz で解釈される
+        let naive = iso_to_point("2026-07-04T10:00:00", &tz).unwrap();
+        let with_offset = iso_to_point("2026-07-04T10:00:00+09:00", &tz).unwrap();
+        assert_eq!(naive.0, with_offset.0);
+    }
+
+    #[test]
+    fn iso_to_point_now() {
+        let tz = jiff::tz::TimeZone::UTC;
+        let _ = iso_to_point("now", &tz).unwrap();
     }
 }
