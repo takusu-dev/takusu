@@ -205,7 +205,14 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
       if (Platform.OS === 'android') {
-        TakusuServerModule.stop().catch(() => {});
+        // stop() is a synchronous native Function; a thrown native
+        // exception (e.g. "Server not running") propagates synchronously,
+        // so use try/catch rather than Promise.resolve().catch().
+        try {
+          TakusuServerModule.stop();
+        } catch {
+          // server may not be running
+        }
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
