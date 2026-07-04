@@ -55,9 +55,14 @@ function formatErrorForLog(e: unknown): string {
 function pushClientLog(level: string, context: string, message: string): void {
   if (Platform.OS !== 'android') return;
   const line = `[client][${level}] ${context}: ${message}`;
-  TakusuServerModule.pushLog(line).catch(() => {
+  // pushLog is a synchronous native Function; a thrown native exception
+  // propagates synchronously, so use try/catch rather than
+  // Promise.resolve().catch().
+  try {
+    TakusuServerModule.pushLog(line);
+  } catch {
     // native module not ready — drop silently
-  });
+  }
 }
 
 /**
