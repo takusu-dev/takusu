@@ -339,11 +339,23 @@ export function SettingsDetailView({
     }
   }
 
-  // Google Sign-In SDK flow: configure with the saved Web client ID,
-  // sign in (silent → account picker → explicit UI), then request the
-  // calendar.events scope. The serverAuthCode returned by requestScopes
+  // Google Sign-In SDK flow: configure with the saved Web client ID and
+  // the calendar.events scope up front so that a single consent dialog
+  // covers both sign-in and the calendar scope. The serverAuthCode
+  // returned by signIn (via the library's enrichWithServerAuthCode step)
   // is sent to the backend, which exchanges it for a refresh token
   // without a redirect_uri (Android SDK code does not use one).
+  //
+  // Requesting the scope in configure() instead of a separate
+  // requestScopes() call avoids a double-authorization flow where the
+  // first consent dialog (from enrichWithServerAuthCode during signIn)
+  // dismisses the bottom sheet and then immediately closes, leaving the
+  // user stuck (issue #129).
+  //
+  // If signIn returns no serverAuthCode (e.g. the silent path produced
+  // none, or the user previously revoked the calendar scope on Google's
+  // side), fall back to requestScopes() to force an explicit consent
+  // dialog for the calendar scope.
   async function startOAuth() {
     if (!client) return;
     const webClientId = gcalSettings?.client_id;
@@ -356,6 +368,7 @@ export function SettingsDetailView({
       GoogleOneTapSignIn.configure({
         webClientId,
         offlineAccess: true,
+        scopes: [CALENDAR_EVENTS_SCOPE],
       });
       await GoogleOneTapSignIn.checkPlayServices();
 
@@ -371,10 +384,15 @@ export function SettingsDetailView({
         return;
       }
 
-      const { serverAuthCode } = await GoogleOneTapSignIn.requestScopes([
-        CALENDAR_EVENTS_SCOPE,
-      ]);
-
+      let { serverAuthCode } = response.data;
+      if (!serverAuthCode) {
+        // signIn did not yield an auth code (e.g. silent path with
+        // previously-revoked scope). Force an explicit consent dialog.
+        const result = await GoogleOneTapSignIn.requestScopes([
+          CALENDAR_EVENTS_SCOPE,
+        ]);
+        serverAuthCode = result.serverAuthCode;
+      }
       if (!serverAuthCode) {
         Alert.alert('エラー', '認可コードを取得できませんでした');
         return;
