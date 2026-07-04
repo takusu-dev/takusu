@@ -4,7 +4,7 @@
 //   abandonability (5-step slider), habit (if generated from habit),
 //   description, parallel config, deps graph (related only)
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -35,6 +35,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { haptic } from '@/src/components/haptics';
 import { formatDate } from '@/src/formatDate';
+import {
+  DependencyGraph,
+  type GraphNode,
+  type GraphEdge,
+} from '@/src/components/graph/DependencyGraph';
 import {
   postInProgressNotification,
   dismissInProgressNotification,
@@ -373,6 +378,67 @@ export function TaskDetailView() {
     router.back();
   }
 
+  // Build the connected component dependency graph for the current task.
+  // Traverses both forward (deps) and reverse (dependents) transitively,
+  // following edges in both directions until no new nodes are discovered.
+  // Must be BEFORE the early return to satisfy Rules of Hooks.
+  const { detailGraphNodes, detailGraphEdges } = useMemo(() => {
+    if (!task) return { detailGraphNodes: [], detailGraphEdges: [] };
+    const taskMap = new Map(allTasks.map((t) => [t.id, t]));
+
+    // Build bidirectional adjacency: for each task, store its forward deps
+    // and reverse deps (tasks that depend on it).
+    const forwardAdj = new Map<string, string[]>();
+    const reverseAdj = new Map<string, string[]>();
+    for (const t of allTasks) {
+      const deps = parseDepends(t.depends);
+      forwardAdj.set(t.id, deps);
+      for (const depId of deps) {
+        const rev = reverseAdj.get(depId) ?? [];
+        rev.push(t.id);
+        reverseAdj.set(depId, rev);
+      }
+    }
+
+    // BFS from the current task, following both forward and reverse edges.
+    const visited = new Set<string>();
+    const queue: string[] = [task.id];
+    const edges: GraphEdge[] = [];
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      if (visited.has(id)) continue;
+      visited.add(id);
+      // Enqueue forward deps
+      for (const depId of forwardAdj.get(id) ?? []) {
+        edges.push({ source: depId, target: id });
+        if (!visited.has(depId)) queue.push(depId);
+      }
+      // Enqueue reverse deps
+      for (const revId of reverseAdj.get(id) ?? []) {
+        if (!visited.has(revId)) queue.push(revId);
+      }
+    }
+
+    // Build nodes in visitation order
+    const nodes: GraphNode[] = [];
+    for (const id of visited) {
+      const t = taskMap.get(id);
+      if (!t) continue;
+      const isDone = t.status === 'completed' || t.status === 'skipped';
+      nodes.push({
+        id: t.id,
+        label: t.title,
+        color: isDone ? '#aaa' : BRAND_COLOR,
+        x: 0,
+        y: 0,
+        vx: 0,
+        vy: 0,
+      });
+    }
+
+    return { detailGraphNodes: nodes, detailGraphEdges: edges };
+  }, [allTasks, task]);
+
   if (!task) {
     return (
       <View style={[styles.container, { backgroundColor: colors.white }]}>
@@ -384,9 +450,6 @@ export function TaskDetailView() {
   }
 
   const isPending = task.status === 'pending';
-  const reverseDeps = allTasks.filter((t) =>
-    parseDepends(t.depends).includes(task.id),
-  );
   const availableDeps = allTasks.filter(
     (t) => t.id !== task.id && !deps.includes(t.id),
   );
@@ -887,27 +950,26 @@ export function TaskDetailView() {
             </Text>
           )}
 
-          {/* Mini deps graph: reverse deps (tasks that depend on this) */}
-          {reverseDeps.length > 0 && (
+          {/* Dependency graph: connected component around this task */}
+          {detailGraphNodes.length > 1 && (
             <View
               style={[styles.miniGraph, { borderTopColor: colors.separator }]}
             >
               <Text style={[styles.miniGraphLabel, { color: colors.gray }]}>
-                これに依存するタスク:
+                依存グラフ
               </Text>
-              {reverseDeps.map((rd) => (
-                <Pressable
-                  key={rd.id}
-                  onPress={() => {
-                    if (!editing) {
-                      haptic.light();
-                      router.push(`/task/${rd.id}`);
-                    }
-                  }}
-                >
-                  <Text style={styles.depLink}>← {rd.title} ›</Text>
-                </Pressable>
-              ))}
+              <DependencyGraph
+                nodes={detailGraphNodes}
+                edges={detailGraphEdges}
+                highlightTaskId={task.id}
+                height={240}
+                onTapNode={(tappedId) => {
+                  if (!editing) {
+                    haptic.light();
+                    router.push(`/task/${tappedId}`);
+                  }
+                }}
+              />
             </View>
           )}
         </View>
