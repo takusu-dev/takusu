@@ -123,7 +123,6 @@ export function HabitDetailView() {
     ) {
       const v = parseInt(sigmaMinutes, 10);
       if (!isNaN(v) && v >= 0) updates.sigma_minutes = v;
-      else if (sigmaMinutes === '') updates.sigma_minutes = 0;
     }
     if (abandonability !== habit.abandonability)
       updates.abandonability = abandonability;
@@ -477,13 +476,9 @@ export function HabitDetailView() {
                   activeOutlineColor={BRAND_COLOR}
                   dense
                 />
-                {(!sigmaMinutes || sigmaMinutes === '0') && (
+                {sigmaMinutes === '' && (
                   <Text style={[styles.costHint, { color: colors.grayLight }]}>
-                    {Math.max(
-                      1,
-                      Math.round((parseInt(avgMinutes, 10) || 60) / 5),
-                    )}
-                    m (avg/5)
+                    {habit.sigma_minutes}m
                   </Text>
                 )}
               </View>
@@ -494,9 +489,7 @@ export function HabitDetailView() {
               {habit.sigma_minutes > 0 ? (
                 `${habit.sigma_minutes}m`
               ) : (
-                <Text style={{ color: colors.grayLight }}>
-                  {Math.max(1, Math.round(habit.avg_minutes / 5))}m (avg/5)
-                </Text>
+                <Text style={{ color: colors.grayLight }}>0m</Text>
               )}
             </Text>
           )}
