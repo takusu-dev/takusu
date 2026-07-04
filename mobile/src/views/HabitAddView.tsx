@@ -19,6 +19,7 @@ import { showError } from '@/src/api/errors';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RruleBuilderModal } from '@/src/components/RruleBuilderModal';
+import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { haptic } from '@/src/components/haptics';
 import {
   defaultRule,
@@ -42,6 +43,20 @@ export function HabitAddView() {
   const [sigmaMinutes, setSigmaMinutes] = useState('0');
   const [abandonability, setAbandonability] = useState(0.5);
   const [saving, setSaving] = useState(false);
+  const [pickerField, setPickerField] = useState<'start' | 'end' | null>(null);
+
+  // "HH:MM" → Date (today at that time)
+  function timeStringToDate(s: string): Date {
+    const [h, m] = s.split(':').map((n) => parseInt(n, 10) || 0);
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    return d;
+  }
+
+  // Date → "HH:MM"
+  function dateToTimeString(d: Date): string {
+    return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+  }
 
   async function create() {
     if (!client || !title || saving) return;
@@ -182,29 +197,45 @@ export function HabitAddView() {
         <View style={styles.row}>
           <View style={[styles.field, { flex: 1 }]}>
             <Text style={[styles.label, { color: colors.gray }]}>開始時刻</Text>
-            <TextInput
+            <Pressable
               style={[
-                styles.input,
-                { borderColor: colors.separator, color: colors.black },
+                styles.dateField,
+                {
+                  borderColor: colors.separator,
+                  backgroundColor: colors.white,
+                },
               ]}
-              value={startTime}
-              onChangeText={setStartTime}
-              placeholder="09:00"
-              placeholderTextColor={colors.grayLight}
-            />
+              onPress={() => {
+                haptic.select();
+                setPickerField('start');
+              }}
+            >
+              <Ionicons name="time-outline" size={20} color={BRAND_COLOR} />
+              <Text style={[styles.dateText, { color: colors.black }]}>
+                {startTime}
+              </Text>
+            </Pressable>
           </View>
           <View style={[styles.field, { flex: 1 }]}>
             <Text style={[styles.label, { color: colors.gray }]}>終了時刻</Text>
-            <TextInput
+            <Pressable
               style={[
-                styles.input,
-                { borderColor: colors.separator, color: colors.black },
+                styles.dateField,
+                {
+                  borderColor: colors.separator,
+                  backgroundColor: colors.white,
+                },
               ]}
-              value={endTime}
-              onChangeText={setEndTime}
-              placeholder="10:00"
-              placeholderTextColor={colors.grayLight}
-            />
+              onPress={() => {
+                haptic.select();
+                setPickerField('end');
+              }}
+            >
+              <Ionicons name="time-outline" size={20} color={BRAND_COLOR} />
+              <Text style={[styles.dateText, { color: colors.black }]}>
+                {endTime}
+              </Text>
+            </Pressable>
           </View>
         </View>
 
@@ -269,6 +300,22 @@ export function HabitAddView() {
           setShowRruleBuilder(false);
         }}
         onCancel={() => setShowRruleBuilder(false)}
+      />
+
+      <DateTimePickerModal
+        visible={pickerField !== null}
+        mode="time"
+        label={pickerField === 'start' ? '開始時刻' : '終了時刻'}
+        value={timeStringToDate(pickerField === 'start' ? startTime : endTime)}
+        onConfirm={(date) => {
+          if (date) {
+            const s = dateToTimeString(date);
+            if (pickerField === 'start') setStartTime(s);
+            else setEndTime(s);
+          }
+          setPickerField(null);
+        }}
+        onCancel={() => setPickerField(null)}
       />
     </View>
   );

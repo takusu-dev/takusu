@@ -19,6 +19,7 @@ import type { HabitRow, TaskRow } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RruleBuilderModal } from '@/src/components/RruleBuilderModal';
+import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { parseRule, summarizeRule } from '@/src/api/rrule';
 import { haptic } from '@/src/components/haptics';
 
@@ -47,10 +48,24 @@ export function HabitDetailView() {
   const [active, setActive] = useState(true);
   const [saving, setSaving] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
+  const [pickerField, setPickerField] = useState<'start' | 'end' | null>(null);
   // Ref mirror of `editing` so refresh() can skip overwriting unsaved edits
   // when called from menu actions (toggleActive) while editing.
   const editingRef = useRef(false);
   editingRef.current = editing;
+
+  // "HH:MM" → Date (today at that time)
+  function timeStringToDate(s: string): Date {
+    const [h, m] = s.split(':').map((n) => parseInt(n, 10) || 0);
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    return d;
+  }
+
+  // Date → "HH:MM"
+  function dateToTimeString(d: Date): string {
+    return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+  }
 
   const refresh = useCallback(async () => {
     if (!client || !id) return;
@@ -383,30 +398,46 @@ export function HabitDetailView() {
           <Text style={[styles.label, { color: colors.gray }]}>時間</Text>
           {editing ? (
             <View style={styles.row}>
-              <PaperTextInput
-                mode="outlined"
-                label="開始"
-                value={startTime}
-                onChangeText={setStartTime}
-                placeholder="09:00"
-                placeholderTextColor={colors.grayLight}
-                outlineColor={colors.separator}
-                activeOutlineColor={BRAND_COLOR}
-                style={[styles.timeInput, { flex: 1 }]}
-                dense
-              />
-              <PaperTextInput
-                mode="outlined"
-                label="終了"
-                value={endTime}
-                onChangeText={setEndTime}
-                placeholder="10:00"
-                placeholderTextColor={colors.grayLight}
-                outlineColor={colors.separator}
-                activeOutlineColor={BRAND_COLOR}
-                style={[styles.timeInput, { flex: 1 }]}
-                dense
-              />
+              <Pressable
+                style={[
+                  styles.timeField,
+                  {
+                    borderColor: colors.separator,
+                    backgroundColor: colors.white,
+                  },
+                ]}
+                onPress={() => {
+                  haptic.select();
+                  setPickerField('start');
+                }}
+              >
+                <Text style={[styles.timeFieldLabel, { color: colors.gray }]}>
+                  開始
+                </Text>
+                <Text style={[styles.timeFieldValue, { color: colors.black }]}>
+                  {startTime}
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.timeField,
+                  {
+                    borderColor: colors.separator,
+                    backgroundColor: colors.white,
+                  },
+                ]}
+                onPress={() => {
+                  haptic.select();
+                  setPickerField('end');
+                }}
+              >
+                <Text style={[styles.timeFieldLabel, { color: colors.gray }]}>
+                  終了
+                </Text>
+                <Text style={[styles.timeFieldValue, { color: colors.black }]}>
+                  {endTime}
+                </Text>
+              </Pressable>
             </View>
           ) : (
             <Text style={[styles.value, { color: colors.black }]}>
@@ -569,6 +600,22 @@ export function HabitDetailView() {
         }}
         onCancel={() => setShowRruleBuilder(false)}
       />
+
+      <DateTimePickerModal
+        visible={pickerField !== null}
+        mode="time"
+        label={pickerField === 'start' ? '開始時刻' : '終了時刻'}
+        value={timeStringToDate(pickerField === 'start' ? startTime : endTime)}
+        onConfirm={(date) => {
+          if (date) {
+            const s = dateToTimeString(date);
+            if (pickerField === 'start') setStartTime(s);
+            else setEndTime(s);
+          }
+          setPickerField(null);
+        }}
+        onCancel={() => setPickerField(null)}
+      />
     </View>
   );
 }
@@ -642,7 +689,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
   },
-  timeInput: {},
+  timeField: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 2,
+  },
+  timeFieldLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  timeFieldValue: {
+    fontSize: 16,
+  },
   costInput: {},
   sliderContainer: {
     flexDirection: 'row',
