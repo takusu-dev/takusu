@@ -7,20 +7,22 @@ export const BRAND_COLOR_LIGHT = '#9B8BC4';
 export const BRAND_COLOR_DARK = '#5A4A85';
 
 // abandonability → background color mapping for task cards
+// 0.0 = must do (red — important), 1.0 = can abandon (calm brand-tinted)
+// Palette is tuned to the purple brand color; the lowest band is clearly red
+// to signal importance (Issue #188).
 export function abandonabilityColor(abandonability: number): string {
-  // 0.0 = must do (red-ish), 1.0 = can abandon (blue-ish)
-  if (abandonability >= 0.75) return '#E8E0F0'; // very light purple
-  if (abandonability >= 0.5) return '#F0EBE8'; // neutral
-  if (abandonability >= 0.25) return '#F0E8E0'; // warm
-  return '#F0E0E0'; // reddish — must do
+  if (abandonability >= 0.75) return '#EDE6F4'; // light brand purple — calm
+  if (abandonability >= 0.5) return '#F0EDE8'; // warm neutral
+  if (abandonability >= 0.25) return '#F5E5D5'; // warm amber — caution
+  return '#F2C8C8'; // clear red/pink — must do
 }
 
 // Dark-theme variant: dimmer, lower-saturation tints on a dark surface
 export function abandonabilityColorDark(abandonability: number): string {
-  if (abandonability >= 0.75) return '#2A2438'; // muted purple
+  if (abandonability >= 0.75) return '#2D2638'; // muted brand purple
   if (abandonability >= 0.5) return '#2A2A2E'; // neutral dark
-  if (abandonability >= 0.25) return '#2E2826'; // warm dark
-  return '#2E2424'; // reddish dark — must do
+  if (abandonability >= 0.25) return '#322A22'; // warm dark
+  return '#3A1E1E'; // dark red — must do
 }
 
 // Theme-aware helper: picks the light or dark palette based on `dark`.
