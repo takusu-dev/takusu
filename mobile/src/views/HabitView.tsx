@@ -193,7 +193,15 @@ export function HabitView({ client }: HabitViewProps) {
             }}
           >
             <View style={styles.habitHeader}>
-              <Text style={[styles.habitTitle, { color: colors.black }]}>
+              <Text
+                style={[
+                  styles.habitTitle,
+                  {
+                    color: h.active ? colors.black : colors.gray,
+                    textDecorationLine: h.active ? 'none' : 'line-through',
+                  },
+                ]}
+              >
                 {h.title}
               </Text>
               {selected.has(h.id) && (
