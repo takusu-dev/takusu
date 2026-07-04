@@ -16,6 +16,7 @@ const MIGRATION_003: &str = include_str!("../migrations/003_settings.sql");
 const MIGRATION_004: &str = include_str!("../migrations/004_indexes.sql");
 const MIGRATION_005: &str = include_str!("../migrations/005_task_display_id.sql");
 const MIGRATION_006: &str = include_str!("../migrations/006_user_edited.sql");
+const MIGRATION_007: &str = include_str!("../migrations/007_task_display_id_seq.sql");
 
 pub struct SqliteStorage {
     pool: SqlitePool,
@@ -64,6 +65,9 @@ impl SqliteStorage {
         if !has_user_edited {
             sqlx::raw_sql(MIGRATION_006).execute(&pool).await?;
         }
+
+        // Migration 007 creates the display_id sequence table (idempotent).
+        sqlx::raw_sql(MIGRATION_007).execute(&pool).await?;
 
         Ok(Self { pool, root_token })
     }
@@ -169,12 +173,19 @@ impl Storage for SqliteStorage {
         let parallelizable = body.parallelizable.unwrap_or(false);
         let allows_parallel = body.allows_parallel.unwrap_or(false);
         let abandonability = body.abandonability.unwrap_or(0.5);
-        // Atomic display_id allocation via subquery — avoids TOCTOU race
-        // between separate SELECT MAX and INSERT under concurrent creates.
+        // Atomically reserve a monotonic display_id from the sequence table.
+        // This prevents display_id reuse after task deletion (#186).
+        let display_id: i64 = sqlx::query_scalar(
+            "UPDATE task_display_id_seq SET next_id = next_id + 1 RETURNING next_id - 1",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_err)?;
         sqlx::query(
-            "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id) VALUES (?, (SELECT COALESCE(MAX(display_id), 0) + 1 FROM tasks), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)"
+            "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)"
         )
         .bind(&id)
+        .bind(display_id)
         .bind(&body.title)
         .bind(&body.description)
         .bind(&body.start_at)
