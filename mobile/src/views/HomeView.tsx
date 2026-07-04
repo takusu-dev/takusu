@@ -423,11 +423,13 @@ export function HomeView() {
 
   async function markDone(task: TaskRow) {
     if (!client) return;
+    const isDone = task.status === 'completed' || task.status === 'skipped';
     const prevStatus = task.status;
+    const newStatus = isDone ? 'scheduled' : 'completed';
     try {
-      await client.updateTask(task.id, { status: 'completed' });
+      await client.updateTask(task.id, { status: newStatus });
     } catch (e) {
-      showError(e, 'タスクの完了に失敗');
+      showError(e, isDone ? 'タスクの未完了に失敗' : 'タスクの完了に失敗');
       return;
     }
     // Dismiss in-progress notification if it was showing
@@ -437,13 +439,13 @@ export function HomeView() {
       );
     }
     undoRedo.push({
-      description: `mark done: ${task.title}`,
+      description: `${isDone ? 'undone' : 'mark done'}: ${task.title}`,
       undo: async () => {
         await client.updateTask(task.id, { status: prevStatus });
         await refresh();
       },
       redo: async () => {
-        await client.updateTask(task.id, { status: 'completed' });
+        await client.updateTask(task.id, { status: newStatus });
         await refresh();
       },
     });

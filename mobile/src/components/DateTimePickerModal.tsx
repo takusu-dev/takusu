@@ -10,7 +10,7 @@ import DateTimePicker, {
 } from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { COLORS, BRAND_COLOR } from '@/src/theme';
+import { COLORS, BRAND_COLOR, useTheme } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
 
 interface DateTimePickerModalProps {
@@ -40,6 +40,7 @@ export function DateTimePickerModal({
   );
   const [showPicker, setShowPicker] = useState(false);
   const insets = useSafeAreaInsets();
+  const { dark, colors } = useTheme();
 
   // Sync tempDate with value prop when modal opens
   useEffect(() => {
@@ -78,39 +79,55 @@ export function DateTimePickerModal({
     <Modal visible={visible} transparent animationType="slide">
       <Pressable style={styles.overlay} onPress={onCancel}>
         <Pressable
-          style={[styles.sheet, { paddingBottom: 32 + insets.bottom }]}
+          style={[
+            styles.sheet,
+            {
+              backgroundColor: colors.white,
+              paddingBottom: 32 + insets.bottom,
+            },
+          ]}
           onPress={(e) => e.stopPropagation()}
         >
           <View style={styles.header}>
-            <Text style={styles.title}>{label}</Text>
+            <Text style={[styles.title, { color: colors.black }]}>{label}</Text>
             <Pressable
               onPress={() => {
                 haptic.light();
                 onCancel();
               }}
             >
-              <Ionicons name="close" size={24} color={COLORS.gray} />
+              <Ionicons name="close" size={24} color={colors.gray} />
             </Pressable>
           </View>
 
           {mode === 'time' ? (
             <Pressable
-              style={styles.fieldRow}
+              style={[
+                styles.fieldRow,
+                { backgroundColor: dark ? '#1E1E32' : '#F8F5FC' },
+              ]}
               onPress={() => openPicker('time')}
             >
               <Ionicons name="time-outline" size={20} color={BRAND_COLOR} />
-              <Text style={styles.fieldLabel}>時刻</Text>
-              <Text style={styles.fieldValue}>{formatDisplay(tempDate)}</Text>
+              <Text style={[styles.fieldLabel, { color: colors.grayDark }]}>
+                時刻
+              </Text>
+              <Text style={[styles.fieldValue, { color: colors.black }]}>
+                {formatDisplay(tempDate)}
+              </Text>
               <Ionicons
                 name="chevron-forward"
                 size={18}
-                color={COLORS.grayLight}
+                color={colors.grayLight}
               />
             </Pressable>
           ) : (
             <>
               <Pressable
-                style={styles.fieldRow}
+                style={[
+                  styles.fieldRow,
+                  { backgroundColor: dark ? '#1E1E32' : '#F8F5FC' },
+                ]}
                 onPress={() => openPicker('date')}
               >
                 <Ionicons
@@ -118,35 +135,43 @@ export function DateTimePickerModal({
                   size={20}
                   color={BRAND_COLOR}
                 />
-                <Text style={styles.fieldLabel}>日付</Text>
-                <Text style={styles.fieldValue}>{formatDisplay(tempDate)}</Text>
+                <Text style={[styles.fieldLabel, { color: colors.grayDark }]}>
+                  日付
+                </Text>
+                <Text style={[styles.fieldValue, { color: colors.black }]}>
+                  {formatDisplay(tempDate)}
+                </Text>
                 <Ionicons
                   name="chevron-forward"
                   size={18}
-                  color={COLORS.grayLight}
+                  color={colors.grayLight}
                 />
               </Pressable>
 
               {mode === 'datetime' && (
                 <Pressable
-                  style={styles.fieldRow}
+                  style={[
+                    styles.fieldRow,
+                    { backgroundColor: dark ? '#1E1E32' : '#F8F5FC' },
+                  ]}
                   onPress={() => openPicker('time')}
                   disabled={!tempDate}
                 >
                   <Ionicons
                     name="time-outline"
                     size={20}
-                    color={tempDate ? BRAND_COLOR : COLORS.grayLight}
+                    color={tempDate ? BRAND_COLOR : colors.grayLight}
                   />
                   <Text
                     style={[
                       styles.fieldLabel,
-                      !tempDate && { color: COLORS.grayLight },
+                      { color: colors.grayDark },
+                      !tempDate && { color: colors.grayLight },
                     ]}
                   >
                     時間
                   </Text>
-                  <Text style={styles.fieldValue}>
+                  <Text style={[styles.fieldValue, { color: colors.black }]}>
                     {tempDate
                       ? `${tempDate.getHours().toString().padStart(2, '0')}:${tempDate.getMinutes().toString().padStart(2, '0')}`
                       : '—'}
@@ -154,7 +179,7 @@ export function DateTimePickerModal({
                   <Ionicons
                     name="chevron-forward"
                     size={18}
-                    color={tempDate ? COLORS.gray : COLORS.grayLight}
+                    color={tempDate ? colors.gray : colors.grayLight}
                   />
                 </Pressable>
               )}
@@ -176,13 +201,15 @@ export function DateTimePickerModal({
 
           <View style={styles.actionRow}>
             <Pressable
-              style={styles.cancelButton}
+              style={[styles.cancelButton, { borderColor: colors.separator }]}
               onPress={() => {
                 haptic.light();
                 onCancel();
               }}
             >
-              <Text style={styles.cancelText}>キャンセル</Text>
+              <Text style={[styles.cancelText, { color: colors.grayDark }]}>
+                キャンセル
+              </Text>
             </Pressable>
             <Pressable
               style={styles.confirmButton}
@@ -203,6 +230,7 @@ export function DateTimePickerModal({
               onChange={handlePickerChange}
               minimumDate={minimumDate}
               timeZoneName={undefined}
+              themeVariant={dark ? 'dark' : 'light'}
             />
           )}
         </Pressable>
@@ -218,7 +246,6 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   sheet: {
-    backgroundColor: COLORS.white,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
@@ -233,26 +260,22 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: '600',
-    color: COLORS.black,
   },
   fieldRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 14,
     paddingHorizontal: 12,
-    backgroundColor: '#F8F5FC',
     borderRadius: 10,
     marginBottom: 8,
     gap: 8,
   },
   fieldLabel: {
     fontSize: 15,
-    color: COLORS.grayDark,
     flex: 1,
   },
   fieldValue: {
     fontSize: 15,
-    color: COLORS.black,
     fontWeight: '500',
   },
   clearButton: {
@@ -276,12 +299,10 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: COLORS.separator,
     alignItems: 'center',
   },
   cancelText: {
     fontSize: 15,
-    color: COLORS.grayDark,
   },
   confirmButton: {
     flex: 1,
