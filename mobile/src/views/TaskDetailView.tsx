@@ -938,6 +938,47 @@ export function TaskDetailView() {
         mode="datetime"
         label="期限日時"
         minimumDate={startAt ?? undefined}
+        shortcuts={[
+          {
+            label: '1時間後',
+            compute: () => new Date(Date.now() + 60 * 60 * 1000),
+          },
+          {
+            label: '今日23:59',
+            compute: () => {
+              const d = new Date();
+              d.setHours(23, 59, 0, 0);
+              return d;
+            },
+          },
+          {
+            label: '明日',
+            compute: () => {
+              const d = new Date();
+              d.setDate(d.getDate() + 1);
+              d.setHours(23, 59, 0, 0);
+              return d;
+            },
+          },
+          {
+            label: '明後日',
+            compute: () => {
+              const d = new Date();
+              d.setDate(d.getDate() + 2);
+              d.setHours(23, 59, 0, 0);
+              return d;
+            },
+          },
+          {
+            label: '1週間後',
+            compute: () => {
+              const d = new Date();
+              d.setDate(d.getDate() + 7);
+              d.setHours(23, 59, 0, 0);
+              return d;
+            },
+          },
+        ]}
         onConfirm={(date) => {
           setEndAt(date);
           setPickerField(null);

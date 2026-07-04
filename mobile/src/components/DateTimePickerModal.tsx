@@ -4,7 +4,14 @@
 // consistent UX and provide a "clear" button for optional fields.
 
 import { useEffect, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import DateTimePicker, {
   type DateTimePickerEvent,
 } from '@react-native-community/datetimepicker';
@@ -22,6 +29,13 @@ interface DateTimePickerModalProps {
   onCancel: () => void;
   optional?: boolean;
   minimumDate?: Date;
+  /** Quick-pick shortcut chips shown above the field rows.
+   *  Each entry sets tempDate to the result of `compute()` when tapped.
+   *  When omitted, no shortcut row is rendered. */
+  shortcuts?: Array<{
+    label: string;
+    compute: (current: Date | null) => Date;
+  }>;
 }
 
 export function DateTimePickerModal({
@@ -33,6 +47,7 @@ export function DateTimePickerModal({
   onCancel,
   optional,
   minimumDate,
+  shortcuts,
 }: DateTimePickerModalProps) {
   const [tempDate, setTempDate] = useState<Date>(value ?? new Date());
   const [pickerMode, setPickerMode] = useState<'date' | 'time'>(
@@ -99,6 +114,61 @@ export function DateTimePickerModal({
               <Ionicons name="close" size={24} color={colors.gray} />
             </Pressable>
           </View>
+
+          {shortcuts && shortcuts.length > 0 && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.shortcutsRow}
+              contentContainerStyle={styles.shortcutsContent}
+            >
+              {shortcuts.map((sc, i) => {
+                // Check minimumDate at render time so we can visually
+                // disable chips that would produce an invalid date. The
+                // actual guard is also applied at tap time (below) to avoid
+                // any stale-closure drift.
+                const preview = sc.compute(tempDate);
+                const wouldViolate =
+                  minimumDate !== undefined && preview < minimumDate;
+                return (
+                  <Pressable
+                    key={`${sc.label}-${i}`}
+                    disabled={wouldViolate}
+                    style={[
+                      styles.shortcutChip,
+                      {
+                        borderColor: wouldViolate
+                          ? colors.grayLight
+                          : colors.separator,
+                      },
+                    ]}
+                    onPress={() => {
+                      const candidate = sc.compute(tempDate);
+                      if (
+                        minimumDate !== undefined &&
+                        candidate < minimumDate
+                      ) {
+                        return;
+                      }
+                      haptic.light();
+                      setTempDate(candidate);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.shortcutText,
+                        {
+                          color: wouldViolate ? colors.grayLight : BRAND_COLOR,
+                        },
+                      ]}
+                    >
+                      {sc.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          )}
 
           {mode === 'time' ? (
             <Pressable
@@ -260,6 +330,23 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: '600',
+  },
+  shortcutsRow: {
+    marginBottom: 12,
+  },
+  shortcutsContent: {
+    gap: 8,
+    paddingRight: 4,
+  },
+  shortcutChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  shortcutText: {
+    fontSize: 13,
+    fontWeight: '500',
   },
   fieldRow: {
     flexDirection: 'row',
