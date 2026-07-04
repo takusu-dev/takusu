@@ -173,6 +173,7 @@ The default loop for any task is:
 - **Branches**: this repo uses a single `main` bookmark; feature work happens in separate change-ids and is rebased onto `main` before push.
 - **Do not rewrite `main`**: never force-push or rebase `main` itself. Rebase your own changes onto `main` instead.
 - **Git compatibility**: `git` commands still work for read-only inspection (`git log`, `git diff`) since `.jj` backs onto `.git`. Prefer `jj` for anything that mutates history.
+- **Issue closing**: link issues to PRs using `Closes #N` lines in the PR body so GitHub auto-closes them on merge. Do **not** post "Fixed in #N" comments on the issues themselves.
 
 ## Workspace Dependencies
 
