@@ -270,7 +270,6 @@ function TaskCardImpl({
                   ↳ {deps.length} deps
                 </Text>
               )}
-              {selected && <Text style={styles.selectedIndicator}>✓</Text>}
             </View>
             <View style={styles.cost}>
               <Text style={[styles.costText, { color: colors.gray }]}>
@@ -356,7 +355,6 @@ function TaskCardImpl({
                   ↳ {deps.length} deps
                 </Text>
               )}
-              {selected && <Text style={styles.selectedIndicator}>✓</Text>}
             </View>
 
             {/* Right-bottom: cost */}
@@ -480,11 +478,6 @@ const styles = StyleSheet.create({
   },
   depsCount: {
     fontSize: 11,
-  },
-  selectedIndicator: {
-    fontSize: 16,
-    color: BRAND_COLOR,
-    fontWeight: 'bold',
   },
   cost: {
     alignSelf: 'flex-end',
