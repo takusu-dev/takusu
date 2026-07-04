@@ -4,7 +4,7 @@
 //   abandonability (5-step slider), habit (if generated from habit),
 //   description, parallel config, deps graph (related only)
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -394,6 +394,24 @@ export function TaskDetailView() {
     (t) => t.id !== task.id && !deps.includes(t.id),
   );
 
+  // Double-tap (or single tap on a section) enters edit mode.
+  const lastTapRef = useRef(0);
+  function enterEdit() {
+    if (!editing) {
+      haptic.light();
+      setEditing(true);
+    }
+  }
+  function handleSectionTap() {
+    const now = Date.now();
+    if (now - lastTapRef.current < 300) {
+      enterEdit();
+      lastTapRef.current = 0;
+    } else {
+      lastTapRef.current = now;
+    }
+  }
+
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
       {/* Top bar */}
@@ -407,26 +425,22 @@ export function TaskDetailView() {
             router.back();
           }}
         />
-        <View style={styles.centerButtonContainer} pointerEvents="box-none">
-          <Button
-            mode={editing ? 'contained' : 'outlined'}
-            onPress={() => {
-              if (editing) {
-                haptic.medium();
-                save();
-              } else {
-                haptic.light();
-                setEditing(true);
-              }
-            }}
-            textColor={editing ? COLORS.white : BRAND_COLOR}
-            buttonColor={editing ? BRAND_COLOR : undefined}
-            compact
-          >
-            {editing ? '保存' : '編集'}
-          </Button>
-        </View>
         <View style={{ flex: 1 }} />
+        <IconButton
+          icon={editing ? 'content-save' : 'pencil-outline'}
+          iconColor={editing ? COLORS.white : BRAND_COLOR}
+          containerColor={editing ? BRAND_COLOR : undefined}
+          size={22}
+          onPress={() => {
+            if (editing) {
+              haptic.medium();
+              save();
+            } else {
+              haptic.light();
+              setEditing(true);
+            }
+          }}
+        />
         <Menu
           visible={menuVisible}
           onDismiss={() => setMenuVisible(false)}
@@ -474,9 +488,11 @@ export function TaskDetailView() {
             contentStyle={{ fontSize: 20, fontWeight: '600' }}
           />
         ) : (
-          <Text style={[styles.title, { color: colors.black }]}>
-            {task.title}
-          </Text>
+          <Pressable onPress={handleSectionTap}>
+            <Text style={[styles.title, { color: colors.black }]}>
+              {task.title}
+            </Text>
+          </Pressable>
         )}
 
         {/* Status */}
@@ -584,9 +600,11 @@ export function TaskDetailView() {
                 </Pressable>
               </View>
             ) : (
-              <Text style={[styles.timeText, { color: colors.gray }]}>
-                {formatTime(task.start_at)} → {formatTime(task.end_at)}
-              </Text>
+              <Pressable onPress={handleSectionTap}>
+                <Text style={[styles.timeText, { color: colors.gray }]}>
+                  {formatTime(task.start_at)} → {formatTime(task.end_at)}
+                </Text>
+              </Pressable>
             )}
           </View>
         )}
@@ -653,14 +671,16 @@ export function TaskDetailView() {
               </View>
             </View>
           ) : (
-            <Text style={[styles.sectionValue, { color: colors.black }]}>
-              avg: {task.avg_minutes}m, sigma:{' '}
-              {task.sigma_minutes > 0 ? (
-                `${task.sigma_minutes}m`
-              ) : (
-                <Text style={{ color: colors.grayLight }}>0m</Text>
-              )}
-            </Text>
+            <Pressable onPress={handleSectionTap}>
+              <Text style={[styles.sectionValue, { color: colors.black }]}>
+                avg: {task.avg_minutes}m, sigma:{' '}
+                {task.sigma_minutes > 0 ? (
+                  `${task.sigma_minutes}m`
+                ) : (
+                  <Text style={{ color: colors.grayLight }}>0m</Text>
+                )}
+              </Text>
+            </Pressable>
           )}
         </View>
 
@@ -685,9 +705,11 @@ export function TaskDetailView() {
               </Text>
             </View>
           ) : (
-            <Text style={[styles.sectionValue, { color: colors.black }]}>
-              {task.abandonability.toFixed(2)}
-            </Text>
+            <Pressable onPress={handleSectionTap}>
+              <Text style={[styles.sectionValue, { color: colors.black }]}>
+                {task.abandonability.toFixed(2)}
+              </Text>
+            </Pressable>
           )}
         </View>
 
@@ -724,9 +746,11 @@ export function TaskDetailView() {
               style={styles.descriptionInput}
             />
           ) : (
-            <Text style={[styles.sectionValue, { color: colors.black }]}>
-              {task.description || '(なし)'}
-            </Text>
+            <Pressable onPress={handleSectionTap}>
+              <Text style={[styles.sectionValue, { color: colors.black }]}>
+                {task.description || '(なし)'}
+              </Text>
+            </Pressable>
           )}
         </View>
 
@@ -765,7 +789,7 @@ export function TaskDetailView() {
               </View>
             </View>
           ) : (
-            <View style={styles.toggleRow}>
+            <Pressable style={styles.toggleRow} onPress={handleSectionTap}>
               <View style={styles.toggleItem}>
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>
                   parallelizable
@@ -786,7 +810,7 @@ export function TaskDetailView() {
                   color={BRAND_COLOR}
                 />
               </View>
-            </View>
+            </Pressable>
           )}
         </View>
 
@@ -1011,12 +1035,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 4,
     paddingBottom: 4,
-  },
-  centerButtonContainer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    alignItems: 'center',
   },
   content: {
     flex: 1,
