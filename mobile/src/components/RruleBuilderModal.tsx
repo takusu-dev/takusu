@@ -58,6 +58,9 @@ function chunk<T>(arr: T[], size: number): T[][] {
 const MONTH_DAYS = Array.from({ length: 31 }, (_, i) => i + 1);
 const MONTH_DAY_ROWS = chunk(MONTH_DAYS, 7);
 
+// Months laid out 6 per row (12 months → 2 rows)
+const MONTH_ROWS = chunk(MONTHS, 6);
+
 // nth values available in the picker: 1..5 and -1 (最終)
 const NTH_OPTIONS: (number | null)[] = [null, 1, 2, 3, 4, 5, -1];
 
@@ -195,6 +198,39 @@ export function RruleBuilderModal({
         ? rule.by_month.filter((x) => x !== m)
         : [...rule.by_month, m].sort((a, b) => a - b),
     });
+  }
+
+  /** Render the month chips as a 6-per-row grid. */
+  function renderMonthGrid() {
+    return MONTH_ROWS.map((row, ri) => (
+      <View key={ri} style={styles.monthRow}>
+        {row.map((m) => {
+          const on = rule.by_month.includes(m);
+          return (
+            <Pressable
+              key={m}
+              style={[
+                styles.monthChip,
+                {
+                  borderColor: on ? BRAND_COLOR : colors.separator,
+                },
+                on && { backgroundColor: BRAND_COLOR },
+              ]}
+              onPress={() => toggleMonth(m)}
+            >
+              <Text
+                style={[
+                  styles.chipText,
+                  { color: on ? COLORS.white : colors.black },
+                ]}
+              >
+                {m}月
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    ));
   }
 
   // ---- exdate helpers ----
@@ -740,35 +776,7 @@ export function RruleBuilderModal({
                       >
                         月
                       </Text>
-                      <View style={styles.chips}>
-                        {MONTHS.map((m) => {
-                          const on = rule.by_month.includes(m);
-                          return (
-                            <Pressable
-                              key={m}
-                              style={[
-                                styles.chip,
-                                {
-                                  borderColor: on
-                                    ? BRAND_COLOR
-                                    : colors.separator,
-                                },
-                                on && { backgroundColor: BRAND_COLOR },
-                              ]}
-                              onPress={() => toggleMonth(m)}
-                            >
-                              <Text
-                                style={[
-                                  styles.chipText,
-                                  { color: on ? COLORS.white : colors.black },
-                                ]}
-                              >
-                                {m}月
-                              </Text>
-                            </Pressable>
-                          );
-                        })}
-                      </View>
+                      {renderMonthGrid()}
                     </View>
                   ) : (
                     // Collapsible for daily / weekly / monthly
@@ -800,34 +808,8 @@ export function RruleBuilderModal({
                         </Text>
                       </Pressable>
                       {showAdvanced && (
-                        <View style={[styles.chips, { marginTop: 8 }]}>
-                          {MONTHS.map((m) => {
-                            const on = rule.by_month.includes(m);
-                            return (
-                              <Pressable
-                                key={m}
-                                style={[
-                                  styles.chip,
-                                  {
-                                    borderColor: on
-                                      ? BRAND_COLOR
-                                      : colors.separator,
-                                  },
-                                  on && { backgroundColor: BRAND_COLOR },
-                                ]}
-                                onPress={() => toggleMonth(m)}
-                              >
-                                <Text
-                                  style={[
-                                    styles.chipText,
-                                    { color: on ? COLORS.white : colors.black },
-                                  ]}
-                                >
-                                  {m}月
-                                </Text>
-                              </Pressable>
-                            );
-                          })}
+                        <View style={{ marginTop: 8 }}>
+                          {renderMonthGrid()}
                         </View>
                       )}
                     </View>
@@ -1239,6 +1221,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+  },
+  // Month chips: 6 per row
+  monthRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginBottom: 6,
+  },
+  monthChip: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
   },
   chip: {
     paddingHorizontal: 14,
