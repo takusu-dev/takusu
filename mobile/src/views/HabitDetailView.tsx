@@ -80,7 +80,7 @@ export function HabitDetailView() {
         setStartTime(h.start_time);
         setEndTime(h.end_time);
         setAvgMinutes(String(h.avg_minutes));
-        setSigmaMinutes(String(h.sigma_minutes));
+        setSigmaMinutes(h.sigma_minutes > 0 ? String(h.sigma_minutes) : '');
         setAbandonability(h.abandonability);
         setParallelizable(h.parallelizable);
         setAllowsParallel(h.allows_parallel);
@@ -117,9 +117,13 @@ export function HabitDetailView() {
       const v = parseInt(avgMinutes, 10);
       if (!isNaN(v) && v > 0) updates.avg_minutes = v;
     }
-    if (sigmaMinutes !== String(habit.sigma_minutes)) {
+    if (
+      sigmaMinutes !==
+      (habit.sigma_minutes > 0 ? String(habit.sigma_minutes) : '')
+    ) {
       const v = parseInt(sigmaMinutes, 10);
       if (!isNaN(v) && v >= 0) updates.sigma_minutes = v;
+      else if (sigmaMinutes === '') updates.sigma_minutes = 0;
     }
     if (abandonability !== habit.abandonability)
       updates.abandonability = abandonability;
@@ -462,21 +466,38 @@ export function HabitDetailView() {
                 style={[styles.costInput, { flex: 1 }]}
                 dense
               />
-              <PaperTextInput
-                mode="outlined"
-                label="sigma (分)"
-                value={sigmaMinutes}
-                onChangeText={setSigmaMinutes}
-                keyboardType="numeric"
-                outlineColor={colors.separator}
-                activeOutlineColor={BRAND_COLOR}
-                style={[styles.costInput, { flex: 1 }]}
-                dense
-              />
+              <View style={[styles.costInput, { flex: 1 }]}>
+                <PaperTextInput
+                  mode="outlined"
+                  label="sigma (分)"
+                  value={sigmaMinutes}
+                  onChangeText={setSigmaMinutes}
+                  keyboardType="numeric"
+                  outlineColor={colors.separator}
+                  activeOutlineColor={BRAND_COLOR}
+                  dense
+                />
+                {(!sigmaMinutes || sigmaMinutes === '0') && (
+                  <Text style={[styles.costHint, { color: colors.grayLight }]}>
+                    {Math.max(
+                      1,
+                      Math.round((parseInt(avgMinutes, 10) || 60) / 5),
+                    )}
+                    m (avg/5)
+                  </Text>
+                )}
+              </View>
             </View>
           ) : (
             <Text style={[styles.value, { color: colors.black }]}>
-              avg: {habit.avg_minutes}m, sigma: {habit.sigma_minutes}m
+              avg: {habit.avg_minutes}m, sigma:{' '}
+              {habit.sigma_minutes > 0 ? (
+                `${habit.sigma_minutes}m`
+              ) : (
+                <Text style={{ color: colors.grayLight }}>
+                  {Math.max(1, Math.round(habit.avg_minutes / 5))}m (avg/5)
+                </Text>
+              )}
             </Text>
           )}
         </View>
@@ -705,6 +726,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   costInput: {},
+  costHint: {
+    fontSize: 11,
+    marginTop: 2,
+    marginLeft: 4,
+  },
   sliderContainer: {
     flexDirection: 'row',
     alignItems: 'center',

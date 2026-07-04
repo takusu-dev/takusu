@@ -57,7 +57,7 @@ export function TaskAddView({
   const [startAt, setStartAt] = useState<Date | null>(null);
   const [endAt, setEndAt] = useState<Date | null>(null);
   const [avgMinutes, setAvgMinutes] = useState('60');
-  const [sigmaMinutes, setSigmaMinutes] = useState('0');
+  const [sigmaMinutes, setSigmaMinutes] = useState('');
   const [abandonability, setAbandonability] = useState(0.5);
   const [description, setDescription] = useState('');
   const [selectedDeps, setSelectedDeps] = useState<string[]>(initialDeps);
@@ -271,14 +271,12 @@ export function TaskAddView({
               value={sigmaMinutes}
               onChangeText={setSigmaMinutes}
               keyboardType="numeric"
-              placeholder="auto"
               placeholderTextColor={colors.grayLight}
             />
             {(!sigmaMinutes || sigmaMinutes === '0') && (
               <Text style={[styles.hint, { color: colors.grayLight }]}>
-                auto:{' '}
-                {Math.max(1, Math.round((parseInt(avgMinutes, 10) || 60) / 5))}m
-                (avg/5)
+                {Math.max(1, Math.round((parseInt(avgMinutes, 10) || 60) / 5))}
+                m (avg/5)
               </Text>
             )}
           </View>
