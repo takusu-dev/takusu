@@ -66,13 +66,25 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
     let allows_parallel = body.allows_parallel.unwrap_or(false);
     let abandonability = body.abandonability.unwrap_or(0.5);
 
-    // Atomic display_id allocation via subquery — avoids TOCTOU race
-    // between separate SELECT MAX and INSERT under concurrent creates.
+    // Atomically reserve a monotonic display_id from the sequence table.
+    // This prevents display_id reuse after task deletion (#186).
+    let seq_stmt = database.prepare(
+        "UPDATE task_display_id_seq SET next_id = next_id + 1 RETURNING next_id - 1 AS display_id",
+    );
+    let seq_row: Option<DisplayIdRow> = seq_stmt
+        .first(None)
+        .await
+        .map_err(WorkerError::Worker)?;
+    let display_id = seq_row
+        .ok_or_else(|| WorkerError::Internal("display_id sequence is empty".into()))?
+        .display_id;
+
     let stmt = database.prepare(
-        "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id) VALUES (?1, (SELECT COALESCE(MAX(display_id), 0) + 1 FROM tasks), ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'pending', ?12, ?13)"
+        "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'pending', ?13, ?14)"
     );
     stmt.bind(&[
         JsValue::from_str(&id),
+        JsValue::from_f64(display_id as f64),
         JsValue::from_str(&body.title),
         body.description
             .as_deref()
@@ -316,4 +328,9 @@ async fn resolve_depends(
         resolved.push(resolve_task_id(database, d).await?);
     }
     Ok(resolved)
+}
+
+#[derive(serde::Deserialize)]
+struct DisplayIdRow {
+    display_id: i64,
 }
