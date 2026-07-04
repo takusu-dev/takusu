@@ -3,6 +3,10 @@
 // worker: endpoint, key (with server restart)
 // google calendar: config + OAuth + manual sync
 // info: license, version (build number)
+//
+// Split into two screens (issue #127): a category list and a per-category
+// detail screen. The horizontal tab bar overflowed on small screens, making
+// some categories (notably "情報") unreachable.
 
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -17,6 +21,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Application from 'expo-application';
 import * as FileSystem from 'expo-file-system';
@@ -45,7 +50,7 @@ import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { haptic } from '@/src/components/haptics';
 import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
 
-type SettingsCategory =
+export type SettingsCategory =
   | 'general'
   | 'sleep'
   | 'notifications'
@@ -55,7 +60,86 @@ type SettingsCategory =
 
 const CALENDAR_EVENTS_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
 
-export function SettingsView() {
+const CATEGORY_LABELS: Record<SettingsCategory, string> = {
+  general: '一般',
+  sleep: '睡眠',
+  notifications: '通知',
+  worker: 'Worker',
+  google: 'Google Calendar',
+  info: '情報',
+};
+
+const CATEGORY_ORDER: SettingsCategory[] = [
+  'general',
+  'sleep',
+  'notifications',
+  'worker',
+  'google',
+  'info',
+];
+
+// ── Category list screen ──
+// Replaces the horizontal tab bar that overflowed on small screens (issue #127).
+export function SettingsCategoryView() {
+  const router = useRouter();
+  const colors = useColors();
+  const insets = useSafeAreaInsets();
+
+  return (
+    <View style={[styles.container, { backgroundColor: colors.white }]}>
+      <View
+        style={[
+          styles.topBar,
+          { borderBottomColor: colors.separator, paddingTop: 8 + insets.top },
+        ]}
+      >
+        <Pressable
+          style={styles.backButton}
+          onPress={() => {
+            haptic.light();
+            router.back();
+          }}
+        >
+          <Text style={[styles.backButtonText, { color: BRAND_COLOR }]}>‹</Text>
+        </Pressable>
+        <Text style={[styles.title, { color: colors.black }]}>設定</Text>
+      </View>
+
+      <ScrollView
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: 16 + insets.bottom },
+        ]}
+      >
+        {CATEGORY_ORDER.map((key) => (
+          <Pressable
+            key={key}
+            style={[
+              styles.categoryRow,
+              { borderBottomColor: colors.separator },
+            ]}
+            onPress={() => {
+              haptic.select();
+              router.push(`/settings/${key}`);
+            }}
+          >
+            <Text style={[styles.categoryLabel, { color: colors.black }]}>
+              {CATEGORY_LABELS[key]}
+            </Text>
+            <Ionicons name="chevron-forward" size={20} color={colors.gray} />
+          </Pressable>
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
+// ── Per-category detail screen ──
+export function SettingsDetailView({
+  category,
+}: {
+  category: SettingsCategory;
+}) {
   const router = useRouter();
   const {
     client,
@@ -72,7 +156,6 @@ export function SettingsView() {
   } = useServer();
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const [category, setCategory] = useState<SettingsCategory>('general');
   const [notifPickerField, setNotifPickerField] = useState<
     'morningBriefing' | 'eveningSummary' | 'habitReminder' | null
   >(null);
@@ -429,15 +512,6 @@ export function SettingsView() {
     }
   }
 
-  const categories: { key: SettingsCategory; label: string }[] = [
-    { key: 'general', label: '一般' },
-    { key: 'sleep', label: '睡眠' },
-    { key: 'notifications', label: '通知' },
-    { key: 'worker', label: 'Worker' },
-    { key: 'google', label: 'Google Calendar' },
-    { key: 'info', label: '情報' },
-  ];
-
   const appVersion = Application.nativeApplicationVersion ?? 'unknown';
   const buildVersion = Application.nativeBuildVersion ?? 'unknown';
   const gitCommit = Constants.expoConfig?.extra?.gitCommit ?? 'unknown';
@@ -460,40 +534,12 @@ export function SettingsView() {
         >
           <Text style={[styles.backButtonText, { color: BRAND_COLOR }]}>‹</Text>
         </Pressable>
-        <Text style={[styles.title, { color: colors.black }]}>設定</Text>
+        <Text style={[styles.title, { color: colors.black }]}>
+          {CATEGORY_LABELS[category]}
+        </Text>
       </View>
 
       <View style={styles.body}>
-        {/* Category tabs */}
-        <View style={[styles.tabs, { borderBottomColor: colors.separator }]}>
-          {categories.map((c) => (
-            <Pressable
-              key={c.key}
-              style={[
-                styles.tab,
-                category === c.key && { borderBottomColor: BRAND_COLOR },
-              ]}
-              onPress={() => {
-                if (category !== c.key) haptic.select();
-                setCategory(c.key);
-              }}
-            >
-              <Text
-                style={[
-                  styles.tabText,
-                  { color: colors.gray },
-                  category === c.key && {
-                    color: BRAND_COLOR,
-                    fontWeight: '600',
-                  },
-                ]}
-              >
-                {c.label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-
         <ScrollView
           contentContainerStyle={[
             styles.content,
@@ -1406,6 +1452,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 8,
     paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   backButton: {
     width: 40,
@@ -1425,24 +1472,20 @@ const styles = StyleSheet.create({
   body: {
     flex: 1,
   },
-  tabs: {
-    flexDirection: 'row',
-    paddingHorizontal: 8,
-    gap: 4,
-    borderBottomWidth: 1,
-  },
-  tab: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-  },
-  tabText: {
-    fontSize: 14,
-  },
   content: {
     padding: 16,
     gap: 16,
+  },
+  categoryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  categoryLabel: {
+    fontSize: 16,
   },
   settingRow: {
     flexDirection: 'row',
