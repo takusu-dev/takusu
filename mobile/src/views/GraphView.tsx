@@ -1,12 +1,11 @@
 // GraphView — task dependency DAG visualization
-// Uses WebView + Cytoscape.js with dagre layout
+// Uses @shopify/react-native-skia + d3-force via DependencyGraph component
 // Shows transitive dependencies of incomplete tasks (completed nodes are gray)
-// Edit mode: tap edge to cut, drag node-to-node to add dependency
+// Edit mode: tap edge to cut, long-press-drag node-to-node to add dependency
 // Non-edit mode: pan/zoom enabled
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { Button, IconButton } from 'react-native-paper';
 import type { TakusuClient } from '@/src/api/client';
 import { showError } from '@/src/api/errors';
@@ -15,6 +14,11 @@ import { parseDepends } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { haptic } from '@/src/components/haptics';
+import {
+  DependencyGraph,
+  type GraphNode,
+  type GraphEdge,
+} from '@/src/components/graph/DependencyGraph';
 
 interface GraphViewProps {
   client: TakusuClient | null;
@@ -22,217 +26,13 @@ interface GraphViewProps {
   onTaskPress?: (taskId: string) => void;
 }
 
-// HTML content for the WebView with Cytoscape.js + dagre.
-// Colors are applied at runtime via setTheme() to avoid reloading the
-// WebView when the theme changes (which causes a white flash — Issue #37).
-function buildGraphHtml(): string {
-  return `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <style>
-    body { margin: 0; padding: 0; overflow: hidden; background: transparent; }
-    #cy { width: 100vw; height: 100vh; }
-  </style>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.4/cytoscape.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape-dagre/2.5.0/cytoscape-dagre.min.js"></script>
-</head>
-<body>
-  <div id="cy"></div>
-  <script>
-    cytoscape.use(cytoscapeDagre);
-
-    let cy;
-    let editMode = false;
-    let currentBrand = '${BRAND_COLOR}';
-
-    function applyTheme(brand) {
-      currentBrand = brand;
-      // Body background is transparent — the native WebView background (set
-      // via React style) provides the themed color with no flash.
-      if (cy) {
-        cy.style()
-          .selector('node')
-          .style('border-color', brand)
-          .update();
-        cy.style()
-          .selector('edge')
-          .style('arrow-color', brand)
-          .style('line-color', brand)
-          .update();
-      }
-    }
-
-    function initGraph(data) {
-      if (cy) cy.destroy();
-      cy = cytoscape({
-        container: document.getElementById('cy'),
-        elements: data.elements,
-        style: [
-          {
-            selector: 'node',
-            style: {
-              'label': 'data(label)',
-              'text-valign': 'center',
-              'text-halign': 'center',
-              'text-wrap': 'wrap',
-              'text-max-width': '120px',
-              'font-size': '12px',
-              'background-color': 'data(color)',
-              'width': 'data(width)',
-              'height': 'data(height)',
-              'border-width': 2,
-              'border-color': currentBrand,
-              'color': '#fff',
-              'text-outline-width': 2,
-              'text-outline-color': '#444',
-            }
-          },
-          {
-            selector: 'node[status="completed"], node[status="skipped"]',
-            style: {
-              'background-color': '#aaa',
-              'border-color': '#888',
-              'color': '#ddd',
-            }
-          },
-          {
-            selector: 'edge',
-            style: {
-              'curve-style': 'bezier',
-              'target-arrow-shape': 'triangle',
-              'arrow-color': currentBrand,
-              'line-color': currentBrand,
-              'width': 2,
-            }
-          },
-          {
-            selector: '.selected',
-            style: {
-              'border-width': 4,
-              'border-color': '#E07070',
-            }
-          }
-        ],
-        layout: {
-          name: 'dagre',
-          rankDir: 'TB',
-          nodeSep: 40,
-          rankSep: 60,
-          animate: true,
-        },
-        userZoomingEnabled: true,
-        userPanningEnabled: true,
-        boxSelectionEnabled: false,
-      });
-
-      cy.on('tap', 'node', function(evt) {
-        const node = evt.target;
-        const id = node.data('id');
-        ReactNativeWebView.postMessage(JSON.stringify({ type: 'tapNode', id }));
-      });
-
-      cy.on('tap', 'edge', function(evt) {
-        if (editMode) {
-          const edge = evt.target;
-          const source = edge.data('source');
-          const target = edge.data('target');
-          ReactNativeWebView.postMessage(JSON.stringify({ type: 'cutEdge', source, target }));
-        }
-      });
-
-      // Edge drawing in edit mode
-      let edgeSource = null;
-      cy.on('tapstart', 'node', function(evt) {
-        if (editMode) {
-          edgeSource = evt.target.data('id');
-        }
-      });
-      cy.on('tapend', function(evt) {
-        if (editMode && edgeSource && evt.target !== cy) {
-          const targetNode = evt.target;
-          if (targetNode.isNode && targetNode.isNode() && targetNode.data('id') !== edgeSource) {
-            const target = targetNode.data('id');
-            ReactNativeWebView.postMessage(JSON.stringify({ type: 'addEdge', source: edgeSource, target }));
-          }
-        }
-        edgeSource = null;
-      });
-    }
-
-    function setEditMode(enabled) {
-      editMode = enabled;
-      if (cy) {
-        cy.userZoomingEnabled(!enabled);
-        cy.userPanningEnabled(!enabled);
-      }
-    }
-
-    document.addEventListener('message', function(e) {
-      const msg = JSON.parse(e.data);
-      if (msg.type === 'init') initGraph(msg.data);
-      if (msg.type === 'setEditMode') setEditMode(msg.enabled);
-      if (msg.type === 'setTheme') applyTheme(msg.brand);
-    });
-
-    // Expose for ReactNativeWebView
-    window.initGraph = initGraph;
-    window.setEditMode = setEditMode;
-    window.applyTheme = applyTheme;
-  </script>
-</body>
-</html>
-`;
-}
-
-interface GraphNode {
-  id: string;
-  label: string;
-  status: string;
-  color: string;
-  width: number;
-  height: number;
-}
-
-interface GraphEdge {
-  source: string;
-  target: string;
-}
-
 export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const webViewRef = useRef<WebView>(null);
   const [editMode, setEditMode] = useState(false);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
-  // webReady is tracked as a ref so that refresh()'s identity is stable and
-  // the refresh effect doesn't re-fire when the WebView finishes loading.
-  // The onLoad handler below performs the initial injection instead.
-  const webReadyRef = useRef(false);
-  // Latest elements to (re)inject once the WebView is ready. Captured as a
-  // ref so refresh() can be called before the WebView finishes loading the
-  // HTML (which defines window.initGraph). Without this, the initial
-  // injectJavaScript call silently fails because window.initGraph is undefined.
-  const pendingElementsRef = useRef<{
-    nodes: GraphNode[];
-    edges: GraphEdge[];
-  } | null>(null);
-
-  // Build the HTML once — it does not depend on theme colors so the WebView
-  // is not reloaded when the theme changes (avoids the flash from Issue #37).
-  // Colors are pushed in via applyTheme() instead.
-  const graphHtml = useMemo(() => buildGraphHtml(), []);
-
-  // Apply theme colors to the WebView whenever they change, without
-  // reloading the page. Only the cytoscape edge/border colors need updating —
-  // the background is handled by the native WebView style (transparent body).
-  useEffect(() => {
-    const brand = JSON.stringify(BRAND_COLOR);
-    webViewRef.current?.injectJavaScript(`window.applyTheme(${brand}); true;`);
-  }, [colors.white]);
+  const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
+  const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
 
   const refresh = useCallback(async () => {
     if (!client) return;
@@ -263,10 +63,11 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
       nodes.push({
         id: task.id,
         label: task.title,
-        status: task.status,
         color: isDone ? '#aaa' : BRAND_COLOR,
-        width: Math.max(60, Math.min(120, task.title.length * 8)),
-        height: 40,
+        x: 0,
+        y: 0,
+        vx: 0,
+        vy: 0,
       });
       const deps = parseDepends(task.depends);
       for (const depId of deps) {
@@ -277,69 +78,55 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
 
     for (const t of incomplete) visit(t.id);
 
-    const elements = {
-      nodes: nodes.map((n) => ({ data: n })),
-      edges: edges.map((e, i) => ({
-        data: { id: `e-${i}`, source: e.source, target: e.target },
-      })),
-    };
-
-    pendingElementsRef.current = { nodes, edges };
-    if (webReadyRef.current) {
-      webViewRef.current?.injectJavaScript(
-        `window.initGraph(${JSON.stringify({ elements })});`,
-      );
-    }
+    setGraphNodes(nodes);
+    setGraphEdges(edges);
   }, [client]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  function onMessage(event: WebViewMessageEvent) {
-    if (!client) return;
-    const msg = JSON.parse(event.nativeEvent.data);
+  function handleTapNode(taskId: string) {
+    haptic.light();
+    if (onTaskPress) {
+      onTaskPress(taskId);
+    } else {
+      onBack();
+    }
+  }
 
-    if (msg.type === 'tapNode') {
-      haptic.light();
-      if (onTaskPress) {
-        onTaskPress(msg.id);
-      } else {
-        onBack();
-      }
-    } else if (msg.type === 'cutEdge') {
-      haptic.medium();
-      const targetTask = tasks.find((t) => t.id === msg.target);
-      if (targetTask) {
-        const deps = parseDepends(targetTask.depends).filter(
-          (d) => d !== msg.source,
-        );
+  function handleCutEdge(source: string, target: string) {
+    if (!client) return;
+    haptic.medium();
+    const targetTask = tasks.find((t) => t.id === target);
+    if (targetTask) {
+      const deps = parseDepends(targetTask.depends).filter((d) => d !== source);
+      client
+        .updateTask(target, { depends: deps })
+        .then(refresh)
+        .catch((e) => showError(e, '依存関係の削除に失敗'));
+    }
+  }
+
+  function handleAddEdge(source: string, target: string) {
+    if (!client) return;
+    haptic.medium();
+    const targetTask = tasks.find((t) => t.id === target);
+    if (targetTask) {
+      const deps = parseDepends(targetTask.depends);
+      if (!deps.includes(source)) {
+        deps.push(source);
         client
-          .updateTask(msg.target, { depends: deps })
+          .updateTask(target, { depends: deps })
           .then(refresh)
-          .catch((e) => showError(e, '依存関係の削除に失敗'));
-      }
-    } else if (msg.type === 'addEdge') {
-      haptic.medium();
-      const targetTask = tasks.find((t) => t.id === msg.target);
-      if (targetTask) {
-        const deps = parseDepends(targetTask.depends);
-        if (!deps.includes(msg.source)) {
-          deps.push(msg.source);
-          client
-            .updateTask(msg.target, { depends: deps })
-            .then(refresh)
-            .catch((e) => showError(e, '依存関係の追加に失敗'));
-        }
+          .catch((e) => showError(e, '依存関係の追加に失敗'));
       }
     }
   }
 
   function toggleEditMode() {
-    const newMode = !editMode;
     haptic.medium();
-    setEditMode(newMode);
-    webViewRef.current?.injectJavaScript(`window.setEditMode(${newMode});`);
+    setEditMode((v) => !v);
   }
 
   return (
@@ -372,33 +159,13 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
         <View style={styles.topBarRight} />
       </View>
 
-      <WebView
-        ref={webViewRef}
-        source={{ html: graphHtml }}
-        onMessage={onMessage}
-        onLoad={() => {
-          webReadyRef.current = true;
-          // Inject any elements that were computed before the WebView
-          // finished loading its HTML (where window.initGraph is defined).
-          const pending = pendingElementsRef.current;
-          if (pending) {
-            const elements = {
-              nodes: pending.nodes.map((n) => ({ data: n })),
-              edges: pending.edges.map((e, i) => ({
-                data: { id: `e-${i}`, source: e.source, target: e.target },
-              })),
-            };
-            webViewRef.current?.injectJavaScript(
-              `window.initGraph(${JSON.stringify({ elements })});`,
-            );
-          }
-        }}
-        // Match the WebView's native background to the theme so there is no
-        // white flash before the HTML body background is applied.
-        style={[styles.webview, { backgroundColor: colors.white }]}
-        originWhitelist={['*']}
-        javaScriptEnabled
-        domStorageEnabled
+      <DependencyGraph
+        nodes={graphNodes}
+        edges={graphEdges}
+        editMode={editMode}
+        onTapNode={handleTapNode}
+        onCutEdge={handleCutEdge}
+        onAddEdge={handleAddEdge}
       />
     </View>
   );
@@ -437,8 +204,5 @@ const styles = StyleSheet.create({
   editButtonContent: {
     paddingVertical: 6,
     paddingHorizontal: 8,
-  },
-  webview: {
-    flex: 1,
   },
 });

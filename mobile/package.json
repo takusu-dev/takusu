@@ -16,10 +16,9 @@
     "@expo/vector-icons": "^15.0.2",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/datetimepicker": "9.1.0",
-    "@types/cytoscape": "^3.21.9",
-    "@types/dagre": "^0.7.54",
-    "cytoscape": "^3.34.0",
-    "dagre": "^0.8.5",
+    "@shopify/react-native-skia": "2.6.2",
+    "@types/d3-force": "^3.0.10",
+    "d3-force": "^3.0.0",
     "expo": "~56.0.12",
     "expo-application": "~56.0.3",
     "expo-build-properties": "^56.0.19",
@@ -43,7 +42,6 @@
     "react-native-paper": "^5.15.3",
     "react-native-reanimated": "4.3.1",
     "react-native-safe-area-context": "^5.8.0",
-    "react-native-webview": "13.16.1",
     "react-native-worklets": "^0.8.0"
   },
   "devDependencies": {
