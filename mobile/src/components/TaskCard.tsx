@@ -2,6 +2,7 @@
 // Left: start/end time, Center: title, Right-bottom: cost (avg, sigma)
 // Background color based on abandonability
 // Slide right = done (weak haptics), slide left = delete (strong haptics)
+// Slide actions show a background preview with icon
 // Done tasks: strikethrough + gray
 // allows_parallel: shows receiver task on left (1:3 width ratio)
 
@@ -14,9 +15,15 @@ import Reanimated, {
   runOnJS,
   withSpring,
 } from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
 import type { TaskRow } from '@/src/api/types';
 import { parseDepends } from '@/src/api/types';
-import { abandonabilityColorFor, BRAND_COLOR, useTheme } from '@/src/theme';
+import {
+  abandonabilityColorFor,
+  BRAND_COLOR,
+  COLORS,
+  useTheme,
+} from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
 
 interface TaskCardProps {
@@ -96,6 +103,14 @@ function TaskCardImpl({
     transform: [{ translateX: translateX.value }],
   }));
 
+  // Background preview opacity for slide actions (#170)
+  const doneBgStyle = useAnimatedStyle(() => ({
+    opacity: Math.min(1, Math.max(0, translateX.value / 80)),
+  }));
+  const deleteBgStyle = useAnimatedStyle(() => ({
+    opacity: Math.min(1, Math.max(0, -translateX.value / 80)),
+  }));
+
   const bgColor = abandonabilityColorFor(task.abandonability, dark);
   const deps = parseDepends(task.depends);
 
@@ -155,35 +170,63 @@ function TaskCardImpl({
                 }),
             )}
           >
-            <Reanimated.View
-              style={[
-                styles.parallelCard,
-                { backgroundColor: parallelBgColor },
-                animatedStyle,
-              ]}
-            >
-              <Pressable
-                onPress={handleParallelPress}
-                style={styles.parallelPressable}
+            <View style={styles.parallelCardWrap}>
+              <Reanimated.View
+                style={[
+                  styles.doneBg,
+                  { backgroundColor: parallelDone ? COLORS.red : COLORS.green },
+                  doneBgStyle,
+                ]}
+                pointerEvents="none"
               >
-                <Text
-                  style={[
-                    styles.parallelTitle,
-                    { color: colors.black },
-                    parallelDone && {
-                      textDecorationLine: 'line-through',
-                      color: colors.done,
-                    },
-                  ]}
-                  numberOfLines={3}
+                <Ionicons
+                  name={parallelDone ? 'refresh' : 'checkmark'}
+                  size={24}
+                  color={COLORS.white}
+                />
+              </Reanimated.View>
+              <Reanimated.View
+                style={[
+                  styles.deleteBg,
+                  { backgroundColor: COLORS.red },
+                  deleteBgStyle,
+                ]}
+                pointerEvents="none"
+              >
+                <Ionicons name="trash" size={24} color={COLORS.white} />
+              </Reanimated.View>
+              <Reanimated.View
+                style={[
+                  styles.parallelCard,
+                  { backgroundColor: parallelBgColor },
+                  animatedStyle,
+                ]}
+              >
+                <Pressable
+                  onPress={handleParallelPress}
+                  style={styles.parallelPressable}
                 >
-                  {parallelTask.title}
-                </Text>
-                <Text style={[styles.parallelTime, { color: colors.grayDark }]}>
-                  {formatTime(parallelScheduleStart)}
-                </Text>
-              </Pressable>
-            </Reanimated.View>
+                  <Text
+                    style={[
+                      styles.parallelTitle,
+                      { color: colors.black },
+                      parallelDone && {
+                        textDecorationLine: 'line-through',
+                        color: colors.done,
+                      },
+                    ]}
+                    numberOfLines={3}
+                  >
+                    {parallelTask.title}
+                  </Text>
+                  <Text
+                    style={[styles.parallelTime, { color: colors.grayDark }]}
+                  >
+                    {formatTime(parallelScheduleStart)}
+                  </Text>
+                </Pressable>
+              </Reanimated.View>
+            </View>
           </GestureDetector>
 
           {/* Right: main task (3:4 ratio → 75%) */}
@@ -192,6 +235,7 @@ function TaskCardImpl({
               styles.mainCard,
               { backgroundColor: bgColor },
               pressed && styles.pressed,
+              selected && styles.cardSelected,
             ]}
             onPress={handlePress}
             onLongPress={handleLongPress}
@@ -205,6 +249,9 @@ function TaskCardImpl({
               </Text>
             </View>
             <View style={styles.titleContainer}>
+              <Text style={[styles.taskId, { color: colors.gray }]}>
+                #{task.display_id}
+              </Text>
               <Text
                 style={[
                   styles.title,
@@ -237,59 +284,91 @@ function TaskCardImpl({
   }
 
   return (
-    <GestureDetector gesture={Gesture.Race(flingRight, flingLeft)}>
-      <Reanimated.View style={[styles.container, animatedStyle]}>
-        <Pressable
-          style={({ pressed }) => [
-            styles.card,
-            { backgroundColor: bgColor },
-            pressed && styles.pressed,
-          ]}
-          onPress={handlePress}
-          onLongPress={handleLongPress}
-        >
-          {/* Left: times */}
-          <View style={styles.times}>
-            <Text style={[styles.timeText, { color: colors.grayDark }]}>
-              {formatTime(scheduleStart)}
-            </Text>
-            <Text style={[styles.timeText, { color: colors.grayDark }]}>
-              {formatTime(scheduleEnd)}
-            </Text>
-          </View>
-
-          {/* Center: title */}
-          <View style={styles.titleContainer}>
-            <Text
-              style={[
-                styles.title,
-                { color: colors.black },
-                isDone && {
-                  textDecorationLine: 'line-through',
-                  color: colors.done,
-                },
-              ]}
-              numberOfLines={2}
-            >
-              {task.title}
-            </Text>
-            {deps.length > 0 && (
-              <Text style={[styles.depsCount, { color: colors.gray }]}>
-                ↳ {deps.length} deps
-              </Text>
-            )}
-            {selected && <Text style={styles.selectedIndicator}>✓</Text>}
-          </View>
-
-          {/* Right-bottom: cost */}
-          <View style={styles.cost}>
-            <Text style={[styles.costText, { color: colors.gray }]}>
-              {task.avg_minutes}m ±{task.sigma_minutes}
-            </Text>
-          </View>
-        </Pressable>
+    <View style={styles.container}>
+      {/* Slide action preview backgrounds (#170) */}
+      <Reanimated.View
+        style={[
+          styles.doneBg,
+          { backgroundColor: isDone ? COLORS.red : COLORS.green },
+          doneBgStyle,
+        ]}
+        pointerEvents="none"
+      >
+        <Ionicons
+          name={isDone ? 'refresh' : 'checkmark'}
+          size={28}
+          color={COLORS.white}
+        />
       </Reanimated.View>
-    </GestureDetector>
+      <Reanimated.View
+        style={[
+          styles.deleteBg,
+          { backgroundColor: COLORS.red },
+          deleteBgStyle,
+        ]}
+        pointerEvents="none"
+      >
+        <Ionicons name="trash" size={28} color={COLORS.white} />
+      </Reanimated.View>
+      <GestureDetector gesture={Gesture.Race(flingRight, flingLeft)}>
+        <Reanimated.View
+          style={[styles.card, { backgroundColor: bgColor }, animatedStyle]}
+        >
+          <Pressable
+            style={({ pressed }) => [
+              styles.cardInner,
+              pressed && styles.pressed,
+              selected && styles.cardSelected,
+            ]}
+            onPress={handlePress}
+            onLongPress={handleLongPress}
+          >
+            {/* Left: times */}
+            <View style={styles.times}>
+              <Text style={[styles.timeText, { color: colors.grayDark }]}>
+                {formatTime(scheduleStart)}
+              </Text>
+              <Text style={[styles.timeText, { color: colors.grayDark }]}>
+                {formatTime(scheduleEnd)}
+              </Text>
+            </View>
+
+            {/* Center: title */}
+            <View style={styles.titleContainer}>
+              <Text style={[styles.taskId, { color: colors.gray }]}>
+                #{task.display_id}
+              </Text>
+              <Text
+                style={[
+                  styles.title,
+                  { color: colors.black },
+                  isDone && {
+                    textDecorationLine: 'line-through',
+                    color: colors.done,
+                  },
+                ]}
+                numberOfLines={2}
+              >
+                {task.title}
+              </Text>
+              {deps.length > 0 && (
+                <Text style={[styles.depsCount, { color: colors.gray }]}>
+                  ↳ {deps.length} deps
+                </Text>
+              )}
+              {selected && <Text style={styles.selectedIndicator}>✓</Text>}
+            </View>
+
+            {/* Right-bottom: cost */}
+            <View style={styles.cost}>
+              <Text style={[styles.costText, { color: colors.gray }]}>
+                {task.avg_minutes}m ±{task.sigma_minutes}
+              </Text>
+            </View>
+          </Pressable>
+        </Reanimated.View>
+      </GestureDetector>
+    </View>
   );
 }
 
@@ -297,8 +376,13 @@ const styles = StyleSheet.create({
   container: {
     marginHorizontal: 12,
     marginVertical: 4,
+    position: 'relative',
   },
   card: {
+    borderRadius: 12,
+    minHeight: 72,
+  },
+  cardInner: {
     flexDirection: 'row',
     padding: 12,
     borderRadius: 12,
@@ -306,14 +390,44 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
+  cardSelected: {
+    borderWidth: 2,
+    borderColor: BRAND_COLOR,
+  },
+  // Slide action preview backgrounds (#170)
+  doneBg: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+    paddingLeft: 20,
+  },
+  deleteBg: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'flex-end',
+    paddingRight: 20,
+  },
   parallelContainer: {
     flexDirection: 'row',
     borderRadius: 12,
     overflow: 'hidden',
     minHeight: 72,
   },
-  parallelCard: {
+  parallelCardWrap: {
     width: '25%',
+    position: 'relative',
+  },
+  parallelCard: {
     padding: 6,
     borderRadius: 0,
   },
@@ -359,6 +473,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
     flex: 1,
+  },
+  taskId: {
+    fontSize: 11,
+    fontVariant: ['tabular-nums'],
   },
   depsCount: {
     fontSize: 11,
