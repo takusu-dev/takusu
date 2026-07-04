@@ -7,6 +7,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -59,6 +60,8 @@ export function TaskAddView({
   const [avgMinutes, setAvgMinutes] = useState('60');
   const [sigmaMinutes, setSigmaMinutes] = useState('');
   const [abandonability, setAbandonability] = useState(0.5);
+  const [parallelizable, setParallelizable] = useState(false);
+  const [allowsParallel, setAllowsParallel] = useState(false);
   const [description, setDescription] = useState('');
   const [selectedDeps, setSelectedDeps] = useState<string[]>(initialDeps);
   const [allTasks, setAllTasks] = useState<TaskRow[]>([]);
@@ -102,6 +105,8 @@ export function TaskAddView({
         sigma_minutes: sigma,
         depends: selectedDeps.length > 0 ? selectedDeps : undefined,
         abandonability,
+        parallelizable,
+        allows_parallel: allowsParallel,
       });
       undoRedo.push({
         description: `create task: ${title}`,
@@ -118,6 +123,8 @@ export function TaskAddView({
             sigma_minutes: sigma,
             depends: selectedDeps.length > 0 ? selectedDeps : undefined,
             abandonability,
+            parallelizable,
+            allows_parallel: allowsParallel,
           });
         },
       });
@@ -294,6 +301,32 @@ export function TaskAddView({
             step={0.25}
             minimumTrackTintColor={BRAND_COLOR}
           />
+        </View>
+
+        <View style={styles.field}>
+          <Text style={[styles.label, { color: colors.gray }]}>並列設定</Text>
+          <View style={styles.toggleRow}>
+            <View style={styles.toggleItem}>
+              <Text style={[styles.toggleLabel, { color: colors.black }]}>
+                parallelizable
+              </Text>
+              <Switch
+                value={parallelizable}
+                onValueChange={setParallelizable}
+                trackColor={{ false: colors.separator, true: BRAND_COLOR }}
+              />
+            </View>
+            <View style={styles.toggleItem}>
+              <Text style={[styles.toggleLabel, { color: colors.black }]}>
+                allows_parallel
+              </Text>
+              <Switch
+                value={allowsParallel}
+                onValueChange={setAllowsParallel}
+                trackColor={{ false: colors.separator, true: BRAND_COLOR }}
+              />
+            </View>
+          </View>
         </View>
 
         <View style={styles.field}>
@@ -557,6 +590,18 @@ const styles = StyleSheet.create({
   },
   multiline: {
     minHeight: 80,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    gap: 24,
+  },
+  toggleItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  toggleLabel: {
+    fontSize: 14,
   },
   depHeader: {
     flexDirection: 'row',

@@ -678,6 +678,7 @@ export function TaskDetailView() {
                 maximumValue={1}
                 step={0.25}
                 minimumTrackTintColor={BRAND_COLOR}
+                style={styles.slider}
               />
               <Text style={[styles.sliderValue, { color: BRAND_COLOR }]}>
                 {abandonability.toFixed(2)}
@@ -1048,6 +1049,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  slider: {
+    flex: 1,
   },
   sliderValue: {
     fontSize: 14,

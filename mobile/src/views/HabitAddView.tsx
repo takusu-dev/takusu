@@ -6,6 +6,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -42,6 +43,8 @@ export function HabitAddView() {
   const [avgMinutes, setAvgMinutes] = useState('60');
   const [sigmaMinutes, setSigmaMinutes] = useState('');
   const [abandonability, setAbandonability] = useState(0.5);
+  const [parallelizable, setParallelizable] = useState(false);
+  const [allowsParallel, setAllowsParallel] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pickerField, setPickerField] = useState<'start' | 'end' | null>(null);
 
@@ -75,6 +78,8 @@ export function HabitAddView() {
         avg_minutes: avg,
         sigma_minutes: sigma,
         abandonability,
+        parallelizable,
+        allows_parallel: allowsParallel,
       });
       undoRedo.push({
         description: `create habit: ${title}`,
@@ -90,6 +95,8 @@ export function HabitAddView() {
             avg_minutes: avg,
             sigma_minutes: sigma,
             abandonability,
+            parallelizable,
+            allows_parallel: allowsParallel,
           });
         },
       });
@@ -288,6 +295,32 @@ export function HabitAddView() {
             minimumTrackTintColor={BRAND_COLOR}
           />
         </View>
+
+        <View style={styles.field}>
+          <Text style={[styles.label, { color: colors.gray }]}>並列設定</Text>
+          <View style={styles.toggleRow}>
+            <View style={styles.toggleItem}>
+              <Text style={[styles.toggleLabel, { color: colors.black }]}>
+                parallelizable
+              </Text>
+              <Switch
+                value={parallelizable}
+                onValueChange={setParallelizable}
+                trackColor={{ false: colors.separator, true: BRAND_COLOR }}
+              />
+            </View>
+            <View style={styles.toggleItem}>
+              <Text style={[styles.toggleLabel, { color: colors.black }]}>
+                allows_parallel
+              </Text>
+              <Switch
+                value={allowsParallel}
+                onValueChange={setAllowsParallel}
+                trackColor={{ false: colors.separator, true: BRAND_COLOR }}
+              />
+            </View>
+          </View>
+        </View>
       </ScrollView>
 
       <RruleBuilderModal
@@ -401,5 +434,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     fontSize: 16,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    gap: 24,
+  },
+  toggleItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  toggleLabel: {
+    fontSize: 14,
   },
 });
