@@ -34,6 +34,7 @@ import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { haptic } from '@/src/components/haptics';
+import { CancelConfirmButton } from '@/src/components/CancelConfirmButton';
 import { formatDate } from '@/src/formatDate';
 import {
   DependencyGraph,
@@ -487,21 +488,37 @@ export function TaskDetailView() {
           }}
         />
         <View style={{ flex: 1 }} />
-        <IconButton
-          icon={editing ? 'content-save' : 'pencil-outline'}
-          iconColor={editing ? COLORS.white : BRAND_COLOR}
-          containerColor={editing ? BRAND_COLOR : undefined}
-          size={22}
-          onPress={() => {
-            if (editing) {
-              haptic.medium();
-              save();
-            } else {
+        {editing ? (
+          <>
+            <IconButton
+              icon="check"
+              iconColor={COLORS.white}
+              containerColor={BRAND_COLOR}
+              size={22}
+              onPress={() => {
+                haptic.medium();
+                save();
+              }}
+            />
+            <CancelConfirmButton
+              onConfirm={() => {
+                haptic.light();
+                refresh();
+                setEditing(false);
+              }}
+            />
+          </>
+        ) : (
+          <IconButton
+            icon="pencil-outline"
+            iconColor={BRAND_COLOR}
+            size={22}
+            onPress={() => {
               haptic.light();
               setEditing(true);
-            }
-          }}
-        />
+            }}
+          />
+        )}
         <Menu
           visible={menuVisible}
           onDismiss={() => setMenuVisible(false)}
@@ -975,6 +992,31 @@ export function TaskDetailView() {
         </View>
       </ScrollView>
 
+      {/* Big save button — visible only in edit mode */}
+      {editing && (
+        <View
+          style={[
+            styles.saveBar,
+            {
+              paddingBottom: 8 + insets.bottom,
+              backgroundColor: colors.white,
+              borderTopColor: colors.separator,
+            },
+          ]}
+        >
+          <Pressable
+            style={[styles.saveBarButton, { backgroundColor: BRAND_COLOR }]}
+            onPress={() => {
+              haptic.medium();
+              save();
+            }}
+          >
+            <Ionicons name="checkmark-circle" size={22} color={COLORS.white} />
+            <Text style={styles.saveBarText}>保存</Text>
+          </Pressable>
+        </View>
+      )}
+
       {/* DateTime Picker Modals */}
       <DateTimePickerModal
         visible={pickerField === 'start'}
@@ -1309,5 +1351,24 @@ const styles = StyleSheet.create({
   },
   depModalClose: {
     marginTop: 8,
+  },
+  saveBar: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  saveBarButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  saveBarText: {
+    color: COLORS.white,
+    fontSize: 18,
+    fontWeight: '700',
   },
 });
