@@ -61,6 +61,8 @@ function TaskCardImpl({
   const { dark, colors } = useTheme();
 
   const flingRight = Gesture.Pan()
+    .activeOffsetX(10)
+    .failOffsetY([-10, 10])
     .onStart(() => {})
     .onUpdate((e) => {
       translateX.value = Math.max(0, e.translationX);
@@ -74,6 +76,8 @@ function TaskCardImpl({
     });
 
   const flingLeft = Gesture.Pan()
+    .activeOffsetX(-10)
+    .failOffsetY([-10, 10])
     .onStart(() => {})
     .onUpdate((e) => {
       translateX.value = Math.min(0, e.translationX);
@@ -217,9 +221,10 @@ const styles = StyleSheet.create({
     minHeight: 72,
     alignItems: 'center',
     gap: 12,
+    borderWidth: 2,
+    borderColor: 'transparent',
   },
   cardSelected: {
-    borderWidth: 2,
     borderColor: BRAND_COLOR,
   },
   // Slide action preview backgrounds (#170)
@@ -325,6 +330,8 @@ function ParallelGroupCardImpl({
   const { dark, colors } = useTheme();
 
   const flingRight = Gesture.Pan()
+    .activeOffsetX(10)
+    .failOffsetY([-10, 10])
     .onUpdate((e) => {
       translateX.value = Math.max(0, e.translationX);
     })
@@ -337,6 +344,8 @@ function ParallelGroupCardImpl({
     });
 
   const flingLeft = Gesture.Pan()
+    .activeOffsetX(-10)
+    .failOffsetY([-10, 10])
     .onUpdate((e) => {
       translateX.value = Math.min(0, e.translationX);
     })
@@ -528,6 +537,8 @@ const groupStyles = StyleSheet.create({
     borderRadius: 12,
     overflow: 'hidden',
     minHeight: 72,
+    borderWidth: 2,
+    borderColor: 'transparent',
   },
   hostCard: {
     width: '25%',
