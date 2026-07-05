@@ -13,13 +13,15 @@ import {
   Canvas,
   Circle,
   Group,
+  Paragraph,
   Path,
-  Text as SkiaText,
-  matchFont,
+  Skia,
+  TextAlign,
   useCanvasRef,
 } from '@shopify/react-native-skia';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
+  runOnJS,
   useSharedValue,
   useDerivedValue,
 } from 'react-native-reanimated';
@@ -61,7 +63,9 @@ export interface DependencyGraphProps {
 // ── Constants ──
 
 const NODE_RADIUS = 35;
-const FONT_SIZE = 11;
+const FONT_SIZE = 13;
+const MAX_LABEL_CHARS = 5;
+const LABEL_WIDTH = NODE_RADIUS * 1.8;
 const HIT_RADIUS = NODE_RADIUS;
 const EDGE_HIT_WIDTH = 12;
 
@@ -146,20 +150,6 @@ export function DependencyGraph({
   const dragSy = useSharedValue(0);
   const dragEx = useSharedValue(0);
   const dragEy = useSharedValue(0);
-
-  // Font — must specify fontFamily or matchFont may return null on Android
-  const font = useMemo(
-    () =>
-      matchFont({
-        fontFamily: Platform.select({
-          ios: 'Helvetica',
-          default: 'sans-serif',
-        }),
-        fontSize: FONT_SIZE,
-        fontWeight: '500',
-      }),
-    [],
-  );
 
   // Content-derived key: triggers simulation restart when node/edge identity
   // changes even if the counts stay the same (e.g., after editing deps).
@@ -317,7 +307,7 @@ export function DependencyGraph({
       const dx = world.x - node.x;
       const dy = world.y - node.y;
       if (Math.hypot(dx, dy) < HIT_RADIUS) {
-        onTapNode?.(node.id);
+        if (onTapNode) runOnJS(onTapNode)(node.id);
         return;
       }
     }
@@ -331,7 +321,7 @@ export function DependencyGraph({
         if (!s || !t) continue;
         const d = distToSegment(world.x, world.y, s.x, s.y, t.x, t.y);
         if (d < EDGE_HIT_WIDTH) {
-          onCutEdge(edge.source, edge.target);
+          runOnJS(onCutEdge)(edge.source, edge.target);
           return;
         }
       }
@@ -377,7 +367,7 @@ export function DependencyGraph({
         const dx = world.x - node.x;
         const dy = world.y - node.y;
         if (Math.hypot(dx, dy) < HIT_RADIUS) {
-          onAddEdge(dragSourceRef.current, node.id);
+          runOnJS(onAddEdge)(dragSourceRef.current, node.id);
           break;
         }
       }
@@ -525,7 +515,6 @@ export function DependencyGraph({
               const textColor = isDone ? '#666' : COLORS.white;
               const label = inputNode?.label ?? node.label;
 
-              const textWidth = NODE_RADIUS * 1.4;
               return (
                 <Group key={node.id}>
                   <Circle
@@ -534,15 +523,12 @@ export function DependencyGraph({
                     r={NODE_RADIUS}
                     color={bgColor}
                   />
-                  {font && (
-                    <SkiaText
-                      x={node.x - textWidth / 2}
-                      y={node.y + FONT_SIZE / 3}
-                      text={truncate(label, 6)}
-                      font={font}
-                      color={textColor}
-                    />
-                  )}
+                  <NodeLabel
+                    x={node.x}
+                    y={node.y}
+                    text={truncate(label, MAX_LABEL_CHARS)}
+                    color={textColor}
+                  />
                   {/* Highlight border */}
                   {isHighlight && (
                     <Circle
@@ -566,6 +552,61 @@ export function DependencyGraph({
 
 function truncate(s: string, maxLen: number): string {
   return s.length > maxLen ? s.slice(0, maxLen - 1) + '…' : s;
+}
+
+// ── NodeLabel — uses Skia Paragraph for CJK font fallback (#251) ──
+// matchFont returns a single font with no fallback, so Japanese glyphs
+// don't render on Android (Roboto lacks CJK). Paragraph's fontFamilies
+// list provides per-character fallback: Latin chars use sans-serif,
+// Japanese chars fall through to NotoSansCJK.
+const NODE_LABEL_FONTS = Platform.select<string[]>({
+  ios: ['Helvetica', 'Hiragino Sans', 'NotoSansCJK'],
+  default: [
+    'sans-serif',
+    'NotoSansCJK',
+    'NotoSansJP',
+    'Noto Sans CJK JP',
+    'DroidSansJapanese',
+  ],
+})!;
+
+function NodeLabel({
+  x,
+  y,
+  text,
+  color,
+}: {
+  x: number;
+  y: number;
+  text: string;
+  color: string;
+}) {
+  const paragraph = useMemo(() => {
+    const builder = Skia.ParagraphBuilder.Make({
+      textAlign: TextAlign.Center,
+    });
+    builder.pushStyle({
+      fontFamilies: NODE_LABEL_FONTS,
+      fontSize: FONT_SIZE,
+      fontStyle: { weight: 500 },
+      color: Skia.Color(color),
+    });
+    builder.addText(text);
+    builder.pop();
+    const p = builder.build();
+    p.layout(LABEL_WIDTH);
+    return p;
+  }, [text, color]);
+
+  const h = paragraph.getHeight();
+  return (
+    <Paragraph
+      paragraph={paragraph}
+      x={x - LABEL_WIDTH / 2}
+      y={y - h / 2}
+      width={LABEL_WIDTH}
+    />
+  );
 }
 
 const styles = StyleSheet.create({
