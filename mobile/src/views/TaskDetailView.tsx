@@ -44,6 +44,7 @@ import {
 import {
   postInProgressNotification,
   dismissInProgressNotification,
+  dismissTaskNotifications,
 } from '@/src/notifications';
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -294,6 +295,8 @@ export function TaskDetailView() {
 
     // Manage in-progress notification
     if (newStatus === 'in_progress') {
+      // Dismiss any delivered start reminder notifications (#257)
+      dismissTaskNotifications(task.id).catch((e) => logError('通知の消去', e));
       if (notifications.inProgress) {
         postInProgressNotification({ ...task, status: newStatus }).catch((e) =>
           logError('通知の投稿', e),
@@ -303,6 +306,11 @@ export function TaskDetailView() {
       dismissInProgressNotification(task.id).catch((e) =>
         logError('通知の消去', e),
       );
+    }
+    // Dismiss any delivered reminder notifications when the task is
+    // completed or skipped (#257).
+    if (newStatus === 'completed' || newStatus === 'skipped') {
+      dismissTaskNotifications(task.id).catch((e) => logError('通知の消去', e));
     }
 
     undoRedo.push({

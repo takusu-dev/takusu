@@ -10,7 +10,7 @@ import type { TaskRow, ScheduleEntry, HabitRow } from '@/src/api/types';
 import { parseSchedule } from '@/src/api/types';
 import { type NotificationSettings, minutesToTime } from './settings';
 import { CHANNELS } from './channels';
-import { CATEGORY_TASK_IN_PROGRESS } from './categories';
+import { CATEGORY_TASK_IN_PROGRESS, CATEGORY_TASK_START } from './categories';
 
 // Android has a ~64 notification limit for scheduled notifications.
 // We limit pre-start and start-overdue to today + tomorrow only.
@@ -256,6 +256,7 @@ export async function rescheduleNotifications(
         'タスク開始時間',
         `「${task.title}」の開始時間です`,
         { url: `/task/${task.id}`, taskId: task.id },
+        CATEGORY_TASK_START,
       );
     }
   }
@@ -331,6 +332,20 @@ export async function dismissInProgressNotification(
   // expo-notifications doesn't support dismissing by data, so we dismiss all
   // from the in-progress channel. This is acceptable since only one task
   // should be in_progress at a time.
+  const presented = await Notifications.getPresentedNotificationsAsync();
+  for (const n of presented) {
+    if (n.request.content.data?.taskId === taskId) {
+      await Notifications.dismissNotificationAsync(n.request.identifier);
+    }
+  }
+}
+
+// Dismiss all delivered notifications for a task (#257).
+// When a task is completed, skipped, or started, any already-delivered
+// reminder notifications (pre-start, start-overdue) sitting in the
+// notification tray should be removed — cancelAllScheduledNotificationsAsync
+// only cancels pending (not-yet-fired) notifications, not delivered ones.
+export async function dismissTaskNotifications(taskId: string): Promise<void> {
   const presented = await Notifications.getPresentedNotificationsAsync();
   for (const n of presented) {
     if (n.request.content.data?.taskId === taskId) {
