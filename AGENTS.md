@@ -97,7 +97,17 @@ takusu/
 │       └── src/lib.rs         #   Client, sync(), delete_all(), OAuth2 helpers
 ├── flake.nix                 # Nix development environment
 ├── rust-toolchain.toml       # Rust toolchain config
-└── .envrc                    # direnv config
+├── .envrc                    # direnv config
+├── .devin/skills/            # Devin CLI skills (thin wrappers around scripts/)
+│   ├── issue-view/SKILL.md
+│   ├── pr-watch/SKILL.md
+│   ├── jj-resolve/SKILL.md
+│   └── discord-notify/SKILL.md
+└── scripts/                  # Agent + user helper scripts
+    ├── issue-view.sh         # GitHub issue list/show (label/assignee/state filters)
+    ├── pr-watch.sh           # PR CI/review/comment snapshot + polling watch loop
+    ├── jj-resolve.sh         # Jujutsu conflict list/show/edit/mark/merge/abort
+    └── discord-notify.sh     # Discord webhook sender (DISCORD_WEBHOOK_URL env)
 ```
 
 ## Development Environment
@@ -129,6 +139,12 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `cargo run -p takusu-audio-cli -- speak --text "..."` | Synthesize speech with Irodori-TTS |
 | `./scripts/irodori-tts-server.sh` | Start Irodori-TTS inference server (clones to `$XDG_CACHE_HOME`) |
 | `nix run .#irodori-tts-server` | Same as above, via Nix |
+| `./scripts/issue-view.sh list [--label L] [--assignee A] [--state S]` | List GitHub issues (TSV: number, title, labels, assignees, state) |
+| `./scripts/issue-view.sh show <N>` | Show issue title, body, labels, assignees, and full comment thread |
+| `./scripts/pr-watch.sh show <PR>` | One-shot snapshot of PR CI checks, reviews, and comments |
+| `./scripts/pr-watch.sh watch <PR> [--interval N] [--max N]` | Poll a PR and print diffs to stdout (no notification); default 60s |
+| `./scripts/jj-resolve.sh list\|status\|show\|edit\|mark\|merge\|abort` | Inspect and resolve Jujutsu merge conflicts |
+| `./scripts/discord-notify.sh "text" \| --title T --desc D` | Send a message/embed to Discord (`$DISCORD_WEBHOOK_URL`) |
 
 ## Version Control Workflow
 
@@ -174,6 +190,99 @@ The default loop for any task is:
 - **Do not rewrite `main`**: never force-push or rebase `main` itself. Rebase your own changes onto `main` instead.
 - **Git compatibility**: `git` commands still work for read-only inspection (`git log`, `git diff`) since `.jj` backs onto `.git`. Prefer `jj` for anything that mutates history.
 - **Issue closing**: link issues to PRs using `Closes #N` lines in the PR body so GitHub auto-closes them on merge. Do **not** post "Fixed in #N" comments on the issues themselves.
+
+## Agent Helpers
+
+Four shell scripts in `scripts/` wrap common agent workflows. Each has a
+matching thin Devin skill in `.devin/skills/<name>/SKILL.md` so the agent
+can invoke them via `/issue-view`, `/pr-watch`, `/jj-resolve`, or
+`/discord-notify`. **Prefer the scripts over raw `gh`/`jj`/`curl`** — they
+produce stable, agent-friendly output and centralize the flag spelling.
+
+### `issue-view.sh` — GitHub issue viewer
+
+Wraps `gh issue list` / `gh issue view`. Plain-text output (TSV for `list`,
+markdown for `show`) so the agent can parse it without TTY-dependent color
+codes.
+
+```sh
+./scripts/issue-view.sh list [--label <label>] [--assignee <user|@me|unassigned>] \
+                             [--state <open|closed|all>] [--limit <N>] [--search <query>]
+./scripts/issue-view.sh show <number>
+```
+
+- `list` output: `number\ttitle\tlabels\tassignees\tstate` (one issue per line).
+- `show` output: title, labels, assignees, body, then the full comment thread.
+- Use `--assignee unassigned` to find untriaged issues.
+
+### `pr-watch.sh` — PR CI/review/comment watcher
+
+Wraps `gh pr view --json ...` and presents a stable snapshot of CI checks,
+reviews, and comments. Two modes:
+
+```sh
+./scripts/pr-watch.sh show <PR>                       # one-shot snapshot
+./scripts/pr-watch.sh watch <PR> [--interval 60] [--max 0]  # polling loop
+```
+
+- `show` prints the full snapshot once.
+- `watch` loops, printing only sections that changed since the last snapshot
+  (`--- <section> changed ---` with `<<< before` / `>>> after`). Default
+  interval 60s; `--max 0` = unlimited.
+- **No desktop/Discord notification** — output goes to stdout only. The agent
+  reads stdout and decides what to do (e.g. reply to a review comment, or
+  report CI failure to the user).
+- Run `watch` in a background shell (`run_in_background: true`) and poll with
+  `get_output` to integrate with the agent loop.
+
+### `jj-resolve.sh` — Jujutsu conflict resolver
+
+Wraps `jj resolve --list` and friends. Use after any `jj rebase` / `jj merge`
+/ `jj git fetch` that might conflict.
+
+```sh
+./scripts/jj-resolve.sh list          # conflicted file paths (or "no conflicts")
+./scripts/jj-resolve.sh status        # "N conflicted file(s)"
+./scripts/jj-resolve.sh show [<file>] # conflict marker line numbers
+./scripts/jj-resolve.sh edit <file>   # open $EDITOR on the file
+./scripts/jj-resolve.sh mark <file>   # verify the file is resolved (no markers + not in jj resolve --list)
+./scripts/jj-resolve.sh merge <file>  # launch a 3-way merge tool via jj resolve
+./scripts/jj-resolve.sh abort         # print recovery guidance
+```
+
+The standard agent workflow is: `list` → `show <file>` → read the file →
+`edit` (or use the `edit` tool) to remove conflict markers → `mark <file>`
+to verify → repeat until `status` reports 0. jj has no explicit "mark
+resolved" command — a file is considered resolved once all conflict markers
+are removed, so `mark` just verifies that condition. Use `merge` if you
+prefer a 3-way merge tool over manual marker editing.
+
+### `discord-notify.sh` — Discord webhook sender
+
+Sends a message or embed to Discord via webhook. The URL is read from
+`$DISCORD_WEBHOOK_URL` (set in `.envrc` or shell config); the script never
+prints it.
+
+```sh
+./scripts/discord-notify.sh "plain text"
+./scripts/discord-notify.sh --title "T" --desc "D" [--color 0xRRGGBB|#RRGGBB|RRGGBB|decimal] [--url <link>]
+./scripts/discord-notify.sh --json <payload.json>
+echo '{"content":"hi"}' | ./scripts/discord-notify.sh --stdin
+```
+
+- `--color` accepts `0xRRGGBB`, `#RRGGBB`, `RRGGBB`, or a decimal integer.
+- `--quiet` suppresses the `discord: sent` confirmation.
+- This is **separate from the `dunstify` desktop notifications** in
+  "Agent Notifications" above — `dunstify` is for local terminal alerts,
+  `discord-notify.sh` is for off-terminal pings.
+
+### Skill invocation
+
+Each helper has a Devin skill in `.devin/skills/<name>/SKILL.md` that
+documents the script and tells the agent when to use it. Skills are picked
+up at session start; restart the session after adding a new one. The skill
+files are thin (just documentation + `allowed-tools: [exec, read]`) — the
+real logic lives in the shell scripts so it can be used outside Devin too.
 
 ## Workspace Dependencies
 
