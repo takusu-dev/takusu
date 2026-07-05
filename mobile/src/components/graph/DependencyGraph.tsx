@@ -137,14 +137,15 @@ export function DependencyGraph({
     { scale: scale.value },
   ]);
 
-  // Drag state for edit mode edge addition (useState so re-renders show the line)
+  // Drag state for edit mode edge addition.
+  // #219: use Reanimated shared values so the drag line updates smoothly
+  // on the UI thread without waiting for React re-renders.
   const dragSourceRef = useRef<string | null>(null);
-  const [dragLine, setDragLine] = useState<{
-    sx: number;
-    sy: number;
-    ex: number;
-    ey: number;
-  } | null>(null);
+  const dragActive = useSharedValue(0);
+  const dragSx = useSharedValue(0);
+  const dragSy = useSharedValue(0);
+  const dragEx = useSharedValue(0);
+  const dragEy = useSharedValue(0);
 
   // Font — must specify fontFamily or matchFont may return null on Android
   const font = useMemo(
@@ -349,12 +350,11 @@ export function DependencyGraph({
         const dy = world.y - node.y;
         if (Math.hypot(dx, dy) < HIT_RADIUS) {
           dragSourceRef.current = node.id;
-          setDragLine({
-            sx: node.x,
-            sy: node.y,
-            ex: node.x,
-            ey: node.y,
-          });
+          dragSx.value = node.x;
+          dragSy.value = node.y;
+          dragEx.value = node.x;
+          dragEy.value = node.y;
+          dragActive.value = 1;
           return;
         }
       }
@@ -362,14 +362,13 @@ export function DependencyGraph({
     .onUpdate((e) => {
       if (!dragSourceRef.current) return;
       const world = toWorld(e.x, e.y);
-      setDragLine((prev) =>
-        prev ? { ...prev, ex: world.x, ey: world.y } : null,
-      );
+      dragEx.value = world.x;
+      dragEy.value = world.y;
     })
     .onEnd((e) => {
       if (!dragSourceRef.current || !onAddEdge) {
         dragSourceRef.current = null;
-        setDragLine(null);
+        dragActive.value = 0;
         return;
       }
       const world = toWorld(e.x, e.y);
@@ -383,7 +382,7 @@ export function DependencyGraph({
         }
       }
       dragSourceRef.current = null;
-      setDragLine(null);
+      dragActive.value = 0;
     });
 
   const composed = Gesture.Simultaneous(
@@ -440,10 +439,11 @@ export function DependencyGraph({
     return paths;
   }, [inputEdges, nodeMap]);
 
-  // Drag line path (computed from state, so re-renders show it)
-  const dragPath = dragLine
-    ? `M ${dragLine.sx} ${dragLine.sy} L ${dragLine.ex} ${dragLine.ey}`
-    : null;
+  // Drag line path — derived from shared values for smooth UI-thread updates (#219)
+  const dragPath = useDerivedValue(() => {
+    if (dragActive.value === 0) return '';
+    return `M ${dragSx.value} ${dragSy.value} L ${dragEx.value} ${dragEy.value}`;
+  });
 
   // ── Canvas size tracking ──
 
@@ -501,15 +501,14 @@ export function DependencyGraph({
               />
             ))}
 
-            {/* Drag line */}
-            {dragPath && (
-              <Path
-                path={dragPath}
-                color={BRAND_COLOR}
-                style="stroke"
-                strokeWidth={2}
-              />
-            )}
+            {/* Drag line — always rendered, hidden via opacity when inactive (#219) */}
+            <Path
+              path={dragPath}
+              color={BRAND_COLOR}
+              style="stroke"
+              strokeWidth={2}
+              opacity={dragActive}
+            />
 
             {/* Nodes — positions from simNodes, visual props from inputNodes */}
             {simNodes.map((node) => {
