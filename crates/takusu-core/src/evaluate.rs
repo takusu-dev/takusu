@@ -53,7 +53,7 @@
 //! - スケジュールされているタスクごとに `+W_INCLUSION`
 //!
 //! ## 重み設計
-//! |W_DEPEND_BASE| ≫ |W_LATE| ≫ |W_START| > W_BUFFER > W_INCLUSION
+//! |W_PARALLEL_VIOL| ≫ |W_DEPEND_BASE| ≫ |W_LATE| ≫ |W_START| > W_BUFFER > W_INCLUSION
 //!
 //! ## 重みの根拠
 //!
@@ -67,6 +67,9 @@
 //! - W_OVER=0.5 (線形): 取りすぎは軽微。最適化よりタスク詰め込み優先。
 //! - W_SLEEP_NORMAL=4, W_SLEEP_SEVERE=15 (2次): 3h硬閾値の意図。
 //!   睡眠3h未満は2次で急峻に。設計思想: 徹夜よりタスク削減。
+//! - W_PARALLEL_VIOL=500: 人間は並列可能タスク以外は同時に実行できないため、
+//!   時間重複は実質的に硬制約。W_DEPEND_BASE(100)の5倍で、依存違反より
+//!   強く罰することで、SAが重複を避けてタスクを分散させる。
 //! - W_INCLUSION=10: タスクをスケジュールから外さない誘因十分。
 
 use super::*;
@@ -80,7 +83,7 @@ const W_SHORT: f64 = 3.0;
 const W_OVER: f64 = 0.5;
 const W_SLEEP_NORMAL: f64 = 4.0;
 const W_SLEEP_SEVERE: f64 = 15.0;
-const W_PARALLEL_VIOL: f64 = 50.0;
+const W_PARALLEL_VIOL: f64 = 500.0;
 const W_INCLUSION: f64 = 10.0;
 const MIN_SLEEP: i64 = 36;
 
