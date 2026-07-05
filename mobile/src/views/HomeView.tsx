@@ -133,6 +133,8 @@ export function HomeView() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showPast, setShowPast] = useState(false);
+  // #206: past tasks load 1 week at a time
+  const [pastWeeks, setPastWeeks] = useState(1);
   const listRef = useRef<FlatList<ListItem>>(null);
   const scrollOffsetRef = useRef(0);
 
@@ -146,6 +148,7 @@ export function HomeView() {
     setShowPast((v) => {
       const next = !v;
       chevronRotate.value = withTiming(next ? 180 : 0, { duration: 250 });
+      if (!next) setPastWeeks(1); // reset pagination when collapsing
       return next;
     });
   }
@@ -312,20 +315,22 @@ export function HomeView() {
 
     const result: ListItem[] = [];
 
-    // Past section (when revealed)
+    // Past section (when revealed) — no date separators, 1 week at a time (#206)
     if (past.length > 0) {
-      result.push({ type: 'separator', label: '過去' });
-      let lastDate = '';
-      for (const t of past) {
-        // Skip guests claimed by an upcoming parallel group — they're
-        // rendered inside the group card, not as individual past items.
+      const weekCutoff = now - pastWeeks * 7 * 24 * 60 * 60 * 1000;
+      const pastVisible = past.filter((t) => {
+        const entry = scheduleMap.get(t.id);
+        const end = entry?.end_at ?? t.end_at;
+        return new Date(end).getTime() >= weekCutoff;
+      });
+      const olderCount = past.length - pastVisible.length;
+      if (pastVisible.length > 0 || olderCount > 0) {
+        result.push({ type: 'separator', label: '過去' });
+      }
+      for (const t of pastVisible) {
         if (groupedGuestIds.has(t.id)) continue;
         const entry = scheduleMap.get(t.id);
         const key = dateKey(entry?.start_at ?? t.end_at);
-        if (key !== lastDate) {
-          result.push({ type: 'separator', label: dateLabel(key) });
-          lastDate = key;
-        }
         result.push({
           type: 'task',
           task: t,
@@ -333,6 +338,13 @@ export function HomeView() {
           scheduleEnd: entry?.end_at,
           isDone: t.status === 'completed' || t.status === 'skipped',
           dateKey: key,
+        });
+      }
+      // "Load more" separator if there are older tasks
+      if (olderCount > 0) {
+        result.push({
+          type: 'separator',
+          label: `過去をさらに読み込む (${olderCount})`,
         });
       }
     }
@@ -404,6 +416,7 @@ export function HomeView() {
     groupedGuestIds,
     parallelGroups,
     showPast,
+    pastWeeks,
   ]);
 
   // Count of past tasks (for badge in header, always computed)
@@ -953,6 +966,24 @@ export function HomeView() {
 
   function renderItem(item: ListItem) {
     if (item.type === 'separator') {
+      // "Load more past" separator is tappable (#206)
+      if (item.label.startsWith('過去をさらに読み込む')) {
+        return (
+          <Pressable
+            style={styles.separator}
+            onPress={() => {
+              haptic.light();
+              setPastWeeks((w) => w + 1);
+            }}
+          >
+            <View style={styles.separatorBar} />
+            <Text style={[styles.separatorText, { color: BRAND_COLOR }]}>
+              {item.label}
+            </Text>
+            <View style={styles.separatorBar} />
+          </Pressable>
+        );
+      }
       return (
         <View style={styles.separator}>
           <View style={styles.separatorBar} />
