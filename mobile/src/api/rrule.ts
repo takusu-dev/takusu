@@ -24,13 +24,13 @@ export interface RecurrenceRule {
 }
 
 export const WEEKDAYS: Weekday[] = [
+  'sun',
   'mon',
   'tue',
   'wed',
   'thu',
   'fri',
   'sat',
-  'sun',
 ];
 
 export const WEEKDAY_LABELS: Record<Weekday, string> = {
@@ -134,15 +134,7 @@ export function validateRule(r: RecurrenceRule): string | null {
       return `by_month_day の値が不正です: ${d}`;
   }
   for (const nw of r.by_day) {
-    const validWds: Weekday[] = [
-      'mon',
-      'tue',
-      'wed',
-      'thu',
-      'fri',
-      'sat',
-      'sun',
-    ];
+    const validWds: Weekday[] = WEEKDAYS;
     if (!validWds.includes(nw.weekday))
       return `by_day の weekday が不正です: ${nw.weekday}`;
     if (
