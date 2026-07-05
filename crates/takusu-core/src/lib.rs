@@ -327,6 +327,10 @@ pub struct Planner {
     now: Point,
     per: u16,
     sleep: SleepConfig,
+    /// #211: 前回スケジュールの参照（安定性ペナルティ用）。
+    /// 各タスクの (start, end) で、SAが移動を嫌うようにする。
+    /// 直近のタスクほど強いペナルティ。
+    previous_schedule: Vec<Option<(Point, Point)>>,
 }
 
 impl Planner {
@@ -340,6 +344,7 @@ impl Planner {
             now,
             per: 5,
             sleep,
+            previous_schedule: vec![],
         }
     }
 
@@ -366,8 +371,29 @@ impl Planner {
     /// 内部では 4 本の独立 SA チェーンを並列実行し最良解を選択する。
     /// 全タスクがスケジュールされる。`abandonability` が高いタスクは
     /// deadline 超過ペナルティが軽減されるが、ドロップはされない。
+    ///
+    /// `previous_schedule` が設定されている場合、直近のタスクを
+    /// 前回位置から動かすことにペナルティを課す (#211)。
     pub fn plan(&self) -> Plan {
         solver::solve(self)
+    }
+
+    /// #211: 前回スケジュールを設定し、安定性ペナルティを有効化する。
+    /// `schedule` は (start, end, task_id) のリスト。
+    /// 設定後、plan() は前回位置からの移動を嫌うようになる。
+    /// 直近（now に近い）ほどペナルティが大きい。
+    pub fn set_previous_schedule(&mut self, schedule: &[(Point, Point, usize)]) {
+        self.previous_schedule = vec![None; self.tasks.len()];
+        for (s, e, id) in schedule {
+            if *id < self.previous_schedule.len() {
+                self.previous_schedule[*id] = Some((*s, *e));
+            }
+        }
+    }
+
+    /// 前回スケジュールの参照（評価関数から使用）。
+    pub fn previous_schedule(&self) -> &[Option<(Point, Point)>] {
+        &self.previous_schedule
     }
 
     /// 固定タスクを保持したまま未固定タスクをスケジュール。

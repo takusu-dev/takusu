@@ -86,6 +86,11 @@ const W_SLEEP_SEVERE: f64 = 15.0;
 const W_PARALLEL_VIOL: f64 = 500.0;
 const W_INCLUSION: f64 = 10.0;
 const MIN_SLEEP: i64 = 36;
+/// #211: 直近タスクの移動ペナルティ。前回位置からの差分スロット × 重み。
+/// now に近いほど大きく、遠いタスクはほぼ無視できる。
+const W_STABILITY: f64 = 3.0;
+/// 安定性ペナルティの減衰スロット数（これ以降はペナルティなし）。
+const STABILITY_RANGE: i64 = 24 * 12; // 24時間
 
 pub fn evaluate(planner: &Planner, plan: &Plan, temperature: f64, t0: f64) -> f64 {
     let mut score = 0.0;
@@ -100,6 +105,7 @@ pub fn evaluate(planner: &Planner, plan: &Plan, temperature: f64, t0: f64) -> f6
     score += sleep_score(planner, schedules);
     score += parallel_violation_score(planner, schedules);
     score += inclusion_bonus(planner, schedules);
+    score += stability_score(planner, &index);
 
     score
 }
@@ -285,6 +291,40 @@ fn parallel_violation_score(planner: &Planner, schedules: &[(Point, Point, usize
 
 fn inclusion_bonus(_planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
     schedules.len() as f64 * W_INCLUSION
+}
+
+/// #211: 安定性ペナルティ — 前回スケジュールからタスクが移動した場合、
+/// 直近（now に近い）ほど大きなペナルティを課す。
+/// 前回位置との開始時刻の差分スロット × W_STABILITY × 減衰係数。
+/// 減衰係数 = max(0, 1 - distance_from_now / STABILITY_RANGE)² （二次減衰）
+fn stability_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
+    let prev = planner.previous_schedule();
+    if prev.is_empty() {
+        return 0.0;
+    }
+    let now = planner.now;
+    let mut penalty = 0.0;
+    for task in &planner.tasks {
+        let Some((sched_start, _)) = index[task.id] else {
+            continue;
+        };
+        let Some(Some((prev_start, _))) = prev.get(task.id) else {
+            continue;
+        };
+        // 過去位置のタスクは前方に移動すべきなのでペナルティなし
+        if prev_start.0 < now.0 {
+            continue;
+        }
+        let delta = (sched_start.0 - prev_start.0).abs();
+        if delta == 0 {
+            continue;
+        }
+        // 前回位置がnowに近いほど大きなペナルティ
+        let distance = (prev_start.0 - now.0) as f64;
+        let decay = ((1.0 - distance / STABILITY_RANGE as f64).max(0.0)).powi(2);
+        penalty -= delta as f64 * W_STABILITY * decay;
+    }
+    penalty
 }
 
 fn plan_range(schedules: &[(Point, Point, usize)]) -> (Point, Point) {

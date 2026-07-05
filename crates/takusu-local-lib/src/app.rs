@@ -509,7 +509,32 @@ impl TakusuApp {
             // 既に scheduled 状態になっているため、再生成でそれらも対象にする。
             .filter(|t| t.status == "pending" || t.status == "scheduled")
             .collect();
-        let (planner, id_map, _) = self.build_planner(from_point, sleep, &all_rows, &tz)?;
+        let (mut planner, id_map, id_to_idx) =
+            self.build_planner(from_point, sleep, &all_rows, &tz)?;
+
+        // #211: 前回スケジュールを参照として渡し、直近タスクの移動に
+        // ペナルティを課す（pinではなく軟制約）。SAは必要なら動かせるが、
+        // 直近のタスクは前回位置を維持する方が高スコアになる。
+        let existing_schedule = self.storage.get_schedule().await.map_err(storage_to_app)?;
+        if let Some(schedule_row) = existing_schedule {
+            // unwrap_or_default: if the schedule JSON is corrupt, fall back to
+            // an empty vec which disables the stability penalty rather than
+            // crashing. This is intentionally more forgiving than reschedule
+            // (which returns an error on parse failure) because generate is a
+            // full regenerate — the user just wants a new schedule.
+            let entries: Vec<ScheduleEntry> =
+                serde_json::from_str(&schedule_row.schedule).unwrap_or_default();
+            let prev: Vec<(Point, Point, usize)> = entries
+                .iter()
+                .filter_map(|entry| {
+                    let idx = id_to_idx.get(&entry.task_id)?;
+                    let s = iso_to_point(&entry.start_at, &tz).ok()?;
+                    let e = iso_to_point(&entry.end_at, &tz).ok()?;
+                    Some((s, e, *idx))
+                })
+                .collect();
+            planner.set_previous_schedule(&prev);
+        }
 
         let plan = planner.plan();
         let entries = self.plan_to_entries(&plan, &id_map);
@@ -564,6 +589,11 @@ impl TakusuApp {
 
         let (planner, id_map, id_to_idx) = self.build_planner(now_point, sleep, &active, &tz)?;
 
+        // Note: stability penalty (#211) is intentionally NOT applied here.
+        // reschedule is a user-initiated partial reconfiguration — the user
+        // explicitly chose which tasks to move, so we don't want to resist
+        // that movement. Stability is only for generate_schedule (full
+        // regenerate) where the user hasn't expressed a preference.
         let current_schedule: Vec<(Point, Point, usize)> = entries
             .iter()
             .filter_map(|entry| {
@@ -800,7 +830,11 @@ impl TakusuApp {
         Ok(google_cal::oauth_url(&row.client_id, redirect_uri))
     }
 
-    pub async fn oauth_callback(&self, code: &str, redirect_uri: Option<&str>) -> Result<(), AppError> {
+    pub async fn oauth_callback(
+        &self,
+        code: &str,
+        redirect_uri: Option<&str>,
+    ) -> Result<(), AppError> {
         let row = self
             .storage
             .get_gcal_settings()
@@ -1190,7 +1224,11 @@ impl TakusuApp {
         let mut id_map: Vec<String> = Vec::with_capacity(task_rows.len());
 
         for (i, row) in task_rows.iter().enumerate() {
-            let start_opt = row.start_at.as_ref().map(|s| iso_to_point(s, tz)).transpose()?;
+            let start_opt = row
+                .start_at
+                .as_ref()
+                .map(|s| iso_to_point(s, tz))
+                .transpose()?;
             let end = iso_to_point(&row.end_at, tz)?;
             let core_task = CoreTask {
                 id: planner.tasks().len(),
