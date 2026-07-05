@@ -10,6 +10,7 @@ import {
 import { Platform } from 'react-native';
 import { TakusuClient } from './client';
 import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
+import TakusuWidgetModule from '../../modules/takusu-widget/src/TakusuWidgetModule';
 import {
   loadSettings,
   saveWorkersUrl,
@@ -93,6 +94,17 @@ export function ServerProvider({ children }: { children: ReactNode }) {
         workersUrl: finalUrl,
         rootToken: finalToken,
       });
+
+      // Persist credentials for the home screen widget so the
+      // WorkManager worker can start the local server independently.
+      try {
+        TakusuWidgetModule.saveConfig({
+          workersUrl: finalUrl,
+          token: finalToken,
+        });
+      } catch {
+        // widget module not available (e.g. non-Android) — ignore
+      }
 
       return new TakusuClient(`http://127.0.0.1:${DEFAULT_PORT}`, finalToken);
     },

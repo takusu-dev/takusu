@@ -558,6 +558,16 @@
                   stdenv.cc
                 ];
               };
+
+              # Kotlin lint/format (ktlint) for the mobile Android modules.
+              # Used by the `kotlin-check` CI job and the `kotlin` devShell.
+              ci-kotlin = pkgs.buildEnv {
+                name = "ci-kotlin";
+                paths = with pkgs; [
+                  ktlint
+                  openjdk_headless
+                ];
+              };
             };
 
           devShells = {
@@ -619,6 +629,15 @@
               shellHook = commonRustShellHook;
             };
 
+            # Kotlin lint/format shell (ktlint). Used by `npm run kt:lint`
+            # and `npm run kt:fmt` in mobile/.
+            kotlin = pkgs.mkShell {
+              nativeBuildInputs = with pkgs; [
+                ktlint
+                openjdk_headless
+              ];
+            };
+
             # Full shell for local development — keeps everything (Android SDK,
             # Node, JVM, uv, audio servers, MCP config symlink, etc.).
             default = pkgs.mkShell {
@@ -639,6 +658,7 @@
                   nodejs
                   wrangler
                   openjdk_headless
+                  ktlint
                 ]
                 ++ [
                   config.packages.funasr-server

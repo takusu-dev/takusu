@@ -9,7 +9,9 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",
-    "fmt:check": "oxfmt --check"
+    "fmt:check": "oxfmt --check",
+    "kt:lint": "ktlint 'modules/**/*.kt' '!modules/takusu-server/android/src/main/java/uniffi/**'",
+    "kt:fmt": "ktlint -F 'modules/**/*.kt' '!modules/takusu-server/android/src/main/java/uniffi/**'"
   },
   "dependencies": {
     "@expo/ui": "~56.0.18",
