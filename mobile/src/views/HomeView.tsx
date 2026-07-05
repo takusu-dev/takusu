@@ -726,9 +726,10 @@ export function HomeView() {
     try {
       await withStatus('reschedule中', () =>
         client.reschedule({
-          range_start: new Date().toISOString(),
-          range_end: until.toISOString(),
-          pinned_task_ids: pinned,
+          mode: 'range',
+          from: new Date().toISOString(),
+          until: until.toISOString(),
+          pinned,
         }),
       );
     } catch (e) {
@@ -747,9 +748,10 @@ export function HomeView() {
     try {
       await withStatus('reschedule中', () =>
         client.reschedule({
-          range_start: new Date().toISOString(),
-          range_end: until.toISOString(),
-          pinned_task_ids: pinned,
+          mode: 'range',
+          from: new Date().toISOString(),
+          until: until.toISOString(),
+          pinned,
         }),
       );
     } catch (e) {
