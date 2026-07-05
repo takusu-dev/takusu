@@ -19,7 +19,7 @@ import {
   TextInput as PaperTextInput,
   Divider,
 } from 'react-native-paper';
-import Slider from '@expo/ui/community/slider';
+import { Slider } from '@expo/ui/community/slider';
 import { useServer } from '@/src/api/ServerProvider';
 import { undoRedo } from '@/src/api/undoRedo';
 import { showError, logError } from '@/src/api/errors';
@@ -414,9 +414,9 @@ export function TaskDetailView() {
     const forwardAdj = new Map<string, string[]>();
     const reverseAdj = new Map<string, string[]>();
     for (const t of allTasks) {
-      const deps = parseDepends(t.depends);
-      forwardAdj.set(t.id, deps);
-      for (const depId of deps) {
+      const tDeps = parseDepends(t.depends);
+      forwardAdj.set(t.id, tDeps);
+      for (const depId of tDeps) {
         const rev = reverseAdj.get(depId) ?? [];
         rev.push(t.id);
         reverseAdj.set(depId, rev);
@@ -428,24 +428,24 @@ export function TaskDetailView() {
     const queue: string[] = [task.id];
     const edges: GraphEdge[] = [];
     while (queue.length > 0) {
-      const id = queue.shift()!;
-      if (visited.has(id)) continue;
-      visited.add(id);
+      const nodeId = queue.shift()!;
+      if (visited.has(nodeId)) continue;
+      visited.add(nodeId);
       // Enqueue forward deps
-      for (const depId of forwardAdj.get(id) ?? []) {
-        edges.push({ source: depId, target: id });
+      for (const depId of forwardAdj.get(nodeId) ?? []) {
+        edges.push({ source: depId, target: nodeId });
         if (!visited.has(depId)) queue.push(depId);
       }
       // Enqueue reverse deps
-      for (const revId of reverseAdj.get(id) ?? []) {
+      for (const revId of reverseAdj.get(nodeId) ?? []) {
         if (!visited.has(revId)) queue.push(revId);
       }
     }
 
     // Build nodes in visitation order
     const nodes: GraphNode[] = [];
-    for (const id of visited) {
-      const t = taskMap.get(id);
+    for (const nodeId of visited) {
+      const t = taskMap.get(nodeId);
       if (!t) continue;
       const isDone = t.status === 'completed' || t.status === 'skipped';
       nodes.push({

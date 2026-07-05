@@ -1,6 +1,6 @@
 // Brand color and theme constants
 
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, type ReactNode } from 'react';
 
 export const BRAND_COLOR = '#7261A3';
 export const BRAND_COLOR_LIGHT = '#9B8BC4';
@@ -110,10 +110,9 @@ export function ThemeProvider({
   children: ReactNode;
 }) {
   const colors = dark ? DARK_COLORS : COLORS;
+  const value = useMemo(() => ({ dark, colors }), [dark, colors]);
   return (
-    <ThemeContext.Provider value={{ dark, colors }}>
-      {children}
-    </ThemeContext.Provider>
+    <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
   );
 }
 

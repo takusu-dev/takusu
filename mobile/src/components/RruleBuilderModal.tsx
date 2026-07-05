@@ -633,8 +633,10 @@ export function RruleBuilderModal({
                               // For weekly: if an nth value is set, open the editor to allow re-editing;
                               //   if n is null (every week), tap toggles the weekday off directly.
                               // For daily: tap always toggles.
-                              const entry = on ? weekdayEntry(wd) : null;
-                              const hasNth = entry !== null && entry.n !== null;
+                              const pressedEntry = on ? weekdayEntry(wd) : null;
+                              const hasNth =
+                                pressedEntry !== null &&
+                                pressedEntry.n !== null;
                               if (
                                 on &&
                                 (rule.freq === 'monthly' ||

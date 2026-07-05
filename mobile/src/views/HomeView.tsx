@@ -182,6 +182,10 @@ export function HomeView() {
   // scheduling / Google Calendar sync operation is running.
   const [statusLabel, setStatusLabel] = useState<string | null>(null);
   const [view, setView] = useState<ViewType>('task');
+  const viewChanger = useMemo(
+    () => <ViewChanger current={view} onChange={setView} />,
+    [view],
+  );
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showPast, setShowPast] = useState(false);
@@ -676,15 +680,15 @@ export function HomeView() {
           undoRedo.push({
             description: `${allDone ? 'undone' : 'mark done'} group (partial): ${host.title}`,
             undo: async () => {
-              for (const t of changed) {
-                const prev = prevStatuses.get(t.id)!;
-                await client.updateTask(t.id, { status: prev });
+              for (const ct of changed) {
+                const prev = prevStatuses.get(ct.id)!;
+                await client.updateTask(ct.id, { status: prev });
               }
               await refresh();
             },
             redo: async () => {
-              for (const t of changed) {
-                await client.updateTask(t.id, { status: newStatus });
+              for (const ct of changed) {
+                await client.updateTask(ct.id, { status: newStatus });
               }
               await refresh();
             },
@@ -1214,18 +1218,13 @@ export function HomeView() {
         client={client}
         onBack={() => setView('task')}
         onTaskPress={(taskId) => router.push(`/task/${taskId}`)}
-        viewChanger={<ViewChanger current={view} onChange={setView} />}
+        viewChanger={viewChanger}
       />
     );
   }
 
   if (view === 'habit') {
-    return (
-      <HabitWrapper
-        client={client}
-        viewChanger={<ViewChanger current={view} onChange={setView} />}
-      />
-    );
+    return <HabitWrapper client={client} viewChanger={viewChanger} />;
   }
 
   return (
