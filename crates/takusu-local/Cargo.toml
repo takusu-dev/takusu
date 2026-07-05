@@ -37,4 +37,5 @@ uuid.workspace = true
 sha2.workspace = true
 http = "1"
 async-trait.workspace = true
+jiff.workspace = true
 takusu-local-lib = { workspace = true, features = ["sqlite"] }

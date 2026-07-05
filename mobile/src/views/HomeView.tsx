@@ -74,21 +74,52 @@ interface DateSeparator {
 
 type ListItem = TaskItem | ParallelGroupItem | DateSeparator;
 
-function dateKey(iso: string): string {
-  return iso.slice(0, 10);
+function dateKey(iso: string, tz?: string): string {
+  // Convert UTC ISO string to the configured timezone's local date
+  // (YYYY-MM-DD). The server's sync_habit_tasks uses the same configured
+  // tz for its date keys, so we must match it here to keep date
+  // separators consistent with the server's grouping.
+  // Falls back to the device timezone if the server tz is unavailable.
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso.slice(0, 10);
+  try {
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz || undefined,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    return fmt.format(d);
+  } catch {
+    // Invalid tz string — fall back to device-local date
+    const y = d.getFullYear();
+    const m = (d.getMonth() + 1).toString().padStart(2, '0');
+    const day = d.getDate().toString().padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
 }
 
-function dateLabel(key: string): string {
+function dateLabel(key: string, tz?: string): string {
+  // Compare the date key (already in server tz) against "today" in the
+  // same server tz, so the 今日/明日/昨日 labels are consistent with the
+  // date separators built by dateKey.
   const d = new Date(key + 'T00:00:00');
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const diff = Math.floor(
+  const todayKey = todayDateKey(tz);
+  const today = new Date(todayKey + 'T00:00:00');
+  const diff = Math.round(
     (d.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
   );
   if (diff === 0) return '今日';
   if (diff === 1) return '明日';
   if (diff === -1) return '昨日';
   return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+/// Returns today's date as YYYY-MM-DD in the given timezone (or the
+/// device timezone if tz is undefined/invalid). Mirrors dateKey so the
+/// "today" used by dateLabel matches the server's date grouping.
+function todayDateKey(tz?: string): string {
+  return dateKey(new Date().toISOString(), tz);
 }
 
 export function HomeView() {
@@ -127,6 +158,9 @@ export function HomeView() {
   const [habits, setHabits] = useState<HabitRow[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [refreshing, setRefreshing] = useState(false);
+  // Server-configured timezone (from GET /api/settings). Used by dateKey
+  // so date separators match the server's habit sync date grouping.
+  const [serverTz, setServerTz] = useState<string | undefined>(undefined);
   // In-progress status label shown in the top-bar center while a
   // scheduling / Google Calendar sync operation is running.
   const [statusLabel, setStatusLabel] = useState<string | null>(null);
@@ -158,7 +192,7 @@ export function HomeView() {
     if (!client) return;
     setRefreshing(true);
     try {
-      const [taskList, sched, habitList] = await Promise.all([
+      const [taskList, sched, habitList, settings] = await Promise.all([
         client.listTasks(),
         client.getSchedule().catch((e) => {
           logError('スケジュール取得', e);
@@ -168,10 +202,12 @@ export function HomeView() {
           logError('Habit取得', e);
           return [] as HabitRow[];
         }),
+        client.getSettings().catch(() => null),
       ]);
       setTasks(taskList);
       setSchedule(sched ? parseSchedule(sched.schedule) : []);
       setHabits(habitList);
+      setServerTz(settings?.tz);
     } catch (e) {
       showError(e, 'タスク一覧の取得に失敗');
     } finally {
@@ -331,7 +367,7 @@ export function HomeView() {
       for (const t of pastVisible) {
         if (groupedGuestIds.has(t.id)) continue;
         const entry = scheduleMap.get(t.id);
-        const key = dateKey(entry?.start_at ?? t.end_at);
+        const key = dateKey(entry?.start_at ?? t.end_at, serverTz);
         result.push({
           type: 'task',
           task: t,
@@ -372,9 +408,9 @@ export function HomeView() {
       // inside the group item alongside their host.
       if (!skipGrouping && groupedGuestIds.has(t.id)) continue;
       const entry = scheduleMap.get(t.id);
-      const key = dateKey(entry?.start_at ?? t.end_at);
+      const key = dateKey(entry?.start_at ?? t.end_at, serverTz);
       if (key !== lastDate) {
-        result.push({ type: 'separator', label: dateLabel(key) });
+        result.push({ type: 'separator', label: dateLabel(key, serverTz) });
         lastDate = key;
       }
       // If this task is a host with overlapping guests, render a group
@@ -418,6 +454,7 @@ export function HomeView() {
     parallelGroups,
     showPast,
     pastWeeks,
+    serverTz,
   ]);
 
   // Count of past tasks (for badge in header, always computed)
@@ -437,11 +474,11 @@ export function HomeView() {
     for (const t of tasks) {
       if (t.status === 'pending') continue;
       const entry = scheduleMap.get(t.id);
-      const key = dateKey(entry?.start_at ?? t.end_at);
+      const key = dateKey(entry?.start_at ?? t.end_at, serverTz);
       set.add(key);
     }
     return set;
-  }, [tasks, scheduleMap]);
+  }, [tasks, scheduleMap, serverTz]);
 
   // Map dateKey → index in items array (for scroll navigation)
   const dateIndexMap = useMemo(() => {
@@ -483,9 +520,10 @@ export function HomeView() {
   }
 
   function jumpToDate(date: Date) {
-    const key = `${date.getFullYear()}-${(date.getMonth() + 1)
-      .toString()
-      .padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
+    // Construct the date key in the server-configured timezone so it
+    // matches the keys in dateIndexMap (which are built via dateKey with
+    // serverTz). Falls back to device-local if serverTz is unavailable.
+    const key = dateKey(date.toISOString(), serverTz);
     scrollToDateKey(key);
   }
 

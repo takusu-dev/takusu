@@ -894,4 +894,56 @@ mod tests {
             vec![date(2025, 1, 15), date(2025, 2, 15), date(2025, 3, 15)]
         );
     }
+
+    #[test]
+    fn daily_by_day_weekdays_from_sunday() {
+        let tz = tokyo();
+        let start_time = TimeOfDay::new(8, 40).unwrap();
+        let start = point_at(date(2026, 7, 5), &start_time, &tz); // Sunday
+        let until = point_at(date(2026, 7, 12), &start_time, &tz); // next Sunday
+
+        let rule_json = r#"{"freq":"daily","interval":1,"by_day":[{"n":null,"weekday":"mon"},{"n":null,"weekday":"tue"},{"n":null,"weekday":"wed"},{"n":null,"weekday":"thu"},{"n":null,"weekday":"fri"}],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#;
+        let rule: RecurrenceRule = serde_json::from_str(rule_json).unwrap();
+        println!(
+            "Parsed rule: freq={:?}, by_day={:?}",
+            rule.freq, rule.by_day
+        );
+
+        let iter = RecurrenceGenerator::new(
+            rule,
+            start_time,
+            tz.clone(),
+            NormalDist::new(94, 3),
+            None,
+            false,
+            false,
+            0.2,
+            false,
+            start,
+            until,
+        );
+
+        let dates: Vec<_> = iter
+            .map(|gt| date_at(gt.task.start.unwrap(), &tz))
+            .collect();
+        for d in &dates {
+            println!("Generated: {} ({:?})", d, d.weekday());
+        }
+        assert!(
+            !dates.contains(&date(2026, 7, 5)),
+            "Sunday 7/5 should NOT be generated"
+        );
+        assert!(
+            dates.contains(&date(2026, 7, 6)),
+            "Monday 7/6 should be generated"
+        );
+        assert!(
+            dates.contains(&date(2026, 7, 10)),
+            "Friday 7/10 should be generated"
+        );
+        assert!(
+            !dates.contains(&date(2026, 7, 11)),
+            "Saturday 7/11 should NOT be generated"
+        );
+    }
 }

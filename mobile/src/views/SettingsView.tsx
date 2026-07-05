@@ -270,7 +270,7 @@ export function SettingsDetailView({
   }, [client]);
 
   useEffect(() => {
-    if (category === 'sleep') {
+    if (category === 'sleep' || category === 'general') {
       loadSleepSettings();
     }
   }, [category, loadSleepSettings]);
@@ -299,16 +299,42 @@ export function SettingsDetailView({
     setSleepSaving(true);
     try {
       const s = await client.updateSettings({
-        tz: sleepTz || undefined,
         sleep_start: sleepStart,
         sleep_end: sleepEnd,
       });
       setSleepSettings(s);
-      setSleepTz(s.tz);
       setSleepStart(s.sleep_start);
       setSleepEnd(s.sleep_end);
       haptic.success();
       Alert.alert('保存しました', '睡眠設定を保存しました');
+    } catch (e) {
+      Alert.alert(
+        'エラー',
+        `保存に失敗: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setSleepSaving(false);
+    }
+  }
+
+  async function saveTimezoneSettings() {
+    if (!client) return;
+    if (!sleepSettings) {
+      Alert.alert(
+        'エラー',
+        '設定の読み込みに失敗しています。タブを開き直してください',
+      );
+      return;
+    }
+    setSleepSaving(true);
+    try {
+      const s = await client.updateSettings({
+        tz: sleepTz || undefined,
+      });
+      setSleepSettings(s);
+      setSleepTz(s.tz);
+      haptic.success();
+      Alert.alert('保存しました', 'タイムゾーンを保存しました');
     } catch (e) {
       Alert.alert(
         'エラー',
@@ -598,11 +624,7 @@ export function SettingsDetailView({
                   placeholderTextColor={colors.gray}
                 />
               </View>
-            </>
-          )}
 
-          {category === 'sleep' && (
-            <>
               {sleepLoading ? (
                 <ActivityIndicator color={BRAND_COLOR} style={styles.loader} />
               ) : (
@@ -615,14 +637,10 @@ export function SettingsDetailView({
                       ]}
                     >
                       <Text style={[styles.label, { color: colors.gray }]}>
-                        現在の設定
+                        現在のタイムゾーン
                       </Text>
                       <Text style={[styles.value, { color: colors.black }]}>
-                        タイムゾーン: {sleepSettings.tz}
-                        {'\n'}
-                        就寝: {sleepSettings.sleep_start}
-                        {'\n'}
-                        起床: {sleepSettings.sleep_end}
+                        {sleepSettings.tz}
                       </Text>
                     </View>
                   )}
@@ -670,6 +688,52 @@ export function SettingsDetailView({
                       </Text>
                     </Pressable>
                   </View>
+
+                  <Pressable
+                    style={[
+                      styles.actionButton,
+                      { backgroundColor: BRAND_COLOR },
+                    ]}
+                    onPress={() => {
+                      haptic.medium();
+                      saveTimezoneSettings();
+                    }}
+                    disabled={sleepSaving || !client}
+                  >
+                    {sleepSaving ? (
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.actionButtonText}>設定を保存</Text>
+                    )}
+                  </Pressable>
+                </>
+              )}
+            </>
+          )}
+
+          {category === 'sleep' && (
+            <>
+              {sleepLoading ? (
+                <ActivityIndicator color={BRAND_COLOR} style={styles.loader} />
+              ) : (
+                <>
+                  {sleepSettings && (
+                    <View
+                      style={[
+                        styles.statusBox,
+                        { backgroundColor: colors.grayLight + '20' },
+                      ]}
+                    >
+                      <Text style={[styles.label, { color: colors.gray }]}>
+                        現在の設定
+                      </Text>
+                      <Text style={[styles.value, { color: colors.black }]}>
+                        就寝: {sleepSettings.sleep_start}
+                        {'\n'}
+                        起床: {sleepSettings.sleep_end}
+                      </Text>
+                    </View>
+                  )}
 
                   <View style={styles.notifGroup}>
                     <Text style={[styles.label, { color: colors.gray }]}>
