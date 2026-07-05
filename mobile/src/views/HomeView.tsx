@@ -44,6 +44,7 @@ import {
   rescheduleFromRaw,
   postInProgressNotification,
   dismissInProgressNotification,
+  dismissTaskNotifications,
 } from '@/src/notifications';
 import type { HabitRow } from '@/src/api/types';
 
@@ -509,7 +510,12 @@ export function HomeView() {
       showError(e, isDone ? 'タスクの未完了に失敗' : 'タスクの完了に失敗');
       return;
     }
-    // Dismiss in-progress notification if it was showing
+    // Dismiss any delivered notifications for this task (#257).
+    // When completing/skipping, remove pre-start and start-overdue
+    // notifications that have already fired and are sitting in the tray.
+    // When undoing (back to scheduled), also clear the in-progress
+    // notification if it was showing.
+    dismissTaskNotifications(task.id).catch((e) => logError('通知の消去', e));
     if (prevStatus === 'in_progress') {
       dismissInProgressNotification(task.id).catch((e) =>
         logError('通知の消去', e),
@@ -551,6 +557,8 @@ export function HomeView() {
       try {
         await client.updateTask(t.id, { status: newStatus });
         changed.push(t);
+        // Dismiss any delivered notifications for this task (#257).
+        dismissTaskNotifications(t.id).catch((e) => logError('通知の消去', e));
       } catch (e) {
         showError(e, 'タスクの完了に失敗');
         // Push a partial undo for tasks that were already changed.
@@ -914,6 +922,10 @@ export function HomeView() {
       try {
         await client.updateTask(task.id, { status: newStatus });
         changed.push(task);
+        // Dismiss any delivered notifications for this task (#257).
+        dismissTaskNotifications(task.id).catch((e) =>
+          logError('通知の消去', e),
+        );
         if (task.status === 'in_progress') {
           dismissInProgressNotification(task.id).catch((e) =>
             logError('通知の消去', e),
@@ -1276,6 +1288,10 @@ export function HomeView() {
               if (client && next.status !== 'in_progress') {
                 try {
                   await client.updateTask(next.id, { status: 'in_progress' });
+                  // Dismiss any delivered start reminder notifications (#257)
+                  dismissTaskNotifications(next.id).catch((e) =>
+                    logError('通知の消去', e),
+                  );
                   // Post in-progress notification with DONE/CANCEL actions
                   if (notifications.inProgress) {
                     postInProgressNotification(next).catch((e) =>

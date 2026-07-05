@@ -16,7 +16,10 @@ import {
   ensureNotificationPermissions,
   ACTION_DONE,
   ACTION_CANCEL,
+  ACTION_START,
   dismissInProgressNotification,
+  dismissTaskNotifications,
+  postInProgressNotification,
 } from '@/src/notifications';
 
 // Foreground notification handler — show notifications while app is open
@@ -41,7 +44,7 @@ function isValidRoute(url: string): boolean {
 }
 
 function ThemedApp() {
-  const { darkMode, client } = useServer();
+  const { darkMode, client, notifications } = useServer();
   // Track whether the initial cold-start notification response has been handled
   // to prevent duplicate navigation when client transitions from null to non-null
   const initialResponseHandled = useRef(false);
@@ -84,6 +87,42 @@ function ThemedApp() {
       (response) => {
         const actionId = response.actionIdentifier;
 
+        // Handle START action (task start reminder → mark in_progress)
+        if (actionId === ACTION_START) {
+          const taskId = response.notification.request.content.data?.taskId;
+          if (typeof taskId === 'string' && taskId && client) {
+            haptic.medium();
+            client
+              .updateTask(taskId, { status: 'in_progress' })
+              .then(() => {
+                // Dismiss the start reminder notification (#257)
+                dismissTaskNotifications(taskId).catch((err) =>
+                  console.warn('Notification action: dismiss failed', err),
+                );
+                // Post in-progress notification with DONE/CANCEL actions
+                if (notifications.inProgress) {
+                  client
+                    .getTask(taskId)
+                    .then((task) =>
+                      postInProgressNotification(task).catch((err) =>
+                        console.warn(
+                          'Notification action: post in-progress failed',
+                          err,
+                        ),
+                      ),
+                    )
+                    .catch((err) =>
+                      console.warn('Notification action: getTask failed', err),
+                    );
+                }
+              })
+              .catch((err) =>
+                console.warn('Notification action: updateTask failed', err),
+              );
+          }
+          return;
+        }
+
         // Handle action button taps (DONE / CANCEL for in-progress tasks)
         if (actionId === ACTION_DONE || actionId === ACTION_CANCEL) {
           const taskId = response.notification.request.content.data?.taskId;
@@ -112,7 +151,7 @@ function ThemedApp() {
     return () => {
       subscription.remove();
     };
-  }, [client]);
+  }, [client, notifications]);
 
   return (
     <ThemeProvider dark={darkMode}>

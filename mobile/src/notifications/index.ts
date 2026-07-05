@@ -15,8 +15,10 @@ export { CHANNELS } from './channels';
 export { setupNotificationChannels } from './channels';
 export {
   CATEGORY_TASK_IN_PROGRESS,
+  CATEGORY_TASK_START,
   ACTION_DONE,
   ACTION_CANCEL,
+  ACTION_START,
   setupNotificationCategories,
 } from './categories';
 export { ensureNotificationPermissions } from './permissions';
@@ -25,4 +27,5 @@ export {
   rescheduleFromRaw,
   postInProgressNotification,
   dismissInProgressNotification,
+  dismissTaskNotifications,
 } from './scheduler';
