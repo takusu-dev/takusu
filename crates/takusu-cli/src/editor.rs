@@ -33,6 +33,7 @@ sigma_minutes: {sigma}
 parallelizable: {par}
 allows_parallel: {apar}
 abandonability: {abandon}
+fixed: {fixed}
 depends: {depends}"#,
         title = task.title,
         desc = task.description.as_deref().unwrap_or(""),
@@ -44,6 +45,7 @@ depends: {depends}"#,
         par = task.parallelizable,
         apar = task.allows_parallel,
         abandon = task.abandonability,
+        fixed = task.fixed,
     )
 }
 
@@ -58,6 +60,7 @@ pub fn parse_edited_task(content: &str) -> Option<UpdateTask> {
     let mut parallelizable = None;
     let mut allows_parallel = None;
     let mut abandonability = None;
+    let mut fixed = None;
     let mut depends = None;
 
     for line in content.lines() {
@@ -91,6 +94,7 @@ pub fn parse_edited_task(content: &str) -> Option<UpdateTask> {
             "parallelizable" => parallelizable = Some(value.parse().ok()?),
             "allows_parallel" => allows_parallel = Some(value.parse().ok()?),
             "abandonability" => abandonability = Some(value.parse().ok()?),
+            "fixed" => fixed = Some(value.parse().ok()?),
             "depends" => {
                 let items: Vec<String> = if value.is_empty() {
                     vec![]
@@ -121,6 +125,7 @@ pub fn parse_edited_task(content: &str) -> Option<UpdateTask> {
         status,
         habit_id: None,
         user_edited: None,
+        fixed,
     })
 }
 
@@ -138,6 +143,7 @@ sigma_minutes: {sigma}
 parallelizable: {par}
 allows_parallel: {apar}
 abandonability: {abandon}
+fixed: {fixed}
 active: {active}"#,
         title = habit.title,
         desc = habit.description.as_deref().unwrap_or(""),
@@ -149,6 +155,7 @@ active: {active}"#,
         par = habit.parallelizable,
         apar = habit.allows_parallel,
         abandon = habit.abandonability,
+        fixed = habit.fixed,
         active = habit.active,
     )
 }
@@ -164,6 +171,7 @@ pub fn parse_edited_habit(content: &str) -> Option<UpdateHabit> {
     let mut parallelizable = None;
     let mut allows_parallel = None;
     let mut abandonability = None;
+    let mut fixed = None;
     let mut active = None;
 
     for line in content.lines() {
@@ -191,6 +199,7 @@ pub fn parse_edited_habit(content: &str) -> Option<UpdateHabit> {
             "parallelizable" => parallelizable = Some(value.parse().ok()?),
             "allows_parallel" => allows_parallel = Some(value.parse().ok()?),
             "abandonability" => abandonability = Some(value.parse().ok()?),
+            "fixed" => fixed = Some(value.parse().ok()?),
             "active" => active = Some(value.parse().ok()?),
             _ => {}
         }
@@ -208,6 +217,7 @@ pub fn parse_edited_habit(content: &str) -> Option<UpdateHabit> {
         allows_parallel,
         abandonability,
         active,
+        fixed,
     })
 }
 

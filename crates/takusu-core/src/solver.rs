@@ -85,6 +85,7 @@ mod tests {
                     parallelizable: false,
                     allows_parallel: false,
                     abandonability: 0.5,
+                    fixed: false,
                 })
                 .unwrap();
         }
@@ -143,6 +144,7 @@ mod tests {
                     parallelizable: false,
                     allows_parallel: false,
                     abandonability: 0.0,
+                    fixed: false,
                 })
                 .unwrap();
         }

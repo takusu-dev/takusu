@@ -362,6 +362,7 @@ mod tests {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.5,
+            fixed: false,
         })
         .unwrap()
     }
@@ -403,6 +404,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
 
@@ -428,6 +430,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
 
@@ -509,6 +512,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: true,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
         let guest = p
@@ -521,6 +525,7 @@ mod tests {
                 parallelizable: true,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
 
@@ -562,6 +567,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: true,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
         let guest = p
@@ -574,6 +580,7 @@ mod tests {
                 parallelizable: true,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
 
@@ -608,6 +615,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
 
@@ -637,6 +645,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
 
@@ -666,6 +675,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 1.0,
+                fixed: false,
             })
             .unwrap();
         let on_time = plan_with(vec![(Point(0), Point(3), id)]);
@@ -704,6 +714,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.0,
+                fixed: false,
             })
             .unwrap();
         let on_time = plan_with(vec![(Point(0), Point(3), id)]);
@@ -753,6 +764,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
         // b starts before a ends: 2-slot violation.

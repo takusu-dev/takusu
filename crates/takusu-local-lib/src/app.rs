@@ -138,15 +138,35 @@ fn habit_row_to_config(
     let start_time = takusu_habit::TimeOfDay::new(sh, sm)
         .ok_or_else(|| AppError::BadRequest(format!("invalid start_time: {}", row.start_time)))?;
     let duration = NormalDist::new((row.avg_minutes / 5) as u64, (row.sigma_minutes / 5) as u64);
+    let (eh, em) = parse_hhmm(&row.end_time);
+    // fixed habit のみ end_time を deadline として使う: end_time - start_time の
+    // スロット数を deadline_slots に設定する。これにより Planner は
+    // [start_time, end_time] の範囲内でタスクを配置できる。
+    // 非 fixed habit は従来通り deadline_slots = None (avg ベース)。
+    let deadline_slots = if row.fixed {
+        let start_minutes = sh as i64 * 60 + sm as i64;
+        let end_minutes = eh as i64 * 60 + em as i64;
+        let diff = end_minutes - start_minutes;
+        if diff > 0 {
+            Some((diff / 5) as u64)
+        } else {
+            // Overnight habits (end_time < start_time) fall back to
+            // avg-based deadline since the window crosses midnight.
+            None
+        }
+    } else {
+        None
+    };
     Ok(takusu_habit::Habit {
         recurrence,
         start_time,
         tz: tz.clone(),
         duration,
-        deadline_slots: None,
+        deadline_slots,
         parallelizable: row.parallelizable,
         allows_parallel: row.allows_parallel,
         abandonability: row.abandonability,
+        fixed: row.fixed,
     })
 }
 
@@ -336,7 +356,8 @@ impl TakusuApp {
                     || body.sigma_minutes.is_some()
                     || body.parallelizable.is_some()
                     || body.allows_parallel.is_some()
-                    || body.abandonability.is_some();
+                    || body.abandonability.is_some()
+                    || body.fixed.is_some();
                 if touched {
                     body.user_edited = Some(true);
                 }
@@ -424,6 +445,7 @@ impl TakusuApp {
                     abandonability: Some(0.5),
                     ical_uid: event.uid.clone(),
                     habit_id: None,
+                    fixed: None,
                 })
                 .await
                 .map_err(storage_to_app)?;
@@ -1119,6 +1141,7 @@ impl TakusuApp {
                         parallelizable: Some(core_task.parallelizable),
                         allows_parallel: Some(core_task.allows_parallel),
                         abandonability: Some(core_task.abandonability),
+                        fixed: Some(core_task.fixed),
                         ..Default::default()
                     };
                     let updated = self
@@ -1145,6 +1168,7 @@ impl TakusuApp {
                     description: habit_desc.clone(),
                     ical_uid: None,
                     habit_id: Some(habit_id.clone()),
+                    fixed: Some(core_task.fixed),
                 };
                 let created = self
                     .storage
@@ -1242,6 +1266,7 @@ impl TakusuApp {
                 parallelizable: row.parallelizable,
                 allows_parallel: row.allows_parallel,
                 abandonability: row.abandonability,
+                fixed: row.fixed,
             };
             planner
                 .add(core_task)

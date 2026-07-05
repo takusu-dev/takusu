@@ -120,7 +120,13 @@ fn topological_order(planner: &Planner, active: &FxHashSet<usize>) -> Vec<usize>
 }
 
 fn compute_earliest(planner: &Planner, schedules: &[(Point, Point, usize)], task: &Task) -> Point {
-    let mut earliest = planner.now;
+    // 固定タスクは start があれば now 以前の配置も許可する (学校など)。
+    // start がない固定タスクは通常タスクと同様に now から配置する。
+    let mut earliest = if task.fixed && task.start.is_some() {
+        Point(i64::MIN)
+    } else {
+        planner.now
+    };
     if let Some(start) = task.start {
         earliest = earliest.max(start);
     }
@@ -256,6 +262,16 @@ fn build_initial(planner: &Planner) -> Plan {
     for task_id in by_freeness {
         let task = &planner.tasks[task_id];
         let dur = (task.cost_estimate.avg as i64).max(1);
+
+        // 固定タスクは start に直接配置 (try_place を使わない)
+        if task.fixed
+            && let Some(start) = task.start
+        {
+            let end = Point(start.0 + dur);
+            schedules.push((start, end, task_id));
+            last_end = last_end.max(end);
+            continue;
+        }
 
         let earliest = compute_earliest(planner, &schedules, task);
         if let Some((start, end)) = try_place(planner, &schedules, task, earliest, dur) {
@@ -545,6 +561,15 @@ fn build_initial_partial(planner: &Planner, pinned: &[(Point, Point, usize)]) ->
         let task = &planner.tasks[task_id];
         let dur = (task.cost_estimate.avg as i64).max(1);
 
+        // 固定タスクは start に直接配置
+        if task.fixed
+            && let Some(start) = task.start
+        {
+            let end = Point(start.0 + dur);
+            schedules.push((start, end, task_id));
+            continue;
+        }
+
         let earliest = compute_earliest(planner, &schedules, task);
         if let Some((start, end)) = try_place(planner, &schedules, task, earliest, dur) {
             schedules.push((start, end, task_id));
@@ -607,18 +632,18 @@ fn generate_neighbor_partial(
                 b_idx = (a_idx + 1) % unpinned_positions.len();
             }
             let b_pos = unpinned_positions[b_idx];
-            neighbor_swap_at(current, a_pos, b_pos)
+            neighbor_swap_at(planner, current, a_pos, b_pos)
         }
         40..=54 => {
             let idx = rng.random_range(0..unpinned_positions.len());
             let pos = unpinned_positions[idx];
-            neighbor_duration_at(current, pos, rng)
+            neighbor_duration_at(planner, current, pos, rng)
         }
         55..=69 => {
             if unpinned.len() < 2 {
                 return current.clone();
             }
-            neighbor_reorder_partial(current, &unpinned_positions, rng)
+            neighbor_reorder_partial(planner, current, &unpinned_positions, rng)
         }
         70..=84 => neighbor_repair_depend(planner, current, rng, Some(pinned_ids)),
         _ => neighbor_lns_partial(planner, current, rng, pinned_ids),
@@ -634,6 +659,10 @@ fn neighbor_shift_at(
     rng: &mut impl Rng,
 ) -> Option<Plan> {
     let (start, end, task_id) = current.schedules[idx];
+    // 固定タスクは移動しない
+    if planner.tasks[task_id].fixed {
+        return None;
+    }
     let dur = end.0 - start.0;
     let range = shift_range(current, dur, rng);
     let k = rand_range(rng, -range, range + 1);
@@ -645,12 +674,16 @@ fn neighbor_shift_at(
     })
 }
 
-fn neighbor_swap_at(current: &Plan, a: usize, b: usize) -> Option<Plan> {
+fn neighbor_swap_at(planner: &Planner, current: &Plan, a: usize, b: usize) -> Option<Plan> {
     if a == b {
         return None;
     }
     let (a_s, a_e, a_id) = current.schedules[a];
     let (b_s, b_e, b_id) = current.schedules[b];
+    // 固定タスクは移動しない
+    if planner.tasks[a_id].fixed || planner.tasks[b_id].fixed {
+        return None;
+    }
     let a_dur = a_e.0 - a_s.0;
     let b_dur = b_e.0 - b_s.0;
     let mut new_scheds = current.schedules.to_vec();
@@ -661,8 +694,12 @@ fn neighbor_swap_at(current: &Plan, a: usize, b: usize) -> Option<Plan> {
     })
 }
 
-fn neighbor_duration_at(current: &Plan, idx: usize, rng: &mut impl Rng) -> Option<Plan> {
+fn neighbor_duration_at(planner: &Planner, current: &Plan, idx: usize, rng: &mut impl Rng) -> Option<Plan> {
     let (start, end, task_id) = current.schedules[idx];
+    // 固定タスクは移動しない
+    if planner.tasks[task_id].fixed {
+        return None;
+    }
     let dur = end.0 - start.0;
     if dur <= 1 {
         return None;
@@ -680,6 +717,7 @@ fn neighbor_duration_at(current: &Plan, idx: usize, rng: &mut impl Rng) -> Optio
 }
 
 fn neighbor_reorder_partial(
+    planner: &Planner,
     current: &Plan,
     unpinned_positions: &[usize],
     rng: &mut impl Rng,
@@ -692,6 +730,12 @@ fn neighbor_reorder_partial(
         b_idx = (a_idx + 1) % unpinned_positions.len();
     }
     let b = unpinned_positions[b_idx];
+
+    let (_, _, a_id) = schedules[a];
+    let (_, _, b_id) = schedules[b];
+    if planner.tasks[a_id].fixed || planner.tasks[b_id].fixed {
+        return None;
+    }
 
     let (a_s, _a_e, _a_id) = schedules[a];
     let (b_s, _b_e, _b_id) = schedules[b];
@@ -747,7 +791,10 @@ fn neighbor_lns_partial(
     let mut destroyed_ids = Vec::new();
     let mut remaining = Vec::new();
     for sched in schedules {
-        if !pinned_ids.contains(&sched.2) && sched.0.0 >= window_start && sched.0.0 < window_end {
+        // 固定タスクと pinned タスクは破壊対象にしない
+        if planner.tasks[sched.2].fixed || pinned_ids.contains(&sched.2) {
+            remaining.push(*sched);
+        } else if sched.0.0 >= window_start && sched.0.0 < window_end {
             destroyed_ids.push(sched.2);
         } else {
             remaining.push(*sched);
@@ -793,6 +840,9 @@ fn neighbor_shift(planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Opti
     }
     let idx = rng.random_range(0..schedules.len());
     let (start, end, task_id) = schedules[idx];
+    if planner.tasks[task_id].fixed {
+        return None;
+    }
     let dur = end.0 - start.0;
     let range = shift_range(current, dur, rng);
     let k = rand_range(rng, -range, range + 1);
@@ -805,7 +855,7 @@ fn neighbor_shift(planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Opti
     })
 }
 
-fn neighbor_swap(_planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Option<Plan> {
+fn neighbor_swap(planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Option<Plan> {
     let schedules = &current.schedules;
     if schedules.len() < 2 {
         return None;
@@ -818,6 +868,10 @@ fn neighbor_swap(_planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Opti
 
     let (a_s, a_e, a_id) = schedules[a];
     let (b_s, b_e, b_id) = schedules[b];
+    // 固定タスクは移動しない
+    if planner.tasks[a_id].fixed || planner.tasks[b_id].fixed {
+        return None;
+    }
     let a_dur = a_e.0 - a_s.0;
     let b_dur = b_e.0 - b_s.0;
 
@@ -829,13 +883,17 @@ fn neighbor_swap(_planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Opti
     })
 }
 
-fn neighbor_duration(_planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Option<Plan> {
+fn neighbor_duration(planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Option<Plan> {
     let schedules = &current.schedules;
     if schedules.is_empty() {
         return None;
     }
     let idx = rng.random_range(0..schedules.len());
     let (start, end, task_id) = schedules[idx];
+    // 固定タスクは移動しない
+    if planner.tasks[task_id].fixed {
+        return None;
+    }
     let dur = end.0 - start.0;
     if dur <= 1 {
         return None;
@@ -853,7 +911,7 @@ fn neighbor_duration(_planner: &Planner, current: &Plan, rng: &mut impl Rng) -> 
     })
 }
 
-fn neighbor_reorder(_planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Option<Plan> {
+fn neighbor_reorder(planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Option<Plan> {
     let schedules = &current.schedules;
     if schedules.len() < 2 {
         return None;
@@ -864,8 +922,12 @@ fn neighbor_reorder(_planner: &Planner, current: &Plan, rng: &mut impl Rng) -> O
         b = (a + 1) % schedules.len();
     }
 
-    let (a_s, _a_e, _a_id) = schedules[a];
-    let (b_s, _b_e, _b_id) = schedules[b];
+    let (a_s, _a_e, a_id) = schedules[a];
+    let (b_s, _b_e, b_id) = schedules[b];
+    // 固定タスクは移動しない
+    if planner.tasks[a_id].fixed || planner.tasks[b_id].fixed {
+        return None;
+    }
 
     let (first, second) = if a_s.0 <= b_s.0 { (a, b) } else { (b, a) };
     let f_s = schedules[first].0;
@@ -905,6 +967,10 @@ fn neighbor_repair_depend(
         if let Some(p) = pinned_ids
             && p.contains(&task.id)
         {
+            continue;
+        }
+        // 固定タスクは移動しない
+        if task.fixed {
             continue;
         }
         let Some((start, _)) = index[task.id] else {
@@ -958,7 +1024,10 @@ fn neighbor_lns(planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Option
     let mut destroyed_ids = Vec::new();
     let mut remaining = Vec::new();
     for sched in schedules {
-        if sched.0.0 >= window_start && sched.0.0 < window_end {
+        // 固定タスクは破壊対象にしない (remaining に残す)
+        if planner.tasks[sched.2].fixed {
+            remaining.push(*sched);
+        } else if sched.0.0 >= window_start && sched.0.0 < window_end {
             destroyed_ids.push(sched.2);
         } else {
             remaining.push(*sched);
@@ -1027,6 +1096,14 @@ fn place_one(planner: &Planner, scheds: &mut Vec<(Point, Point, usize)>, task_id
     // さもないと iCal 由来の avg=0 タスクが LNS/repair_polish の再構築で
     // サイレントにドロップされてしまう (inclusion_bonus の不整合)。
     let dur = (task.cost_estimate.avg as i64).max(1);
+    // 固定タスクは start に直接配置
+    if task.fixed
+        && let Some(start) = task.start
+    {
+        let end = Point(start.0 + dur);
+        scheds.push((start, end, task_id));
+        return;
+    }
     let earliest = compute_earliest(planner, scheds, task);
     if let Some((start, end)) = try_place(planner, scheds, task, earliest, dur) {
         scheds.push((start, end, task_id));
@@ -1068,6 +1145,7 @@ mod tests {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.5,
+            fixed: false,
         };
         let t1 = Task {
             id: 1,
@@ -1078,6 +1156,7 @@ mod tests {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.5,
+            fixed: false,
         };
         let p = test_planner(vec![t0, t1]);
         let plan = build_initial(&p);
@@ -1101,6 +1180,7 @@ mod tests {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.5,
+            fixed: false,
         };
         let t1 = Task {
             id: 1,
@@ -1111,6 +1191,7 @@ mod tests {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.5,
+            fixed: false,
         };
         let p = test_planner(vec![t0, t1]);
         let plan = build_initial(&p);
@@ -1128,6 +1209,7 @@ mod tests {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.5,
+            fixed: false,
         };
         let t1 = Task {
             id: 1,
@@ -1138,6 +1220,7 @@ mod tests {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.5,
+            fixed: false,
         };
         let p = test_planner(vec![t0, t1]);
         let mut rng = rng();
@@ -1174,6 +1257,7 @@ mod tests {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.5,
+            fixed: false,
         };
         let t1 = Task {
             id: 1,
@@ -1184,6 +1268,7 @@ mod tests {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.5,
+            fixed: false,
         };
         let p = test_planner(vec![t0, t1]);
         let mut rng = rng();
@@ -1208,6 +1293,7 @@ mod tests {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.5,
+            fixed: false,
         };
         let other = Task {
             id: 1,
@@ -1218,6 +1304,7 @@ mod tests {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.5,
+            fixed: false,
         };
         let p = test_planner(vec![zero, other]);
 
@@ -1244,6 +1331,7 @@ mod tests {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.5,
+            fixed: false,
         };
         // zero-avg task that depends on dep, but is scheduled before dep ends.
         let violator = Task {
@@ -1255,6 +1343,7 @@ mod tests {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.5,
+            fixed: false,
         };
         let p = test_planner(vec![dep, violator]);
         // Force a dependency violation: dep ends at 5, violator starts at 0.

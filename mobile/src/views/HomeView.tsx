@@ -648,6 +648,7 @@ export function HomeView() {
             abandonability: t.abandonability,
             ical_uid: t.ical_uid,
             habit_id: t.habit_id,
+            fixed: t.fixed,
           });
           if (t.status !== 'pending') {
             await client.updateTask(recreated.id, { status: t.status });
@@ -707,6 +708,7 @@ export function HomeView() {
           abandonability: task.abandonability,
           ical_uid: task.ical_uid,
           habit_id: task.habit_id,
+          fixed: task.fixed,
         });
         // CreateTask does not accept `status`; restore it via update.
         if (task.status !== 'pending') {
@@ -835,6 +837,7 @@ export function HomeView() {
             abandonability: task.abandonability,
             ical_uid: task.ical_uid,
             habit_id: task.habit_id,
+            fixed: task.fixed,
           });
           // CreateTask does not accept `status`; restore it via update.
           if (task.status !== 'pending') {

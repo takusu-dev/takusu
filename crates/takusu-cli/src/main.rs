@@ -179,6 +179,8 @@ enum TaskCommands {
         parallelizable: Option<bool>,
         #[arg(long)]
         allows_parallel: Option<bool>,
+        #[arg(long, help = "Lock start time (scheduler cannot move)")]
+        fixed: Option<bool>,
     },
 
     /// Edit a task in $EDITOR
@@ -209,6 +211,8 @@ enum TaskCommands {
         abandonability: Option<f64>,
         #[arg(long)]
         status: Option<String>,
+        #[arg(long, help = "Lock start time (scheduler cannot move)")]
+        fixed: Option<bool>,
     },
 
     /// Full replace a task (PUT)
@@ -242,6 +246,8 @@ enum TaskCommands {
         parallelizable: Option<bool>,
         #[arg(long)]
         allows_parallel: Option<bool>,
+        #[arg(long, help = "Lock start time (scheduler cannot move)")]
+        fixed: Option<bool>,
     },
 
     /// Delete a task
@@ -292,6 +298,8 @@ enum HabitCommands {
         parallelizable: bool,
         #[arg(long)]
         allows_parallel: bool,
+        #[arg(long, help = "Lock start time (scheduler cannot move)")]
+        fixed: bool,
     },
 
     /// Edit a habit in $EDITOR
@@ -322,6 +330,8 @@ enum HabitCommands {
         abandonability: Option<f64>,
         #[arg(long)]
         active: Option<bool>,
+        #[arg(long, help = "Lock start time (scheduler cannot move)")]
+        fixed: Option<bool>,
     },
 
     /// Full replace a habit (PUT)
@@ -355,6 +365,8 @@ enum HabitCommands {
         parallelizable: bool,
         #[arg(long)]
         allows_parallel: bool,
+        #[arg(long, help = "Lock start time (scheduler cannot move)")]
+        fixed: bool,
     },
 
     /// Delete a habit
@@ -598,6 +610,7 @@ async fn run_task(
             depends,
             parallelizable,
             allows_parallel,
+            fixed,
         } => {
             let (title, end_at) = if is_interactive() && title.is_none() && end_at.is_none() {
                 let t = prompt("Title");
@@ -625,6 +638,7 @@ async fn run_task(
                 description,
                 ical_uid: None,
                 habit_id: None,
+                fixed,
             };
             let task = app.create_task(&body).await?;
             match mode {
@@ -659,6 +673,7 @@ async fn run_task(
             allows_parallel,
             abandonability,
             status,
+            fixed,
         } => {
             let avg_minutes = avg_time
                 .as_ref()
@@ -684,6 +699,7 @@ async fn run_task(
                 status,
                 habit_id: None,
                 user_edited: None,
+                fixed,
             };
             let task = app.update_task(&id, &body).await?;
             match mode {
@@ -703,6 +719,7 @@ async fn run_task(
             depends,
             parallelizable,
             allows_parallel,
+            fixed,
         } => {
             let avg_minutes = parse_duration(&avg_time).map_err(AppError::BadRequest)?;
             let sigma_minutes: i64 = parse_duration(&sigma_time).map_err(AppError::BadRequest)?;
@@ -723,6 +740,7 @@ async fn run_task(
                 description,
                 ical_uid: None,
                 habit_id: None,
+                fixed,
             };
             let task = app.replace_task(&id, &body).await?;
             match mode {
@@ -776,6 +794,7 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
             description,
             parallelizable,
             allows_parallel,
+            fixed,
         } => {
             let (title, recurrence, start_time, end_time) = if is_interactive()
                 && title.is_none()
@@ -808,6 +827,7 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
                 allows_parallel: if allows_parallel { Some(true) } else { None },
                 abandonability: Some(abandonability),
                 description,
+                fixed: if fixed { Some(true) } else { None },
             };
             let habit = app.create_habit(&body).await?;
             match mode {
@@ -841,6 +861,7 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
             allows_parallel,
             abandonability,
             active,
+            fixed,
         } => {
             let avg_minutes = avg_time
                 .as_ref()
@@ -864,6 +885,7 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
                 allows_parallel,
                 abandonability,
                 active,
+                fixed,
             };
             let habit = app.update_habit(&id, &body).await?;
             match mode {
@@ -883,6 +905,7 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
             description,
             parallelizable,
             allows_parallel,
+            fixed,
         } => {
             let avg_minutes = parse_duration(&avg_time).map_err(AppError::BadRequest)?;
             let sigma_minutes: i64 = parse_duration(&sigma_time).map_err(AppError::BadRequest)?;
@@ -901,6 +924,7 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
                 allows_parallel: if allows_parallel { Some(true) } else { None },
                 abandonability: Some(abandonability),
                 description,
+                fixed: if fixed { Some(true) } else { None },
             };
             let habit = app.replace_habit(&id, &body).await?;
             match mode {

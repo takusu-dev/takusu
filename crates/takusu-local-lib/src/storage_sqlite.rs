@@ -17,6 +17,7 @@ const MIGRATION_004: &str = include_str!("../migrations/004_indexes.sql");
 const MIGRATION_005: &str = include_str!("../migrations/005_task_display_id.sql");
 const MIGRATION_006: &str = include_str!("../migrations/006_user_edited.sql");
 const MIGRATION_007: &str = include_str!("../migrations/007_task_display_id_seq.sql");
+const MIGRATION_008: &str = include_str!("../migrations/008_fixed.sql");
 
 pub struct SqliteStorage {
     pool: SqlitePool,
@@ -68,6 +69,16 @@ impl SqliteStorage {
 
         // Migration 007 creates the display_id sequence table (idempotent).
         sqlx::raw_sql(MIGRATION_007).execute(&pool).await?;
+
+        // Migration 008 adds fixed column to habits and tasks (not idempotent).
+        let has_fixed: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name = 'fixed'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        if !has_fixed {
+            sqlx::raw_sql(MIGRATION_008).execute(&pool).await?;
+        }
 
         Ok(Self { pool, root_token })
     }
@@ -173,6 +184,7 @@ impl Storage for SqliteStorage {
         let parallelizable = body.parallelizable.unwrap_or(false);
         let allows_parallel = body.allows_parallel.unwrap_or(false);
         let abandonability = body.abandonability.unwrap_or(0.5);
+        let fixed = body.fixed.unwrap_or(false);
         // Atomically reserve a monotonic display_id from the sequence table.
         // This prevents display_id reuse after task deletion (#186).
         let display_id: i64 = sqlx::query_scalar(
@@ -182,7 +194,7 @@ impl Storage for SqliteStorage {
         .await
         .map_err(map_err)?;
         sqlx::query(
-            "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)"
+            "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)"
         )
         .bind(&id)
         .bind(display_id)
@@ -198,6 +210,7 @@ impl Storage for SqliteStorage {
         .bind(abandonability)
         .bind(&body.ical_uid)
         .bind(&body.habit_id)
+        .bind(fixed)
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
@@ -240,7 +253,7 @@ impl Storage for SqliteStorage {
         }
 
         sqlx::query(
-            "UPDATE tasks SET title=COALESCE(?,title), description=COALESCE(?,description), start_at=COALESCE(?,start_at), end_at=COALESCE(?,end_at), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), depends=COALESCE(?,depends), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), status=?, habit_id=COALESCE(?,habit_id), user_edited=COALESCE(?,user_edited), updated_at=datetime('now') WHERE id = ?"
+            "UPDATE tasks SET title=COALESCE(?,title), description=COALESCE(?,description), start_at=COALESCE(?,start_at), end_at=COALESCE(?,end_at), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), depends=COALESCE(?,depends), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), status=?, habit_id=COALESCE(?,habit_id), user_edited=COALESCE(?,user_edited), fixed=COALESCE(?,fixed), updated_at=datetime('now') WHERE id = ?"
         )
         .bind(body.title.as_ref())
         .bind(body.description.as_ref())
@@ -255,6 +268,7 @@ impl Storage for SqliteStorage {
         .bind(status)
         .bind(body.habit_id.as_ref())
         .bind(body.user_edited)
+        .bind(body.fixed)
         .bind(&full)
         .execute(&self.pool)
         .await
@@ -275,8 +289,9 @@ impl Storage for SqliteStorage {
         let parallelizable = body.parallelizable.unwrap_or(false);
         let allows_parallel = body.allows_parallel.unwrap_or(false);
         let abandonability = body.abandonability.unwrap_or(0.5);
+        let fixed = body.fixed.unwrap_or(false);
         sqlx::query(
-            "UPDATE tasks SET title=?, description=?, start_at=?, end_at=?, avg_minutes=?, sigma_minutes=?, depends=?, parallelizable=?, allows_parallel=?, abandonability=?, habit_id=COALESCE(?,habit_id), updated_at=datetime('now') WHERE id = ?"
+            "UPDATE tasks SET title=?, description=?, start_at=?, end_at=?, avg_minutes=?, sigma_minutes=?, depends=?, parallelizable=?, allows_parallel=?, abandonability=?, habit_id=COALESCE(?,habit_id), fixed=?, updated_at=datetime('now') WHERE id = ?"
         )
         .bind(&body.title)
         .bind(&body.description)
@@ -289,6 +304,7 @@ impl Storage for SqliteStorage {
         .bind(allows_parallel)
         .bind(abandonability)
         .bind(&body.habit_id)
+        .bind(fixed)
         .bind(&full)
         .execute(&self.pool)
         .await
@@ -334,8 +350,9 @@ impl Storage for SqliteStorage {
         let parallelizable = body.parallelizable.unwrap_or(false);
         let allows_parallel = body.allows_parallel.unwrap_or(false);
         let abandonability = body.abandonability.unwrap_or(0.5);
+        let fixed = body.fixed.unwrap_or(false);
         sqlx::query(
-            "INSERT INTO habits (id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)"
+            "INSERT INTO habits (id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)"
         )
         .bind(&id)
         .bind(&body.title)
@@ -348,6 +365,7 @@ impl Storage for SqliteStorage {
         .bind(parallelizable)
         .bind(allows_parallel)
         .bind(abandonability)
+        .bind(fixed)
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
@@ -360,7 +378,7 @@ impl Storage for SqliteStorage {
 
     async fn update_habit(&self, id: &str, body: &UpdateHabit) -> StorageResult<HabitRow> {
         sqlx::query(
-            "UPDATE habits SET title=COALESCE(?,title), description=COALESCE(?,description), recurrence=COALESCE(?,recurrence), start_time=COALESCE(?,start_time), end_time=COALESCE(?,end_time), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), active=COALESCE(?,active), updated_at=datetime('now') WHERE id = ?"
+            "UPDATE habits SET title=COALESCE(?,title), description=COALESCE(?,description), recurrence=COALESCE(?,recurrence), start_time=COALESCE(?,start_time), end_time=COALESCE(?,end_time), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), active=COALESCE(?,active), fixed=COALESCE(?,fixed), updated_at=datetime('now') WHERE id = ?"
         )
         .bind(body.title.as_ref())
         .bind(body.description.as_ref())
@@ -373,6 +391,7 @@ impl Storage for SqliteStorage {
         .bind(body.allows_parallel)
         .bind(body.abandonability)
         .bind(body.active)
+        .bind(body.fixed)
         .bind(id)
         .execute(&self.pool)
         .await
@@ -392,8 +411,9 @@ impl Storage for SqliteStorage {
         let parallelizable = body.parallelizable.unwrap_or(false);
         let allows_parallel = body.allows_parallel.unwrap_or(false);
         let abandonability = body.abandonability.unwrap_or(0.5);
+        let fixed = body.fixed.unwrap_or(false);
         sqlx::query(
-            "UPDATE habits SET title=?, description=?, recurrence=?, start_time=?, end_time=?, avg_minutes=?, sigma_minutes=?, parallelizable=?, allows_parallel=?, abandonability=?, updated_at=datetime('now') WHERE id = ?"
+            "UPDATE habits SET title=?, description=?, recurrence=?, start_time=?, end_time=?, avg_minutes=?, sigma_minutes=?, parallelizable=?, allows_parallel=?, abandonability=?, fixed=?, updated_at=datetime('now') WHERE id = ?"
         )
         .bind(&body.title)
         .bind(&body.description)
@@ -405,6 +425,7 @@ impl Storage for SqliteStorage {
         .bind(parallelizable)
         .bind(allows_parallel)
         .bind(abandonability)
+        .bind(fixed)
         .bind(id)
         .execute(&self.pool)
         .await

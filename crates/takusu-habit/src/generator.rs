@@ -16,6 +16,7 @@ pub struct RecurrenceGenerator {
     parallelizable: bool,
     allows_parallel: bool,
     abandonability: f64,
+    fixed: bool,
     start_point: Point,
     until_point: Point,
     start_date: Date,
@@ -36,6 +37,7 @@ impl RecurrenceGenerator {
         parallelizable: bool,
         allows_parallel: bool,
         abandonability: f64,
+        fixed: bool,
         start: Point,
         until: Point,
     ) -> Self {
@@ -50,6 +52,7 @@ impl RecurrenceGenerator {
             parallelizable,
             allows_parallel,
             abandonability,
+            fixed,
             start_point: start,
             until_point: until,
             start_date,
@@ -239,6 +242,7 @@ impl Iterator for RecurrenceGenerator {
                     parallelizable: self.parallelizable,
                     allows_parallel: self.allows_parallel,
                     abandonability: self.abandonability,
+                    fixed: self.fixed,
                 },
             });
         }

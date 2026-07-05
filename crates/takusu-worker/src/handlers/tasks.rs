@@ -7,7 +7,7 @@ use crate::handlers::d1::safe_all;
 use crate::handlers::tokens::{json_created, json_ok, parse_json};
 use crate::models::{CreateTask, TaskRow, UpdateTask};
 
-const TASK_COLS: &str = "id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, created_at, updated_at";
+const TASK_COLS: &str = "id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, created_at, updated_at";
 
 fn select_tasks() -> String {
     format!("SELECT {TASK_COLS} FROM tasks")
@@ -77,7 +77,7 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
         .display_id;
 
     let stmt = database.prepare(
-        "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'pending', ?13, ?14)"
+        "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'pending', ?13, ?14, ?15)"
     );
     stmt.bind(&[
         JsValue::from_str(&id),
@@ -106,6 +106,7 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
             .as_deref()
             .map(JsValue::from_str)
             .unwrap_or(JsValue::NULL),
+        JsValue::from_bool(body.fixed.unwrap_or(false)),
     ])?
     .run()
     .await
@@ -151,7 +152,7 @@ pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, Wo
     };
 
     let stmt = database.prepare(
-        "UPDATE tasks SET title=COALESCE(?1,title), description=COALESCE(?2,description), start_at=COALESCE(?3,start_at), end_at=COALESCE(?4,end_at), avg_minutes=COALESCE(?5,avg_minutes), sigma_minutes=COALESCE(?6,sigma_minutes), depends=COALESCE(?7,depends), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), status=?11, habit_id=COALESCE(?13,habit_id), user_edited=COALESCE(?14,user_edited), updated_at=datetime('now') WHERE id = ?12"
+        "UPDATE tasks SET title=COALESCE(?1,title), description=COALESCE(?2,description), start_at=COALESCE(?3,start_at), end_at=COALESCE(?4,end_at), avg_minutes=COALESCE(?5,avg_minutes), sigma_minutes=COALESCE(?6,sigma_minutes), depends=COALESCE(?7,depends), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), status=?11, habit_id=COALESCE(?13,habit_id), user_edited=COALESCE(?14,user_edited), fixed=COALESCE(?15,fixed), updated_at=datetime('now') WHERE id = ?12"
     );
     stmt.bind(&[
         body.title
@@ -198,6 +199,7 @@ pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, Wo
         body.user_edited
             .map(JsValue::from_bool)
             .unwrap_or(JsValue::NULL),
+        body.fixed.map(JsValue::from_bool).unwrap_or(JsValue::NULL),
     ])?
     .run()
     .await
@@ -219,7 +221,7 @@ pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, W
     let abandonability = body.abandonability.unwrap_or(0.5);
 
     let stmt = database.prepare(
-        "UPDATE tasks SET title=?1, description=?2, start_at=?3, end_at=?4, avg_minutes=?5, sigma_minutes=?6, depends=?7, parallelizable=?8, allows_parallel=?9, abandonability=?10, habit_id=COALESCE(?12,habit_id), updated_at=datetime('now') WHERE id = ?11"
+        "UPDATE tasks SET title=?1, description=?2, start_at=?3, end_at=?4, avg_minutes=?5, sigma_minutes=?6, depends=?7, parallelizable=?8, allows_parallel=?9, abandonability=?10, habit_id=COALESCE(?12,habit_id), fixed=?13, updated_at=datetime('now') WHERE id = ?11"
     );
     stmt.bind(&[
         JsValue::from_str(&body.title),
@@ -243,6 +245,7 @@ pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, W
             .as_deref()
             .map(JsValue::from_str)
             .unwrap_or(JsValue::NULL),
+        JsValue::from_bool(body.fixed.unwrap_or(false)),
     ])?
     .run()
     .await

@@ -28,6 +28,7 @@
 //!     parallelizable: false,
 //!     allows_parallel: false,
 //!     abandonability: 0.3,
+//!     fixed: false,
 //! };
 //! store.add(habit);
 //!
@@ -78,6 +79,8 @@ pub struct Habit {
     pub parallelizable: bool,
     pub allows_parallel: bool,
     pub abandonability: f64,
+    /// 開始時刻を固定するか。true の場合、生成される Task の fixed が true になる。
+    pub fixed: bool,
 }
 
 impl HabitConfig for Habit {
@@ -95,6 +98,7 @@ impl HabitConfig for Habit {
             self.parallelizable,
             self.allows_parallel,
             self.abandonability,
+            self.fixed,
             start,
             until,
         ))
@@ -231,6 +235,7 @@ mod tests {
             false,
             false,
             0.5,
+            false,
             start,
             until,
         );
@@ -259,6 +264,7 @@ mod tests {
             false,
             false,
             0.0,
+            false,
             start,
             until,
         );
@@ -293,6 +299,7 @@ mod tests {
             false,
             false,
             0.3,
+            false,
             start,
             until,
         );
@@ -323,6 +330,7 @@ mod tests {
             false,
             false,
             0.0,
+            false,
             start,
             until,
         );
@@ -346,6 +354,7 @@ mod tests {
             false,
             false,
             0.0,
+            false,
             start,
             until,
         );
@@ -374,6 +383,7 @@ mod tests {
             false,
             false,
             0.0,
+            false,
             start,
             until,
         );
@@ -403,6 +413,7 @@ mod tests {
             false,
             false,
             0.0,
+            false,
             start,
             until,
         );
@@ -426,6 +437,7 @@ mod tests {
             false,
             false,
             0.0,
+            false,
             start,
             until,
         );
@@ -457,6 +469,7 @@ mod tests {
             false,
             false,
             0.0,
+            false,
             start,
             until,
         );
@@ -480,6 +493,7 @@ mod tests {
             false,
             false,
             0.0,
+            false,
             start,
             until,
         );
@@ -506,6 +520,7 @@ mod tests {
             true,
             true,
             0.7,
+            false,
             start,
             until,
         );
@@ -534,6 +549,7 @@ mod tests {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.5,
+            fixed: false,
         });
 
         store.add(Habit {
@@ -545,6 +561,7 @@ mod tests {
             parallelizable: true,
             allows_parallel: false,
             abandonability: 0.2,
+            fixed: false,
         });
 
         let start = point_at(date(2025, 3, 1), &TimeOfDay::new(0, 0).unwrap(), &tz);
@@ -593,6 +610,7 @@ mod tests {
             false,
             false,
             0.0,
+            false,
             range_start,
             until,
         );
@@ -617,6 +635,7 @@ mod tests {
             false,
             false,
             0.0,
+            false,
             start,
             until,
         );
@@ -648,6 +667,7 @@ mod tests {
             false,
             false,
             0.0,
+            false,
             start,
             until,
         );
@@ -678,6 +698,7 @@ mod tests {
             false,
             false,
             0.0,
+            false,
             start,
             until,
         );
@@ -712,6 +733,7 @@ mod tests {
             false,
             false,
             0.0,
+            false,
             start,
             until,
         );
@@ -746,6 +768,7 @@ mod tests {
             false,
             false,
             0.0,
+            false,
             start,
             until,
         );
@@ -777,6 +800,7 @@ mod tests {
             false,
             false,
             0.0,
+            false,
             start,
             until,
         );
@@ -805,6 +829,7 @@ mod tests {
             false,
             false,
             0.0,
+            false,
             start,
             until,
         );
@@ -854,6 +879,7 @@ mod tests {
             false,
             false,
             0.0,
+            false,
             start,
             until,
         );

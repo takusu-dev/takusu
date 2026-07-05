@@ -21,6 +21,7 @@
 //!     parallelizable: false,
 //!     allows_parallel: false,
 //!     abandonability: 0.5,
+//!     fixed: false,
 //! }).unwrap();
 //!
 //! let plan = planner.plan();
@@ -236,6 +237,11 @@ pub struct Task {
     /// 諦めやすさ [0.0, 1.0]。大きいほど諦められやすい。
     /// 全タスクが収まらない場合、この値が大きいタスクからドロップされる。
     pub abandonability: f64,
+
+    /// 開始時刻を固定するか。true の場合、Planner は now 以前の
+    /// 配置も許可し、SA の近傍操作でも移動しない。
+    /// 学校など開始時刻が厳密なタスクに使う。
+    pub fixed: bool,
 }
 
 // ── Plan ──────────────────────────────────────────────────────────────
@@ -316,6 +322,7 @@ type ResultE<T> = Result<T, Error>;
 ///     parallelizable: false,
 ///     allows_parallel: false,
 ///     abandonability: 0.5,
+///     fixed: false,
 /// }).unwrap();
 ///
 /// let plan = p.plan();
@@ -517,6 +524,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
         let b = p
@@ -529,6 +537,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
 
@@ -557,6 +566,7 @@ mod tests {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.5,
+            fixed: false,
         })
         .unwrap();
 
@@ -587,6 +597,7 @@ mod tests {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.9,
+            fixed: false,
         })
         .unwrap();
 
@@ -622,6 +633,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
         let _b = p
@@ -634,6 +646,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
 
@@ -663,6 +676,7 @@ mod tests {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.5,
+            fixed: false,
         })
         .unwrap();
 
@@ -688,6 +702,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
         let _b = p
@@ -700,6 +715,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
 
@@ -729,6 +745,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
         let _b = p
@@ -741,6 +758,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
         let _c = p
@@ -753,6 +771,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
 
@@ -806,6 +825,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
         let _b = p
@@ -818,6 +838,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
         let _c = p
@@ -830,6 +851,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
 
@@ -871,6 +893,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
         let _b = p
@@ -883,6 +906,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
         let _c = p
@@ -895,6 +919,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
 
@@ -981,6 +1006,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
         let id2 = planner
@@ -993,6 +1019,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
         assert_eq!(id1, 0);
@@ -1012,6 +1039,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
         planner
@@ -1024,6 +1052,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
         assert_eq!(planner.tasks()[1].depends, vec![0]);
@@ -1042,6 +1071,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.0,
+                fixed: false,
             })
             .unwrap();
         let f = planner.freeness(0);
@@ -1093,6 +1123,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
         planner
@@ -1105,6 +1136,7 @@ mod tests {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.5,
+                fixed: false,
             })
             .unwrap();
         planner

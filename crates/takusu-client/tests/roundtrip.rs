@@ -14,6 +14,7 @@ fn create_task_serialization() {
         parallelizable: Some(true),
         allows_parallel: Some(false),
         abandonability: Some(0.3),
+        fixed: None,
     };
 
     let json = serde_json::to_value(&ct).unwrap();
@@ -36,6 +37,7 @@ fn create_task_defaults_are_skipped() {
         parallelizable: None,
         allows_parallel: None,
         abandonability: None,
+        fixed: None,
     };
 
     let json = serde_json::to_value(&ct).unwrap();
@@ -133,6 +135,7 @@ fn create_habit_serialization() {
         parallelizable: None,
         allows_parallel: None,
         abandonability: None,
+        fixed: None,
     };
 
     let json = serde_json::to_value(&ch).unwrap();

@@ -24,6 +24,7 @@ export interface TaskRow {
   habit_id?: string;
   ical_uid?: string;
   user_edited: boolean;
+  fixed: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -41,6 +42,7 @@ export interface CreateTask {
   abandonability?: number;
   ical_uid?: string;
   habit_id?: string;
+  fixed?: boolean;
 }
 
 export interface UpdateTask {
@@ -56,6 +58,7 @@ export interface UpdateTask {
   abandonability?: number;
   status?: TaskStatus;
   user_edited?: boolean;
+  fixed?: boolean;
 }
 
 export interface TaskQuery {
@@ -78,6 +81,7 @@ export interface HabitRow {
   allows_parallel: boolean;
   abandonability: number;
   active: boolean;
+  fixed: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -93,6 +97,7 @@ export interface CreateHabit {
   parallelizable?: boolean;
   allows_parallel?: boolean;
   abandonability?: number;
+  fixed?: boolean;
 }
 
 export interface UpdateHabit {
@@ -107,6 +112,7 @@ export interface UpdateHabit {
   allows_parallel?: boolean;
   abandonability?: number;
   active?: boolean;
+  fixed?: boolean;
 }
 
 export interface ScheduleEntry {
