@@ -16,6 +16,23 @@ set -euo pipefail
 
 die() { echo "issue-view: $*" >&2; exit 1; }
 
+# gh requires a git repo in cwd or an ancestor. This workspace is a jj
+# secondary workspace that shares its git repo with another workspace, so
+# .git may live elsewhere. Resolve the git toplevel via `jj git root` and
+# cd there before invoking gh. Override with $TAKUSU_REPO_ROOT (abs path).
+_resolve_repo_root() {
+  if [ -n "${TAKUSU_REPO_ROOT:-}" ]; then
+    echo "$TAKUSU_REPO_ROOT"; return
+  fi
+  local gitdir
+  gitdir="$(jj git root 2>/dev/null || true)"
+  if [ -n "$gitdir" ]; then
+    dirname "$gitdir"; return
+  fi
+  pwd
+}
+cd "$(_resolve_repo_root)"
+
 usage() {
   sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
