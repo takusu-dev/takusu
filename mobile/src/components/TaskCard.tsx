@@ -61,6 +61,8 @@ function TaskCardImpl({
   const { dark, colors } = useTheme();
 
   const flingRight = Gesture.Pan()
+    .activeOffsetX(10)
+    .failOffsetY(20)
     .onStart(() => {})
     .onUpdate((e) => {
       translateX.value = Math.max(0, e.translationX);
@@ -74,6 +76,8 @@ function TaskCardImpl({
     });
 
   const flingLeft = Gesture.Pan()
+    .activeOffsetX(-10)
+    .failOffsetY(20)
     .onStart(() => {})
     .onUpdate((e) => {
       translateX.value = Math.min(0, e.translationX);
@@ -325,6 +329,8 @@ function ParallelGroupCardImpl({
   const { dark, colors } = useTheme();
 
   const flingRight = Gesture.Pan()
+    .activeOffsetX(10)
+    .failOffsetY(20)
     .onUpdate((e) => {
       translateX.value = Math.max(0, e.translationX);
     })
@@ -337,6 +343,8 @@ function ParallelGroupCardImpl({
     });
 
   const flingLeft = Gesture.Pan()
+    .activeOffsetX(-10)
+    .failOffsetY(20)
     .onUpdate((e) => {
       translateX.value = Math.min(0, e.translationX);
     })
