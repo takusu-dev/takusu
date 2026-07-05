@@ -308,6 +308,9 @@ export function HabitView({ client }: HabitViewProps) {
                 {h.title}
               </Text>
             </View>
+            <Text style={[styles.habitTime, { color: colors.gray }]}>
+              時間: {h.start_time} → {h.end_time}
+            </Text>
             <Text style={[styles.habitRecurrence, { color: colors.gray }]}>
               周期: {summarizeRule(parseRule(h.recurrence))}
             </Text>
@@ -381,6 +384,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   habitRecurrence: {
+    fontSize: 13,
+  },
+  habitTime: {
     fontSize: 13,
   },
   habitCost: {
