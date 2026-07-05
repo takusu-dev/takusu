@@ -301,19 +301,20 @@ export function HomeView() {
 
     // Past completed/skipped tasks — always compute count, only include in list when showPast
     const now = Date.now();
-    const pastAll = scheduled.filter((t) => {
+    // #254: 完了/スキップ済みタスクは end_at に関わらず過去セクションへ。
+    // fixed タスクは完了後も schedule の end_at が未来になりうるため、
+    // status ベースで過去判定しないと upcoming に残り続ける。
+    const isPast = (t: TaskRow): boolean => {
+      if (t.status === 'completed' || t.status === 'skipped') return true;
       const entry = scheduleMap.get(t.id);
       const end = entry?.end_at ?? t.end_at;
       return new Date(end).getTime() < now;
-    });
+    };
+    const pastAll = scheduled.filter(isPast);
     const past = showPast ? pastAll : [];
 
     // Upcoming = always exclude past tasks, regardless of showPast
-    const upcoming = scheduled.filter((t) => {
-      const entry = scheduleMap.get(t.id);
-      const end = entry?.end_at ?? t.end_at;
-      return new Date(end).getTime() >= now;
-    });
+    const upcoming = scheduled.filter((t) => !isPast(t));
 
     const result: ListItem[] = [];
 
@@ -422,10 +423,12 @@ export function HomeView() {
   ]);
 
   // Count of past tasks (for badge in header, always computed)
+  // #254: completed/skipped は end_at に関わらず過去扱い。
   const pastCount = useMemo(() => {
     const now = Date.now();
     return tasks.filter((t) => {
       if (t.status === 'pending') return false;
+      if (t.status === 'completed' || t.status === 'skipped') return true;
       const entry = scheduleMap.get(t.id);
       const end = entry?.end_at ?? t.end_at;
       return new Date(end).getTime() < now;
