@@ -13,7 +13,7 @@ import {
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Checkbox } from 'react-native-paper';
-import Slider from '@expo/ui/community/slider';
+import { Slider } from '@expo/ui/community/slider';
 import { useServer } from '@/src/api/ServerProvider';
 import { undoRedo } from '@/src/api/undoRedo';
 import { showError } from '@/src/api/errors';

@@ -17,7 +17,7 @@ import {
   Menu,
   TextInput as PaperTextInput,
 } from 'react-native-paper';
-import Slider from '@expo/ui/community/slider';
+import { Slider } from '@expo/ui/community/slider';
 import { useServer } from '@/src/api/ServerProvider';
 import { undoRedo } from '@/src/api/undoRedo';
 import { showError, logError } from '@/src/api/errors';
