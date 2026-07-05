@@ -1015,8 +1015,23 @@ impl TakusuApp {
             return Ok(vec![]);
         }
 
-        let now = Point::from_timestamp(Timestamp::now(), 5);
-        let from = now - 7 * 24 * 12;
+        let now_ts = Timestamp::now();
+        let now = Point::from_timestamp(now_ts, 5);
+        // 過去のハビットタスクは生成しない: 過去分を残すと Planner が
+        // 開始時刻を過ぎたタスクを今日以降に再配置してしまい、別の日に
+        // 実行される問題 (#204/#205/#207) が起きるため、from を今日の
+        // 0時 (tz ローカル) にする。今日の 0 時にすることで、今日の
+        // 開始時刻を過ぎたハビットタスクも expected に残り、cleanup
+        // ループで削除されないようにする。
+        // now_ts を再利用して日付境界をまたぐレースを防ぐ。
+        // start_of_day() は DST の spring-forward で 0 時が存在しない
+        // タイムゾーンでも安全に開始時刻を返す。
+        let start_of_today = now_ts
+            .to_zoned(tz.clone())
+            .start_of_day()
+            .map_err(|e| AppError::Internal(format!("start_of_day: {e}")))?
+            .timestamp();
+        let from = Point::from_timestamp(start_of_today, 5);
         let until = now + 14 * 24 * 12;
 
         let mut expected: Vec<(String, String, CoreTask, Option<String>)> = Vec::new();
