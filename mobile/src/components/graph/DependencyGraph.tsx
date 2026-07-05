@@ -3,7 +3,12 @@
 // Shared by GraphView (full-screen, editable) and TaskDetailView (embedded, read-only)
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { type LayoutChangeEvent, StyleSheet, View } from 'react-native';
+import {
+  Platform,
+  type LayoutChangeEvent,
+  StyleSheet,
+  View,
+} from 'react-native';
 import {
   Canvas,
   Circle,
@@ -141,9 +146,17 @@ export function DependencyGraph({
     ey: number;
   } | null>(null);
 
-  // Font
+  // Font — must specify fontFamily or matchFont may return null on Android
   const font = useMemo(
-    () => matchFont({ fontSize: FONT_SIZE, fontWeight: '500' }),
+    () =>
+      matchFont({
+        fontFamily: Platform.select({
+          ios: 'Helvetica',
+          default: 'sans-serif',
+        }),
+        fontSize: FONT_SIZE,
+        fontWeight: '500',
+      }),
     [],
   );
 
@@ -206,26 +219,53 @@ export function DependencyGraph({
       .force('collide', d3.forceCollide(NODE_RADIUS + 8))
       .stop(); // Stop d3's internal timer — we drive ticks manually below
 
-    // Run a burst of ticks then stop.
-    // We drive the simulation manually via setInterval rather than
-    // relying on d3-force's internal timer, so we control the stop
-    // condition and avoid double-tick issues.
-    let ticks = 0;
+    // Run all ticks synchronously in a single batch.
+    // Previously this used setInterval at 16ms for 300 iterations (5s of
+    // rapid re-renders), which caused Skia to crash when the user tapped
+    // during the animation. Running all ticks at once produces the final
+    // layout in one pass — one setSimNodes call, no animation, no crash.
     const maxTicks = 300;
-    const tickInterval = setInterval(() => {
-      ticks++;
+    for (let i = 0; i < maxTicks; i++) {
       sim.tick();
-      setSimNodes(simNodesLocal.map((n) => ({ ...n, x: n.x, y: n.y })));
-      if (ticks >= maxTicks || sim.alpha() < sim.alphaMin()) {
-        sim.stop();
-        clearInterval(tickInterval);
-      }
-    }, 16);
+      if (sim.alpha() < sim.alphaMin()) break;
+    }
+    sim.stop();
 
-    return () => {
-      sim.stop();
-      clearInterval(tickInterval);
-    };
+    const finalNodes = simNodesLocal.map((n) => ({ ...n, x: n.x, y: n.y }));
+    setSimNodes(finalNodes);
+
+    // ── Auto-fit: zoom/translate so all nodes are visible (#218) ──
+    // Only apply when not in edit mode and no explicit height (full-screen
+    // GraphView). Embedded graphs (TaskDetailView) keep scale=1.
+    // In edit mode, skip auto-fit so the user's pan/zoom is preserved
+    // across edge additions/removals (which trigger refresh → graphKey
+    // change → this effect re-runs).
+    if (finalNodes.length > 0 && !height && !editMode) {
+      const xs = finalNodes.map((n) => n.x);
+      const ys = finalNodes.map((n) => n.y);
+      const minX = Math.min(...xs) - NODE_RADIUS;
+      const maxX = Math.max(...xs) + NODE_RADIUS;
+      const minY = Math.min(...ys) - NODE_RADIUS;
+      const maxY = Math.max(...ys) + NODE_RADIUS;
+      const graphW = maxX - minX;
+      const graphH = maxY - minY;
+      const cw = canvasSize.width;
+      const ch = canvasSize.height;
+      if (graphW > 0 && graphH > 0) {
+        const padding = 40;
+        const fitScale = Math.min(
+          (cw - padding * 2) / graphW,
+          (ch - padding * 2) / graphH,
+          1, // don't zoom in beyond 1x
+        );
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+        scale.value = fitScale;
+        translateX.value = cw / 2 - cx * fitScale;
+        translateY.value = ch / 2 - cy * fitScale;
+      }
+    }
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graphKey, canvasSize.width, canvasSize.height]);
 
@@ -495,13 +535,15 @@ export function DependencyGraph({
                     r={NODE_RADIUS}
                     color={bgColor}
                   />
-                  <SkiaText
-                    x={node.x - textWidth / 2}
-                    y={node.y + FONT_SIZE / 3}
-                    text={truncate(label, 6)}
-                    font={font}
-                    color={textColor}
-                  />
+                  {font && (
+                    <SkiaText
+                      x={node.x - textWidth / 2}
+                      y={node.y + FONT_SIZE / 3}
+                      text={truncate(label, 6)}
+                      font={font}
+                      color={textColor}
+                    />
+                  )}
                   {/* Highlight border */}
                   {isHighlight && (
                     <Circle
