@@ -92,8 +92,16 @@ export function HabitDetailView() {
     }
     try {
       const allTasks = await client.listTasks({ habit_id: id });
-      // Show recent tasks (up to 10)
-      setTasks(allTasks.slice(0, 10));
+      // Show upcoming tasks in chronological order.
+      // Server returns tasks ordered by created_at DESC (generation order),
+      // not by date. Sort by start_at ascending so the user sees the earliest
+      // upcoming task first. Exclude completed/skipped tasks so past finished
+      // habit occurrences don't push upcoming ones out of the top 10.
+      const sorted = [...allTasks]
+        .filter((t) => t.status !== 'completed' && t.status !== 'skipped')
+        .sort((a, b) => (a.start_at ?? '').localeCompare(b.start_at ?? ''))
+        .slice(0, 10);
+      setTasks(sorted);
     } catch (e) {
       logError('ハビットのタスク取得', e);
       setTasks([]);

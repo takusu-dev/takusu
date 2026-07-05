@@ -39,11 +39,13 @@
 mod error;
 mod generator;
 mod rule;
+mod summarize;
 mod time;
 
 pub use error::Error;
 pub use generator::RecurrenceGenerator;
 pub use rule::{Frequency, NWeekday, RecurrenceRule, Weekday};
+pub use summarize::summarize;
 pub use time::TimeOfDay;
 
 use jiff::tz::TimeZone;

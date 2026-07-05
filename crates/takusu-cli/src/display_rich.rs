@@ -1,6 +1,15 @@
 use comfy_table::{Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 use jiff::Timestamp;
+use takusu_habit::{RecurrenceRule, summarize};
 use takusu_storage::{HabitRow, ScheduleEntry, TaskRow, TokenRow};
+
+/// Parse a recurrence JSON string into a human-readable summary.
+/// Falls back to the raw string if parsing fails.
+fn format_recurrence(raw: &str) -> String {
+    serde_json::from_str::<RecurrenceRule>(raw)
+        .map(|r| summarize(&r))
+        .unwrap_or_else(|_| raw.to_string())
+}
 
 pub fn display_task_detail(task: &TaskRow, entry: Option<&ScheduleEntry>, tz: &jiff::tz::TimeZone) {
     let status_color = match task.status.as_str() {
@@ -98,7 +107,7 @@ pub fn display_habits(habits: &[HabitRow]) {
         table.add_row(vec![
             Cell::new(short_id),
             Cell::new(&h.title),
-            Cell::new(&h.recurrence),
+            Cell::new(format_recurrence(&h.recurrence)),
             Cell::new(time),
             Cell::new(h.avg_minutes),
             Cell::new(h.sigma_minutes),
@@ -137,7 +146,7 @@ pub fn display_habit_detail(habit: &HabitRow) {
     table.add_row(vec![
         Cell::new(habit.id.as_str()),
         Cell::new(&habit.title),
-        Cell::new(&habit.recurrence),
+        Cell::new(format_recurrence(&habit.recurrence)),
         Cell::new(time),
         Cell::new(habit.avg_minutes),
         Cell::new(habit.sigma_minutes),
