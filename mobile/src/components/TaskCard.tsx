@@ -60,30 +60,22 @@ function TaskCardImpl({
   const translateX = useSharedValue(0);
   const { dark, colors } = useTheme();
 
-  const flingRight = Gesture.Pan()
-    .activeOffsetX(10)
+  // Single pan gesture handles both swipe-right (done) and swipe-left (delete).
+  // Using Gesture.Race with two separate pans was unreliable for left swipe
+  // (#230): Race resolution between gestures with activeOffsetX in opposite
+  // directions can fail to activate. A single gesture with bidirectional
+  // activeOffsetX avoids the issue entirely.
+  const pan = Gesture.Pan()
+    .activeOffsetX([-10, 10])
     .failOffsetY([-10, 10])
-    .onStart(() => {})
     .onUpdate((e) => {
-      translateX.value = Math.max(0, e.translationX);
+      translateX.value = e.translationX;
     })
     .onEnd((e) => {
       if (e.translationX > 80 && onDone) {
         runOnJS(haptic.light)();
         runOnJS(onDone)();
-      }
-      translateX.value = withSpring(0);
-    });
-
-  const flingLeft = Gesture.Pan()
-    .activeOffsetX(-10)
-    .failOffsetY([-10, 10])
-    .onStart(() => {})
-    .onUpdate((e) => {
-      translateX.value = Math.min(0, e.translationX);
-    })
-    .onEnd((e) => {
-      if (e.translationX < -80 && onDelete) {
+      } else if (e.translationX < -80 && onDelete) {
         runOnJS(haptic.medium)();
         runOnJS(onDelete)();
       }
@@ -143,7 +135,7 @@ function TaskCardImpl({
       >
         <Ionicons name="trash" size={28} color={COLORS.white} />
       </Reanimated.View>
-      <GestureDetector gesture={Gesture.Race(flingRight, flingLeft)}>
+      <GestureDetector gesture={pan}>
         <Reanimated.View
           style={[styles.card, { backgroundColor: bgColor }, animatedStyle]}
         >
@@ -329,28 +321,17 @@ function ParallelGroupCardImpl({
   const translateX = useSharedValue(0);
   const { dark, colors } = useTheme();
 
-  const flingRight = Gesture.Pan()
-    .activeOffsetX(10)
+  const pan = Gesture.Pan()
+    .activeOffsetX([-10, 10])
     .failOffsetY([-10, 10])
     .onUpdate((e) => {
-      translateX.value = Math.max(0, e.translationX);
+      translateX.value = e.translationX;
     })
     .onEnd((e) => {
       if (e.translationX > 80 && onDone) {
         runOnJS(haptic.light)();
         runOnJS(onDone)();
-      }
-      translateX.value = withSpring(0);
-    });
-
-  const flingLeft = Gesture.Pan()
-    .activeOffsetX(-10)
-    .failOffsetY([-10, 10])
-    .onUpdate((e) => {
-      translateX.value = Math.min(0, e.translationX);
-    })
-    .onEnd((e) => {
-      if (e.translationX < -80 && onDelete) {
+      } else if (e.translationX < -80 && onDelete) {
         runOnJS(haptic.medium)();
         runOnJS(onDelete)();
       }
@@ -407,7 +388,7 @@ function ParallelGroupCardImpl({
         <Ionicons name="trash" size={28} color={COLORS.white} />
       </Reanimated.View>
 
-      <GestureDetector gesture={Gesture.Race(flingRight, flingLeft)}>
+      <GestureDetector gesture={pan}>
         <Reanimated.View
           style={[
             groupStyles.groupContainer,
