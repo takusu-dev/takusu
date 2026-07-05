@@ -229,7 +229,7 @@ All penalty weights are positive. Penalties are applied as negative contribution
 | buffer_score | `sigma × remaining_slots × W_BUFFER` | 2.0 | High-sigma tasks get more buffer |
 | duration_score | `−deficit² × W_SHORT` / `deficit × W_OVER` | 3.0 / 0.5 | Quadratic for too-short |
 | sleep_score | per-day: `−sleep_used × W_NORMAL`, `−deficit² × W_SEVERE` below 3h | 4.0 / 15.0 | 3h hard threshold |
-| parallel_violation | `−overlap_slots × W_PARALLEL_VIOL` | 50.0 | Proportional to illegal overlap |
+| parallel_violation | `−overlap_slots × W_PARALLEL_VIOL` | 200.0 | Proportional to illegal overlap |
 | inclusion_bonus | `+W_INCLUSION × scheduled_tasks` | 10.0 | Rewards keeping tasks |
 
 ### Penalty Design Principle

@@ -86,11 +86,7 @@ pub async fn exchange_code(
     if let Some(uri) = redirect_uri {
         form.push(("redirect_uri", uri.to_string()));
     }
-    let resp = http
-        .post(GOOGLE_TOKEN_URL)
-        .form(&form)
-        .send()
-        .await?;
+    let resp = http.post(GOOGLE_TOKEN_URL).form(&form).send().await?;
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
@@ -98,9 +94,9 @@ pub async fn exchange_code(
     }
 
     let token: TokenResponse = resp.json().await?;
-    let refresh_token = token.refresh_token.ok_or_else(|| {
-        Error::OAuth2("token response did not include a refresh_token".into())
-    })?;
+    let refresh_token = token
+        .refresh_token
+        .ok_or_else(|| Error::OAuth2("token response did not include a refresh_token".into()))?;
     Ok(OAuthTokens {
         access_token: token.access_token,
         refresh_token,

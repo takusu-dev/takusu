@@ -160,7 +160,7 @@ total = inclusion_bonus + deadline_score + start_score + buffer_score
 | buffer_score | `σ × remaining_slots × W_BUFFER` | 2.0 | 高σタスクに余裕を |
 | duration_score | `−deficit² × W_SHORT` / `deficit × W_OVER` | 3.0 / 0.5 | 短すぎは2次 |
 | sleep_score | `−sleep_used × W_NORMAL` / `−deficit² × W_SEVERE` | 4.0 / 15.0 | 3時間未満は重度 |
-| parallel_violation | `−overlap_slots × W_PARALLEL_VIOL` | 50.0 | 不正な重なり |
+| parallel_violation | `−overlap_slots × W_PARALLEL_VIOL` | 200.0 | 不正な重なり |
 | inclusion_bonus | `+W_INCLUSION × scheduled_tasks` | 10.0 | タスク維持への報酬 |
 
 #### 評価キャッシュ戦略
@@ -194,7 +194,7 @@ free_tasks = in_range_tasks - extra_pinned
 - `parallelizable == true`: このタスクは他のタスクと同時に実行できる（スマホ操作など）
 - `allows_parallel == true`: このタスク実行中に他のタスクを同時実行できる（待ち時間など）
 - 両方 `true` の場合のみ重なりが許可される
-- 不正な重なりは `parallel_violation` としてペナルティ（重なったスロット数 × 50）
+- 不正な重なりは `parallel_violation` としてペナルティ（重なったスロット数 × 200）
 
 ## 3. サーバーアーキテクチャ
 

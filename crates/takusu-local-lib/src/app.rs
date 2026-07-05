@@ -800,7 +800,11 @@ impl TakusuApp {
         Ok(google_cal::oauth_url(&row.client_id, redirect_uri))
     }
 
-    pub async fn oauth_callback(&self, code: &str, redirect_uri: Option<&str>) -> Result<(), AppError> {
+    pub async fn oauth_callback(
+        &self,
+        code: &str,
+        redirect_uri: Option<&str>,
+    ) -> Result<(), AppError> {
         let row = self
             .storage
             .get_gcal_settings()
@@ -1190,7 +1194,11 @@ impl TakusuApp {
         let mut id_map: Vec<String> = Vec::with_capacity(task_rows.len());
 
         for (i, row) in task_rows.iter().enumerate() {
-            let start_opt = row.start_at.as_ref().map(|s| iso_to_point(s, tz)).transpose()?;
+            let start_opt = row
+                .start_at
+                .as_ref()
+                .map(|s| iso_to_point(s, tz))
+                .transpose()?;
             let end = iso_to_point(&row.end_at, tz)?;
             let core_task = CoreTask {
                 id: planner.tasks().len(),
