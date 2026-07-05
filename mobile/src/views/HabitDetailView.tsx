@@ -15,12 +15,13 @@ import { useServer } from '@/src/api/ServerProvider';
 import { undoRedo } from '@/src/api/undoRedo';
 import { showError, logError } from '@/src/api/errors';
 import type { HabitRow, TaskRow } from '@/src/api/types';
-import { BRAND_COLOR, useColors } from '@/src/theme';
+import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RruleBuilderModal } from '@/src/components/RruleBuilderModal';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { parseRule, summarizeRule } from '@/src/api/rrule';
 import { haptic } from '@/src/components/haptics';
+import { CancelConfirmButton } from '@/src/components/CancelConfirmButton';
 
 export function HabitDetailView() {
   const { client } = useServer();
@@ -261,6 +262,28 @@ export function HabitDetailView() {
           }}
         />
         <View style={{ flex: 1 }} />
+        {editing && (
+          <>
+            <IconButton
+              icon="check"
+              iconColor={COLORS.white}
+              containerColor={BRAND_COLOR}
+              size={22}
+              onPress={() => {
+                haptic.medium();
+                save();
+              }}
+            />
+            <CancelConfirmButton
+              onConfirm={() => {
+                haptic.light();
+                editingRef.current = false;
+                setEditing(false);
+                refresh();
+              }}
+            />
+          </>
+        )}
         <Menu
           visible={menuVisible}
           onDismiss={() => setMenuVisible(false)}
@@ -286,6 +309,7 @@ export function HabitDetailView() {
               <Menu.Item
                 onPress={() => {
                   setMenuVisible(false);
+                  editingRef.current = false;
                   setEditing(false);
                   refresh();
                 }}
@@ -641,6 +665,31 @@ export function HabitDetailView() {
         </View>
       </ScrollView>
 
+      {/* Big save button — visible only in edit mode */}
+      {editing && (
+        <View
+          style={[
+            styles.saveBar,
+            {
+              paddingBottom: 8 + insets.bottom,
+              backgroundColor: colors.white,
+              borderTopColor: colors.separator,
+            },
+          ]}
+        >
+          <Pressable
+            style={[styles.saveBarButton, { backgroundColor: BRAND_COLOR }]}
+            onPress={() => {
+              haptic.medium();
+              save();
+            }}
+          >
+            <Ionicons name="checkmark-circle" size={22} color={COLORS.white} />
+            <Text style={styles.saveBarText}>保存</Text>
+          </Pressable>
+        </View>
+      )}
+
       <RruleBuilderModal
         visible={showRruleBuilder}
         value={recurrence}
@@ -792,5 +841,24 @@ const styles = StyleSheet.create({
   },
   taskItemStatus: {
     fontSize: 12,
+  },
+  saveBar: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  saveBarButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  saveBarText: {
+    color: COLORS.white,
+    fontSize: 18,
+    fontWeight: '700',
   },
 });
