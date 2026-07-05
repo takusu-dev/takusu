@@ -365,23 +365,30 @@ export function SettingsDetailView({
     }
   }
 
-  // Google Sign-In SDK flow: configure with the saved Web client ID and
-  // the calendar.events scope up front so that a single consent dialog
-  // covers both sign-in and the calendar scope. The serverAuthCode
-  // returned by signIn (via the library's enrichWithServerAuthCode step)
-  // is sent to the backend, which exchanges it for a refresh token
-  // without a redirect_uri (Android SDK code does not use one).
+  // Google Sign-In SDK flow — two-phase approach (issue #248).
   //
-  // Requesting the scope in configure() instead of a separate
-  // requestScopes() call avoids a double-authorization flow where the
-  // first consent dialog (from enrichWithServerAuthCode during signIn)
-  // dismisses the bottom sheet and then immediately closes, leaving the
-  // user stuck (issue #129).
+  // Phase 1 — sign-in ONLY (no offline access, no scopes):
+  //   configure({ webClientId, offlineAccess: false }) then signIn() →
+  //   createAccount() → presentExplicitSignIn().  Because offlineAccess
+  //   is false and no scopes are configured, the library's internal
+  //   enrichWithServerAuthCode() is skipped entirely, so NO consent
+  //   dialog is launched immediately after the Credential Manager
+  //   bottom sheet closes.  This avoids the race where the bottom sheet
+  //   dismisses and a second activity (consent dialog) is started in
+  //   rapid succession, which on some Android devices causes the dialog
+  //   to never appear or to close instantly (issues #129, #248).
   //
-  // If signIn returns no serverAuthCode (e.g. the silent path produced
-  // none, or the user previously revoked the calendar scope on Google's
-  // side), fall back to requestScopes() to force an explicit consent
-  // dialog for the calendar scope.
+  // Phase 2 — request the calendar scope as a SEPARATE action:
+  //   reconfigure with offlineAccess: true + the calendar.events scope,
+  //   then call requestScopes().  The AuthorizationClient consent
+  //   dialog is now a deliberate, standalone UI step that does not
+  //   compete with the Credential Manager flow.  requestScopes()
+  //   requires offlineAccess: true in configure() for a non-null
+  //   serverAuthCode, hence the reconfigure.
+  //
+  // The serverAuthCode from requestScopes() is sent to the backend,
+  // which exchanges it for a refresh token without a redirect_uri
+  // (Android SDK code does not use one).
   async function startOAuth() {
     if (!client) return;
     const webClientId = gcalSettings?.client_id;
@@ -391,10 +398,10 @@ export function SettingsDetailView({
     }
     setOauthLoading(true);
     try {
+      // Phase 1: sign-in only — no consent dialog after the bottom sheet.
       GoogleOneTapSignIn.configure({
         webClientId,
-        offlineAccess: true,
-        scopes: [CALENDAR_EVENTS_SCOPE],
+        offlineAccess: false,
       });
       await GoogleOneTapSignIn.checkPlayServices();
 
@@ -410,21 +417,23 @@ export function SettingsDetailView({
         return;
       }
 
-      let { serverAuthCode } = response.data;
-      if (!serverAuthCode) {
-        // signIn did not yield an auth code (e.g. silent path with
-        // previously-revoked scope). Force an explicit consent dialog.
-        const result = await GoogleOneTapSignIn.requestScopes([
-          CALENDAR_EVENTS_SCOPE,
-        ]);
-        serverAuthCode = result.serverAuthCode;
-      }
-      if (!serverAuthCode) {
+      // Phase 2: reconfigure with offline access + calendar scope, then
+      // request the scope as a separate consent dialog.
+      GoogleOneTapSignIn.configure({
+        webClientId,
+        offlineAccess: true,
+        scopes: [CALENDAR_EVENTS_SCOPE],
+      });
+
+      const result = await GoogleOneTapSignIn.requestScopes([
+        CALENDAR_EVENTS_SCOPE,
+      ]);
+      if (!result.serverAuthCode) {
         Alert.alert('エラー', '認可コードを取得できませんでした');
         return;
       }
 
-      await client.oauthCallback(serverAuthCode);
+      await client.oauthCallback(result.serverAuthCode);
       await loadGcalSettings();
       Alert.alert('成功', 'Google Calendar認証が完了しました');
     } catch (e) {
