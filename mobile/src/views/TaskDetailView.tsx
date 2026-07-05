@@ -82,6 +82,10 @@ export function TaskDetailView() {
   const [parallelTask, setParallelTask] = useState<TaskRow | null>(null);
   const [allTasks, setAllTasks] = useState<TaskRow[]>([]);
   const [editing, setEditing] = useState(false);
+  // Ref mirror of `editing` so refresh() can skip overwriting unsaved edits
+  // (matching HabitDetailView's pattern).
+  const editingRef = useRef(false);
+  editingRef.current = editing;
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [abandonability, setAbandonability] = useState(0.5);
@@ -112,18 +116,21 @@ export function TaskDetailView() {
       showError(e, 'タスクの取得に失敗');
       return;
     }
-    setTask(t);
-    setTitle(t.title);
-    setDescription(t.description ?? '');
-    setAbandonability(t.abandonability);
-    setAvgMinutes(String(t.avg_minutes));
-    setSigmaMinutes(t.sigma_minutes > 0 ? String(t.sigma_minutes) : '');
-    setStartAt(t.start_at ? new Date(t.start_at) : null);
-    setEndAt(new Date(t.end_at));
-    setParallelizable(t.parallelizable);
-    setAllowsParallel(t.allows_parallel);
-    setDeps(parseDepends(t.depends));
-    setStatus(t.status);
+    // Don't clobber the user's in-progress edits.
+    if (!editingRef.current) {
+      setTask(t);
+      setTitle(t.title);
+      setDescription(t.description ?? '');
+      setAbandonability(t.abandonability);
+      setAvgMinutes(String(t.avg_minutes));
+      setSigmaMinutes(t.sigma_minutes > 0 ? String(t.sigma_minutes) : '');
+      setStartAt(t.start_at ? new Date(t.start_at) : null);
+      setEndAt(new Date(t.end_at));
+      setParallelizable(t.parallelizable);
+      setAllowsParallel(t.allows_parallel);
+      setDeps(parseDepends(t.depends));
+      setStatus(t.status);
+    }
     if (t.habit_id) {
       try {
         setHabit(await client.getHabit(t.habit_id));
@@ -224,6 +231,7 @@ export function TaskDetailView() {
     }
 
     if (Object.keys(updates).length === 0) {
+      editingRef.current = false;
       setEditing(false);
       return;
     }
@@ -257,6 +265,7 @@ export function TaskDetailView() {
         await refresh();
       },
     });
+    editingRef.current = false;
     setEditing(false);
     await refresh();
   }
@@ -503,6 +512,7 @@ export function TaskDetailView() {
             <CancelConfirmButton
               onConfirm={() => {
                 haptic.light();
+                editingRef.current = false;
                 refresh();
                 setEditing(false);
               }}
