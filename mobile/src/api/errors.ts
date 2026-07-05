@@ -8,6 +8,7 @@
 // the same export as server logs.
 
 import { Alert, Platform } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { ApiError } from './client';
 import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
 
@@ -69,11 +70,29 @@ function pushClientLog(level: string, context: string, message: string): void {
  * Show an alert for an operation failure.
  * `title` defaults to "エラー" but can be overridden for context
  * (e.g. "タスクの削除に失敗").
+ *
+ * The alert includes a "コピー" button so the user can copy the full
+ * error message (including stack trace when available) to the clipboard
+ * for bug reports (issue #216).
  */
-export function showError(e: unknown, title = 'エラー'): void {
+export async function showError(e: unknown, title = 'エラー'): Promise<void> {
   const msg = formatError(e);
-  pushClientLog('error', title, formatErrorForLog(e));
-  Alert.alert(title, msg);
+  const fullMsg = formatErrorForLog(e);
+  pushClientLog('error', title, fullMsg);
+  Alert.alert(
+    title,
+    msg,
+    [
+      {
+        text: 'コピー',
+        onPress: async () => {
+          await Clipboard.setStringAsync(fullMsg);
+        },
+      },
+      { text: 'OK', style: 'cancel' },
+    ],
+    { cancelable: true },
+  );
 }
 
 /**
