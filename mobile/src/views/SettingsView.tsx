@@ -1305,7 +1305,10 @@ export function SettingsDetailView({
                 <Text style={[styles.label, { color: colors.gray }]}>
                   ライセンス
                 </Text>
-                <Text style={[styles.value, { color: colors.black }]}>MIT</Text>
+                <Text style={[styles.value, { color: colors.black }]}>
+                  MIT{'\n'}
+                  Copyright (c) 2025 satler
+                </Text>
               </View>
 
               {/* Log export */}

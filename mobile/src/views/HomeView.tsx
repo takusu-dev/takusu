@@ -282,9 +282,16 @@ export function HomeView() {
     const scheduled = filtered
       .filter((t) => t.status !== 'pending')
       .sort((a, b) => {
+        // Sort by scheduled start time (or task end_at as fallback).
+        // Use timestamp comparison instead of string localeCompare to
+        // avoid date-boundary sorting issues (#210): localeCompare on
+        // ISO strings with different dates can produce wrong order when
+        // the strings have different lengths or timezone offsets.
         const sa = scheduleMap.get(a.id)?.start_at ?? a.end_at;
         const sb = scheduleMap.get(b.id)?.start_at ?? b.end_at;
-        return sa.localeCompare(sb);
+        const ta = new Date(sa).getTime();
+        const tb = new Date(sb).getTime();
+        return ta - tb;
       });
 
     // Past completed/skipped tasks — always compute count, only include in list when showPast
