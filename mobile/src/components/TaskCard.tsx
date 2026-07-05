@@ -443,6 +443,7 @@ function ParallelGroupCardImpl({
                   style={({ pressed }) => [
                     groupStyles.guestCard,
                     { backgroundColor: guestBg },
+                    idx === guests.length - 1 && groupStyles.guestCardLast,
                     pressed && styles.pressed,
                   ]}
                   onPress={() => {
@@ -515,6 +516,7 @@ const groupStyles = StyleSheet.create({
   },
   groupContainer: {
     flexDirection: 'row',
+    alignItems: 'stretch',
     borderRadius: 12,
     overflow: 'hidden',
     minHeight: 72,
@@ -526,6 +528,7 @@ const groupStyles = StyleSheet.create({
     padding: 6,
     justifyContent: 'center',
     gap: 2,
+    alignSelf: 'stretch',
   },
   hostTime: {
     fontSize: 10,
@@ -541,6 +544,7 @@ const groupStyles = StyleSheet.create({
     flexDirection: 'column',
   },
   guestCard: {
+    flex: 1,
     flexDirection: 'row',
     padding: 8,
     alignItems: 'center',
@@ -548,6 +552,9 @@ const groupStyles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: 'rgba(0,0,0,0.08)',
     minHeight: 48,
+  },
+  guestCardLast: {
+    borderBottomWidth: 0,
   },
   guestTimes: {
     width: 36,
