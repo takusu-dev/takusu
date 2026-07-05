@@ -165,11 +165,28 @@ pub async fn replace(
 
 pub async fn delete(_req: worker::Request, env: Env, id: &str) -> Result<Response, WorkerError> {
     let database = db(&env)?;
-    let stmt = database.prepare("DELETE FROM habits WHERE id = ?1");
-    stmt.bind(&[JsValue::from_str(id)])?
-        .run()
-        .await
-        .map_err(WorkerError::Worker)?;
+    // Delete tasks referencing this habit before deleting the habit,
+    // so D1's foreign-key constraint does not block deletion of habits
+    // that have already generated tasks (#240). The client confirms
+    // with the user before issuing the delete when there are
+    // associated tasks. All statements run in a single batch() call
+    // so D1 executes them atomically (matching the sqlite transaction
+    // in storage_sqlite.rs) — a partial failure cannot leave the
+    // database with tasks deleted but the habit still present.
+    // google_cal_events mappings are cleaned up explicitly; D1
+    // enforces FKs so the ON DELETE CASCADE would handle it, but the
+    // explicit delete is harmless and keeps parity with the sqlite
+    // path (which does not enable PRAGMA foreign_keys).
+    let stmts = vec![
+        database.prepare("DELETE FROM google_cal_events WHERE task_id IN (SELECT id FROM tasks WHERE habit_id = ?1)").bind(&[JsValue::from_str(id)])?,
+        database
+            .prepare("DELETE FROM tasks WHERE habit_id = ?1")
+            .bind(&[JsValue::from_str(id)])?,
+        database
+            .prepare("DELETE FROM habits WHERE id = ?1")
+            .bind(&[JsValue::from_str(id)])?,
+    ];
+    database.batch(stmts).await.map_err(WorkerError::Worker)?;
     Ok(Response::empty()?)
 }
 

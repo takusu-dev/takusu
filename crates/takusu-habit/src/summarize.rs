@@ -6,8 +6,7 @@
 use crate::rule::{Frequency, NWeekday, RecurrenceRule, Weekday};
 
 const MONTH_LABELS: [&str; 12] = [
-    "1月", "2月", "3月", "4月", "5月", "6月",
-    "7月", "8月", "9月", "10月", "11月", "12月",
+    "1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月",
 ];
 
 fn weekday_label(wd: Weekday) -> &'static str {
@@ -102,7 +101,11 @@ pub fn summarize(r: &RecurrenceRule) -> String {
     }
 
     if !r.by_month_day.is_empty() {
-        let labels: Vec<String> = r.by_month_day.iter().map(|&d| format_month_day(d)).collect();
+        let labels: Vec<String> = r
+            .by_month_day
+            .iter()
+            .map(|&d| format_month_day(d))
+            .collect();
         parts.push(labels.join("・"));
     }
 

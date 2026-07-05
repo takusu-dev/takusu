@@ -438,11 +438,34 @@ impl Storage for SqliteStorage {
     }
 
     async fn delete_habit(&self, id: &str) -> StorageResult<()> {
-        sqlx::query("DELETE FROM habits WHERE id = ?")
+        // Delete tasks referencing this habit before deleting the habit,
+        // so the foreign-key constraint (enforced on D1) does not block
+        // deletion of habits that have already generated tasks (#240).
+        // The client confirms with the user before issuing the delete
+        // when there are associated tasks. All statements run in a
+        // single transaction so a partial failure cannot leave the
+        // database with tasks deleted but the habit still present.
+        // google_cal_events mappings for those tasks are also cleaned
+        // up because foreign keys are not enabled at runtime (the
+        // ON DELETE CASCADE in the schema only fires with
+        // PRAGMA foreign_keys = ON, which this codebase does not set).
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        sqlx::query("DELETE FROM google_cal_events WHERE task_id IN (SELECT id FROM tasks WHERE habit_id = ?)")
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(map_err)?;
+        sqlx::query("DELETE FROM tasks WHERE habit_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        sqlx::query("DELETE FROM habits WHERE id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        tx.commit().await.map_err(map_err)?;
         Ok(())
     }
 
