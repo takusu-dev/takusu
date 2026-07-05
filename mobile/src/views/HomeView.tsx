@@ -1279,10 +1279,19 @@ export function HomeView() {
         <Pressable
           style={[styles.startDoneButton, { bottom: 16 + insets.bottom }]}
           onPress={async () => {
-            // Start next pending/scheduled task — mark as in_progress
-            const next = tasks.find(
-              (t) => t.status === 'scheduled' || t.status === 'pending',
-            );
+            // Start next task — mark as in_progress.
+            // #256: pick the chronologically next scheduled task (earliest
+            // start time) so the user can start it early (前倒し), not just
+            // the most recently created one. Fall back to pending tasks.
+            const scheduled = tasks
+              .filter((t) => t.status === 'scheduled')
+              .sort((a, b) => {
+                const sa = scheduleMap.get(a.id)?.start_at ?? a.end_at;
+                const sb = scheduleMap.get(b.id)?.start_at ?? b.end_at;
+                return new Date(sa).getTime() - new Date(sb).getTime();
+              });
+            const next =
+              scheduled[0] ?? tasks.find((t) => t.status === 'pending');
             if (next) {
               haptic.medium();
               if (client && next.status !== 'in_progress') {

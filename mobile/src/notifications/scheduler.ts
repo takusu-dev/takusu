@@ -232,7 +232,9 @@ export async function rescheduleNotifications(
   for (const { task, entry } of upcomingTasks) {
     const startDate = new Date(entry.start_at);
 
-    // Pre-start reminder
+    // Pre-start reminder (#256: attach CATEGORY_TASK_START so the user can
+    // start the task early from the reminder notification, not just from the
+    // start-overdue one)
     if (settings.preStartReminder) {
       const reminderDate = new Date(
         startDate.getTime() - settings.preStartReminderMinutes * 60 * 1000,
@@ -244,6 +246,7 @@ export async function rescheduleNotifications(
           'タスク開始直前',
           `「${task.title}」が${settings.preStartReminderMinutes}分後に開始します`,
           { url: `/task/${task.id}`, taskId: task.id },
+          CATEGORY_TASK_START,
         );
       }
     }
