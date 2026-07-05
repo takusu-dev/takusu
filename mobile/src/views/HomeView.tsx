@@ -23,7 +23,7 @@ import { useServer } from '@/src/api/ServerProvider';
 import { TakusuClient } from '@/src/api/client';
 import { undoRedo } from '@/src/api/undoRedo';
 import { showError, logError } from '@/src/api/errors';
-import type { TaskRow, ScheduleEntry } from '@/src/api/types';
+import type { TaskRow, TaskStatus, ScheduleEntry } from '@/src/api/types';
 import { parseDepends, parseSchedule } from '@/src/api/types';
 import { TaskCard, ParallelGroupCard } from '@/src/components/TaskCard';
 import { NavigationButtons } from '@/src/components/NavigationButtons';
@@ -863,6 +863,61 @@ export function HomeView() {
     });
   }
 
+  async function setStatusSelected(newStatus: TaskStatus) {
+    if (!client) return;
+    const toUpdate = tasks.filter((t) => selected.has(t.id));
+    if (toUpdate.length === 0) return;
+    const prevStatuses = new Map(toUpdate.map((t) => [t.id, t.status]));
+    const changed: TaskRow[] = [];
+    let failed = 0;
+    for (const task of toUpdate) {
+      if (task.status === newStatus) continue;
+      try {
+        await client.updateTask(task.id, { status: newStatus });
+        changed.push(task);
+        if (task.status === 'in_progress') {
+          dismissInProgressNotification(task.id).catch((e) =>
+            logError('通知の消去', e),
+          );
+        }
+      } catch (e) {
+        failed++;
+        logError(`ステータス変更 (${task.title})`, e);
+      }
+    }
+    if (failed > 0) {
+      showError(
+        `${failed}件のステータス変更に失敗しました`,
+        'ステータスの一括設定',
+      );
+    }
+    if (changed.length === 0) {
+      await refresh();
+      return;
+    }
+    undoRedo.push({
+      description:
+        changed.length === 1
+          ? `set status ${newStatus}: ${changed[0].title}`
+          : `set status ${newStatus} on ${changed.length} tasks`,
+      undo: async () => {
+        for (const t of changed) {
+          const prev = prevStatuses.get(t.id)!;
+          await client.updateTask(t.id, { status: prev });
+        }
+        await refresh();
+      },
+      redo: async () => {
+        for (const t of changed) {
+          await client.updateTask(t.id, { status: newStatus });
+        }
+        await refresh();
+      },
+    });
+    setSelected(new Set());
+    await refresh();
+  }
+
   // ── Bottom-sheet preview handlers (AddButton drag → TaskAddSheet) ──
   function handleAddDragStart() {
     // Cancel any pending unmount so a quick second drag can't have the
@@ -1030,6 +1085,7 @@ export function HomeView() {
           onRescheduleOthers={rescheduleOthers}
           onDeleteSelected={deleteSelected}
           onCreateDependent={createDependent}
+          onSetStatusSelected={setStatusSelected}
           onClearSelection={() => setSelected(new Set())}
         />
         <Pressable
