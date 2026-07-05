@@ -95,6 +95,7 @@ export function TaskDetailView() {
   const [endAt, setEndAt] = useState<Date | null>(null);
   const [parallelizable, setParallelizable] = useState(false);
   const [allowsParallel, setAllowsParallel] = useState(false);
+  const [fixed, setFixed] = useState(false);
   const [deps, setDeps] = useState<string[]>([]);
   const [pickerField, setPickerField] = useState<'start' | 'end' | null>(null);
   const [statusMenuVisible, setStatusMenuVisible] = useState(false);
@@ -128,6 +129,7 @@ export function TaskDetailView() {
       setEndAt(new Date(t.end_at));
       setParallelizable(t.parallelizable);
       setAllowsParallel(t.allows_parallel);
+      setFixed(t.fixed);
       setDeps(parseDepends(t.depends));
       setStatus(t.status);
     }
@@ -224,6 +226,7 @@ export function TaskDetailView() {
       updates.parallelizable = parallelizable;
     if (allowsParallel !== task.allows_parallel)
       updates.allows_parallel = allowsParallel;
+    if (fixed !== task.fixed) updates.fixed = fixed;
     if (status !== task.status) updates.status = status;
     const prevDeps = parseDepends(task.depends);
     if (JSON.stringify(deps) !== JSON.stringify(prevDeps)) {
@@ -255,6 +258,7 @@ export function TaskDetailView() {
           end_at: prev.end_at,
           parallelizable: prev.parallelizable,
           allows_parallel: prev.allows_parallel,
+          fixed: prev.fixed,
           status: prev.status,
           depends: prevDeps,
         });
@@ -375,6 +379,7 @@ export function TaskDetailView() {
           allows_parallel: task.allows_parallel,
           abandonability: task.abandonability,
           habit_id: task.habit_id,
+          fixed: task.fixed,
         });
         currentId = recreated.id;
         if (task.user_edited) {
@@ -914,6 +919,39 @@ export function TaskDetailView() {
           )}
         </View>
 
+        {/* Fixed */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: colors.gray }]}>
+            時間固定
+          </Text>
+          {editing ? (
+            <View style={styles.toggleItem}>
+              <Checkbox
+                status={fixed ? 'checked' : 'unchecked'}
+                onPress={() => {
+                  haptic.select();
+                  setFixed(!fixed);
+                }}
+                color={BRAND_COLOR}
+              />
+              <Text style={[styles.hint, { color: colors.grayLight }]}>
+                開始時刻を固定し、スケジューラの移動を許可しない
+              </Text>
+            </View>
+          ) : (
+            <Pressable
+              style={styles.toggleItem}
+              onPress={() => handleSectionTap('fixed')}
+            >
+              <Checkbox
+                status={task.fixed ? 'checked' : 'unchecked'}
+                disabled
+                color={BRAND_COLOR}
+              />
+            </Pressable>
+          )}
+        </View>
+
         {/* Deps — editable list + mini graph */}
         <View style={styles.section}>
           <View style={styles.depHeader}>
@@ -1242,6 +1280,11 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 13,
     fontWeight: '500',
+  },
+  hint: {
+    fontSize: 11,
+    marginTop: 2,
+    flex: 1,
   },
   sectionValue: {
     fontSize: 16,

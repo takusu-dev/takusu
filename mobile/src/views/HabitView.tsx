@@ -96,6 +96,7 @@ export function HabitView({ client }: HabitViewProps) {
             parallelizable: h.parallelizable,
             allows_parallel: h.allows_parallel,
             abandonability: h.abandonability,
+            fixed: h.fixed,
           });
           // CreateHabit does not accept `active`; restore it via update.
           if (!h.active) {

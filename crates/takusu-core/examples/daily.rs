@@ -60,7 +60,8 @@ fn main() {
                 depends: vec![],
                 parallelizable: false,
                 allows_parallel: false,
-                abandonability: 0.1, // ほぼ諦めない
+                abandonability: 0.1, // // ほぼ諦めない
+                fixed: false,
             })
             .unwrap(),
     );
@@ -78,6 +79,7 @@ fn main() {
                 parallelizable: false,
                 allows_parallel: true, // 洗濯中に他のことできる
                 abandonability: 0.2,
+                fixed: false,
             })
             .unwrap(),
     );
@@ -94,7 +96,8 @@ fn main() {
                 depends: vec![],
                 parallelizable: true, // 他のタスク中でも可
                 allows_parallel: false,
-                abandonability: 0.6, // まあできなくてもいい
+                abandonability: 0.6, // // まあできなくてもいい
+                fixed: false,
             })
             .unwrap(),
     );
@@ -110,6 +113,7 @@ fn main() {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.1,
+            fixed: false,
         })
         .unwrap();
     ids.insert("調査", survey_id);
@@ -127,6 +131,7 @@ fn main() {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.2,
+                fixed: false,
             })
             .unwrap(),
     );
@@ -142,6 +147,7 @@ fn main() {
             parallelizable: false,
             allows_parallel: false,
             abandonability: 0.3,
+            fixed: false,
         })
         .unwrap();
     ids.insert("買い物リスト", list_id);
@@ -159,6 +165,7 @@ fn main() {
                 parallelizable: false,
                 allows_parallel: false,
                 abandonability: 0.2,
+                fixed: false,
             })
             .unwrap(),
     );
@@ -175,7 +182,8 @@ fn main() {
                 depends: vec![],
                 parallelizable: false,
                 allows_parallel: false,
-                abandonability: 0.8, // deadline 超過を大きく許容
+                abandonability: 0.8, // // deadline 超過を大きく許容
+                fixed: false,
             })
             .unwrap(),
     );
@@ -193,6 +201,7 @@ fn main() {
                 parallelizable: false,
                 allows_parallel: true, // 移動中にメールできる
                 abandonability: 0.1,
+                fixed: false,
             })
             .unwrap(),
     );
@@ -209,6 +218,7 @@ fn main() {
                 parallelizable: true, // 他のタスク(移動)中にできる
                 allows_parallel: false,
                 abandonability: 0.3,
+                fixed: false,
             })
             .unwrap(),
     );

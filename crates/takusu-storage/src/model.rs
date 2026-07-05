@@ -58,6 +58,8 @@ pub struct TaskRow {
     pub ical_uid: Option<String>,
     #[serde(with = "bool_compat", default)]
     pub user_edited: bool,
+    #[serde(with = "bool_compat", default)]
+    pub fixed: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -85,6 +87,8 @@ pub struct CreateTask {
     pub ical_uid: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub habit_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fixed: Option<bool>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -115,6 +119,8 @@ pub struct UpdateTask {
     pub habit_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub user_edited: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fixed: Option<bool>,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -142,6 +148,8 @@ pub struct HabitRow {
     pub abandonability: f64,
     #[serde(with = "bool_compat", default)]
     pub active: bool,
+    #[serde(with = "bool_compat", default)]
+    pub fixed: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -163,6 +171,8 @@ pub struct CreateHabit {
     pub allows_parallel: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub abandonability: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fixed: Option<bool>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -189,6 +199,8 @@ pub struct UpdateHabit {
     pub abandonability: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fixed: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -401,6 +413,7 @@ mod tests {
             abandonability: Some(0.3),
             ical_uid: None,
             habit_id: None,
+            fixed: None,
         };
         let json = serde_json::to_string(&c).unwrap();
         let back: CreateTask = serde_json::from_str(&json).unwrap();

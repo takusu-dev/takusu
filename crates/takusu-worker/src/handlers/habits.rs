@@ -8,7 +8,7 @@ use crate::handlers::d1::safe_all;
 use crate::handlers::tokens::{json_created, json_ok, parse_json};
 use crate::models::{CreateHabit, HabitRow, UpdateHabit};
 
-const HABIT_COLS: &str = "id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, created_at, updated_at";
+const HABIT_COLS: &str = "id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed, created_at, updated_at";
 
 fn select_habits() -> String {
     format!("SELECT {HABIT_COLS} FROM habits")
@@ -32,9 +32,10 @@ pub async fn create(mut req: worker::Request, env: Env) -> Result<Response, Work
     let parallelizable = body.parallelizable.unwrap_or(false);
     let allows_parallel = body.allows_parallel.unwrap_or(false);
     let abandonability = body.abandonability.unwrap_or(0.5);
+    let fixed = body.fixed.unwrap_or(false);
 
     let stmt = database.prepare(
-        "INSERT INTO habits (id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1)"
+        "INSERT INTO habits (id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, ?12)"
     );
     stmt.bind(&[
         JsValue::from_str(&id),
@@ -51,6 +52,7 @@ pub async fn create(mut req: worker::Request, env: Env) -> Result<Response, Work
         JsValue::from_bool(parallelizable),
         JsValue::from_bool(allows_parallel),
         JsValue::from_f64(abandonability),
+        JsValue::from_bool(fixed),
     ])?
     .run()
     .await
@@ -70,7 +72,7 @@ pub async fn update(mut req: worker::Request, env: Env, id: &str) -> Result<Resp
     let body: UpdateHabit = parse_json(&mut req).await?;
     let database = db(&env)?;
     let stmt = database.prepare(
-        "UPDATE habits SET title=COALESCE(?1,title), description=COALESCE(?2,description), recurrence=COALESCE(?3,recurrence), start_time=COALESCE(?4,start_time), end_time=COALESCE(?5,end_time), avg_minutes=COALESCE(?6,avg_minutes), sigma_minutes=COALESCE(?7,sigma_minutes), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), active=COALESCE(?11,active), updated_at=datetime('now') WHERE id = ?12"
+        "UPDATE habits SET title=COALESCE(?1,title), description=COALESCE(?2,description), recurrence=COALESCE(?3,recurrence), start_time=COALESCE(?4,start_time), end_time=COALESCE(?5,end_time), avg_minutes=COALESCE(?6,avg_minutes), sigma_minutes=COALESCE(?7,sigma_minutes), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), active=COALESCE(?11,active), fixed=COALESCE(?12,fixed), updated_at=datetime('now') WHERE id = ?13"
     );
     stmt.bind(&[
         body.title
@@ -109,6 +111,7 @@ pub async fn update(mut req: worker::Request, env: Env, id: &str) -> Result<Resp
             .map(JsValue::from_f64)
             .unwrap_or(JsValue::NULL),
         body.active.map(JsValue::from_bool).unwrap_or(JsValue::NULL),
+        body.fixed.map(JsValue::from_bool).unwrap_or(JsValue::NULL),
         JsValue::from_str(id),
     ])?
     .run()
@@ -130,9 +133,10 @@ pub async fn replace(
     let parallelizable = body.parallelizable.unwrap_or(false);
     let allows_parallel = body.allows_parallel.unwrap_or(false);
     let abandonability = body.abandonability.unwrap_or(0.5);
+    let fixed = body.fixed.unwrap_or(false);
 
     let stmt = database.prepare(
-        "UPDATE habits SET title=?1, description=?2, recurrence=?3, start_time=?4, end_time=?5, avg_minutes=?6, sigma_minutes=?7, parallelizable=?8, allows_parallel=?9, abandonability=?10, updated_at=datetime('now') WHERE id = ?11"
+        "UPDATE habits SET title=?1, description=?2, recurrence=?3, start_time=?4, end_time=?5, avg_minutes=?6, sigma_minutes=?7, parallelizable=?8, allows_parallel=?9, abandonability=?10, fixed=?11, updated_at=datetime('now') WHERE id = ?12"
     );
     stmt.bind(&[
         JsValue::from_str(&body.title),
@@ -148,6 +152,7 @@ pub async fn replace(
         JsValue::from_bool(parallelizable),
         JsValue::from_bool(allows_parallel),
         JsValue::from_f64(abandonability),
+        JsValue::from_bool(fixed),
         JsValue::from_str(id),
     ])?
     .run()

@@ -45,6 +45,7 @@ export function HabitAddView() {
   const [abandonability, setAbandonability] = useState(0.5);
   const [parallelizable, setParallelizable] = useState(false);
   const [allowsParallel, setAllowsParallel] = useState(false);
+  const [fixed, setFixed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pickerField, setPickerField] = useState<'start' | 'end' | null>(null);
 
@@ -80,6 +81,7 @@ export function HabitAddView() {
         abandonability,
         parallelizable,
         allows_parallel: allowsParallel,
+        fixed,
       });
       undoRedo.push({
         description: `create habit: ${title}`,
@@ -97,6 +99,7 @@ export function HabitAddView() {
             abandonability,
             parallelizable,
             allows_parallel: allowsParallel,
+            fixed,
           });
         },
       });
@@ -320,6 +323,22 @@ export function HabitAddView() {
               />
             </View>
           </View>
+        </View>
+
+        <View style={styles.field}>
+          <View style={styles.toggleItem}>
+            <Text style={[styles.toggleLabel, { color: colors.black }]}>
+              時間固定
+            </Text>
+            <Checkbox
+              status={fixed ? 'checked' : 'unchecked'}
+              onPress={() => setFixed(!fixed)}
+              color={BRAND_COLOR}
+            />
+          </View>
+          <Text style={[styles.hint, { color: colors.grayLight }]}>
+            開始時刻を固定し、スケジューラの移動を許可しない
+          </Text>
         </View>
       </ScrollView>
 

@@ -537,6 +537,8 @@ pub struct TaskRow {
     pub ical_uid: Option<String>,
     #[serde(default)]
     pub user_edited: bool,
+    #[serde(default)]
+    pub fixed: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -560,6 +562,8 @@ pub struct CreateTask {
     pub allows_parallel: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub abandonability: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fixed: Option<bool>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -588,6 +592,8 @@ pub struct UpdateTask {
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_edited: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fixed: Option<bool>,
 }
 
 #[derive(Debug, Default)]
@@ -612,6 +618,8 @@ pub struct HabitRow {
     pub allows_parallel: bool,
     pub abandonability: f64,
     pub active: bool,
+    #[serde(default)]
+    pub fixed: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -633,6 +641,8 @@ pub struct CreateHabit {
     pub allows_parallel: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub abandonability: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fixed: Option<bool>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -659,6 +669,8 @@ pub struct UpdateHabit {
     pub abandonability: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fixed: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

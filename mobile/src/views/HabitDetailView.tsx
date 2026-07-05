@@ -45,6 +45,7 @@ export function HabitDetailView() {
   const [abandonability, setAbandonability] = useState(0.5);
   const [parallelizable, setParallelizable] = useState(false);
   const [allowsParallel, setAllowsParallel] = useState(false);
+  const [fixed, setFixed] = useState(false);
   const [active, setActive] = useState(true);
   const [saving, setSaving] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
@@ -85,6 +86,7 @@ export function HabitDetailView() {
         setParallelizable(h.parallelizable);
         setAllowsParallel(h.allows_parallel);
         setActive(h.active);
+        setFixed(h.fixed);
       }
     } catch (e) {
       showError(e, 'Habitの取得に失敗');
@@ -131,6 +133,7 @@ export function HabitDetailView() {
     if (allowsParallel !== habit.allows_parallel)
       updates.allows_parallel = allowsParallel;
     if (active !== habit.active) updates.active = active;
+    if (fixed !== habit.fixed) updates.fixed = fixed;
 
     if (Object.keys(updates).length === 0) {
       setEditing(false);
@@ -160,6 +163,7 @@ export function HabitDetailView() {
           parallelizable: prev.parallelizable,
           allows_parallel: prev.allows_parallel,
           active: prev.active,
+          fixed: prev.fixed,
         });
         await refresh();
       },
@@ -200,6 +204,7 @@ export function HabitDetailView() {
           parallelizable: prev.parallelizable,
           allows_parallel: prev.allows_parallel,
           abandonability: prev.abandonability,
+          fixed: prev.fixed,
         });
         // CreateHabit does not accept `active`; restore it via update.
         if (!prev.active) {
@@ -636,6 +641,29 @@ export function HabitDetailView() {
           )}
         </View>
 
+        {/* Fixed */}
+        <View style={styles.section}>
+          <Text style={[styles.label, { color: colors.gray }]}>時間固定</Text>
+          {editing ? (
+            <>
+              <Checkbox
+                status={fixed ? 'checked' : 'unchecked'}
+                onPress={() => setFixed(!fixed)}
+                color={BRAND_COLOR}
+              />
+              <Text style={[styles.hint, { color: colors.grayLight }]}>
+                開始時刻を固定し、スケジューラの移動を許可しない
+              </Text>
+            </>
+          ) : (
+            <Checkbox
+              status={habit.fixed ? 'checked' : 'unchecked'}
+              disabled
+              color={BRAND_COLOR}
+            />
+          )}
+        </View>
+
         {/* Recent generated tasks */}
         <View style={styles.section}>
           <Text style={[styles.label, { color: colors.gray }]}>
@@ -750,6 +778,10 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 13,
     fontWeight: '500',
+  },
+  hint: {
+    fontSize: 11,
+    marginTop: 2,
   },
   value: {
     fontSize: 16,
