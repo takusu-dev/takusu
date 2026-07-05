@@ -1053,6 +1053,7 @@ mod tests {
             now: Point(0),
             per: 5,
             sleep: SleepConfig::disabled(),
+            previous_schedule: vec![],
         }
     }
 

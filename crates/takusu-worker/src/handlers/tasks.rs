@@ -71,10 +71,7 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
     let seq_stmt = database.prepare(
         "UPDATE task_display_id_seq SET next_id = next_id + 1 RETURNING next_id - 1 AS display_id",
     );
-    let seq_row: Option<DisplayIdRow> = seq_stmt
-        .first(None)
-        .await
-        .map_err(WorkerError::Worker)?;
+    let seq_row: Option<DisplayIdRow> = seq_stmt.first(None).await.map_err(WorkerError::Worker)?;
     let display_id = seq_row
         .ok_or_else(|| WorkerError::Internal("display_id sequence is empty".into()))?
         .display_id;
