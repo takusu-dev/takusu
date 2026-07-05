@@ -123,6 +123,22 @@ function todayDateKey(tz?: string): string {
   return dateKey(new Date().toISOString(), tz);
 }
 
+// A separator that marks a real day boundary (今日 / 明日 / M/D). Excludes
+// the non-day separators: 'pending', '過去', and the "load more past" row.
+function isDaySeparator(item: DateSeparator): boolean {
+  return (
+    item.label !== 'pending' &&
+    item.label !== '過去' &&
+    !item.label.startsWith('過去をさらに読み込む')
+  );
+}
+
+// viewabilityConfig for tracking the topmost visible item index. Module-level
+// so the object identity stays stable across renders (FlatList requirement).
+const VIEWABILITY_CONFIG = {
+  minimumViewTime: 0,
+  viewAreaCoveragePercentThreshold: 0,
+} as const;
 export function HomeView() {
   const { client, notifications } = useServer();
   const router = useRouter();
@@ -173,6 +189,27 @@ export function HomeView() {
   const [pastWeeks, setPastWeeks] = useState(1);
   const listRef = useRef<FlatList<ListItem>>(null);
   const scrollOffsetRef = useRef(0);
+  // Viewport height of the FlatList (for page-sized scrolls). Captured via
+  // onLayout so it stays correct across rotation / keyboard changes.
+  const listLayoutHeightRef = useRef(0);
+  // Index of the topmost visible item, kept in sync via
+  // onViewableItemsChanged. Used by scrollByDay to find the next/previous
+  // day separator relative to the current scroll position.
+  const visibleTopIndexRef = useRef(0);
+
+  // Stable callback for FlatList's onViewableItemsChanged. React Native
+  // warns ("Changing onViewableItemsChanged on the fly is not supported")
+  // when the callback identity changes after mount, so it must be wrapped
+  // in useCallback with an empty dependency array. The callback only writes
+  // to a ref, so capturing it once is safe.
+  const handleViewableItemsChanged = useCallback(
+    ({ viewableItems }: { viewableItems: Array<{ index: number | null }> }) => {
+      if (viewableItems.length > 0) {
+        visibleTopIndexRef.current = viewableItems[0].index ?? 0;
+      }
+    },
+    [],
+  );
 
   // Animated chevron rotation for past-day toggle
   const chevronRotate = useSharedValue(0);
@@ -513,13 +550,45 @@ export function HomeView() {
 
   function scrollByDay(direction: -1 | 1) {
     if (!listRef.current) return;
-    const newOffset = Math.max(0, scrollOffsetRef.current + direction * 300);
-    listRef.current.scrollToOffset({ offset: newOffset, animated: true });
+    // Jump to the next/previous day separator relative to the currently
+    // visible top item. A "day" boundary is a separator whose label is a
+    // date (not 'pending' / '過去' / load-more).
+    // Clamp the ref index to the current list length — the ref is updated
+    // asynchronously by onViewableItemsChanged, so it can hold a stale
+    // index larger than items.length after a search/refresh shrinks the
+    // list. Without this guard, items[i] would be undefined and crash.
+    const from = Math.min(visibleTopIndexRef.current, items.length - 1);
+    if (direction < 0) {
+      for (let i = from - 1; i >= 0; i--) {
+        const item = items[i];
+        if (item.type === 'separator' && isDaySeparator(item)) {
+          listRef.current.scrollToIndex({ index: i, animated: true });
+          return;
+        }
+      }
+      // No earlier day separator — go to the very top.
+      listRef.current.scrollToOffset({ offset: 0, animated: true });
+    } else {
+      for (let i = from + 1; i < items.length; i++) {
+        const item = items[i];
+        if (item.type === 'separator' && isDaySeparator(item)) {
+          listRef.current.scrollToIndex({ index: i, animated: true });
+          return;
+        }
+      }
+      // No later day separator — scroll to the bottom.
+      listRef.current.scrollToEnd({ animated: true });
+    }
   }
 
   function scrollByPage(direction: -1 | 1) {
     if (!listRef.current) return;
-    const newOffset = Math.max(0, scrollOffsetRef.current + direction * 600);
+    const viewport = listLayoutHeightRef.current;
+    if (viewport <= 0) return;
+    // Scroll by one viewport, keeping a small overlap so the user keeps
+    // some context at the edge.
+    const delta = viewport * 0.9 * direction;
+    const newOffset = Math.max(0, scrollOffsetRef.current + delta);
     listRef.current.scrollToOffset({ offset: newOffset, animated: true });
   }
 
@@ -1295,6 +1364,11 @@ export function HomeView() {
           scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
         }}
         scrollEventThrottle={16}
+        onLayout={(e) => {
+          listLayoutHeightRef.current = e.nativeEvent.layout.height;
+        }}
+        onViewableItemsChanged={handleViewableItemsChanged}
+        viewabilityConfig={VIEWABILITY_CONFIG}
         onScrollToIndexFailed={({ index, averageItemLength }) => {
           // Fallback: scroll to approximate offset
           listRef.current?.scrollToOffset({
