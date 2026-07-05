@@ -858,7 +858,13 @@ export function TaskDetailView() {
           </Text>
           {editing ? (
             <View style={styles.toggleRow}>
-              <View style={styles.toggleItem}>
+              <Pressable
+                style={styles.toggleItem}
+                onPress={() => {
+                  haptic.select();
+                  setParallelizable(!parallelizable);
+                }}
+              >
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>
                   並列実行可能
                 </Text>
@@ -870,8 +876,14 @@ export function TaskDetailView() {
                   }}
                   color={BRAND_COLOR}
                 />
-              </View>
-              <View style={styles.toggleItem}>
+              </Pressable>
+              <Pressable
+                style={styles.toggleItem}
+                onPress={() => {
+                  haptic.select();
+                  setAllowsParallel(!allowsParallel);
+                }}
+              >
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>
                   並列受け入れ
                 </Text>
@@ -883,7 +895,7 @@ export function TaskDetailView() {
                   }}
                   color={BRAND_COLOR}
                 />
-              </View>
+              </Pressable>
             </View>
           ) : (
             <Pressable

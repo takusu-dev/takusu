@@ -579,7 +579,10 @@ export function HabitDetailView() {
           <Text style={[styles.label, { color: colors.gray }]}>並列設定</Text>
           {editing ? (
             <View style={styles.toggleRow}>
-              <View style={styles.toggleItem}>
+              <Pressable
+                style={styles.toggleItem}
+                onPress={() => setParallelizable(!parallelizable)}
+              >
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>
                   並列実行可能
                 </Text>
@@ -588,8 +591,11 @@ export function HabitDetailView() {
                   onPress={() => setParallelizable(!parallelizable)}
                   color={BRAND_COLOR}
                 />
-              </View>
-              <View style={styles.toggleItem}>
+              </Pressable>
+              <Pressable
+                style={styles.toggleItem}
+                onPress={() => setAllowsParallel(!allowsParallel)}
+              >
                 <Text style={[styles.toggleLabel, { color: colors.black }]}>
                   並列受け入れ
                 </Text>
@@ -598,7 +604,7 @@ export function HabitDetailView() {
                   onPress={() => setAllowsParallel(!allowsParallel)}
                   color={BRAND_COLOR}
                 />
-              </View>
+              </Pressable>
             </View>
           ) : (
             <View style={styles.toggleRow}>
