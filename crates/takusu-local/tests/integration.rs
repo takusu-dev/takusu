@@ -361,6 +361,74 @@ async fn habit_crud() {
 }
 
 #[tokio::test]
+async fn habit_delete_cascades_to_tasks() {
+    // #240: deleting a habit that has already generated tasks must
+    // succeed (cascade-delete the associated tasks) instead of failing
+    // on the foreign-key constraint.
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    // Create a habit.
+    let habit_req = auth_req_body(
+        Method::POST,
+        "/api/habits",
+        json!({
+            "title": "朝のランニング",
+            "description": "30分走る",
+            "recurrence": r#"{"freq":"daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#,
+            "start_time": "06:00",
+            "end_time": "07:00",
+            "avg_minutes": 30,
+            "sigma_minutes": 5,
+            "parallelizable": false,
+            "allows_parallel": false,
+            "abandonability": 0.1
+        }),
+    );
+    let res = app.clone().oneshot(habit_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let habit_id = body["id"].as_str().unwrap();
+
+    // Create a task referencing the habit.
+    let task_req = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "ランニングタスク",
+            "end_at": "2026-07-06T07:00:00Z",
+            "avg_minutes": 30,
+            "sigma_minutes": 5,
+            "depends": [],
+            "parallelizable": false,
+            "allows_parallel": false,
+            "abandonability": 0.1,
+            "habit_id": habit_id,
+        }),
+    );
+    let res = app.clone().oneshot(task_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let task_body: serde_json::Value =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let task_id = task_body["id"].as_str().unwrap();
+
+    // Delete the habit — must succeed and cascade-delete the task.
+    let delete_req = auth_req(Method::DELETE, &format!("/api/habits/{habit_id}"));
+    let res = app.clone().oneshot(delete_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+    // Habit is gone.
+    let get_req = auth_req(Method::GET, &format!("/api/habits/{habit_id}"));
+    let res = app.clone().oneshot(get_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    // Associated task is also gone.
+    let task_get = auth_req(Method::GET, &format!("/api/tasks/{task_id}"));
+    let res = app.oneshot(task_get).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn ical_import() {
     let (state, _) = setup().await;
     let app = build_router(state);

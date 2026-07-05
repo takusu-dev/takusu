@@ -1,7 +1,14 @@
 // HabitDetailView — view and edit a habit + recent generated tasks
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  Pressable,
+  Alert,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -14,6 +21,7 @@ import Slider from '@expo/ui/community/slider';
 import { useServer } from '@/src/api/ServerProvider';
 import { undoRedo } from '@/src/api/undoRedo';
 import { showError, logError } from '@/src/api/errors';
+import { parseDepends } from '@/src/api/types';
 import type { HabitRow, TaskRow } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -188,6 +196,41 @@ export function HabitDetailView() {
   async function deleteHabit() {
     setMenuVisible(false);
     if (!client || !habit) return;
+    // #240: confirm before deleting, showing how many associated
+    // tasks will also be cascade-deleted. Fetch the task list first
+    // so the confirmation is accurate and undo can restore them.
+    let deletedTasks: TaskRow[];
+    try {
+      deletedTasks = await client.listTasks({ habit_id: habit.id });
+    } catch (e) {
+      showError(e, 'ハビットのタスク取得に失敗');
+      return;
+    }
+    const taskCount = deletedTasks.length;
+    const message =
+      taskCount > 0
+        ? `このハビットと関連する${taskCount}件のタスクも削除されます。よろしいですか？`
+        : 'このハビットを削除しますか？';
+    const confirmed = await new Promise<boolean>((resolve) => {
+      Alert.alert(
+        'ハビットを削除',
+        message,
+        [
+          {
+            text: 'キャンセル',
+            style: 'cancel',
+            onPress: () => resolve(false),
+          },
+          {
+            text: '削除',
+            style: 'destructive',
+            onPress: () => resolve(true),
+          },
+        ],
+        { cancelable: true, onDismiss: () => resolve(false) },
+      );
+    });
+    if (!confirmed) return;
     const prev = { ...habit };
     // Track the current habit id: undo recreates the habit with a new id,
     // and redo must delete that new id (not the stale original).
@@ -198,29 +241,88 @@ export function HabitDetailView() {
       showError(e, 'ハビットの削除に失敗');
       return;
     }
+    // Track recreated task ids so redo deletes them, and so a retry
+    // after partial failure doesn't create duplicates.
+    const currentTaskIds: string[] = [...deletedTasks.map((t) => t.id)];
+    const taskCreatedIdx = new Set<number>();
+    // Guard habit creation so a retry after partial failure doesn't
+    // create a duplicate habit (mirrors HabitView's createdIdx).
+    let habitCreated = false;
     undoRedo.push({
-      description: `delete habit: ${habit.title}`,
+      description:
+        taskCount > 0
+          ? `delete habit + ${taskCount} tasks: ${habit.title}`
+          : `delete habit: ${habit.title}`,
       undo: async () => {
-        const recreated = await client.createHabit({
-          title: prev.title,
-          description: prev.description,
-          recurrence: prev.recurrence,
-          start_time: prev.start_time,
-          end_time: prev.end_time,
-          avg_minutes: prev.avg_minutes,
-          sigma_minutes: prev.sigma_minutes,
-          parallelizable: prev.parallelizable,
-          allows_parallel: prev.allows_parallel,
-          abandonability: prev.abandonability,
-          fixed: prev.fixed,
-        });
-        // CreateHabit does not accept `active`; restore it via update.
-        if (!prev.active) {
-          await client.updateHabit(recreated.id, { active: prev.active });
+        if (!habitCreated) {
+          const recreated = await client.createHabit({
+            title: prev.title,
+            description: prev.description,
+            recurrence: prev.recurrence,
+            start_time: prev.start_time,
+            end_time: prev.end_time,
+            avg_minutes: prev.avg_minutes,
+            sigma_minutes: prev.sigma_minutes,
+            parallelizable: prev.parallelizable,
+            allows_parallel: prev.allows_parallel,
+            abandonability: prev.abandonability,
+            fixed: prev.fixed,
+          });
+          // CreateHabit does not accept `active`; restore it via update.
+          if (!prev.active) {
+            await client.updateHabit(recreated.id, { active: prev.active });
+          }
+          currentId = recreated.id;
+          habitCreated = true;
         }
-        currentId = recreated.id;
+        // Restore the cascade-deleted tasks, pointing them at the
+        // recreated habit's new id. Two-pass: first create with no
+        // deps (so server doesn't reject references to not-yet-existing
+        // tasks), then remap deps to new ids — mirrors HomeView's
+        // batch-delete undo pattern.
+        const oldToNew = new Map<string, string>();
+        for (let i = 0; i < deletedTasks.length; i++) {
+          if (taskCreatedIdx.has(i)) {
+            oldToNew.set(deletedTasks[i].id, currentTaskIds[i]);
+            continue;
+          }
+          const t = deletedTasks[i];
+          const recreatedTask = await client.createTask({
+            title: t.title,
+            description: t.description,
+            start_at: t.start_at,
+            end_at: t.end_at,
+            avg_minutes: t.avg_minutes,
+            sigma_minutes: t.sigma_minutes,
+            depends: [],
+            parallelizable: t.parallelizable,
+            allows_parallel: t.allows_parallel,
+            abandonability: t.abandonability,
+            ical_uid: t.ical_uid,
+            habit_id: currentId,
+            fixed: t.fixed,
+          });
+          if (t.status !== 'pending') {
+            await client.updateTask(recreatedTask.id, { status: t.status });
+          }
+          currentTaskIds[i] = recreatedTask.id;
+          oldToNew.set(t.id, recreatedTask.id);
+          taskCreatedIdx.add(i);
+        }
+        // Second pass: remap depends to new IDs for deps within the
+        // deleted set.
+        for (let i = 0; i < deletedTasks.length; i++) {
+          const t = deletedTasks[i];
+          const origDeps = parseDepends(t.depends);
+          if (origDeps.length === 0) continue;
+          const newId = oldToNew.get(t.id)!;
+          const remapped = origDeps.map((d) => oldToNew.get(d) ?? d);
+          await client.updateTask(newId, { depends: remapped });
+        }
       },
       redo: async () => {
+        habitCreated = false;
+        taskCreatedIdx.clear();
         await client.deleteHabit(currentId);
       },
     });

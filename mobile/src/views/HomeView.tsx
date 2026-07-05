@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   BackHandler,
   FlatList,
   Pressable,
@@ -787,6 +788,28 @@ export function HomeView() {
   async function deleteSelected() {
     if (!client) return;
     const toDelete = tasks.filter((t) => selected.has(t.id));
+    if (toDelete.length === 0) return;
+    // #242: confirm before batch-deleting tasks.
+    const confirmed = await new Promise<boolean>((resolve) => {
+      Alert.alert(
+        'タスクを削除',
+        `${toDelete.length}件のタスクを削除しますか？`,
+        [
+          {
+            text: 'キャンセル',
+            style: 'cancel',
+            onPress: () => resolve(false),
+          },
+          {
+            text: '削除',
+            style: 'destructive',
+            onPress: () => resolve(true),
+          },
+        ],
+        { cancelable: true, onDismiss: () => resolve(false) },
+      );
+    });
+    if (!confirmed) return;
     const deleted: TaskRow[] = [];
     let failed = 0;
     for (const task of toDelete) {
