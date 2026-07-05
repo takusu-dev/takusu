@@ -18,6 +18,7 @@ jiff = { workspace = true }
 takusu-local-lib = { workspace = true, features = ["sqlite"] }
 takusu-util = { workspace = true }
 takusu-storage = { workspace = true }
+takusu-habit = { workspace = true }
 toml = "0.8"
 
 comfy-table = "7"

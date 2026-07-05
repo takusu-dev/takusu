@@ -3230,6 +3230,7 @@ dependencies = [
  "jiff",
  "serde",
  "serde_json",
+ "takusu-habit",
  "takusu-local-lib",
  "takusu-storage",
  "takusu-util",
