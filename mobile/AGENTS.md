@@ -103,8 +103,12 @@ to end), use `nix run .#build-android-apk-dev` then `adb install -r`.
 ### Linting & Formatting
 
 The mobile app uses [oxlint](https://oxc.rs/docs/guide/usage/linter.html) and
-[oxfmt](https://oxc.rs/docs/guide/usage/formatter.html) (the Oxc toolchain).
-Configs live at `mobile/.oxlintrc.json` and `mobile/.oxfmtrc.json`.
+[oxfmt](https://oxc.rs/docs/guide/usage/formatter.html) (the Oxc toolchain)
+for JS/TS, and [ktlint](https://pinterest.github.io/ktlint/) for Kotlin.
+
+Configs:
+- JS/TS: `mobile/.oxlintrc.json` and `mobile/.oxfmtrc.json`
+- Kotlin: `mobile/.editorconfig` (ktlint reads `.editorconfig`)
 
 | Command | Description |
 |---------|-------------|
@@ -112,10 +116,21 @@ Configs live at `mobile/.oxlintrc.json` and `mobile/.oxfmtrc.json`.
 | `npm run lint:fix` | Run oxlint with auto-fix |
 | `npm run fmt` | Format all JS/TS files with oxfmt |
 | `npm run fmt:check` | Check formatting without writing (CI uses this) |
+| `npm run kt:lint` | Run ktlint on Kotlin files in `modules/` |
+| `npm run kt:fmt` | Auto-format Kotlin files with ktlint `-F` |
 
-Run these from the `mobile/` directory.
+Run these from the `mobile/` directory. ktlint requires `nix develop .#kotlin`
+(or `nix shell .#ci-kotlin -c ktlint ...`) for the `ktlint` binary.
+
+The UniFFI-generated bindings at
+`modules/takusu-server/android/src/main/java/uniffi/` are excluded from
+ktlint (auto-generated code). The `android/` directory (Expo prebuild
+output) is also excluded.
 
 ### CI/CD
 
-- `ci.yaml`: `android-build` job builds `.so` for aarch64; `expo-check` job runs oxlint, oxfmt (`--check`), and TypeScript typecheck
+- `ci.yaml`:
+  - `android-build` job builds `.so` for aarch64
+  - `expo-check` job runs oxlint, oxfmt (`--check`), and TypeScript typecheck
+  - `kotlin-check` job runs ktlint on `modules/**/*.kt` (independent of `expo-check`)
 - `release.yaml`: `build-android-apk` job builds all ABIs, prebuilds, and uploads APK to GitHub Releases on tag push

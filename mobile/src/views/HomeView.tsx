@@ -40,6 +40,7 @@ import Reanimated, {
 } from 'react-native-reanimated';
 import { useColors, COLORS, BRAND_COLOR } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
+import TakusuWidgetModule from '../../modules/takusu-widget/src/TakusuWidgetModule';
 import {
   rescheduleFromRaw,
   postInProgressNotification,
@@ -246,6 +247,47 @@ export function HomeView() {
       setSchedule(sched ? parseSchedule(sched.schedule) : []);
       setHabits(habitList);
       setServerTz(settings?.tz);
+      // Push a fresh snapshot to the home screen widget so it shows
+      // current data immediately (without waiting for WorkManager).
+      try {
+        const schedEntries = sched ? parseSchedule(sched.schedule) : [];
+        const schedMap = new Map(schedEntries.map((e) => [e.task_id, e]));
+        const now = Date.now();
+        let doingTitle: string | null = null;
+        let unscheduledCount = 0;
+        const upcoming: {
+          title: string;
+          startAt: string | null;
+          endAt: string;
+        }[] = [];
+        for (const t of taskList) {
+          if (t.status === 'in_progress') {
+            if (!doingTitle) doingTitle = t.title;
+          } else if (t.status === 'pending') {
+            unscheduledCount++;
+          } else if (t.status === 'scheduled') {
+            const entry = schedMap.get(t.id);
+            const startAt = entry?.start_at ?? t.start_at ?? null;
+            const endAt = entry?.end_at ?? t.end_at;
+            const endTime = new Date(endAt).getTime();
+            if (endTime >= now) {
+              upcoming.push({ title: t.title, startAt, endAt });
+            }
+          }
+        }
+        upcoming.sort((a, b) => {
+          const ta = new Date(a.startAt ?? a.endAt).getTime();
+          const tb = new Date(b.startAt ?? b.endAt).getTime();
+          return ta - tb;
+        });
+        TakusuWidgetModule.saveSnapshot({
+          doingTitle,
+          upcoming: upcoming.slice(0, 5),
+          unscheduledCount,
+        });
+      } catch {
+        // widget module not available (non-Android) — ignore
+      }
     } catch (e) {
       showError(e, 'タスク一覧の取得に失敗');
     } finally {

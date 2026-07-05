@@ -1,0 +1,25 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.takusuwidget'
+version = '0.1.0'
+
+android {
+  namespace "expo.modules.takusuwidget"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+  lintOptions {
+    abortOnError false
+  }
+}
+
+dependencies {
+  // UniFFI TakusuServer bindings (start/stop the local Rust server)
+  implementation project(':takusu-server')
+  // WorkManager for periodic widget updates
+  implementation 'androidx.work:work-runtime-ktx:2.10.0'
+}

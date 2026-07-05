@@ -12,6 +12,7 @@ jobs:
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       mobile: ${{ steps.filter.outputs.mobile }}
+      kotlin: ${{ steps.filter.outputs.kotlin }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,6 +31,10 @@ jobs:
               - '.github/workflows/ci.yaml'
             mobile:
               - 'mobile/**'
+              - '.github/workflows/ci.yaml'
+            kotlin:
+              - 'mobile/modules/**/*.kt'
+              - 'mobile/.editorconfig'
               - '.github/workflows/ci.yaml'
 
   lint:
@@ -148,3 +153,23 @@ jobs:
       - name: Typecheck
         working-directory: mobile
         run: npx tsc --noEmit
+
+  kotlin-check:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.kotlin == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
+
+      - name: Restore binary cache
+        uses: asa1984/infra/.github/actions/binary-cache@44165003348ea3578a66f8c879bfaf23a3c7cc18
+        with:
+          package: .#ci-kotlin
+
+      - run: nix profile install .#ci-kotlin
+
+      - name: ktlint check
+        working-directory: mobile
+        run: ktlint 'modules/**/*.kt' '!modules/takusu-server/android/src/main/java/uniffi/**'
