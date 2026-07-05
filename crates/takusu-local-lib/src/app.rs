@@ -79,8 +79,25 @@ fn point_to_iso(slot: i64) -> String {
     ts.to_string()
 }
 
-fn iso_date(iso: &str) -> String {
-    iso.chars().take(10).collect()
+/// Point スロット値 → ローカルタイムゾーンの日付文字列 (YYYY-MM-DD)。
+/// `point_to_iso` は UTC タイムスタンプを返すため、JST など UTC より東の
+/// タイムゾーンで午前 0 時〜 9 时のタスクが前日として扱われてしまう。
+/// `sync_habit_tasks` の日付キーはローカル日付で一貫させる必要がある。
+fn point_to_local_date(slot: i64, tz: &jiff::tz::TimeZone) -> String {
+    let secs = slot * 5 * 60;
+    let ts = Timestamp::from_second(secs).unwrap_or_else(|_| Timestamp::now());
+    ts.to_zoned(tz.clone()).date().to_string()
+}
+
+/// ISO 文字列 → ローカルタイムゾーンの日付文字列 (YYYY-MM-DD)。
+/// `task.start_at` (UTC ISO 文字列) からローカル日付を得るために使う。
+fn iso_to_local_date(iso: &str, tz: &jiff::tz::TimeZone) -> String {
+    if let Ok(ts) = Timestamp::from_str(iso) {
+        ts.to_zoned(tz.clone()).date().to_string()
+    } else {
+        // フォールバック: naive 日付文字列の先頭 10 文字
+        iso.chars().take(10).collect()
+    }
 }
 
 fn detect_cycle(adj: &[Vec<usize>]) -> Result<(), AppError> {
@@ -1097,7 +1114,7 @@ impl TakusuApp {
             store.add(config);
             for gt in store.generate(from, until) {
                 let start_point = gt.task.start.unwrap_or(Point(0));
-                let date = iso_date(&point_to_iso(start_point.0));
+                let date = point_to_local_date(start_point.0, tz);
                 expected.push((row.id.clone(), date, gt.task, row.description.clone()));
             }
         }
@@ -1111,7 +1128,11 @@ impl TakusuApp {
         let mut existing_by_key: HashMap<(String, String), TaskRow> = HashMap::new();
         for task in &all_tasks {
             if let Some(ref hid) = task.habit_id {
-                let date = task.start_at.as_deref().map(iso_date).unwrap_or_default();
+                let date = task
+                    .start_at
+                    .as_deref()
+                    .map(|s| iso_to_local_date(s, tz))
+                    .unwrap_or_default();
                 if !date.is_empty() {
                     existing_by_key.insert((hid.clone(), date), task.clone());
                 }

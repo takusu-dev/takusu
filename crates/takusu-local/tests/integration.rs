@@ -1504,3 +1504,67 @@ async fn stale_user_edited_task_is_not_deleted() {
     let res = app.clone().oneshot(get_req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn habit_sync_uses_local_date_in_non_utc_timezone() {
+    // Regression test: sync_habit_tasks used to compute the (habit_id, date)
+    // key and the title date from the UTC date of start_at. In Asia/Tokyo
+    // (UTC+9), a habit starting at 08:40 JST maps to 23:40 UTC on the
+    // *previous* day, so a Mon-Fri habit generated a task titled
+    // "habit (2026-07-05)" (Sunday, UTC date) instead of
+    // "habit (2026-07-06)" (Monday, local date). This also caused the
+    // weekday filter to appear broken and tasks to be skipped/duplicated
+    // across day boundaries.
+    let (state, pool) = setup().await;
+    let app = build_router(state);
+
+    // Set timezone to Asia/Tokyo.
+    let req = auth_req_body(Method::PUT, "/api/settings", json!({ "tz": "Asia/Tokyo" }));
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // Insert a habit with by_day=[Mon-Fri] and start_time=08:40 JST.
+    // 08:40 JST = 23:40 UTC (previous day), which is the exact case that
+    // exposed the bug.
+    let habit_id = sqlx::query_scalar::<_, String>(
+        "INSERT INTO habits (id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed) VALUES ('habit-tz', '平日朝', '', '{\"freq\":\"daily\",\"interval\":1,\"by_day\":[{\"n\":null,\"weekday\":\"mon\"},{\"n\":null,\"weekday\":\"tue\"},{\"n\":null,\"weekday\":\"wed\"},{\"n\":null,\"weekday\":\"thu\"},{\"n\":null,\"weekday\":\"fri\"}],\"by_month\":[],\"by_month_day\":[],\"count\":null,\"exdates\":[]}', '08:40', '16:30', 470, 15, 0, 0, 0.2, 1, 0) RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Trigger habit sync via schedule/generate.
+    let gen_req = auth_req_body(
+        Method::POST,
+        "/api/schedule/generate",
+        json!({ "sleep": "disabled" }),
+    );
+    let res = app.clone().oneshot(gen_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // List generated tasks for this habit.
+    let list_req = auth_req(Method::GET, &format!("/api/tasks?habit_id={habit_id}"));
+    let res = app.clone().oneshot(list_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let tasks: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(!tasks.is_empty(), "habit should generate at least one task");
+
+    // The title includes the date in parentheses. Before the fix, the date
+    // in the title was the UTC date (1 day behind the JST date of start_at).
+    // Verify that the title date matches the JST date of start_at.
+    let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+    for t in &tasks {
+        let title = t["title"].as_str().unwrap();
+        let start_at = t["start_at"].as_str().unwrap();
+        let ts: jiff::Timestamp = start_at.parse().unwrap();
+        let jst_date = ts.to_zoned(tz.clone()).date().to_string();
+        assert!(
+            title.contains(&jst_date),
+            "title '{}' should contain JST date '{}' (start_at={})",
+            title,
+            jst_date,
+            start_at
+        );
+    }
+}

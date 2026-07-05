@@ -694,7 +694,12 @@ fn neighbor_swap_at(planner: &Planner, current: &Plan, a: usize, b: usize) -> Op
     })
 }
 
-fn neighbor_duration_at(planner: &Planner, current: &Plan, idx: usize, rng: &mut impl Rng) -> Option<Plan> {
+fn neighbor_duration_at(
+    planner: &Planner,
+    current: &Plan,
+    idx: usize,
+    rng: &mut impl Rng,
+) -> Option<Plan> {
     let (start, end, task_id) = current.schedules[idx];
     // 固定タスクは移動しない
     if planner.tasks[task_id].fixed {
