@@ -520,6 +520,90 @@ export function RruleBuilderModal({
                     ))}
                   </View>
 
+                  {/* Quick presets */}
+                  <View style={styles.presetsRow}>
+                    <Pressable
+                      style={[
+                        styles.presetChip,
+                        {
+                          borderColor: colors.separator,
+                        },
+                      ]}
+                      onPress={() => {
+                        haptic.select();
+                        setEditingNthWeekday(null);
+                        update({
+                          freq: 'daily',
+                          by_day: [],
+                          by_month: [],
+                          by_month_day: [],
+                        });
+                      }}
+                    >
+                      <Text
+                        style={[styles.presetChipText, { color: colors.black }]}
+                      >
+                        毎日
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[
+                        styles.presetChip,
+                        {
+                          borderColor: colors.separator,
+                        },
+                      ]}
+                      onPress={() => {
+                        haptic.select();
+                        setEditingNthWeekday(null);
+                        update({
+                          freq: 'weekly',
+                          by_day: ['mon', 'tue', 'wed', 'thu', 'fri'].map(
+                            (weekday) => ({
+                              n: null,
+                              weekday: weekday as Weekday,
+                            }),
+                          ),
+                          by_month: [],
+                          by_month_day: [],
+                        });
+                      }}
+                    >
+                      <Text
+                        style={[styles.presetChipText, { color: colors.black }]}
+                      >
+                        平日
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[
+                        styles.presetChip,
+                        {
+                          borderColor: colors.separator,
+                        },
+                      ]}
+                      onPress={() => {
+                        haptic.select();
+                        setEditingNthWeekday(null);
+                        update({
+                          freq: 'weekly',
+                          by_day: ['sat', 'sun'].map((weekday) => ({
+                            n: null,
+                            weekday: weekday as Weekday,
+                          })),
+                          by_month: [],
+                          by_month_day: [],
+                        });
+                      }}
+                    >
+                      <Text
+                        style={[styles.presetChipText, { color: colors.black }]}
+                      >
+                        週末
+                      </Text>
+                    </Pressable>
+                  </View>
+
                   {/* Hidden-fields notice */}
                   {hasHiddenFields && (
                     <View
@@ -1160,6 +1244,23 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: 'center',
     gap: 2,
+  },
+  // Quick presets row (毎日 / 平日 / 週末)
+  presetsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  presetChip: {
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  presetChipText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   chipSubText: {
     fontSize: 9,

@@ -866,4 +866,81 @@ mod tests {
             vec![date(2025, 1, 15), date(2025, 2, 15), date(2025, 3, 15)]
         );
     }
+
+    // ── #205: weekday filtering ────────────────────────────────────────
+
+    #[test]
+    fn daily_with_weekday_filter_skips_weekend() {
+        // 2026-07-05 is Sunday. Daily freq with by_day=[Mon..Fri] should
+        // NOT generate on Sunday even when the range starts on Sunday.
+        let tz = utc();
+        let start = point_at(date(2026, 7, 5), &TimeOfDay::new(9, 0).unwrap(), &tz);
+        let until = point_at(date(2026, 7, 11), &TimeOfDay::new(9, 0).unwrap(), &tz);
+
+        let iter = RecurrenceGenerator::new(
+            RecurrenceRule::daily().by_day(vec![
+                NWeekday::every(Weekday::Mon),
+                NWeekday::every(Weekday::Tue),
+                NWeekday::every(Weekday::Wed),
+                NWeekday::every(Weekday::Thu),
+                NWeekday::every(Weekday::Fri),
+            ]),
+            TimeOfDay::new(9, 0).unwrap(),
+            tz.clone(),
+            NormalDist::new(6, 0),
+            None,
+            false,
+            false,
+            0.0,
+            start,
+            until,
+        );
+
+        let tasks: Vec<_> = iter.collect();
+        let dates: Vec<_> = tasks
+            .iter()
+            .map(|gt| date_at(gt.task.start.unwrap(), &tz))
+            .collect();
+        // Mon Jul 6 .. Fri Jul 10 → 5 tasks; Sun Jul 5 and Sat Jul 11 skipped.
+        assert_eq!(dates.len(), 5);
+        assert!(!dates.contains(&date(2026, 7, 5))); // Sunday
+        assert!(dates.contains(&date(2026, 7, 6))); // Monday
+        assert!(dates.contains(&date(2026, 7, 10))); // Friday
+    }
+
+    #[test]
+    fn weekly_with_weekday_filter_skips_weekend() {
+        // 2026-07-05 is Sunday. Weekly freq with by_day=[Mon..Fri] should
+        // NOT generate on Sunday.
+        let tz = utc();
+        let start = point_at(date(2026, 7, 5), &TimeOfDay::new(9, 0).unwrap(), &tz);
+        let until = point_at(date(2026, 7, 11), &TimeOfDay::new(9, 0).unwrap(), &tz);
+
+        let iter = RecurrenceGenerator::new(
+            RecurrenceRule::weekly().by_day(vec![
+                NWeekday::every(Weekday::Mon),
+                NWeekday::every(Weekday::Tue),
+                NWeekday::every(Weekday::Wed),
+                NWeekday::every(Weekday::Thu),
+                NWeekday::every(Weekday::Fri),
+            ]),
+            TimeOfDay::new(9, 0).unwrap(),
+            tz.clone(),
+            NormalDist::new(6, 0),
+            None,
+            false,
+            false,
+            0.0,
+            start,
+            until,
+        );
+
+        let tasks: Vec<_> = iter.collect();
+        let dates: Vec<_> = tasks
+            .iter()
+            .map(|gt| date_at(gt.task.start.unwrap(), &tz))
+            .collect();
+        assert_eq!(dates.len(), 5);
+        assert!(!dates.contains(&date(2026, 7, 5))); // Sunday
+    }
 }

@@ -79,8 +79,34 @@ fn point_to_iso(slot: i64) -> String {
     ts.to_string()
 }
 
-fn iso_date(iso: &str) -> String {
-    iso.chars().take(10).collect()
+/// Point → "YYYY-MM-DD" in the given timezone.
+/// `point_to_iso` returns a UTC string, which shifts the date for non-UTC
+/// users; this helper keeps the local calendar date so habit task keys and
+/// titles match the day the user actually sees.
+fn point_to_local_date(slot: i64, tz: &jiff::tz::TimeZone) -> String {
+    let secs = slot * 5 * 60;
+    let ts = Timestamp::from_second(secs).unwrap_or_else(|_| Timestamp::now());
+    ts.to_zoned(tz.clone()).date().to_string()
+}
+
+/// ISO string → "YYYY-MM-DD" in the given timezone.
+/// Used to compare task dates against the local calendar date.
+fn iso_date_local(iso: &str, tz: &jiff::tz::TimeZone) -> String {
+    match iso_to_point(iso, tz) {
+        Ok(p) => point_to_local_date(p.0, tz),
+        Err(_) => iso.chars().take(10).collect(),
+    }
+}
+
+/// Start-of-today (local midnight) as a Point, so habit generation begins
+/// from the current day rather than producing past tasks.
+fn start_of_today_point(tz: &jiff::tz::TimeZone) -> Point {
+    let today = Timestamp::now().to_zoned(tz.clone()).date();
+    let zdt = today
+        .at(0, 0, 0, 0)
+        .in_tz(tz.iana_name().unwrap_or("UTC"))
+        .unwrap_or_else(|_| Timestamp::UNIX_EPOCH.to_zoned(tz.clone()));
+    Point::from_timestamp(zdt.timestamp(), 5)
 }
 
 fn detect_cycle(adj: &[Vec<usize>]) -> Result<(), AppError> {
@@ -800,7 +826,11 @@ impl TakusuApp {
         Ok(google_cal::oauth_url(&row.client_id, redirect_uri))
     }
 
-    pub async fn oauth_callback(&self, code: &str, redirect_uri: Option<&str>) -> Result<(), AppError> {
+    pub async fn oauth_callback(
+        &self,
+        code: &str,
+        redirect_uri: Option<&str>,
+    ) -> Result<(), AppError> {
         let row = self
             .storage
             .get_gcal_settings()
@@ -1016,7 +1046,7 @@ impl TakusuApp {
         }
 
         let now = Point::from_timestamp(Timestamp::now(), 5);
-        let from = now - 7 * 24 * 12;
+        let from = start_of_today_point(tz);
         let until = now + 14 * 24 * 12;
 
         let mut expected: Vec<(String, String, CoreTask, Option<String>)> = Vec::new();
@@ -1026,7 +1056,7 @@ impl TakusuApp {
             store.add(config);
             for gt in store.generate(from, until) {
                 let start_point = gt.task.start.unwrap_or(Point(0));
-                let date = iso_date(&point_to_iso(start_point.0));
+                let date = point_to_local_date(start_point.0, tz);
                 expected.push((row.id.clone(), date, gt.task, row.description.clone()));
             }
         }
@@ -1040,7 +1070,12 @@ impl TakusuApp {
         let mut existing_by_key: HashMap<(String, String), TaskRow> = HashMap::new();
         for task in &all_tasks {
             if let Some(ref hid) = task.habit_id {
-                let date = task.start_at.as_deref().map(iso_date).unwrap_or_default();
+                let date = task
+                    .start_at
+                    .as_deref()
+                    .map(|iso| iso_to_point(iso, tz).map(|p| point_to_local_date(p.0, tz)))
+                    .transpose()?
+                    .unwrap_or_default();
                 if !date.is_empty() {
                     existing_by_key.insert((hid.clone(), date), task.clone());
                 }
@@ -1110,8 +1145,16 @@ impl TakusuApp {
         // ただし pending かつユーザーが編集していないものだけ:
         // 手動で status 変更したタスク (scheduled, in_progress, completed, skipped) および
         // ユーザーが編集したタスクは削除しない。
+        // さらに、過去の日付のタスクは生成範囲外になっても残す (ユーザーが
+        // 後から確認できるように、過去の pending タスクは削除しない)。
+        let today_str = point_to_local_date(now.0, tz);
         for (_, task) in existing_by_key {
-            if task.status == "pending" && !task.user_edited {
+            let is_past = task
+                .start_at
+                .as_deref()
+                .map(|iso| iso_date_local(iso, tz) < today_str)
+                .unwrap_or(false);
+            if task.status == "pending" && !task.user_edited && !is_past {
                 self.storage
                     .delete_task(&task.id)
                     .await
@@ -1175,7 +1218,11 @@ impl TakusuApp {
         let mut id_map: Vec<String> = Vec::with_capacity(task_rows.len());
 
         for (i, row) in task_rows.iter().enumerate() {
-            let start_opt = row.start_at.as_ref().map(|s| iso_to_point(s, tz)).transpose()?;
+            let start_opt = row
+                .start_at
+                .as_ref()
+                .map(|s| iso_to_point(s, tz))
+                .transpose()?;
             let end = iso_to_point(&row.end_at, tz)?;
             let core_task = CoreTask {
                 id: planner.tasks().len(),

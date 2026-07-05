@@ -128,9 +128,12 @@ export interface GenerateSchedule {
 }
 
 export interface RescheduleRequest {
-  range_start: string;
-  range_end: string;
-  pinned_task_ids?: string[];
+  mode: 'range' | 'tasks';
+  from?: string;
+  until?: string;
+  task_ids?: string[];
+  pinned?: string[];
+  sleep?: string;
 }
 
 export interface MoveEntryRequest {
