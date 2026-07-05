@@ -11,6 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { undoRedo } from '@/src/api/undoRedo';
 import { haptic } from '@/src/components/haptics';
+import type { TaskStatus } from '@/src/api/types';
 
 interface ContextMenuProps {
   hasSelection: boolean;
@@ -24,6 +25,7 @@ interface ContextMenuProps {
   onRescheduleSelected?: () => void;
   onRescheduleOthers?: () => void;
   onCreateDependent?: () => void;
+  onSetStatusSelected?: (status: TaskStatus) => void;
 }
 
 type MenuItem = {
@@ -45,9 +47,11 @@ export function ContextMenu({
   onRescheduleSelected,
   onRescheduleOthers,
   onCreateDependent,
+  onSetStatusSelected,
 }: ContextMenuProps) {
   const colors = useColors();
   const [open, setOpen] = useState(false);
+  const [statusSubmenu, setStatusSubmenu] = useState(false);
 
   const alwaysItems: MenuItem[] = [
     { label: '設定', icon: 'settings-outline', onPress: onSettings },
@@ -108,6 +112,17 @@ export function ContextMenu({
               },
             ]
           : []),
+        ...(onSetStatusSelected
+          ? [
+              {
+                label: 'ステータスを一括設定',
+                icon: 'list-outline' as const,
+                onPress: () => {
+                  setStatusSubmenu(true);
+                },
+              },
+            ]
+          : []),
         {
           label: '削除',
           icon: 'trash-outline',
@@ -154,6 +169,14 @@ export function ContextMenu({
     );
   }
 
+  const statusItems: { label: string; status: TaskStatus }[] = [
+    { label: '未着手 (pending)', status: 'pending' },
+    { label: '予定済 (scheduled)', status: 'scheduled' },
+    { label: '進行中 (in_progress)', status: 'in_progress' },
+    { label: '完了 (completed)', status: 'completed' },
+    { label: 'スキップ (skipped)', status: 'skipped' },
+  ];
+
   return (
     <>
       <Pressable
@@ -182,6 +205,43 @@ export function ContextMenu({
               />
             )}
             {selectionItems.map(renderItem)}
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Status submenu */}
+      <Modal visible={statusSubmenu} transparent animationType="fade">
+        <Pressable
+          style={styles.overlay}
+          onPress={() => setStatusSubmenu(false)}
+        >
+          <View style={[styles.menu, { backgroundColor: colors.white }]}>
+            <Text style={[styles.submenuHeader, { color: colors.gray }]}>
+              ステータスを選択
+            </Text>
+            {statusItems.map((item) => (
+              <Pressable
+                key={item.status}
+                style={({ pressed }) => [
+                  styles.menuItem,
+                  pressed && styles.menuItemPressed,
+                ]}
+                onPress={() => {
+                  haptic.light();
+                  setStatusSubmenu(false);
+                  onSetStatusSelected?.(item.status);
+                }}
+              >
+                <Ionicons
+                  name="radio-button-off"
+                  size={20}
+                  color={BRAND_COLOR}
+                />
+                <Text style={[styles.menuItemText, { color: colors.black }]}>
+                  {item.label}
+                </Text>
+              </Pressable>
+            ))}
           </View>
         </Pressable>
       </Modal>
@@ -216,6 +276,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 8,
+  },
+  submenuHeader: {
+    fontSize: 13,
+    fontWeight: '600',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
   },
   menuItem: {
     flexDirection: 'row',
