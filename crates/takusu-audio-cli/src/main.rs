@@ -111,9 +111,10 @@ enum Commands {
         #[arg(long)]
         voice: Option<String>,
 
-        /// Response audio format: wav, mp3, flac, pcm, opus
-        #[arg(long, default_value = "wav")]
-        format: String,
+        /// Response audio format: wav, mp3, flac, pcm, opus.
+        /// If omitted, inferred from the --output extension.
+        #[arg(long)]
+        format: Option<String>,
 
         /// Speaking speed
         #[arg(long)]
@@ -228,6 +229,12 @@ async fn main() {
         } => {
             let url = url.unwrap_or_else(|| "http://127.0.0.1:8088".to_string());
 
+            // Resolve the response format, ensuring it matches the --output
+            // extension so the file isn't silently corrupted (e.g. MP3 bytes
+            // written to a .wav file). If --format is omitted, infer it from
+            // the extension; if both are given and conflict, error out.
+            let format = resolve_audio_format(format.as_deref(), &output);
+
             let reference_path = reference.or_else(|| {
                 pick_reference_voice(&refs_dir)
                     .ok()
@@ -276,6 +283,38 @@ async fn main() {
             });
             eprintln!("Saved to {}", output.display());
         }
+    }
+}
+
+/// Resolve the TTS response format from `--format` and the `--output` path.
+///
+/// If `--format` is given, it is used as-is when the output file has no
+/// extension. When the output file *does* have an extension, `--format` must
+/// match it (case-insensitive); a mismatch is an error to prevent writing
+/// e.g. MP3 bytes into a `.wav` file. If `--format` is omitted, the format is
+/// inferred from the `--output` extension, defaulting to `wav` when the file
+/// has no extension.
+fn resolve_audio_format(format: Option<&str>, output: &std::path::Path) -> String {
+    let ext = output
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    match format {
+        Some(f) => {
+            let f = f.to_ascii_lowercase();
+            if let Some(ref e) = ext
+                && f != *e
+            {
+                eprintln!(
+                    "Error: --format {f} does not match --output extension '{e}' ({}). \
+                     Use a matching extension or omit --format so it is inferred.",
+                    output.display()
+                );
+                std::process::exit(1);
+            }
+            f
+        }
+        None => ext.unwrap_or_else(|| "wav".to_string()),
     }
 }
 
@@ -487,5 +526,58 @@ mod tests {
         assert!((out[2] + 0.25).abs() < 1e-4);
         assert!((out[3] - 0.9).abs() < 1e-4);
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn resolve_format_infers_from_extension() {
+        assert_eq!(
+            resolve_audio_format(None, std::path::Path::new("a.wav")),
+            "wav"
+        );
+        assert_eq!(
+            resolve_audio_format(None, std::path::Path::new("a.MP3")),
+            "mp3"
+        );
+        assert_eq!(
+            resolve_audio_format(None, std::path::Path::new("a.flac")),
+            "flac"
+        );
+        assert_eq!(
+            resolve_audio_format(None, std::path::Path::new("a.opus")),
+            "opus"
+        );
+    }
+
+    #[test]
+    fn resolve_format_accepts_matching_explicit() {
+        assert_eq!(
+            resolve_audio_format(Some("wav"), std::path::Path::new("a.wav")),
+            "wav"
+        );
+        assert_eq!(
+            resolve_audio_format(Some("MP3"), std::path::Path::new("a.mp3")),
+            "mp3"
+        );
+    }
+
+    #[test]
+    fn resolve_format_defaults_to_wav_for_no_extension() {
+        assert_eq!(
+            resolve_audio_format(None, std::path::Path::new("speech")),
+            "wav"
+        );
+    }
+
+    #[test]
+    fn resolve_format_explicit_with_no_extension() {
+        // --format mp3 --output myfile  →  "mp3" (no mismatch error)
+        assert_eq!(
+            resolve_audio_format(Some("mp3"), std::path::Path::new("myfile")),
+            "mp3"
+        );
+        assert_eq!(
+            resolve_audio_format(Some("flac"), std::path::Path::new("myfile")),
+            "flac"
+        );
     }
 }
