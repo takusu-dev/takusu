@@ -342,14 +342,22 @@ let schedule = client.generate_schedule(&req).await?;
 
 ## 7. Google Calendar 連携
 
-### 7.1 OAuth2 フロー
+### 7.1 OAuth2 フロー (CLI専用)
 
 ```
-1. GET  /api/sync/oauth-url → Google認証URL
+1. takusu sync oauth-url --redirect-uri http://localhost
+   → Google認証URLを表示 (バックエンドの client_id から生成)
 2. ユーザーがブラウザで認証 → 認可コード取得
-3. POST /api/sync/oauth-callback { code, redirect_uri }
-   → refresh_token を DB に保存
+3. takusu sync oauth-callback --code <CODE> --redirect-uri http://localhost
+   → CLIプロセスが直接Googleとトークン交換 → refresh_token をDBに保存
 ```
+
+- モバイルアプリではOAuthを実行しない (Android Credential Manager / One Tap
+  フローが端末間で不安定だったため、issue #297 で削除)
+- モバイルはCLIで取得した refresh_token を共有バックエンド (local SQLite /
+  Workers D1) から読み取って同期に使用
+- モバイル設定画面に refresh_token 手動入力フィールドあり (フォールバック)
+- `takusu sync setup --refresh-token <TOKEN>` で直接トークンを設定することも可能
 
 ### 7.2 差分同期 (google-cal/src/lib.rs)
 

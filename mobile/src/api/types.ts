@@ -190,14 +190,6 @@ export interface UpdateGoogleCalSettings {
   refresh_token?: string;
 }
 
-export interface OAuthUrlResponse {
-  url: string;
-}
-
-export interface OAuthCallbackResponse {
-  refresh_token_set: boolean;
-}
-
 export interface SyncTriggerResponse {
   status: string;
 }

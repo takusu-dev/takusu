@@ -29,11 +29,6 @@ import * as Sharing from 'expo-sharing';
 import * as Clipboard from 'expo-clipboard';
 import Constants from 'expo-constants';
 import {
-  GoogleOneTapSignIn,
-  isSuccessResponse,
-  isNoSavedCredentialFoundResponse,
-} from 'react-native-nitro-google-signin';
-import {
   useServer,
   saveWorkersUrl,
   saveWorkersToken,
@@ -57,8 +52,6 @@ export type SettingsCategory =
   | 'worker'
   | 'google'
   | 'info';
-
-const CALENDAR_EVENTS_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
 
 const CATEGORY_LABELS: Record<SettingsCategory, string> = {
   general: '一般',
@@ -197,8 +190,8 @@ export function SettingsDetailView({
   const [gcalCalendarId, setGcalCalendarId] = useState('');
   const [gcalClientId, setGcalClientId] = useState('');
   const [gcalClientSecret, setGcalClientSecret] = useState('');
+  const [gcalRefreshToken, setGcalRefreshToken] = useState('');
   const [gcalLoading, setGcalLoading] = useState(false);
-  const [oauthLoading, setOauthLoading] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
 
   // Health check state (info tab)
@@ -400,84 +393,38 @@ export function SettingsDetailView({
     }
   }
 
-  // Google Sign-In SDK flow — two-phase approach (issue #248).
+  // Save a refresh token obtained via the CLI OAuth flow (issue #297).
   //
-  // Phase 1 — sign-in ONLY (no offline access, no scopes):
-  //   configure({ webClientId, offlineAccess: false }) then signIn() →
-  //   createAccount() → presentExplicitSignIn().  Because offlineAccess
-  //   is false and no scopes are configured, the library's internal
-  //   enrichWithServerAuthCode() is skipped entirely, so NO consent
-  //   dialog is launched immediately after the Credential Manager
-  //   bottom sheet closes.  This avoids the race where the bottom sheet
-  //   dismisses and a second activity (consent dialog) is started in
-  //   rapid succession, which on some Android devices causes the dialog
-  //   to never appear or to close instantly (issues #129, #248).
+  // Mobile no longer runs OAuth directly — the Android Credential
+  // Manager / One Tap flow was fragile across devices (issues #108,
+  // #129, #248, #297).  Instead, the user runs OAuth on the CLI:
   //
-  // Phase 2 — request the calendar scope as a SEPARATE action:
-  //   reconfigure with offlineAccess: true + the calendar.events scope,
-  //   then call requestScopes().  The AuthorizationClient consent
-  //   dialog is now a deliberate, standalone UI step that does not
-  //   compete with the Credential Manager flow.  requestScopes()
-  //   requires offlineAccess: true in configure() for a non-null
-  //   serverAuthCode, hence the reconfigure.
+  //   takusu sync oauth-url --redirect-uri http://localhost
+  //   → open the URL in a browser → copy the authorization code
+  //   takusu sync oauth-callback --code <CODE> --redirect-uri http://localhost
   //
-  // The serverAuthCode from requestScopes() is sent to the backend,
-  // which exchanges it for a refresh token without a redirect_uri
-  // (Android SDK code does not use one).
-  async function startOAuth() {
+  // The CLI exchanges the code with Google and stores the refresh
+  // token in the shared backend (local SQLite or Workers D1).  Mobile
+  // reads it from there.  This field lets the user paste a token
+  // obtained by other means as a fallback.
+  async function saveRefreshToken() {
     if (!client) return;
-    const webClientId = gcalSettings?.client_id;
-    if (!webClientId) {
-      Alert.alert('エラー', '先にClient IDを保存してください');
+    if (!gcalRefreshToken.trim()) {
+      Alert.alert('エラー', 'Refresh Tokenを入力してください');
       return;
     }
-    setOauthLoading(true);
     try {
-      // Phase 1: sign-in only — no consent dialog after the bottom sheet.
-      GoogleOneTapSignIn.configure({
-        webClientId,
-        offlineAccess: false,
+      const s = await client.updateGcalSettings({
+        refresh_token: gcalRefreshToken.trim(),
       });
-      await GoogleOneTapSignIn.checkPlayServices();
-
-      let response = await GoogleOneTapSignIn.signIn();
-      if (isNoSavedCredentialFoundResponse(response)) {
-        response = await GoogleOneTapSignIn.createAccount();
-      }
-      if (isNoSavedCredentialFoundResponse(response)) {
-        response = await GoogleOneTapSignIn.presentExplicitSignIn();
-      }
-      if (!isSuccessResponse(response)) {
-        // User cancelled or no credential — nothing to do
-        return;
-      }
-
-      // Phase 2: reconfigure with offline access + calendar scope, then
-      // request the scope as a separate consent dialog.
-      GoogleOneTapSignIn.configure({
-        webClientId,
-        offlineAccess: true,
-        scopes: [CALENDAR_EVENTS_SCOPE],
-      });
-
-      const result = await GoogleOneTapSignIn.requestScopes([
-        CALENDAR_EVENTS_SCOPE,
-      ]);
-      if (!result.serverAuthCode) {
-        Alert.alert('エラー', '認可コードを取得できませんでした');
-        return;
-      }
-
-      await client.oauthCallback(result.serverAuthCode);
-      await loadGcalSettings();
-      Alert.alert('成功', 'Google Calendar認証が完了しました');
+      setGcalSettings(s);
+      setGcalRefreshToken('');
+      Alert.alert('保存しました', 'Refresh Tokenを保存しました');
     } catch (e) {
       Alert.alert(
         'エラー',
-        `OAuth認証に失敗しました: ${e instanceof Error ? e.message : String(e)}`,
+        `保存に失敗: ${e instanceof Error ? e.message : String(e)}`,
       );
-    } finally {
-      setOauthLoading(false);
     }
   }
 
@@ -1349,19 +1296,42 @@ export function SettingsDetailView({
                 <Text style={styles.actionButtonText}>設定を保存</Text>
               </Pressable>
 
+              <View style={styles.field}>
+                <Text style={[styles.label, { color: colors.gray }]}>
+                  Refresh Token
+                </Text>
+                <TextInput
+                  style={[
+                    styles.input,
+                    { borderColor: colors.separator, color: colors.black },
+                  ]}
+                  value={gcalRefreshToken}
+                  onChangeText={setGcalRefreshToken}
+                  placeholder={
+                    gcalSettings?.has_refresh_token
+                      ? '設定済み (入力で上書き)'
+                      : 'CLIでOAuth実行後に貼り付け'
+                  }
+                  placeholderTextColor={colors.gray}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <Text style={[styles.helpText, { color: colors.gray }]}>
+                  CLIで `takusu sync oauth-url` → `oauth-callback`
+                  を実行して取得したトークンを貼り付けてください
+                </Text>
+              </View>
+
               <Pressable
                 style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
                 onPress={() => {
                   haptic.medium();
-                  startOAuth();
+                  saveRefreshToken();
                 }}
-                disabled={oauthLoading || !gcalSettings?.has_client_secret}
+                disabled={!gcalRefreshToken.trim()}
               >
-                {oauthLoading ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.actionButtonText}>OAuth認証を開始</Text>
-                )}
+                <Text style={styles.actionButtonText}>Refresh Tokenを保存</Text>
               </Pressable>
 
               <Pressable
@@ -1629,6 +1599,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     fontSize: 16,
+  },
+  helpText: {
+    fontSize: 12,
+    marginTop: 2,
   },
   warning: {
     fontSize: 13,
