@@ -16,8 +16,6 @@ import type {
   TokenCreateResponse,
   GoogleCalSettings,
   UpdateGoogleCalSettings,
-  OAuthUrlResponse,
-  OAuthCallbackResponse,
   SyncTriggerResponse,
   GoogleCalEventMapping,
 } from './types';
@@ -189,21 +187,6 @@ export class TakusuClient {
     body: UpdateGoogleCalSettings,
   ): Promise<GoogleCalSettings> {
     return this.request('PUT', '/api/sync/settings', body);
-  }
-
-  async getOAuthUrl(redirectUri: string): Promise<OAuthUrlResponse> {
-    return this.request('POST', '/api/sync/oauth/url', {
-      redirect_uri: redirectUri,
-    });
-  }
-
-  async oauthCallback(
-    code: string,
-    redirectUri?: string,
-  ): Promise<OAuthCallbackResponse> {
-    const body: Record<string, string> = { code };
-    if (redirectUri) body.redirect_uri = redirectUri;
-    return this.request('POST', '/api/sync/oauth/callback', body);
   }
 
   async triggerSync(): Promise<SyncTriggerResponse> {
