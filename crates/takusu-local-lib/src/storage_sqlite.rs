@@ -17,7 +17,6 @@ const MIGRATION_004: &str = include_str!("../migrations/004_indexes.sql");
 const MIGRATION_005: &str = include_str!("../migrations/005_task_display_id.sql");
 const MIGRATION_006: &str = include_str!("../migrations/006_user_edited.sql");
 const MIGRATION_007: &str = include_str!("../migrations/007_task_display_id_seq.sql");
-const MIGRATION_008: &str = include_str!("../migrations/008_fixed.sql");
 
 pub struct SqliteStorage {
     pool: SqlitePool,
@@ -71,13 +70,29 @@ impl SqliteStorage {
         sqlx::raw_sql(MIGRATION_007).execute(&pool).await?;
 
         // Migration 008 adds fixed column to habits and tasks (not idempotent).
-        let has_fixed: bool = sqlx::query_scalar(
+        // SQLite has no IF NOT EXISTS for ADD COLUMN, so check each table
+        // separately and run only the missing ALTER. This recovers from a
+        // partial migration 008 failure where one table was altered but the
+        // other was not (e.g. a crash mid-migration).
+        let has_tasks_fixed: bool = sqlx::query_scalar(
             "SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name = 'fixed'",
         )
         .fetch_one(&pool)
         .await?;
-        if !has_fixed {
-            sqlx::raw_sql(MIGRATION_008).execute(&pool).await?;
+        if !has_tasks_fixed {
+            sqlx::query("ALTER TABLE tasks ADD COLUMN fixed BOOLEAN NOT NULL DEFAULT 0")
+                .execute(&pool)
+                .await?;
+        }
+        let has_habits_fixed: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('habits') WHERE name = 'fixed'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        if !has_habits_fixed {
+            sqlx::query("ALTER TABLE habits ADD COLUMN fixed BOOLEAN NOT NULL DEFAULT 0")
+                .execute(&pool)
+                .await?;
         }
 
         Ok(Self { pool, root_token })
@@ -480,13 +495,17 @@ impl Storage for SqliteStorage {
         let schedule_json = serde_json::to_string(&req.entries)
             .map_err(|e| StorageError::Internal(format!("serialize schedule: {e}")))?;
         let now = jiff::Timestamp::now().to_string();
+        // Wrap the schedule upsert and the task status updates in a single
+        // transaction so a failure mid-way cannot leave the schedule saved
+        // but some tasks still marked pending (#289).
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
         sqlx::query(
             "INSERT INTO schedules (id, created_at, updated_at, schedule) VALUES ('active', ?, ?, ?) ON CONFLICT(id) DO UPDATE SET schedule=excluded.schedule, updated_at=excluded.updated_at"
         )
         .bind(&now)
         .bind(&now)
         .bind(&schedule_json)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_err)?;
         for id in &req.mark_scheduled_task_ids {
@@ -494,10 +513,11 @@ impl Storage for SqliteStorage {
                 "UPDATE tasks SET status = 'scheduled', updated_at = datetime('now') WHERE id = ?",
             )
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(map_err)?;
         }
+        tx.commit().await.map_err(map_err)?;
         sqlx::query_as::<_, ScheduleRow>("SELECT * FROM schedules WHERE id = 'active'")
             .fetch_one(&self.pool)
             .await
@@ -585,14 +605,11 @@ impl Storage for SqliteStorage {
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
-        Ok(SettingsRow {
-            id: existing.id,
-            tz,
-            sleep_start,
-            sleep_end,
-            created_at: existing.created_at,
-            updated_at: String::new(),
-        })
+        // Re-query to return the actual updated_at the DB set (#290).
+        sqlx::query_as::<_, SettingsRow>("SELECT * FROM settings WHERE id = 'active'")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_err)
     }
 
     async fn get_gcal_settings(&self) -> StorageResult<GoogleCalSettingsRow> {
@@ -649,16 +666,13 @@ impl Storage for SqliteStorage {
         .await
         .map_err(map_err)?;
 
-        Ok(GoogleCalSettingsRow {
-            id: "active".to_string(),
-            enabled,
-            calendar_id,
-            client_id,
-            client_secret,
-            refresh_token,
-            created_at: existing.created_at,
-            updated_at: String::new(),
-        })
+        // Re-query to return the actual updated_at the DB set (#290).
+        sqlx::query_as::<_, GoogleCalSettingsRow>(
+            "SELECT * FROM google_cal_settings WHERE id = 'active'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_err)
     }
 
     async fn list_gcal_mappings(&self) -> StorageResult<Vec<GoogleCalEventRow>> {
