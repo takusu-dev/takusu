@@ -349,14 +349,32 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
             let delta = eval_neighbor - eval_current;
 
             if delta > 0.0 || rng.random::<f64>() < (delta / temperature).exp() {
-                mark_tabu(&mut tabu, &neighbor);
+                mark_tabu(&mut tabu, &current, &neighbor);
                 current = neighbor;
                 eval_current = eval_neighbor;
 
                 if eval_current > eval_best {
-                    best = current.clone();
-                    eval_best = eval_current;
-                    improved = true;
+                    // Compare at T=0 to avoid temperature-dependent score
+                    // drift: evaluate's depend_score penalty scales with
+                    // temperature, so re-evaluating eval_best at a lower
+                    // temperature could make a worse plan score higher.
+                    // The T=0 comparison ensures best tracks the plan that
+                    // is actually best at the final temperature (#282).
+                    if evaluate(planner, &current, 0.0, t0) > evaluate(planner, &best, 0.0, t0) {
+                        best = current.clone();
+                        eval_best = eval_current;
+                        improved = true;
+                    } else {
+                        // current beat eval_best at the current temperature
+                        // but is not actually better than best at T=0. Raise
+                        // eval_best to eval_current so the outer gate does
+                        // not fire again on every subsequent accepted
+                        // neighbor in this temperature step (avoids
+                        // redundant T=0 evaluations). eval_best is
+                        // re-synced to best's score at the end of the
+                        // temperature step below.
+                        eval_best = eval_current;
+                    }
                 }
             }
         }
@@ -432,14 +450,22 @@ pub fn sa_lns_partial(
             let delta = eval_neighbor - eval_current;
 
             if delta > 0.0 || rng.random::<f64>() < (delta / temperature).exp() {
-                mark_tabu(&mut tabu, &neighbor);
+                mark_tabu(&mut tabu, &current, &neighbor);
                 current = neighbor;
                 eval_current = eval_neighbor;
 
                 if eval_current > eval_best {
-                    best = current.clone();
-                    eval_best = eval_current;
-                    improved = true;
+                    // Compare at T=0 to avoid temperature-dependent score
+                    // drift (#282).
+                    if evaluate(planner, &current, 0.0, t0) > evaluate(planner, &best, 0.0, t0) {
+                        best = current.clone();
+                        eval_best = eval_current;
+                        improved = true;
+                    } else {
+                        // See sa_lns: raise eval_best to avoid redundant
+                        // T=0 evaluations within this temperature step.
+                        eval_best = eval_current;
+                    }
                 }
             }
         }
@@ -817,9 +843,20 @@ fn is_tabu(tabu: &TabuList, plan: &Plan) -> bool {
         .any(|(s, e, id)| tabu.contains(*id, *s, e.0 - s.0))
 }
 
-fn mark_tabu(tabu: &mut TabuList, plan: &Plan) {
-    for (s, e, id) in &plan.schedules {
-        tabu.push(*id, *s, e.0 - s.0);
+fn mark_tabu(tabu: &mut TabuList, current: &Plan, neighbor: &Plan) {
+    // Only record tasks whose (start, duration) changed between current and
+    // neighbor, instead of all tasks in the plan (#281). This preserves the
+    // design intent: "同一タスクの同一配置への再訪を防ぐ" for the moved
+    // tasks only, so unrelated moves are not over-restricted.
+    for (s, e, id) in &neighbor.schedules {
+        let changed = current
+            .schedules
+            .iter()
+            .find(|(_, _, cid)| cid == id)
+            .is_none_or(|(cs, ce, _)| cs.0 != s.0 || ce.0 != e.0);
+        if changed {
+            tabu.push(*id, *s, e.0 - s.0);
+        }
     }
 }
 
