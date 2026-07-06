@@ -1333,11 +1333,16 @@ export function HomeView() {
             autoFocus
           />
         )}
+        {/* Flex spacer — keeps the refresh button right-aligned when search
+            is closed. The status label is absolutely positioned inside so
+            it stays centered regardless of left/right button widths (#304). */}
         <View style={styles.topBarCenter}>
           {statusLabel && (
-            <View style={styles.statusPill}>
-              <ActivityIndicator size="small" color={BRAND_COLOR} />
-              <Text style={styles.statusText}>{statusLabel}</Text>
+            <View style={styles.statusLabelAbsolute} pointerEvents="none">
+              <View style={styles.statusPill}>
+                <ActivityIndicator size="small" color={BRAND_COLOR} />
+                <Text style={styles.statusText}>{statusLabel}</Text>
+              </View>
             </View>
           )}
         </View>
@@ -1588,6 +1593,15 @@ const styles = StyleSheet.create({
   },
   topBarCenter: {
     flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusLabelAbsolute: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },
