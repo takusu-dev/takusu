@@ -61,10 +61,33 @@ class TakusuWidgetProvider : AppWidgetProvider() {
 
             if (snapshotJson != null) {
                 val snap = JSONObject(snapshotJson)
-                renderSnapshot(context, views, snap, updatedAt)
+                renderSnapshot(views, snap, updatedAt)
             } else {
                 renderPlaceholder(views)
             }
+
+            // Set up the RemoteAdapter for the ListView — always set, even
+            // when showing the placeholder, so the list has a data source on
+            // first install before any data is fetched. The factory handles
+            // the empty-snapshot case correctly.
+            val remoteAdapter =
+                android.content.Intent(context, TakusuWidgetService::class.java)
+            views.setRemoteAdapter(R.id.widget_upcoming_list, remoteAdapter)
+
+            // Template PendingIntent for per-item clicks. The factory fills
+            // in the full data URI (takusu://task/<id>) via
+            // setOnClickFillInIntent. The template must NOT set its own data
+            // field, otherwise Intent.fillIn() will not override it.
+            val templateIntent = Intent(Intent.ACTION_VIEW)
+            templateIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            val templatePi =
+                PendingIntent.getActivity(
+                    context,
+                    0,
+                    templateIntent,
+                    PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                )
+            views.setPendingIntentTemplate(R.id.widget_upcoming_list, templatePi)
 
             // Tap on widget → open the app
             val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
@@ -80,10 +103,15 @@ class TakusuWidgetProvider : AppWidgetProvider() {
             }
 
             manager.updateAppWidget(widgetId, views)
+
+            // Notify the remote adapter to reload its data from SharedPreferences.
+            manager.notifyAppWidgetViewDataChanged(
+                intArrayOf(widgetId),
+                R.id.widget_upcoming_list,
+            )
         }
 
         private fun renderSnapshot(
-            context: Context,
             views: RemoteViews,
             snap: JSONObject,
             updatedAt: Long,
@@ -102,22 +130,6 @@ class TakusuWidgetProvider : AppWidgetProvider() {
             val upcoming = snap.optJSONArray("upcoming") ?: JSONArray()
             views.setTextViewText(R.id.widget_upcoming_label, "次のタスク (${upcoming.length()})")
 
-            // Show up to 3 upcoming tasks in the pre-defined slots
-            val slotIds = intArrayOf(R.id.widget_upcoming_1, R.id.widget_upcoming_2, R.id.widget_upcoming_3)
-            for (i in slotIds.indices) {
-                if (i < upcoming.length()) {
-                    val t = upcoming.getJSONObject(i)
-                    val title = t.getString("title")
-                    val startAt = if (t.isNull("start_at")) null else t.optString("start_at", null)
-                    val time = if (startAt != null) formatTime(startAt) else ""
-                    val text = if (time.isNotEmpty()) "$time  $title" else title
-                    views.setTextViewText(slotIds[i], text)
-                    views.setViewVisibility(slotIds[i], android.view.View.VISIBLE)
-                } else {
-                    views.setViewVisibility(slotIds[i], android.view.View.GONE)
-                }
-            }
-
             // Unscheduled count
             val unscheduled = snap.optInt("unscheduled_count", 0)
             views.setTextViewText(R.id.widget_unscheduled, "未スケジュール: $unscheduled")
@@ -131,38 +143,10 @@ class TakusuWidgetProvider : AppWidgetProvider() {
 
         private fun renderPlaceholder(views: RemoteViews) {
             views.setViewVisibility(R.id.widget_doing_section, android.view.View.GONE)
-            views.setTextViewText(R.id.widget_upcoming_label, "次のタスク")
-            views.setTextViewText(R.id.widget_upcoming_1, "アプリを起動して設定してください")
-            views.setViewVisibility(R.id.widget_upcoming_1, android.view.View.VISIBLE)
-            views.setViewVisibility(R.id.widget_upcoming_2, android.view.View.GONE)
-            views.setViewVisibility(R.id.widget_upcoming_3, android.view.View.GONE)
+            // Empty list will show nothing; use the label as a hint.
+            views.setTextViewText(R.id.widget_upcoming_label, "アプリを起動して設定してください")
             views.setTextViewText(R.id.widget_unscheduled, "")
             views.setTextViewText(R.id.widget_updated, "")
         }
-
-        private fun formatTime(iso: String): String =
-            try {
-                val s = iso.replace(Regex("\\.\\d+"), "").replace("Z", "+00:00")
-                val odt = java.time.OffsetDateTime.parse(s)
-                val local = odt.atZoneSameInstant(java.time.ZoneId.systemDefault())
-                val fmt =
-                    java.time.format.DateTimeFormatter
-                        .ofPattern("HH:mm")
-                local.format(fmt)
-            } catch (e: Exception) {
-                try {
-                    val ldt = java.time.LocalDateTime.parse(iso.replace("Z", ""))
-                    val local =
-                        ldt
-                            .atZone(java.time.ZoneOffset.UTC)
-                            .withZoneSameInstant(java.time.ZoneId.systemDefault())
-                    val fmt =
-                        java.time.format.DateTimeFormatter
-                            .ofPattern("HH:mm")
-                    local.format(fmt)
-                } catch (e2: Exception) {
-                    ""
-                }
-            }
     }
 }

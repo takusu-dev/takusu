@@ -19,6 +19,7 @@ data class WidgetSnapshot(
 )
 
 data class UpcomingTask(
+    val id: String,
     val title: String,
     val startAt: String?,
     val endAt: String,
@@ -64,7 +65,7 @@ object WidgetFetcher {
                         } else {
                             val endTime = parseIso(endAt) ?: 0L
                             if (endTime >= now) {
-                                upcoming.add(UpcomingTask(t.getString("title"), startAt, endAt))
+                                upcoming.add(UpcomingTask(t.getString("id"), t.getString("title"), startAt, endAt))
                             }
                         }
                     }
@@ -75,7 +76,7 @@ object WidgetFetcher {
 
             WidgetSnapshot(
                 doingTitle = doing,
-                upcoming = upcoming.take(5),
+                upcoming = upcoming,
                 unscheduledCount = unscheduled,
             )
         } catch (e: Exception) {
