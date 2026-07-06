@@ -22,6 +22,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RruleBuilderModal } from '@/src/components/RruleBuilderModal';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { haptic } from '@/src/components/haptics';
+import { parseDuration } from '@/src/utils/duration';
 import {
   defaultRule,
   parseRule,
@@ -66,10 +67,10 @@ export function HabitAddView() {
     if (!client || !title || saving) return;
     haptic.medium();
     setSaving(true);
-    const avg = parseInt(avgMinutes, 10) || 60;
-    const sigmaRaw = parseInt(sigmaMinutes, 10);
+    const avg = parseDuration(avgMinutes) || 60;
+    const sigmaRaw = parseDuration(sigmaMinutes);
     // sigma=0/未入力の時は未送信にしてサーバーの auto (avg/5) に任せる
-    const sigma = sigmaRaw > 0 ? sigmaRaw : undefined;
+    const sigma = sigmaRaw !== null && sigmaRaw > 0 ? sigmaRaw : undefined;
     try {
       const habit = await client.createHabit({
         title,
@@ -251,7 +252,9 @@ export function HabitAddView() {
 
         <View style={styles.row}>
           <View style={[styles.field, { flex: 1 }]}>
-            <Text style={[styles.label, { color: colors.gray }]}>avg (分)</Text>
+            <Text style={[styles.label, { color: colors.gray }]}>
+              avg (1h30m / 90m / 90)
+            </Text>
             <View style={styles.rowWithButton}>
               <TextInput
                 style={[
@@ -261,7 +264,8 @@ export function HabitAddView() {
                 ]}
                 value={avgMinutes}
                 onChangeText={setAvgMinutes}
-                keyboardType="numeric"
+                autoCapitalize="none"
+                autoCorrect={false}
               />
               <Pressable
                 style={[styles.maximizeButton, { borderColor: BRAND_COLOR }]}
@@ -300,7 +304,7 @@ export function HabitAddView() {
           </View>
           <View style={[styles.field, { flex: 1 }]}>
             <Text style={[styles.label, { color: colors.gray }]}>
-              sigma (分)
+              sigma (1h30m / 90m / 90)
             </Text>
             <TextInput
               style={[
@@ -309,12 +313,13 @@ export function HabitAddView() {
               ]}
               value={sigmaMinutes}
               onChangeText={setSigmaMinutes}
-              keyboardType="numeric"
+              autoCapitalize="none"
+              autoCorrect={false}
               placeholderTextColor={colors.grayLight}
             />
             {(!sigmaMinutes || sigmaMinutes === '0') && (
               <Text style={[styles.hint, { color: colors.grayLight }]}>
-                {Math.max(1, Math.round((parseInt(avgMinutes, 10) || 60) / 5))}
+                {Math.max(1, Math.round((parseDuration(avgMinutes) || 60) / 5))}
                 m (avg/5)
               </Text>
             )}

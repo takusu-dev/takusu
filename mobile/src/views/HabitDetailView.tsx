@@ -30,6 +30,7 @@ import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { parseRule, summarizeRule } from '@/src/api/rrule';
 import { haptic } from '@/src/components/haptics';
 import { CancelConfirmButton } from '@/src/components/CancelConfirmButton';
+import { parseDuration } from '@/src/utils/duration';
 
 export function HabitDetailView() {
   const { client } = useServer();
@@ -132,15 +133,15 @@ export function HabitDetailView() {
     if (startTime !== habit.start_time) updates.start_time = startTime;
     if (endTime !== habit.end_time) updates.end_time = endTime;
     if (avgMinutes !== String(habit.avg_minutes)) {
-      const v = parseInt(avgMinutes, 10);
-      if (!isNaN(v) && v > 0) updates.avg_minutes = v;
+      const v = parseDuration(avgMinutes);
+      if (v !== null && v > 0) updates.avg_minutes = v;
     }
     if (
       sigmaMinutes !==
       (habit.sigma_minutes > 0 ? String(habit.sigma_minutes) : '')
     ) {
-      const v = parseInt(sigmaMinutes, 10);
-      if (!isNaN(v) && v >= 0) updates.sigma_minutes = v;
+      const v = parseDuration(sigmaMinutes);
+      if (v !== null && v >= 0) updates.sigma_minutes = v;
     }
     if (abandonability !== habit.abandonability)
       updates.abandonability = abandonability;
@@ -615,10 +616,11 @@ export function HabitDetailView() {
             <View style={styles.row}>
               <PaperTextInput
                 mode="outlined"
-                label="avg (分)"
+                label="avg (1h30m / 90m / 90)"
                 value={avgMinutes}
                 onChangeText={setAvgMinutes}
-                keyboardType="numeric"
+                autoCapitalize="none"
+                autoCorrect={false}
                 outlineColor={colors.separator}
                 activeOutlineColor={BRAND_COLOR}
                 style={[styles.costInput, { flex: 1 }]}
@@ -627,10 +629,11 @@ export function HabitDetailView() {
               <View style={[styles.costInput, { flex: 1 }]}>
                 <PaperTextInput
                   mode="outlined"
-                  label="sigma (分)"
+                  label="sigma (1h30m / 90m / 90)"
                   value={sigmaMinutes}
                   onChangeText={setSigmaMinutes}
-                  keyboardType="numeric"
+                  autoCapitalize="none"
+                  autoCorrect={false}
                   outlineColor={colors.separator}
                   activeOutlineColor={BRAND_COLOR}
                   dense

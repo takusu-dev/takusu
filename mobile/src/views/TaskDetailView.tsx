@@ -36,6 +36,7 @@ import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { haptic } from '@/src/components/haptics';
 import { CancelConfirmButton } from '@/src/components/CancelConfirmButton';
 import { formatDate } from '@/src/formatDate';
+import { parseDuration } from '@/src/utils/duration';
 import {
   DependencyGraph,
   type GraphNode,
@@ -205,15 +206,15 @@ export function TaskDetailView() {
     if (abandonability !== task.abandonability)
       updates.abandonability = abandonability;
     if (avgMinutes !== String(task.avg_minutes)) {
-      const v = parseInt(avgMinutes, 10);
-      if (!isNaN(v) && v > 0) updates.avg_minutes = v;
+      const v = parseDuration(avgMinutes);
+      if (v !== null && v > 0) updates.avg_minutes = v;
     }
     if (
       sigmaMinutes !==
       (task.sigma_minutes > 0 ? String(task.sigma_minutes) : '')
     ) {
-      const v = parseInt(sigmaMinutes, 10);
-      if (!isNaN(v) && v >= 0) updates.sigma_minutes = v;
+      const v = parseDuration(sigmaMinutes);
+      if (v !== null && v >= 0) updates.sigma_minutes = v;
     }
     const prevStart = task.start_at ? new Date(task.start_at) : null;
     if (startAt?.getTime() !== prevStart?.getTime()) {
@@ -754,10 +755,11 @@ export function TaskDetailView() {
               <View style={styles.avgInputContainer}>
                 <PaperTextInput
                   mode="outlined"
-                  label="avg (分)"
+                  label="avg (1h30m / 90m / 90)"
                   value={avgMinutes}
                   onChangeText={setAvgMinutes}
-                  keyboardType="numeric"
+                  autoCapitalize="none"
+                  autoCorrect={false}
                   outlineColor={colors.separator}
                   activeOutlineColor={BRAND_COLOR}
                   style={styles.costInput}
@@ -782,10 +784,11 @@ export function TaskDetailView() {
               <View style={styles.costInput}>
                 <PaperTextInput
                   mode="outlined"
-                  label="sigma (分)"
+                  label="sigma (1h30m / 90m / 90)"
                   value={sigmaMinutes}
                   onChangeText={setSigmaMinutes}
-                  keyboardType="numeric"
+                  autoCapitalize="none"
+                  autoCorrect={false}
                   outlineColor={colors.separator}
                   activeOutlineColor={BRAND_COLOR}
                   dense

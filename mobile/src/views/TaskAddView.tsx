@@ -24,6 +24,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { haptic } from '@/src/components/haptics';
 import { formatDate } from '@/src/formatDate';
+import { parseDuration } from '@/src/utils/duration';
 
 interface TaskAddViewProps {
   /** Called when the view requests closing (back button / successful save).
@@ -85,10 +86,10 @@ export function TaskAddView({
     if (!client || !title || !endAt || saving) return;
     haptic.medium();
     setSaving(true);
-    const avg = parseInt(avgMinutes, 10) || 60;
-    const sigmaRaw = parseInt(sigmaMinutes, 10);
+    const avg = parseDuration(avgMinutes) || 60;
+    const sigmaRaw = parseDuration(sigmaMinutes);
     // sigma=0/未入力の時は未送信にしてサーバーの auto (avg/5) に任せる
-    const sigma = sigmaRaw > 0 ? sigmaRaw : undefined;
+    const sigma = sigmaRaw !== null && sigmaRaw > 0 ? sigmaRaw : undefined;
     try {
       const task = await client.createTask({
         title,
@@ -251,7 +252,9 @@ export function TaskAddView({
 
         <View style={styles.row}>
           <View style={[styles.field, { flex: 1 }]}>
-            <Text style={[styles.label, { color: colors.gray }]}>avg (分)</Text>
+            <Text style={[styles.label, { color: colors.gray }]}>
+              avg (1h30m / 90m / 90)
+            </Text>
             <View style={styles.rowWithButton}>
               <TextInput
                 style={[
@@ -261,7 +264,8 @@ export function TaskAddView({
                 ]}
                 value={avgMinutes}
                 onChangeText={setAvgMinutes}
-                keyboardType="numeric"
+                autoCapitalize="none"
+                autoCorrect={false}
               />
               <Pressable
                 style={[
@@ -298,7 +302,7 @@ export function TaskAddView({
           </View>
           <View style={[styles.field, { flex: 1 }]}>
             <Text style={[styles.label, { color: colors.gray }]}>
-              sigma (分)
+              sigma (1h30m / 90m / 90)
             </Text>
             <TextInput
               style={[
@@ -307,12 +311,13 @@ export function TaskAddView({
               ]}
               value={sigmaMinutes}
               onChangeText={setSigmaMinutes}
-              keyboardType="numeric"
+              autoCapitalize="none"
+              autoCorrect={false}
               placeholderTextColor={colors.grayLight}
             />
             {(!sigmaMinutes || sigmaMinutes === '0') && (
               <Text style={[styles.hint, { color: colors.grayLight }]}>
-                {Math.max(1, Math.round((parseInt(avgMinutes, 10) || 60) / 5))}
+                {Math.max(1, Math.round((parseDuration(avgMinutes) || 60) / 5))}
                 m (avg/5)
               </Text>
             )}
