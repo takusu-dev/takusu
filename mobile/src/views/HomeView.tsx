@@ -203,6 +203,46 @@ export function HomeView() {
   // day separator relative to the current scroll position.
   const visibleTopIndexRef = useRef(0);
 
+  // Navigation buttons visibility — shown when scrolling, hidden when idle
+  // (#308). Uses a shared value for smooth opacity animation.
+  const navOpacity = useSharedValue(0);
+  const [navButtonsVisible, setNavButtonsVisible] = useState(false);
+  const navHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navDisableTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showNavButtons = useCallback(() => {
+    if (navHideTimer.current) {
+      clearTimeout(navHideTimer.current);
+      navHideTimer.current = null;
+    }
+    if (navDisableTimer.current) {
+      clearTimeout(navDisableTimer.current);
+      navDisableTimer.current = null;
+    }
+    navOpacity.value = withTiming(1, { duration: 200 });
+    setNavButtonsVisible(true);
+  }, [navOpacity]);
+
+  const scheduleHideNavButtons = useCallback(() => {
+    if (navHideTimer.current) clearTimeout(navHideTimer.current);
+    if (navDisableTimer.current) {
+      clearTimeout(navDisableTimer.current);
+      navDisableTimer.current = null;
+    }
+    navHideTimer.current = setTimeout(() => {
+      navOpacity.value = withTiming(0, { duration: 300 });
+      // Disable taps after the fade-out animation completes
+      navDisableTimer.current = setTimeout(
+        () => setNavButtonsVisible(false),
+        350,
+      );
+    }, 1500);
+  }, [navOpacity]);
+
+  const navButtonsStyle = useAnimatedStyle(() => ({
+    opacity: navOpacity.value,
+  }));
+
   // Stable callback for FlatList's onViewableItemsChanged. React Native
   // warns ("Changing onViewableItemsChanged on the fly is not supported")
   // when the callback identity changes after mount, so it must be wrapped
@@ -1414,6 +1454,10 @@ export function HomeView() {
         onScroll={(e) => {
           scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
         }}
+        onScrollBeginDrag={showNavButtons}
+        onScrollEndDrag={scheduleHideNavButtons}
+        onMomentumScrollBegin={showNavButtons}
+        onMomentumScrollEnd={scheduleHideNavButtons}
         scrollEventThrottle={16}
         onLayout={(e) => {
           listLayoutHeightRef.current = e.nativeEvent.layout.height;
@@ -1486,15 +1530,43 @@ export function HomeView() {
         </Pressable>
       </View>
 
-      {/* Floating navigation */}
-      <NavigationButtons
-        onScrollUpByDay={() => scrollByDay(-1)}
-        onScrollUpByPage={() => scrollByPage(-1)}
-        onScrollDownByDay={() => scrollByDay(1)}
-        onScrollDownByPage={() => scrollByPage(1)}
-        onJumpToDate={jumpToDate}
-        markedDates={markedDates}
-      />
+      {/* Floating navigation — visible only while scrolling (#308) */}
+      <Reanimated.View
+        style={[
+          { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 },
+          navButtonsStyle,
+        ]}
+        pointerEvents={navButtonsVisible ? 'box-none' : 'none'}
+      >
+        <NavigationButtons
+          onScrollUpByDay={() => {
+            showNavButtons();
+            scrollByDay(-1);
+            scheduleHideNavButtons();
+          }}
+          onScrollUpByPage={() => {
+            showNavButtons();
+            scrollByPage(-1);
+            scheduleHideNavButtons();
+          }}
+          onScrollDownByDay={() => {
+            showNavButtons();
+            scrollByDay(1);
+            scheduleHideNavButtons();
+          }}
+          onScrollDownByPage={() => {
+            showNavButtons();
+            scrollByPage(1);
+            scheduleHideNavButtons();
+          }}
+          onJumpToDate={(date) => {
+            showNavButtons();
+            jumpToDate(date);
+            scheduleHideNavButtons();
+          }}
+          markedDates={markedDates}
+        />
+      </Reanimated.View>
 
       {/* View changer */}
       <ViewChanger current={view} onChange={setView} />
