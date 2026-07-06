@@ -22,6 +22,40 @@ fn parse_hhmm(s: &str) -> (u8, u8) {
     (h, m)
 }
 
+/// Reject negative `avg_minutes` / `sigma_minutes`, which would wrap to a
+/// huge `u64` slot count in the planner and break the schedule (#269).
+fn validate_minutes(avg: i64, sigma: Option<i64>) -> Result<(), AppError> {
+    if avg < 0 {
+        return Err(AppError::BadRequest(format!(
+            "avg_minutes must be >= 0 (got {avg})"
+        )));
+    }
+    if let Some(s) = sigma
+        && s < 0
+    {
+        return Err(AppError::BadRequest(format!(
+            "sigma_minutes must be >= 0 (got {s})"
+        )));
+    }
+    Ok(())
+}
+
+/// Verify the recurrence string parses as a `RecurrenceRule` so that bad JSON
+/// is rejected at the API boundary instead of crashing later (#285).
+fn validate_recurrence(recurrence: &str) -> Result<(), AppError> {
+    serde_json::from_str::<takusu_habit::RecurrenceRule>(recurrence)
+        .map_err(|e| AppError::BadRequest(format!("invalid recurrence: {e}")))?;
+    Ok(())
+}
+
+/// Verify the timezone string resolves to a real `jiff::tz::TimeZone` so that
+/// typos don't silently fall back to UTC (#277).
+fn validate_timezone(tz: &str) -> Result<(), AppError> {
+    jiff::tz::TimeZone::get(tz)
+        .map(|_| ())
+        .map_err(|_| AppError::BadRequest(format!("invalid timezone: {tz}")))
+}
+
 fn parse_sleep(s: &str, settings: &SettingsRow) -> SleepConfig {
     match s {
         "recommended" => {
@@ -277,6 +311,9 @@ impl TakusuApp {
     }
 
     pub async fn update_settings(&self, body: &UpdateSettings) -> Result<SettingsRow, AppError> {
+        if let Some(tz) = &body.tz {
+            validate_timezone(tz)?;
+        }
         self.storage
             .update_settings(body)
             .await
@@ -286,6 +323,7 @@ impl TakusuApp {
     // ── Tasks ─────────────────────────────────────────────
 
     pub async fn create_task(&self, body: &CreateTask) -> Result<TaskRow, AppError> {
+        validate_minutes(body.avg_minutes, body.sigma_minutes)?;
         if let Some(dep_ids) = &body.depends
             && !dep_ids.is_empty()
         {
@@ -327,6 +365,13 @@ impl TakusuApp {
     }
 
     pub async fn update_task(&self, id: &str, body: &UpdateTask) -> Result<TaskRow, AppError> {
+        // Validate minutes if provided. avg_minutes is required to be present
+        // only when it is actually set in the update body.
+        if let Some(avg) = body.avg_minutes {
+            validate_minutes(avg, body.sigma_minutes)?;
+        } else if let Some(sigma) = body.sigma_minutes {
+            validate_minutes(0, Some(sigma))?;
+        }
         let mut body = body.clone();
         if let Some(dep_ids) = &body.depends {
             let tasks = self
@@ -388,6 +433,7 @@ impl TakusuApp {
     }
 
     pub async fn replace_task(&self, id: &str, body: &CreateTask) -> Result<TaskRow, AppError> {
+        validate_minutes(body.avg_minutes, body.sigma_minutes)?;
         if let Some(dep_ids) = &body.depends
             && !dep_ids.is_empty()
         {
@@ -484,6 +530,8 @@ impl TakusuApp {
     // ── Habits ────────────────────────────────────────────
 
     pub async fn create_habit(&self, body: &CreateHabit) -> Result<HabitRow, AppError> {
+        validate_minutes(body.avg_minutes, body.sigma_minutes)?;
+        validate_recurrence(&body.recurrence)?;
         self.storage
             .create_habit(body)
             .await
@@ -499,6 +547,14 @@ impl TakusuApp {
     }
 
     pub async fn update_habit(&self, id: &str, body: &UpdateHabit) -> Result<HabitRow, AppError> {
+        if let Some(avg) = body.avg_minutes {
+            validate_minutes(avg, body.sigma_minutes)?;
+        } else if let Some(sigma) = body.sigma_minutes {
+            validate_minutes(0, Some(sigma))?;
+        }
+        if let Some(recurrence) = &body.recurrence {
+            validate_recurrence(recurrence)?;
+        }
         self.storage
             .update_habit(id, body)
             .await
@@ -506,6 +562,8 @@ impl TakusuApp {
     }
 
     pub async fn replace_habit(&self, id: &str, body: &CreateHabit) -> Result<HabitRow, AppError> {
+        validate_minutes(body.avg_minutes, body.sigma_minutes)?;
+        validate_recurrence(&body.recurrence)?;
         self.storage
             .replace_habit(id, body)
             .await

@@ -6,6 +6,7 @@ use crate::handlers::auth::db;
 use crate::handlers::d1::safe_all;
 use crate::handlers::tokens::{json_created, json_ok, parse_json};
 use crate::models::{CreateTask, TaskRow, UpdateTask};
+use crate::validate::validate_minutes;
 
 const TASK_COLS: &str = "id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, created_at, updated_at";
 
@@ -56,6 +57,7 @@ pub async fn list(req: Request, env: Env) -> Result<Response, WorkerError> {
 
 pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError> {
     let body: CreateTask = parse_json(&mut req).await?;
+    validate_minutes(body.avg_minutes, body.sigma_minutes)?;
     let database = db(&env)?;
     let id = uuid::Uuid::now_v7().to_string();
     let resolved_depends = resolve_depends(&database, body.depends.as_deref()).await?;
@@ -125,6 +127,11 @@ pub async fn get(_req: Request, env: Env, id: &str) -> Result<Response, WorkerEr
 
 pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, WorkerError> {
     let body: UpdateTask = parse_json(&mut req).await?;
+    if let Some(avg) = body.avg_minutes {
+        validate_minutes(avg, body.sigma_minutes)?;
+    } else if let Some(sigma) = body.sigma_minutes {
+        validate_minutes(0, Some(sigma))?;
+    }
     let database = db(&env)?;
     let full = resolve_task_id(&database, id).await?;
 
@@ -211,6 +218,7 @@ pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, Wo
 
 pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, WorkerError> {
     let body: CreateTask = parse_json(&mut req).await?;
+    validate_minutes(body.avg_minutes, body.sigma_minutes)?;
     let database = db(&env)?;
     let full = resolve_task_id(&database, id).await?;
     let resolved_depends = resolve_depends(&database, body.depends.as_deref()).await?;
