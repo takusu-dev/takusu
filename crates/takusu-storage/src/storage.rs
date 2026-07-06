@@ -29,6 +29,20 @@ pub trait Storage: Send + Sync + 'static {
     async fn replace_habit(&self, id: &str, body: &CreateHabit) -> StorageResult<HabitRow>;
     async fn delete_habit(&self, id: &str) -> StorageResult<()>;
 
+    // ── Habit pauses (#303) ───────────────────────────────
+    /// List pause periods for a single habit.
+    async fn list_habit_pauses(&self, habit_id: &str) -> StorageResult<Vec<HabitPauseRow>>;
+    /// List pause periods for all habits (used by sync_habit_tasks).
+    async fn list_all_habit_pauses(&self) -> StorageResult<Vec<HabitPauseRow>>;
+    /// Create a pause period for a habit.
+    async fn create_habit_pause(
+        &self,
+        habit_id: &str,
+        body: &CreateHabitPause,
+    ) -> StorageResult<HabitPauseRow>;
+    /// Delete a pause period by its id.
+    async fn delete_habit_pause(&self, habit_id: &str, pause_id: &str) -> StorageResult<()>;
+
     async fn get_schedule(&self) -> StorageResult<Option<ScheduleRow>>;
     async fn save_schedule(&self, req: &SaveScheduleRequest) -> StorageResult<ScheduleRow>;
     async fn clear_schedule(&self) -> StorageResult<()>;

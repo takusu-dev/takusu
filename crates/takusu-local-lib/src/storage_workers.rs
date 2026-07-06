@@ -7,10 +7,10 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use takusu_storage::{
-    CreateHabit, CreateTask, GoogleCalEventRow, GoogleCalSettingsRow, HabitRow,
-    SaveScheduleRequest, ScheduleRow, SettingsRow, Storage, StorageError, TaskQuery, TaskRow,
-    TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateSettings,
-    UpdateTask, storage::StorageResult,
+    CreateHabit, CreateHabitPause, CreateTask, GoogleCalEventRow, GoogleCalSettingsRow,
+    HabitPauseRow, HabitRow, SaveScheduleRequest, ScheduleRow, SettingsRow, Storage, StorageError,
+    TaskQuery, TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit,
+    UpdateSettings, UpdateTask, storage::StorageResult,
 };
 
 use crate::config::LocalConfig;
@@ -312,6 +312,44 @@ impl Storage for WorkersStorage {
         self.request_no_body(
             reqwest::Method::DELETE,
             &format!("/api/habits/{}", url_encode(id)),
+        )
+        .await
+    }
+
+    async fn list_habit_pauses(&self, habit_id: &str) -> StorageResult<Vec<HabitPauseRow>> {
+        self.request(
+            reqwest::Method::GET,
+            &format!("/api/habits/{}/pauses", url_encode(habit_id)),
+        )
+        .await
+    }
+
+    async fn list_all_habit_pauses(&self) -> StorageResult<Vec<HabitPauseRow>> {
+        self.request(reqwest::Method::GET, "/api/habits/pauses")
+            .await
+    }
+
+    async fn create_habit_pause(
+        &self,
+        habit_id: &str,
+        body: &CreateHabitPause,
+    ) -> StorageResult<HabitPauseRow> {
+        self.request_body(
+            reqwest::Method::POST,
+            &format!("/api/habits/{}/pauses", url_encode(habit_id)),
+            body,
+        )
+        .await
+    }
+
+    async fn delete_habit_pause(&self, habit_id: &str, pause_id: &str) -> StorageResult<()> {
+        self.request_no_body(
+            reqwest::Method::DELETE,
+            &format!(
+                "/api/habits/{}/pauses/{}",
+                url_encode(habit_id),
+                url_encode(pause_id)
+            ),
         )
         .await
     }

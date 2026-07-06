@@ -131,6 +131,55 @@ pub(crate) fn validate_recurrence(recurrence: &str) -> Result<(), WorkerError> {
     Ok(())
 }
 
+/// Validate that `start` and `end` are real `YYYY-MM-DD` calendar dates and
+/// that `start <= end`. Mirrors the sqlite-side `validate_pause_dates`.
+pub(crate) fn validate_pause_dates(start: &str, end: &str) -> Result<(), WorkerError> {
+    let s = parse_calendar_date(start)
+        .ok_or_else(|| WorkerError::BadRequest(format!("invalid start_date: {start}")))?;
+    let e = parse_calendar_date(end)
+        .ok_or_else(|| WorkerError::BadRequest(format!("invalid end_date: {end}")))?;
+    if s > e {
+        return Err(WorkerError::BadRequest(format!(
+            "start_date ({start}) must be <= end_date ({end})"
+        )));
+    }
+    Ok(())
+}
+
+/// Parse a `YYYY-MM-DD` string into a `(year, month, day)` tuple if it is a
+/// real calendar date, else `None`.
+///
+/// Enforces zero-padded fields (4-digit year, 2-digit month/day) so that
+/// lexicographic comparison against `jiff`'s zero-padded `Date::to_string()`
+/// works correctly during pause matching (#303).
+fn parse_calendar_date(s: &str) -> Option<(i64, u32, u32)> {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    if parts[0].len() != 4 || parts[1].len() != 2 || parts[2].len() != 2 {
+        return None;
+    }
+    let y: i64 = parts[0].parse().ok()?;
+    let m: u32 = parts[1].parse().ok()?;
+    let d: u32 = parts[2].parse().ok()?;
+    if !(1..=12).contains(&m) {
+        return None;
+    }
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let max_day = match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return None,
+    };
+    if !(1..=max_day).contains(&d) {
+        return None;
+    }
+    Some((y, m, d))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,5 +237,34 @@ mod tests {
     fn recurrence_accepts_leap_day() {
         let rule = r#"{"freq":"daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":["2024-02-29"]}"#;
         assert!(validate_recurrence(rule).is_ok());
+    }
+
+    #[test]
+    fn pause_dates_accepts_valid_range() {
+        assert!(validate_pause_dates("2026-08-01", "2026-08-07").is_ok());
+        assert!(validate_pause_dates("2026-08-07", "2026-08-07").is_ok());
+    }
+
+    #[test]
+    fn pause_dates_rejects_reversed() {
+        assert!(validate_pause_dates("2026-08-07", "2026-08-01").is_err());
+    }
+
+    #[test]
+    fn pause_dates_rejects_bad_format() {
+        assert!(validate_pause_dates("2026/08/01", "2026-08-07").is_err());
+        assert!(validate_pause_dates("2026-08-01", "notadate").is_err());
+        assert!(validate_pause_dates("2026-13-01", "2026-08-07").is_err());
+        assert!(validate_pause_dates("2026-02-30", "2026-08-07").is_err());
+    }
+
+    #[test]
+    fn pause_dates_rejects_non_zero_padded() {
+        // Non-zero-padded dates would pass numeric parsing but break the
+        // lexicographic comparison against jiff's zero-padded Date::to_string,
+        // so they must be rejected (#303).
+        assert!(validate_pause_dates("2026-8-1", "2026-08-07").is_err());
+        assert!(validate_pause_dates("2026-08-01", "2026-8-7").is_err());
+        assert!(validate_pause_dates("026-08-01", "2026-08-07").is_err());
     }
 }

@@ -16,7 +16,8 @@ use takusu_local_lib::{
     token_cache::TokenCache,
 };
 use takusu_storage::{
-    CreateHabit, CreateTask, ScheduleEntry, TaskQuery, UpdateHabit, UpdateSettings,
+    CreateHabit, CreateHabitPause, CreateTask, ScheduleEntry, TaskQuery, UpdateHabit,
+    UpdateSettings,
 };
 use takusu_util::{generate_root_token, parse_datetime_tz, parse_duration};
 
@@ -372,6 +373,32 @@ enum HabitCommands {
     /// Delete a habit
     #[command(visible_alias = "rm")]
     Delete { id: String },
+
+    /// Manage habit pause periods (#303)
+    Pause {
+        #[command(subcommand)]
+        command: PauseCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum PauseCommands {
+    /// Add a pause period to a habit
+    Add {
+        id: String,
+        #[arg(long, help = "Start date (YYYY-MM-DD, inclusive)")]
+        from: String,
+        #[arg(long, help = "End date (YYYY-MM-DD, inclusive)")]
+        to: String,
+        #[arg(long, help = "Optional reason (e.g. 休暇)")]
+        reason: Option<String>,
+    },
+    /// List pause periods for a habit
+    #[command(visible_alias = "ls")]
+    List { id: String },
+    /// Remove a pause period
+    #[command(visible_alias = "rm")]
+    Remove { id: String, pause_id: String },
 }
 
 #[derive(Subcommand)]
@@ -803,6 +830,20 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
                 DisplayMode::Rich => display_rich::display_habit_detail(&habit),
                 DisplayMode::Simple => display_simple::display_habit_detail(&habit),
             }
+            // Show pause periods (#303) if any.
+            let pauses = app.list_habit_pauses(&id).await.unwrap_or_default();
+            if !pauses.is_empty() {
+                println!("   pauses:");
+                for p in &pauses {
+                    println!(
+                        "     {} {}..{} ({})",
+                        p.id,
+                        p.start_date,
+                        p.end_date,
+                        p.reason.as_deref().unwrap_or("")
+                    );
+                }
+            }
         }
         HabitCommands::Create {
             title,
@@ -956,6 +997,57 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
         HabitCommands::Delete { id } => {
             app.delete_habit(&id).await?;
             println!("Habit {id} deleted.");
+        }
+        HabitCommands::Pause { command } => run_pause(mode, app, command).await?,
+    }
+    Ok(())
+}
+
+async fn run_pause(
+    _mode: DisplayMode,
+    app: &TakusuApp,
+    cmd: PauseCommands,
+) -> Result<(), AppError> {
+    match cmd {
+        PauseCommands::Add {
+            id,
+            from,
+            to,
+            reason,
+        } => {
+            let body = CreateHabitPause {
+                start_date: from,
+                end_date: to,
+                reason,
+            };
+            let pause = app.create_habit_pause(&id, &body).await?;
+            println!(
+                "Pause added: {} {}..{} ({})",
+                pause.id,
+                pause.start_date,
+                pause.end_date,
+                pause.reason.as_deref().unwrap_or("")
+            );
+        }
+        PauseCommands::List { id } => {
+            let pauses = app.list_habit_pauses(&id).await?;
+            if pauses.is_empty() {
+                println!("No pauses for habit {id}.");
+            } else {
+                for p in &pauses {
+                    println!(
+                        "{}\t{}\t{}\t{}",
+                        p.id,
+                        p.start_date,
+                        p.end_date,
+                        p.reason.as_deref().unwrap_or("")
+                    );
+                }
+            }
+        }
+        PauseCommands::Remove { id, pause_id } => {
+            app.delete_habit_pause(&id, &pause_id).await?;
+            println!("Pause {pause_id} removed.");
         }
     }
     Ok(())
