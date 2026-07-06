@@ -361,11 +361,28 @@ fn read_wav(path: &std::path::Path) -> Vec<f32> {
     let spec = reader.spec();
     let samples: Vec<f32> = match spec.sample_format {
         hound::SampleFormat::Int => {
-            let max_val = 2u32.pow(spec.bits_per_sample as u32 - 1) as f32;
-            reader
-                .samples::<i16>()
-                .map(|s| s.unwrap() as f32 / max_val)
-                .collect()
+            let bits = spec.bits_per_sample;
+            if bits == 0 || bits > 32 {
+                eprintln!("Unsupported WAV bit depth: {bits}");
+                std::process::exit(1);
+            }
+            // Use the matching hound sample type per bit depth. hound decodes
+            // 8/16-bit integer WAVs as i16 and 24/32-bit as i32, so decoding
+            // with the wrong type produces garbage or errors. Compute the
+            // normalization divisor via u64 to avoid u32 overflow for >16-bit.
+            if bits <= 16 {
+                let max_val = (1u32 << (bits - 1)) as f32;
+                reader
+                    .samples::<i16>()
+                    .map(|s| s.unwrap() as f32 / max_val)
+                    .collect()
+            } else {
+                let max_val = (1u64 << (bits - 1)) as f32;
+                reader
+                    .samples::<i32>()
+                    .map(|s| s.unwrap() as f32 / max_val)
+                    .collect()
+            }
         }
         hound::SampleFormat::Float => reader.samples::<f32>().map(|s| s.unwrap()).collect(),
     };
@@ -386,4 +403,89 @@ fn read_wav(path: &std::path::Path) -> Vec<f32> {
     }
 
     samples
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_wav(path: &std::path::Path, bits: u16, samples: &[f32]) {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16000,
+            bits_per_sample: bits,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(path, spec).unwrap();
+        let max_val = (1u64 << (bits - 1)) as f32;
+        for &s in samples {
+            let scaled = (s * max_val) as i32;
+            if bits <= 16 {
+                writer.write_sample(scaled as i16).unwrap();
+            } else {
+                writer.write_sample(scaled).unwrap();
+            }
+        }
+        writer.finalize().unwrap();
+    }
+
+    #[test]
+    fn read_wav_16bit_normalizes_correctly() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("takusu-read-wav-16.wav");
+        // Avoid full-scale 1.0 which overflows i16 on write.
+        write_wav(&path, 16, &[0.0, 0.5, -0.5, 0.9]);
+        let out = read_wav(&path);
+        assert_eq!(out.len(), 4);
+        assert!((out[0]).abs() < 1e-4);
+        assert!((out[1] - 0.5).abs() < 1e-3);
+        assert!((out[2] + 0.5).abs() < 1e-3);
+        assert!((out[3] - 0.9).abs() < 1e-3);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn read_wav_32bit_normalizes_correctly() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("takusu-read-wav-32.wav");
+        write_wav(&path, 32, &[0.0, 0.25, -0.25, 0.9]);
+        let out = read_wav(&path);
+        assert_eq!(out.len(), 4);
+        assert!((out[0]).abs() < 1e-5);
+        assert!((out[1] - 0.25).abs() < 1e-4);
+        assert!((out[2] + 0.25).abs() < 1e-4);
+        assert!((out[3] - 0.9).abs() < 1e-4);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn read_wav_8bit_normalizes_correctly() {
+        // hound sign-extends (not left-shifts) 8-bit samples into i16, so the
+        // 2^(bits-1)=128 divisor is correct. This test documents that.
+        let dir = std::env::temp_dir();
+        let path = dir.join("takusu-read-wav-8.wav");
+        write_wav(&path, 8, &[0.0, 0.5, -0.5, 0.9]);
+        let out = read_wav(&path);
+        assert_eq!(out.len(), 4);
+        assert!((out[0]).abs() < 1e-2);
+        assert!((out[1] - 0.5).abs() < 2e-2);
+        assert!((out[2] + 0.5).abs() < 2e-2);
+        assert!((out[3] - 0.9).abs() < 2e-2);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn read_wav_24bit_normalizes_correctly() {
+        // hound sign-extends 24-bit samples into i32, so 2^(bits-1) is correct.
+        let dir = std::env::temp_dir();
+        let path = dir.join("takusu-read-wav-24.wav");
+        write_wav(&path, 24, &[0.0, 0.25, -0.25, 0.9]);
+        let out = read_wav(&path);
+        assert_eq!(out.len(), 4);
+        assert!((out[0]).abs() < 1e-5);
+        assert!((out[1] - 0.25).abs() < 1e-4);
+        assert!((out[2] + 0.25).abs() < 1e-4);
+        assert!((out[3] - 0.9).abs() < 1e-4);
+        std::fs::remove_file(&path).ok();
+    }
 }
