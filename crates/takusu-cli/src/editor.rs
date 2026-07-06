@@ -87,7 +87,13 @@ pub fn parse_edited_task(content: &str) -> Option<UpdateTask> {
                     Some(Some(value.to_string()))
                 }
             }
-            "end_at" => end_at = Some(value.to_string()),
+            "end_at" => {
+                end_at = if value.is_empty() {
+                    Some(None)
+                } else {
+                    Some(Some(value.to_string()))
+                }
+            }
             "status" => status = Some(value.to_string()),
             "avg_minutes" => avg_minutes = Some(value.parse().ok()?),
             "sigma_minutes" => sigma_minutes = Some(value.parse().ok()?),
@@ -115,7 +121,7 @@ pub fn parse_edited_task(content: &str) -> Option<UpdateTask> {
         title,
         description: description.flatten(),
         start_at: start_at.flatten(),
-        end_at,
+        end_at: end_at.flatten(),
         avg_minutes,
         sigma_minutes,
         depends,
@@ -192,8 +198,20 @@ pub fn parse_edited_habit(content: &str) -> Option<UpdateHabit> {
                 }
             }
             "recurrence" => recurrence = Some(value.to_string()),
-            "start_time" => start_time = Some(value.to_string()),
-            "end_time" => end_time = Some(value.to_string()),
+            "start_time" => {
+                start_time = if value.is_empty() {
+                    Some(None)
+                } else {
+                    Some(Some(value.to_string()))
+                }
+            }
+            "end_time" => {
+                end_time = if value.is_empty() {
+                    Some(None)
+                } else {
+                    Some(Some(value.to_string()))
+                }
+            }
             "avg_minutes" => avg_minutes = Some(value.parse().ok()?),
             "sigma_minutes" => sigma_minutes = Some(value.parse().ok()?),
             "parallelizable" => parallelizable = Some(value.parse().ok()?),
@@ -209,8 +227,8 @@ pub fn parse_edited_habit(content: &str) -> Option<UpdateHabit> {
         title,
         description: description.flatten(),
         recurrence,
-        start_time,
-        end_time,
+        start_time: start_time.flatten(),
+        end_time: end_time.flatten(),
         avg_minutes,
         sigma_minutes,
         parallelizable,
@@ -240,4 +258,54 @@ pub fn open_editor(content: &str, suffix: &str) -> io::Result<String> {
     let edited = fs::read_to_string(&path)?;
     fs::remove_file(&path).ok();
     Ok(edited)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_edited_task_empty_end_at_is_skipped() {
+        let input = "title: t\nend_at:\n";
+        let update = parse_edited_task(input).unwrap();
+        assert_eq!(update.title.as_deref(), Some("t"));
+        assert_eq!(update.end_at, None, "empty end_at should skip update");
+    }
+
+    #[test]
+    fn parse_edited_task_nonempty_end_at_is_set() {
+        let input = "title: t\nend_at: 2026-07-06T18:00:00\n";
+        let update = parse_edited_task(input).unwrap();
+        assert_eq!(
+            update.end_at.as_deref(),
+            Some("2026-07-06T18:00:00"),
+            "non-empty end_at should be set"
+        );
+    }
+
+    #[test]
+    fn parse_edited_task_empty_start_at_is_skipped() {
+        let input = "title: t\nstart_at:\n";
+        let update = parse_edited_task(input).unwrap();
+        assert_eq!(update.start_at, None, "empty start_at should skip update");
+    }
+
+    #[test]
+    fn parse_edited_habit_empty_times_are_skipped() {
+        let input = "title: h\nstart_time:\nend_time:\n";
+        let update = parse_edited_habit(input).unwrap();
+        assert_eq!(
+            update.start_time, None,
+            "empty start_time should skip update"
+        );
+        assert_eq!(update.end_time, None, "empty end_time should skip update");
+    }
+
+    #[test]
+    fn parse_edited_habit_nonempty_times_are_set() {
+        let input = "title: h\nstart_time: 09:00\nend_time: 10:00\n";
+        let update = parse_edited_habit(input).unwrap();
+        assert_eq!(update.start_time.as_deref(), Some("09:00"));
+        assert_eq!(update.end_time.as_deref(), Some("10:00"));
+    }
 }
