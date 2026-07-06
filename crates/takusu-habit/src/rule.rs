@@ -153,7 +153,7 @@ impl RecurrenceRule {
     }
 
     pub fn interval(mut self, interval: u32) -> Self {
-        self.interval = interval;
+        self.interval = interval.max(1);
         self
     }
 
