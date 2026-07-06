@@ -37,7 +37,7 @@ takusu/
 ├── crates/
 │   ├── takusu-core/          # Core planner (data types, scheduling algorithm)
 │   │   ├── src/lib.rs        #   Public API (Point, Task, NormalDist, Planner, Plan, RescheduleRange)
-│   │   ├── src/evaluate.rs   #   Evaluation function (8 components)
+│   │   ├── src/evaluate.rs   #   Evaluation function (10 components)
 │   │   ├── src/anneal.rs     #   SA + LNS + Tabu Search (full + partial)
 │   │   ├── src/solver.rs     #   Parallel restart + solve/solve_partial entry points
 │   │   ├── benches/plan.rs   #   Criterion benchmark (25 tasks)

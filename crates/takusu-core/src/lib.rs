@@ -22,6 +22,7 @@
 //!     allows_parallel: false,
 //!     abandonability: 0.5,
 //!     fixed: false,
+//!     habit_group: None,
 //! }).unwrap();
 //!
 //! let plan = planner.plan();
@@ -242,6 +243,11 @@ pub struct Task {
     /// 配置も許可し、SA の近傍操作でも移動しない。
     /// 学校など開始時刻が厳密なタスクに使う。
     pub fixed: bool,
+
+    /// #306: Habit 由来のタスクの場合、habit グループのインデックス。
+    /// 同じ habit_id のタスクは日ごとに近い時刻に配置されるとボーナス。
+    /// 非 habit タスクは None。
+    pub habit_group: Option<usize>,
 }
 
 // ── Plan ──────────────────────────────────────────────────────────────
@@ -323,6 +329,7 @@ type ResultE<T> = Result<T, Error>;
 ///     allows_parallel: false,
 ///     abandonability: 0.5,
 ///     fixed: false,
+///     habit_group: None,
 /// }).unwrap();
 ///
 /// let plan = p.plan();
@@ -480,6 +487,11 @@ impl Planner {
         &mut self.tasks
     }
 
+    /// 1スロットの分数 (通常5)。
+    pub fn per(&self) -> u16 {
+        self.per
+    }
+
     /// タスクの「余裕度」を返す [0.0, 1.0]。
     /// 値が大きい = 余裕がある = 優先度が低い。
     /// 値が小さい = 切迫している = 優先度が高い。
@@ -525,6 +537,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         let b = p
@@ -538,6 +551,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
 
@@ -567,6 +581,7 @@ mod tests {
             allows_parallel: false,
             abandonability: 0.5,
             fixed: false,
+            habit_group: None,
         })
         .unwrap();
 
@@ -598,6 +613,7 @@ mod tests {
             allows_parallel: false,
             abandonability: 0.9,
             fixed: false,
+            habit_group: None,
         })
         .unwrap();
 
@@ -634,6 +650,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         let _b = p
@@ -647,6 +664,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
 
@@ -677,6 +695,7 @@ mod tests {
             allows_parallel: false,
             abandonability: 0.5,
             fixed: false,
+            habit_group: None,
         })
         .unwrap();
 
@@ -703,6 +722,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         let _b = p
@@ -716,6 +736,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
 
@@ -746,6 +767,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         let _b = p
@@ -759,6 +781,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         let _c = p
@@ -772,6 +795,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
 
@@ -826,6 +850,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         let _b = p
@@ -839,6 +864,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         let _c = p
@@ -852,6 +878,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
 
@@ -894,6 +921,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         let _b = p
@@ -907,6 +935,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         let _c = p
@@ -920,6 +949,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
 
@@ -1007,6 +1037,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         let id2 = planner
@@ -1020,6 +1051,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         assert_eq!(id1, 0);
@@ -1040,6 +1072,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         planner
@@ -1053,6 +1086,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         assert_eq!(planner.tasks()[1].depends, vec![0]);
@@ -1072,6 +1106,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.0,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         let f = planner.freeness(0);
@@ -1124,6 +1159,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         planner
@@ -1137,6 +1173,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         planner

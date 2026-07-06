@@ -86,6 +86,7 @@ mod tests {
                     allows_parallel: false,
                     abandonability: 0.5,
                     fixed: false,
+                    habit_group: None,
                 })
                 .unwrap();
         }
@@ -145,6 +146,7 @@ mod tests {
                     allows_parallel: false,
                     abandonability: 0.0,
                     fixed: false,
+                    habit_group: None,
                 })
                 .unwrap();
         }

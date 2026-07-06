@@ -11,6 +11,8 @@
 //!             + Σ sleep_score(d)         // 日ごと睡眠評価
 //!             + Σ parallel_violation     // 並列違反
 //!             + inclusion_bonus          // スケジュール存在ボーナス
+//!             + stability_score          // #211 前回配置からの安定性
+//!             + habit_consistency_score  // #306 habit時刻一貫性ボーナス
 //! ```
 //!
 //! ## 各項の詳細
@@ -91,6 +93,13 @@ const MIN_SLEEP: i64 = 36;
 const W_STABILITY: f64 = 3.0;
 /// 安定性ペナルティの減衰スロット数（これ以降はペナルティなし）。
 const STABILITY_RANGE: i64 = 24 * 12; // 24時間
+/// #306: Habitタスクの時刻一貫性ボーナスの重み。
+/// 同じhabitグループのタスクが日ごとに近い時刻に配置されるとボーナス。
+/// 分散が小さいほど高スコア。最大ボーナス = W_HABIT_CONSISTENCY * グループ数。
+const W_HABIT_CONSISTENCY: f64 = 2.0;
+/// 一貫性ボーナスの計算対象となる最大分散 (スロット²)。
+/// この分散を超えるとボーナス0になる。
+const HABIT_CONSISTENCY_MAX_VAR: f64 = (6.0 * 12.0) * (6.0 * 12.0); // 6時間の分散で0
 
 pub fn evaluate(planner: &Planner, plan: &Plan, temperature: f64, t0: f64) -> f64 {
     let mut score = 0.0;
@@ -106,6 +115,7 @@ pub fn evaluate(planner: &Planner, plan: &Plan, temperature: f64, t0: f64) -> f6
     score += parallel_violation_score(planner, schedules);
     score += inclusion_bonus(planner, schedules);
     score += stability_score(planner, &index);
+    score += habit_consistency_score(planner, &index);
 
     score
 }
@@ -327,6 +337,55 @@ fn stability_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
     penalty
 }
 
+/// #306: Habitタスクの時刻一貫性ボーナス。
+///
+/// 同じ `habit_group` に属するタスク群について、開始時刻の「時刻帯」
+/// (日付を無視したスロット) の分散を計算し、分散が小さいほどボーナス。
+///
+/// - 時刻帯 = `start_slot % slots_per_day` (日付成分を除去)
+/// - 分散が0 (全タスクが同時刻) → 最大ボーナス `W_HABIT_CONSISTENCY`
+/// - 分散が `HABIT_CONSISTENCY_MAX_VAR` 以上 → ボーナス0
+/// - 2タスク未満のグループは評価しない (分散が意味を持たない)
+fn habit_consistency_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
+    let slots_per_day = 24 * 60 / planner.per() as i64;
+    let mut groups: std::collections::HashMap<usize, Vec<i64>> = std::collections::HashMap::new();
+    for task in &planner.tasks {
+        let Some(group) = task.habit_group else {
+            continue;
+        };
+        let Some((sched_start, _)) = index[task.id] else {
+            continue;
+        };
+        // 日付成分を除去: 時刻帯のみのスロット値
+        let tod = sched_start.0.rem_euclid(slots_per_day);
+        groups.entry(group).or_default().push(tod);
+    }
+
+    let mut bonus = 0.0;
+    for times in groups.values() {
+        if times.len() < 2 {
+            continue;
+        }
+        // 時刻は循環 (23:59 → 0:00) なので、ソートして隣接ペアの
+        // 円周上の差を取り、その二乗平均を分散の代わりとする。
+        let mut sorted: Vec<i64> = times.clone();
+        sorted.sort_unstable();
+        let n = sorted.len() as f64;
+        let mut sum_sq_diff = 0.0;
+        for i in 0..sorted.len() {
+            let next = (i + 1) % sorted.len();
+            let raw = (sorted[next] - sorted[i]).abs();
+            let diff = raw.min(slots_per_day - raw);
+            sum_sq_diff += diff as f64 * diff as f64;
+        }
+        let mean_sq_diff = sum_sq_diff / n;
+        // 分散が小さいほどボーナス。線形減衰。
+        let consistency = (1.0 - mean_sq_diff / HABIT_CONSISTENCY_MAX_VAR).max(0.0);
+        bonus += W_HABIT_CONSISTENCY * consistency;
+    }
+    bonus
+}
+
 fn plan_range(schedules: &[(Point, Point, usize)]) -> (Point, Point) {
     if schedules.is_empty() {
         return (Point(0), Point(0));
@@ -363,6 +422,7 @@ mod tests {
             allows_parallel: false,
             abandonability: 0.5,
             fixed: false,
+            habit_group: None,
         })
         .unwrap()
     }
@@ -405,6 +465,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
 
@@ -431,6 +492,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
 
@@ -513,6 +575,7 @@ mod tests {
                 allows_parallel: true,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         let guest = p
@@ -526,6 +589,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
 
@@ -568,6 +632,7 @@ mod tests {
                 allows_parallel: true,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         let guest = p
@@ -581,6 +646,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
 
@@ -616,6 +682,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
 
@@ -646,6 +713,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
 
@@ -676,6 +744,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 1.0,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         let on_time = plan_with(vec![(Point(0), Point(3), id)]);
@@ -715,6 +784,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.0,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         let on_time = plan_with(vec![(Point(0), Point(3), id)]);
@@ -765,6 +835,7 @@ mod tests {
                 allows_parallel: false,
                 abandonability: 0.5,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
         // b starts before a ends: 2-slot violation.
@@ -817,5 +888,81 @@ mod tests {
         // Should not panic; score is just inclusion_bonus for the bogus entry.
         let score = evaluate(&p, &plan, 0.0, 1.0);
         assert!(score.is_finite());
+    }
+
+    // #306: habit consistency bonus
+    fn add_habit_task(p: &mut Planner, avg: u64, end: i64, habit_group: usize) -> usize {
+        p.add(Task {
+            id: 0,
+            start: Some(Point(0)),
+            end: Point(end),
+            cost_estimate: NormalDist::new(avg, 0),
+            depends: vec![],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: false,
+            habit_group: Some(habit_group),
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn habit_consistency_rewards_same_time_of_day() {
+        let mut p = make_planner();
+        let slots_per_day: i64 = 24 * 12;
+        let t0 = add_habit_task(&mut p, 2, slots_per_day * 3, 0);
+        let t1 = add_habit_task(&mut p, 2, slots_per_day * 4, 0);
+
+        let consistent = plan_with(vec![
+            (Point(100), Point(102), t0),
+            (Point(100 + slots_per_day), Point(102 + slots_per_day), t1),
+        ]);
+        let inconsistent = plan_with(vec![
+            (Point(100), Point(102), t0),
+            (Point(200 + slots_per_day), Point(202 + slots_per_day), t1),
+        ]);
+
+        let score_consistent = evaluate(&p, &consistent, 0.0, 1.0);
+        let score_inconsistent = evaluate(&p, &inconsistent, 0.0, 1.0);
+        assert!(
+            score_consistent > score_inconsistent,
+            "consistent habit timing should score higher: consistent={score_consistent} inconsistent={score_inconsistent}"
+        );
+    }
+
+    #[test]
+    fn habit_consistency_ignores_non_habit_tasks() {
+        let mut p = make_planner();
+        let slots_per_day: i64 = 24 * 12;
+        let t0 = add_simple_task(&mut p, 2, 0, slots_per_day * 3);
+        let t1 = add_simple_task(&mut p, 2, 0, slots_per_day * 4);
+
+        let same_time = plan_with(vec![
+            (Point(100), Point(102), t0),
+            (Point(100 + slots_per_day), Point(102 + slots_per_day), t1),
+        ]);
+        let diff_time = plan_with(vec![
+            (Point(100), Point(102), t0),
+            (Point(200 + slots_per_day), Point(202 + slots_per_day), t1),
+        ]);
+
+        assert_eq!(
+            habit_consistency_score(&p, &build_index(&p, &same_time.schedules)),
+            0.0
+        );
+        assert_eq!(
+            habit_consistency_score(&p, &build_index(&p, &diff_time.schedules)),
+            0.0
+        );
+    }
+
+    #[test]
+    fn habit_consistency_single_task_no_bonus() {
+        let mut p = make_planner();
+        let t0 = add_habit_task(&mut p, 2, 100, 0);
+        let plan = plan_with(vec![(Point(10), Point(12), t0)]);
+        let score = habit_consistency_score(&p, &build_index(&p, &plan.schedules));
+        assert_eq!(score, 0.0, "single-task habit group should get no bonus");
     }
 }
