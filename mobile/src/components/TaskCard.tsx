@@ -284,8 +284,8 @@ const styles = StyleSheet.create({
 export const TaskCard = memo(TaskCardImpl);
 
 // ── ParallelGroupCard ──
-// Renders a parallel task group: host (allows_parallel) on the left (25%),
-// guests (parallelizable) stacked on the right (75%).
+// Renders a parallel task group: host (allows_parallel) on the left (50%),
+// guests (parallelizable) stacked on the right (50%).
 // A single slide gesture applies to the whole group:
 //   slide right → complete all, slide left → delete all (#194).
 
@@ -396,7 +396,7 @@ function ParallelGroupCardImpl({
             animatedStyle,
           ]}
         >
-          {/* Left: host (25%) */}
+          {/* Left: host (50%) */}
           <Pressable
             style={({ pressed }) => [
               groupStyles.hostCard,
@@ -427,7 +427,7 @@ function ParallelGroupCardImpl({
             </Text>
           </Pressable>
 
-          {/* Right: guests stacked (75%) */}
+          {/* Right: guests stacked (50%) */}
           <View style={groupStyles.guestsColumn}>
             {guests.map((guest, idx) => {
               const guestDone =
@@ -524,7 +524,7 @@ const groupStyles = StyleSheet.create({
     borderColor: 'transparent',
   },
   hostCard: {
-    width: '25%',
+    flex: 1,
     padding: 6,
     justifyContent: 'center',
     gap: 2,
