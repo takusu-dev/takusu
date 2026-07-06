@@ -701,34 +701,81 @@ export function HomeView() {
 
   async function markDone(task: TaskRow) {
     if (!client) return;
+    // Pending tasks: swipe-right completes directly (pending → completed).
+    // After completion, the task enters the 3-state cycle (scheduled →
+    // in_progress → completed → scheduled). Undo restores the original
+    // pending status.
+    // Scheduled/in_progress/completed use the 3-state cycle (#312).
     const isDone = task.status === 'completed' || task.status === 'skipped';
+    const isInProgress = task.status === 'in_progress';
+    const isPending = task.status === 'pending';
     const prevStatus = task.status;
-    const newStatus = isDone ? 'scheduled' : 'completed';
+    let newStatus: TaskStatus;
+    let actionLabel: string;
+    let errorLabel: string;
+    if (isPending) {
+      // Pending tasks: 2-state toggle pending ↔ completed
+      newStatus = 'completed';
+      actionLabel = 'mark done';
+      errorLabel = 'タスクの完了に失敗';
+    } else if (isInProgress) {
+      newStatus = 'completed';
+      actionLabel = 'mark done';
+      errorLabel = 'タスクの完了に失敗';
+    } else if (isDone) {
+      newStatus = 'scheduled';
+      actionLabel = 'undone';
+      errorLabel = 'タスクの未完了に失敗';
+    } else {
+      newStatus = 'in_progress';
+      actionLabel = 'start';
+      errorLabel = 'タスクの開始に失敗';
+    }
     try {
       await client.updateTask(task.id, { status: newStatus });
     } catch (e) {
-      showError(e, isDone ? 'タスクの未完了に失敗' : 'タスクの完了に失敗');
+      showError(e, errorLabel);
       return;
     }
     // Dismiss any delivered notifications for this task (#257).
-    // When completing/skipping, remove pre-start and start-overdue
-    // notifications that have already fired and are sitting in the tray.
-    // When undoing (back to scheduled), also clear the in-progress
-    // notification if it was showing.
     dismissTaskNotifications(task.id).catch((e) => logError('通知の消去', e));
     if (prevStatus === 'in_progress') {
       dismissInProgressNotification(task.id).catch((e) =>
         logError('通知の消去', e),
       );
     }
+    // Post in-progress notification when starting via swipe (#312)
+    if (newStatus === 'in_progress' && notifications.inProgress) {
+      postInProgressNotification(task).catch((e) => logError('通知の投稿', e));
+    }
     undoRedo.push({
-      description: `${isDone ? 'undone' : 'mark done'}: ${task.title}`,
+      description: `${actionLabel}: ${task.title}`,
       undo: async () => {
         await client.updateTask(task.id, { status: prevStatus });
+        if (newStatus === 'in_progress') {
+          dismissInProgressNotification(task.id).catch((e) =>
+            logError('通知の消去', e),
+          );
+        }
+        if (prevStatus === 'in_progress' && notifications.inProgress) {
+          postInProgressNotification(task).catch((e) =>
+            logError('通知の投稿', e),
+          );
+        }
         await refresh();
       },
       redo: async () => {
         await client.updateTask(task.id, { status: newStatus });
+        if (newStatus === 'in_progress' && notifications.inProgress) {
+          postInProgressNotification(task).catch((e) =>
+            logError('通知の投稿', e),
+          );
+        }
+        if (prevStatus === 'in_progress' && newStatus === 'completed') {
+          dismissInProgressNotification(task.id).catch((e) =>
+            logError('通知の消去', e),
+          );
+        }
         await refresh();
       },
     });

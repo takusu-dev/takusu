@@ -1,7 +1,8 @@
 // TaskCard component — displays a single task in the list
 // Left: start/end time, Center: title, Right-bottom: cost (avg, sigma)
 // Background color based on abandonability
-// Slide right = done (weak haptics), slide left = delete (strong haptics)
+// Slide right cycles: start → complete → revert (#312)
+// Slide left = delete (strong haptics)
 // Slide actions show a background preview with icon
 // Done tasks: strikethrough + gray
 
@@ -115,6 +116,28 @@ function TaskCardImpl({
   const bgColor = abandonabilityColorFor(task.abandonability, dark);
   const deps = parseDepends(task.depends);
 
+  // Slide-right background preview: icon and color depend on what the
+  // next state in the cycle will be (#312).
+  // pending → completed (checkmark, green)
+  // scheduled → in_progress (play, blue), in_progress → completed (check, green),
+  // completed → scheduled (refresh, red)
+  const isPending = task.status === 'pending';
+  const isInProgress = task.status === 'in_progress';
+  const doneIcon = isDone
+    ? 'refresh'
+    : isPending
+      ? 'checkmark'
+      : isInProgress
+        ? 'checkmark'
+        : 'play';
+  const doneColor = isDone
+    ? COLORS.red
+    : isPending
+      ? COLORS.green
+      : isInProgress
+        ? COLORS.green
+        : BRAND_COLOR;
+
   const handlePress = () => {
     haptic.light();
     onPress();
@@ -130,18 +153,10 @@ function TaskCardImpl({
     <View style={styles.container}>
       {/* Slide action preview backgrounds (#170) */}
       <Reanimated.View
-        style={[
-          styles.doneBg,
-          { backgroundColor: isDone ? COLORS.red : COLORS.green },
-          doneBgStyle,
-        ]}
+        style={[styles.doneBg, { backgroundColor: doneColor }, doneBgStyle]}
         pointerEvents="none"
       >
-        <Ionicons
-          name={isDone ? 'refresh' : 'checkmark'}
-          size={28}
-          color={COLORS.white}
-        />
+        <Ionicons name={doneIcon} size={28} color={COLORS.white} />
       </Reanimated.View>
       <Reanimated.View
         style={[
