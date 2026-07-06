@@ -58,6 +58,9 @@ function TaskCardImpl({
   selected,
 }: TaskCardProps) {
   const translateX = useSharedValue(0);
+  // Track which direction the haptic last fired for (0=none, 1=right, -1=left)
+  // so reversing swipe direction mid-gesture re-fires the haptic (#313).
+  const hapticFiredDir = useSharedValue(0);
   const { dark, colors } = useTheme();
 
   // Single pan gesture handles both swipe-right (done) and swipe-left (delete).
@@ -70,16 +73,31 @@ function TaskCardImpl({
     .failOffsetY([-10, 10])
     .onUpdate((e) => {
       translateX.value = e.translationX;
+      // Fire haptic when crossing the action threshold mid-slide (#313).
+      if (e.translationX > 80 && onDone && hapticFiredDir.value !== 1) {
+        hapticFiredDir.value = 1;
+        runOnJS(haptic.light)();
+      } else if (
+        e.translationX < -80 &&
+        onDelete &&
+        hapticFiredDir.value !== -1
+      ) {
+        hapticFiredDir.value = -1;
+        runOnJS(haptic.medium)();
+      }
     })
     .onEnd((e) => {
       if (e.translationX > 80 && onDone) {
-        runOnJS(haptic.light)();
         runOnJS(onDone)();
       } else if (e.translationX < -80 && onDelete) {
-        runOnJS(haptic.medium)();
         runOnJS(onDelete)();
       }
       translateX.value = withSpring(0);
+    })
+    // onFinalize fires for both END and CANCELLED terminal states, ensuring
+    // hapticFiredDir is always reset even if the gesture is interrupted.
+    .onFinalize(() => {
+      hapticFiredDir.value = 0;
     });
 
   const animatedStyle = useAnimatedStyle(() => ({
@@ -321,6 +339,9 @@ function ParallelGroupCardImpl({
   onDelete,
 }: ParallelGroupCardProps) {
   const translateX = useSharedValue(0);
+  // Track which direction the haptic last fired for (0=none, 1=right, -1=left)
+  // so reversing swipe direction mid-gesture re-fires the haptic (#313).
+  const hapticFiredDir = useSharedValue(0);
   const { dark, colors } = useTheme();
 
   const pan = Gesture.Pan()
@@ -328,16 +349,31 @@ function ParallelGroupCardImpl({
     .failOffsetY([-10, 10])
     .onUpdate((e) => {
       translateX.value = e.translationX;
+      // Fire haptic when crossing the action threshold mid-slide (#313).
+      if (e.translationX > 80 && onDone && hapticFiredDir.value !== 1) {
+        hapticFiredDir.value = 1;
+        runOnJS(haptic.light)();
+      } else if (
+        e.translationX < -80 &&
+        onDelete &&
+        hapticFiredDir.value !== -1
+      ) {
+        hapticFiredDir.value = -1;
+        runOnJS(haptic.medium)();
+      }
     })
     .onEnd((e) => {
       if (e.translationX > 80 && onDone) {
-        runOnJS(haptic.light)();
         runOnJS(onDone)();
       } else if (e.translationX < -80 && onDelete) {
-        runOnJS(haptic.medium)();
         runOnJS(onDelete)();
       }
       translateX.value = withSpring(0);
+    })
+    // onFinalize fires for both END and CANCELLED terminal states, ensuring
+    // hapticFiredDir is always reset even if the gesture is interrupted.
+    .onFinalize(() => {
+      hapticFiredDir.value = 0;
     });
 
   const animatedStyle = useAnimatedStyle(() => ({
