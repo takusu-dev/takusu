@@ -317,6 +317,17 @@ export function HabitView({ client }: HabitViewProps) {
             <Text style={[styles.habitCost, { color: colors.gray }]}>
               {h.avg_minutes}m ±{h.sigma_minutes}
             </Text>
+            <Text style={[styles.habitParallel, { color: colors.gray }]}>
+              parallel:{' '}
+              {h.parallelizable && h.allows_parallel
+                ? 'host+guest'
+                : h.parallelizable
+                  ? 'guest'
+                  : h.allows_parallel
+                    ? 'host'
+                    : 'none'}
+              {h.fixed ? ' · fixed' : ''}
+            </Text>
             <Text style={[styles.habitAbandon, { color: colors.gray }]}>
               abandon: {h.abandonability.toFixed(2)}
             </Text>
@@ -390,6 +401,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   habitCost: {
+    fontSize: 13,
+  },
+  habitParallel: {
     fontSize: 13,
   },
   habitAbandon: {
