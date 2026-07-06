@@ -51,6 +51,16 @@ pub struct SyncEntry {
 pub struct SyncResult {
     pub mappings: Vec<(String, String)>,
     pub deleted: Vec<String>,
+    /// Tasks whose create/update/delete on Google Calendar failed.
+    /// Non-empty when the DB and Calendar may have diverged (#279).
+    pub failed: Vec<SyncFailure>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncFailure {
+    pub task_id: String,
+    pub operation: String,
+    pub error: String,
 }
 
 pub struct Client {
@@ -261,6 +271,7 @@ impl Client {
         let token = self.refresh_access_token().await?;
         let mut mappings = Vec::new();
         let mut deleted = Vec::new();
+        let mut failed = Vec::new();
 
         let entry_ids: Vec<&str> = entries.iter().map(|e| e.task_id.as_str()).collect();
 
@@ -268,7 +279,14 @@ impl Client {
             if !entry_ids.contains(&task_id.as_str()) {
                 match self.delete_event(&token, event_id).await {
                     Ok(()) => deleted.push(event_id.clone()),
-                    Err(e) => tracing::warn!("failed to delete event {event_id}: {e}"),
+                    Err(e) => {
+                        tracing::warn!("failed to delete event {event_id}: {e}");
+                        failed.push(SyncFailure {
+                            task_id: task_id.clone(),
+                            operation: "delete".to_string(),
+                            error: e.to_string(),
+                        });
+                    }
                 }
             }
         }
@@ -289,6 +307,11 @@ impl Client {
                                     "failed to create event for task {}: {e2}",
                                     entry.task_id
                                 );
+                                failed.push(SyncFailure {
+                                    task_id: entry.task_id.clone(),
+                                    operation: "update+create".to_string(),
+                                    error: format!("{e}; then {e2}"),
+                                });
                             }
                         }
                     }
@@ -298,12 +321,21 @@ impl Client {
                     Ok(id) => mappings.push((entry.task_id.clone(), id)),
                     Err(e) => {
                         tracing::error!("failed to create event for task {}: {e}", entry.task_id);
+                        failed.push(SyncFailure {
+                            task_id: entry.task_id.clone(),
+                            operation: "create".to_string(),
+                            error: e.to_string(),
+                        });
                     }
                 }
             }
         }
 
-        Ok(SyncResult { mappings, deleted })
+        Ok(SyncResult {
+            mappings,
+            deleted,
+            failed,
+        })
     }
 
     pub async fn delete_all(&self, event_ids: &[(String, String)]) -> Result<Vec<String>> {
