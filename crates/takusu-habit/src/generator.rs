@@ -277,6 +277,7 @@ impl Iterator for RecurrenceGenerator {
                     allows_parallel: self.allows_parallel,
                     abandonability: self.abandonability,
                     fixed: self.fixed,
+                    habit_group: None,
                 },
             });
         }

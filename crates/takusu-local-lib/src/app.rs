@@ -1339,6 +1339,20 @@ impl TakusuApp {
 
         detect_cycle(&all_depends)?;
 
+        // #306: Build habit_id → group index map so that tasks from the same
+        // habit share a habit_group index, enabling the consistency bonus.
+        let mut habit_group_map: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        let mut next_group = 0usize;
+        for row in task_rows.iter() {
+            if let Some(ref hid) = row.habit_id
+                && !habit_group_map.contains_key(hid)
+            {
+                habit_group_map.insert(hid.clone(), next_group);
+                next_group += 1;
+            }
+        }
+
         let mut planner = Planner::new(start, sleep);
         let mut id_map: Vec<String> = Vec::with_capacity(task_rows.len());
 
@@ -1362,6 +1376,10 @@ impl TakusuApp {
                 allows_parallel: row.allows_parallel,
                 abandonability: row.abandonability,
                 fixed: row.fixed,
+                habit_group: row
+                    .habit_id
+                    .as_ref()
+                    .and_then(|hid| habit_group_map.get(hid).copied()),
             };
             planner
                 .add(core_task)

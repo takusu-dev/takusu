@@ -1188,6 +1188,7 @@ mod tests {
             allows_parallel: false,
             abandonability: 0.5,
             fixed: false,
+            habit_group: None,
         };
         let t1 = Task {
             id: 1,
@@ -1199,6 +1200,7 @@ mod tests {
             allows_parallel: false,
             abandonability: 0.5,
             fixed: false,
+            habit_group: None,
         };
         let p = test_planner(vec![t0, t1]);
         let plan = build_initial(&p);
@@ -1223,6 +1225,7 @@ mod tests {
             allows_parallel: false,
             abandonability: 0.5,
             fixed: false,
+            habit_group: None,
         };
         let t1 = Task {
             id: 1,
@@ -1234,6 +1237,7 @@ mod tests {
             allows_parallel: false,
             abandonability: 0.5,
             fixed: false,
+            habit_group: None,
         };
         let p = test_planner(vec![t0, t1]);
         let plan = build_initial(&p);
@@ -1252,6 +1256,7 @@ mod tests {
             allows_parallel: false,
             abandonability: 0.5,
             fixed: false,
+            habit_group: None,
         };
         let t1 = Task {
             id: 1,
@@ -1263,6 +1268,7 @@ mod tests {
             allows_parallel: false,
             abandonability: 0.5,
             fixed: false,
+            habit_group: None,
         };
         let p = test_planner(vec![t0, t1]);
         let mut rng = rng();
@@ -1300,6 +1306,7 @@ mod tests {
             allows_parallel: false,
             abandonability: 0.5,
             fixed: false,
+            habit_group: None,
         };
         let t1 = Task {
             id: 1,
@@ -1311,6 +1318,7 @@ mod tests {
             allows_parallel: false,
             abandonability: 0.5,
             fixed: false,
+            habit_group: None,
         };
         let p = test_planner(vec![t0, t1]);
         let mut rng = rng();
@@ -1336,6 +1344,7 @@ mod tests {
             allows_parallel: false,
             abandonability: 0.5,
             fixed: false,
+            habit_group: None,
         };
         let other = Task {
             id: 1,
@@ -1347,6 +1356,7 @@ mod tests {
             allows_parallel: false,
             abandonability: 0.5,
             fixed: false,
+            habit_group: None,
         };
         let p = test_planner(vec![zero, other]);
 
@@ -1374,6 +1384,7 @@ mod tests {
             allows_parallel: false,
             abandonability: 0.5,
             fixed: false,
+            habit_group: None,
         };
         // zero-avg task that depends on dep, but is scheduled before dep ends.
         let violator = Task {
@@ -1386,6 +1397,7 @@ mod tests {
             allows_parallel: false,
             abandonability: 0.5,
             fixed: false,
+            habit_group: None,
         };
         let p = test_planner(vec![dep, violator]);
         // Force a dependency violation: dep ends at 5, violator starts at 0.

@@ -62,6 +62,7 @@ fn main() {
                 allows_parallel: false,
                 abandonability: 0.1, // // ほぼ諦めない
                 fixed: false,
+                habit_group: None,
             })
             .unwrap(),
     );
@@ -80,6 +81,7 @@ fn main() {
                 allows_parallel: true, // 洗濯中に他のことできる
                 abandonability: 0.2,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap(),
     );
@@ -98,6 +100,7 @@ fn main() {
                 allows_parallel: false,
                 abandonability: 0.6, // // まあできなくてもいい
                 fixed: false,
+                habit_group: None,
             })
             .unwrap(),
     );
@@ -114,6 +117,7 @@ fn main() {
             allows_parallel: false,
             abandonability: 0.1,
             fixed: false,
+            habit_group: None,
         })
         .unwrap();
     ids.insert("調査", survey_id);
@@ -132,6 +136,7 @@ fn main() {
                 allows_parallel: false,
                 abandonability: 0.2,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap(),
     );
@@ -148,6 +153,7 @@ fn main() {
             allows_parallel: false,
             abandonability: 0.3,
             fixed: false,
+            habit_group: None,
         })
         .unwrap();
     ids.insert("買い物リスト", list_id);
@@ -166,6 +172,7 @@ fn main() {
                 allows_parallel: false,
                 abandonability: 0.2,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap(),
     );
@@ -184,6 +191,7 @@ fn main() {
                 allows_parallel: false,
                 abandonability: 0.8, // // deadline 超過を大きく許容
                 fixed: false,
+                habit_group: None,
             })
             .unwrap(),
     );
@@ -202,6 +210,7 @@ fn main() {
                 allows_parallel: true, // 移動中にメールできる
                 abandonability: 0.1,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap(),
     );
@@ -219,6 +228,7 @@ fn main() {
                 allows_parallel: false,
                 abandonability: 0.3,
                 fixed: false,
+                habit_group: None,
             })
             .unwrap(),
     );

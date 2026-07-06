@@ -37,6 +37,7 @@ fn generate_tasks(rng: &mut impl Rng, count: usize) -> Planner {
                 allows_parallel: rng.random_bool(0.2),
                 abandonability: rng.random::<f64>(),
                 fixed: false,
+                habit_group: None,
             })
             .unwrap();
     }
