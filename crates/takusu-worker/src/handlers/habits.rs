@@ -9,7 +9,7 @@ use crate::handlers::tokens::{json_created, json_ok, parse_json};
 use crate::models::{CreateHabit, HabitRow, UpdateHabit};
 use crate::validate::{validate_minutes, validate_recurrence};
 
-const HABIT_COLS: &str = "id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed, created_at, updated_at";
+const HABIT_COLS: &str = "id, display_id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed, created_at, updated_at";
 
 fn select_habits() -> String {
     format!("SELECT {HABIT_COLS} FROM habits")
@@ -37,11 +37,22 @@ pub async fn create(mut req: worker::Request, env: Env) -> Result<Response, Work
     let abandonability = body.abandonability.unwrap_or(0.5);
     let fixed = body.fixed.unwrap_or(false);
 
+    // Atomically reserve a monotonic display_id from the sequence table
+    // (mirrors tasks.display_id, issue #186 / #305).
+    let seq_stmt = database.prepare(
+        "UPDATE habit_display_id_seq SET next_id = next_id + 1 RETURNING next_id - 1 AS display_id",
+    );
+    let seq_row: Option<DisplayIdRow> = seq_stmt.first(None).await.map_err(WorkerError::Worker)?;
+    let display_id = seq_row
+        .ok_or_else(|| WorkerError::Internal("habit display_id sequence is empty".into()))?
+        .display_id;
+
     let stmt = database.prepare(
-        "INSERT INTO habits (id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, ?12)"
+        "INSERT INTO habits (id, display_id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, ?13)"
     );
     stmt.bind(&[
         JsValue::from_str(&id),
+        JsValue::from_f64(display_id as f64),
         JsValue::from_str(&body.title),
         body.description
             .as_deref()
@@ -67,7 +78,8 @@ pub async fn create(mut req: worker::Request, env: Env) -> Result<Response, Work
 
 pub async fn get(_req: worker::Request, env: Env, id: &str) -> Result<Response, WorkerError> {
     let database = db(&env)?;
-    let row = select_one(&database, id).await?;
+    let full = resolve_habit_id(&database, id).await?;
+    let row = select_one(&database, &full).await?;
     json_ok(&row)
 }
 
@@ -82,6 +94,7 @@ pub async fn update(mut req: worker::Request, env: Env, id: &str) -> Result<Resp
         validate_recurrence(recurrence)?;
     }
     let database = db(&env)?;
+    let full = resolve_habit_id(&database, id).await?;
     let stmt = database.prepare(
         "UPDATE habits SET title=COALESCE(?1,title), description=COALESCE(?2,description), recurrence=COALESCE(?3,recurrence), start_time=COALESCE(?4,start_time), end_time=COALESCE(?5,end_time), avg_minutes=COALESCE(?6,avg_minutes), sigma_minutes=COALESCE(?7,sigma_minutes), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), active=COALESCE(?11,active), fixed=COALESCE(?12,fixed), updated_at=datetime('now') WHERE id = ?13"
     );
@@ -123,13 +136,13 @@ pub async fn update(mut req: worker::Request, env: Env, id: &str) -> Result<Resp
             .unwrap_or(JsValue::NULL),
         body.active.map(JsValue::from_bool).unwrap_or(JsValue::NULL),
         body.fixed.map(JsValue::from_bool).unwrap_or(JsValue::NULL),
-        JsValue::from_str(id),
+        JsValue::from_str(&full),
     ])?
     .run()
     .await
     .map_err(WorkerError::Worker)?;
 
-    let row = select_one(&database, id).await?;
+    let row = select_one(&database, &full).await?;
     json_ok(&row)
 }
 
@@ -142,6 +155,7 @@ pub async fn replace(
     validate_minutes(body.avg_minutes, body.sigma_minutes)?;
     validate_recurrence(&body.recurrence)?;
     let database = db(&env)?;
+    let full = resolve_habit_id(&database, id).await?;
     let sigma = body.sigma_minutes.unwrap_or((body.avg_minutes / 5).max(1));
     let parallelizable = body.parallelizable.unwrap_or(false);
     let allows_parallel = body.allows_parallel.unwrap_or(false);
@@ -166,18 +180,19 @@ pub async fn replace(
         JsValue::from_bool(allows_parallel),
         JsValue::from_f64(abandonability),
         JsValue::from_bool(fixed),
-        JsValue::from_str(id),
+        JsValue::from_str(&full),
     ])?
     .run()
     .await
     .map_err(WorkerError::Worker)?;
 
-    let row = select_one(&database, id).await?;
+    let row = select_one(&database, &full).await?;
     json_ok(&row)
 }
 
 pub async fn delete(_req: worker::Request, env: Env, id: &str) -> Result<Response, WorkerError> {
     let database = db(&env)?;
+    let full = resolve_habit_id(&database, id).await?;
     // Delete tasks referencing this habit before deleting the habit,
     // so D1's foreign-key constraint does not block deletion of habits
     // that have already generated tasks (#240). The client confirms
@@ -191,13 +206,13 @@ pub async fn delete(_req: worker::Request, env: Env, id: &str) -> Result<Respons
     // explicit delete is harmless and keeps parity with the sqlite
     // path (which does not enable PRAGMA foreign_keys).
     let stmts = vec![
-        database.prepare("DELETE FROM google_cal_events WHERE task_id IN (SELECT id FROM tasks WHERE habit_id = ?1)").bind(&[JsValue::from_str(id)])?,
+        database.prepare("DELETE FROM google_cal_events WHERE task_id IN (SELECT id FROM tasks WHERE habit_id = ?1)").bind(&[JsValue::from_str(&full)])?,
         database
             .prepare("DELETE FROM tasks WHERE habit_id = ?1")
-            .bind(&[JsValue::from_str(id)])?,
+            .bind(&[JsValue::from_str(&full)])?,
         database
             .prepare("DELETE FROM habits WHERE id = ?1")
-            .bind(&[JsValue::from_str(id)])?,
+            .bind(&[JsValue::from_str(&full)])?,
     ];
     database.batch(stmts).await.map_err(WorkerError::Worker)?;
     Ok(Response::empty()?)
@@ -211,4 +226,49 @@ pub async fn select_one(database: &worker::D1Database, id: &str) -> Result<Habit
         .await
         .map_err(WorkerError::Worker)?;
     row.ok_or_else(|| WorkerError::NotFound(format!("habit {id} not found")))
+}
+
+/// Resolve a habit reference (`h<N>`, full UUID, or UUID prefix) to a full UUID.
+async fn resolve_habit_id(database: &worker::D1Database, id: &str) -> Result<String, WorkerError> {
+    // `h<N>` → habit display_id lookup (#305).
+    if let Some(rest) = id.strip_prefix(['h', 'H'])
+        && let Ok(num) = rest.parse::<i64>()
+    {
+        let stmt = database.prepare(format!(
+            "{select} WHERE display_id = ?1",
+            select = select_habits()
+        ));
+        let row: Option<HabitRow> = stmt
+            .bind(&[JsValue::from_f64(num as f64)])?
+            .first(None)
+            .await
+            .map_err(WorkerError::Worker)?;
+        return row
+            .map(|h| h.id)
+            .ok_or_else(|| WorkerError::NotFound(format!("habit {id} not found")));
+    }
+    // Full UUID
+    if id.contains('-') {
+        return Ok(id.to_string());
+    }
+    // UUID prefix — fetch all and filter
+    let stmt = database.prepare(select_habits());
+    let all: Vec<HabitRow> = safe_all(&stmt).await?;
+    let matches: Vec<String> = all
+        .iter()
+        .filter(|h| h.id.starts_with(id))
+        .map(|h| h.id.clone())
+        .collect();
+    match matches.len() {
+        0 => Err(WorkerError::NotFound(format!("habit {id} not found"))),
+        1 => Ok(matches.into_iter().next().unwrap()),
+        _ => Err(WorkerError::BadRequest(format!(
+            "ambiguous habit id prefix: {id}"
+        ))),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct DisplayIdRow {
+    display_id: i64,
 }

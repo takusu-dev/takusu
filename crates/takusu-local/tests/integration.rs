@@ -328,16 +328,28 @@ async fn habit_crud() {
     assert_eq!(res.status(), StatusCode::CREATED);
     let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
     let habit_id = body["id"].as_str().unwrap();
+    // create_habit assigns a monotonic display_id (#305).
+    let display_id = body["display_id"].as_i64().unwrap();
+    assert!(display_id >= 1);
 
     let get_req = auth_req(Method::GET, &format!("/api/habits/{habit_id}"));
     let res = app.clone().oneshot(get_req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let habit: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
     assert_eq!(habit["title"], "朝のランニング");
+    assert_eq!(habit["display_id"], display_id);
     assert_eq!(
         habit["recurrence"],
         r#"{"freq":"daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#
     );
+
+    // Habit can be fetched by `h{display_id}` (#305).
+    let h_req = auth_req(Method::GET, &format!("/api/habits/h{display_id}"));
+    let res = app.clone().oneshot(h_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let h_habit: serde_json::Value =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(h_habit["id"], habit_id);
 
     let update_req = auth_req_body(
         Method::PATCH,
@@ -358,6 +370,40 @@ async fn habit_crud() {
     let delete_req = auth_req(Method::DELETE, &format!("/api/habits/{habit_id}"));
     let res = app.oneshot(delete_req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn habit_display_id_is_monotonic() {
+    // #305: habit display_id is assigned from a monotonic sequence.
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let mk = || {
+        auth_req_body(
+            Method::POST,
+            "/api/habits",
+            json!({
+                "title": "h",
+                "recurrence": r#"{"freq":"daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#,
+                "start_time": "06:00",
+                "end_time": "07:00",
+                "avg_minutes": 30,
+            }),
+        )
+    };
+
+    let r1 = app.clone().oneshot(mk()).await.unwrap();
+    let b1: serde_json::Value = serde_json::from_str(&body_str(r1.into_body()).await).unwrap();
+    let r2 = app.clone().oneshot(mk()).await.unwrap();
+    let b2: serde_json::Value = serde_json::from_str(&body_str(r2.into_body()).await).unwrap();
+    let d1 = b1["display_id"].as_i64().unwrap();
+    let d2 = b2["display_id"].as_i64().unwrap();
+    assert_eq!(d2, d1 + 1, "habit display_id must be monotonic");
+
+    // Fetch the second habit by h{d2}.
+    let h_req = auth_req(Method::GET, &format!("/api/habits/h{d2}"));
+    let res = app.oneshot(h_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
 }
 
 #[tokio::test]

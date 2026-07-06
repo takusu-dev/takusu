@@ -18,6 +18,32 @@ const MIGRATION_005: &str = include_str!("../migrations/005_task_display_id.sql"
 const MIGRATION_006: &str = include_str!("../migrations/006_user_edited.sql");
 const MIGRATION_007: &str = include_str!("../migrations/007_task_display_id_seq.sql");
 
+// Migration 009 adds habits.display_id. The ALTER TABLE is not idempotent
+// (SQLite has no IF NOT EXISTS for ADD COLUMN), so it is run conditionally
+// in `init`. The backfill, index, and sequence-table statements below are
+// idempotent and run unconditionally. See `MIGRATION_009_BACKFILL`.
+const MIGRATION_009_BACKFILL: &str = "
+-- Backfill existing rows with sequential numbers ordered by creation time.
+UPDATE habits SET display_id = (
+    SELECT COUNT(*) + 1 FROM habits h2
+    WHERE h2.created_at < habits.created_at
+       OR (h2.created_at = habits.created_at AND h2.id < habits.id)
+) WHERE display_id = 0;
+
+-- Unique only for real (non-zero) display_ids.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_habits_display_id ON habits(display_id) WHERE display_id != 0;
+
+-- Monotonic display_id sequence — prevents reuse after habit deletion.
+CREATE TABLE IF NOT EXISTS habit_display_id_seq (
+    next_id INTEGER NOT NULL
+);
+
+-- Initialize from the current maximum display_id (or 1 if no habits exist).
+INSERT INTO habit_display_id_seq (next_id)
+SELECT COALESCE(MAX(display_id), 0) + 1 FROM habits
+WHERE (SELECT COUNT(*) FROM habit_display_id_seq) = 0;
+";
+
 pub struct SqliteStorage {
     pool: SqlitePool,
     root_token: String,
@@ -94,6 +120,24 @@ impl SqliteStorage {
                 .execute(&pool)
                 .await?;
         }
+
+        // Migration 009 adds habits.display_id (not idempotent — SQLite has no
+        // IF NOT EXISTS for ADD COLUMN). The backfill, index, and sequence
+        // table statements in 009 are idempotent, but the ALTER is not, so we
+        // split the migration: run the ALTER only when the column is missing,
+        // then run the rest of 009 unconditionally.
+        let has_habits_display_id: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('habits') WHERE name = 'display_id'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        if !has_habits_display_id {
+            sqlx::query("ALTER TABLE habits ADD COLUMN display_id INTEGER NOT NULL DEFAULT 0")
+                .execute(&pool)
+                .await?;
+        }
+        // Backfill + index + sequence table (idempotent statements).
+        sqlx::raw_sql(MIGRATION_009_BACKFILL).execute(&pool).await?;
 
         Ok(Self { pool, root_token })
     }
@@ -349,8 +393,9 @@ impl Storage for SqliteStorage {
     }
 
     async fn get_habit(&self, id: &str) -> StorageResult<HabitRow> {
+        let full = resolve_habit_id(&self.pool, id).await?;
         sqlx::query_as::<_, HabitRow>("SELECT * FROM habits WHERE id = ?")
-            .bind(id)
+            .bind(&full)
             .fetch_one(&self.pool)
             .await
             .map_err(|e| match e {
@@ -366,10 +411,19 @@ impl Storage for SqliteStorage {
         let allows_parallel = body.allows_parallel.unwrap_or(false);
         let abandonability = body.abandonability.unwrap_or(0.5);
         let fixed = body.fixed.unwrap_or(false);
+        // Atomically reserve a monotonic display_id from the sequence table
+        // (mirrors tasks.display_id, issue #186 / #305).
+        let display_id: i64 = sqlx::query_scalar(
+            "UPDATE habit_display_id_seq SET next_id = next_id + 1 RETURNING next_id - 1",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_err)?;
         sqlx::query(
-            "INSERT INTO habits (id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)"
+            "INSERT INTO habits (id, display_id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)"
         )
         .bind(&id)
+        .bind(display_id)
         .bind(&body.title)
         .bind(&body.description)
         .bind(&body.recurrence)
@@ -392,6 +446,7 @@ impl Storage for SqliteStorage {
     }
 
     async fn update_habit(&self, id: &str, body: &UpdateHabit) -> StorageResult<HabitRow> {
+        let full = resolve_habit_id(&self.pool, id).await?;
         sqlx::query(
             "UPDATE habits SET title=COALESCE(?,title), description=COALESCE(?,description), recurrence=COALESCE(?,recurrence), start_time=COALESCE(?,start_time), end_time=COALESCE(?,end_time), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), active=COALESCE(?,active), fixed=COALESCE(?,fixed), updated_at=datetime('now') WHERE id = ?"
         )
@@ -407,12 +462,12 @@ impl Storage for SqliteStorage {
         .bind(body.abandonability)
         .bind(body.active)
         .bind(body.fixed)
-        .bind(id)
+        .bind(&full)
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
         sqlx::query_as::<_, HabitRow>("SELECT * FROM habits WHERE id = ?")
-            .bind(id)
+            .bind(&full)
             .fetch_one(&self.pool)
             .await
             .map_err(|e| match e {
@@ -422,6 +477,7 @@ impl Storage for SqliteStorage {
     }
 
     async fn replace_habit(&self, id: &str, body: &CreateHabit) -> StorageResult<HabitRow> {
+        let full = resolve_habit_id(&self.pool, id).await?;
         let sigma = body.sigma_minutes.unwrap_or((body.avg_minutes / 5).max(1));
         let parallelizable = body.parallelizable.unwrap_or(false);
         let allows_parallel = body.allows_parallel.unwrap_or(false);
@@ -441,12 +497,12 @@ impl Storage for SqliteStorage {
         .bind(allows_parallel)
         .bind(abandonability)
         .bind(fixed)
-        .bind(id)
+        .bind(&full)
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
         sqlx::query_as::<_, HabitRow>("SELECT * FROM habits WHERE id = ?")
-            .bind(id)
+            .bind(&full)
             .fetch_one(&self.pool)
             .await
             .map_err(map_err)
@@ -464,19 +520,20 @@ impl Storage for SqliteStorage {
         // up because foreign keys are not enabled at runtime (the
         // ON DELETE CASCADE in the schema only fires with
         // PRAGMA foreign_keys = ON, which this codebase does not set).
+        let full = resolve_habit_id(&self.pool, id).await?;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         sqlx::query("DELETE FROM google_cal_events WHERE task_id IN (SELECT id FROM tasks WHERE habit_id = ?)")
-            .bind(id)
+            .bind(&full)
             .execute(&mut *tx)
             .await
             .map_err(map_err)?;
         sqlx::query("DELETE FROM tasks WHERE habit_id = ?")
-            .bind(id)
+            .bind(&full)
             .execute(&mut *tx)
             .await
             .map_err(map_err)?;
         sqlx::query("DELETE FROM habits WHERE id = ?")
-            .bind(id)
+            .bind(&full)
             .execute(&mut *tx)
             .await
             .map_err(map_err)?;
@@ -762,6 +819,49 @@ async fn resolve_task_id(pool: &SqlitePool, id: &str) -> StorageResult<String> {
         }
     }
     Err(StorageError::NotFound(format!("task {id} not found")))
+}
+
+/// Resolve a habit reference to its full UUID.
+/// Accepts `h<N>` (habit display_id, e.g. `h1`), a full UUID, or a UUID prefix.
+async fn resolve_habit_id(pool: &SqlitePool, id: &str) -> StorageResult<String> {
+    // `h<N>` → habit display_id lookup (#305).
+    if let Some(rest) = id.strip_prefix(['h', 'H'])
+        && let Ok(num) = rest.parse::<i64>()
+    {
+        return sqlx::query_scalar::<_, String>("SELECT id FROM habits WHERE display_id = ?")
+            .bind(num)
+            .fetch_optional(pool)
+            .await
+            .map_err(map_err)?
+            .ok_or_else(|| StorageError::NotFound(format!("habit {id} not found")));
+    }
+    if id.contains('-') {
+        let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM habits WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .map_err(map_err)?;
+        if exists {
+            return Ok(id.to_string());
+        }
+    } else {
+        let matches: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM habits WHERE id LIKE ? || '%'")
+                .bind(id)
+                .fetch_all(pool)
+                .await
+                .map_err(map_err)?;
+        match matches.len() {
+            0 => {}
+            1 => return Ok(matches.into_iter().next().unwrap()),
+            _ => {
+                return Err(StorageError::BadRequest(format!(
+                    "ambiguous habit id prefix: {id}"
+                )));
+            }
+        }
+    }
+    Err(StorageError::NotFound(format!("habit {id} not found")))
 }
 
 /// Resolve a list of dependency references (display_id numbers or UUIDs/prefixes)
