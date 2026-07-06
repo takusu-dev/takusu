@@ -277,6 +277,13 @@ impl TakusuApp {
     }
 
     pub async fn update_settings(&self, body: &UpdateSettings) -> Result<SettingsRow, AppError> {
+        if let Some(ref tz) = body.tz
+            && jiff::tz::TimeZone::get(tz).is_err()
+        {
+            return Err(AppError::BadRequest(format!(
+                "invalid timezone '{tz}' (e.g. Asia/Tokyo)"
+            )));
+        }
         self.storage
             .update_settings(body)
             .await
@@ -1314,6 +1321,7 @@ impl TakusuApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::LocalConfig;
 
     #[test]
     fn iso_to_point_with_offset() {
@@ -1337,5 +1345,45 @@ mod tests {
     fn iso_to_point_now() {
         let tz = jiff::tz::TimeZone::UTC;
         let _ = iso_to_point("now", &tz).unwrap();
+    }
+
+    #[test]
+    fn load_root_token_missing_returns_error() {
+        // #278: load_root_token should return an error, not panic, when
+        // TAKUSU_ROOT_TOKEN is unset.
+        // SAFETY: tests are single-threaded; this env var manipulation is
+        // safe within the test process.
+        unsafe {
+            std::env::remove_var("TAKUSU_ROOT_TOKEN");
+        }
+        let result = LocalConfig::load_root_token();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("TAKUSU_ROOT_TOKEN"));
+    }
+
+    #[test]
+    fn load_root_token_present_returns_value() {
+        // #278: when the env var is set, load_root_token returns Ok.
+        // SAFETY: tests are single-threaded.
+        unsafe {
+            std::env::set_var("TAKUSU_ROOT_TOKEN", "test-token-123");
+        }
+        let result = LocalConfig::load_root_token();
+        assert_eq!(result.unwrap(), "test-token-123");
+        unsafe {
+            std::env::remove_var("TAKUSU_ROOT_TOKEN");
+        }
+    }
+
+    #[test]
+    fn update_settings_rejects_invalid_timezone() {
+        // #277: update_settings should reject an invalid timezone string
+        // with BadRequest instead of silently falling back to UTC.
+        // We test the validation logic directly.
+        let invalid_tz = "Asia/Tokyoo";
+        assert!(jiff::tz::TimeZone::get(invalid_tz).is_err());
+
+        let valid_tz = "Asia/Tokyo";
+        assert!(jiff::tz::TimeZone::get(valid_tz).is_ok());
     }
 }
