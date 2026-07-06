@@ -2,7 +2,7 @@
 // Uses @shopify/react-native-skia + d3-force
 // Shared by GraphView (full-screen, editable) and TaskDetailView (embedded, read-only)
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Platform,
   type LayoutChangeEvent,
@@ -62,11 +62,12 @@ export interface DependencyGraphProps {
 
 // ── Constants ──
 
-const NODE_RADIUS = 35;
-const FONT_SIZE = 13;
-const MAX_LABEL_CHARS = 5;
-const LABEL_WIDTH = NODE_RADIUS * 1.8;
-const HIT_RADIUS = NODE_RADIUS;
+const NODE_RADIUS = 28;
+const FONT_SIZE = 15;
+const MAX_LABEL_CHARS = 12;
+const LABEL_WIDTH = 140;
+const LABEL_OFFSET = NODE_RADIUS + 6;
+const HIT_RADIUS = NODE_RADIUS + 4;
 const EDGE_HIT_WIDTH = 12;
 
 // ── Helpers ──
@@ -80,6 +81,7 @@ function distToSegment(
   bx: number,
   by: number,
 ): number {
+  'worklet';
   const dx = bx - ax;
   const dy = by - ay;
   const lenSq = dx * dx + dy * dy;
@@ -144,7 +146,11 @@ export function DependencyGraph({
   // Drag state for edit mode edge addition.
   // #219: use Reanimated shared values so the drag line updates smoothly
   // on the UI thread without waiting for React re-renders.
-  const dragSourceRef = useRef<string | null>(null);
+  // #294: dragSourceId must be a SharedValue, not useRef — onStart/onUpdate/
+  // onEnd are separate worklets with separate closure copies, so a useRef
+  // mutation in onStart is invisible to onUpdate/onEnd. SharedValues are
+  // accessible from all worklets on the UI thread.
+  const dragSourceId = useSharedValue<string | null>(null);
   const dragActive = useSharedValue(0);
   const dragSx = useSharedValue(0);
   const dragSy = useSharedValue(0);
@@ -202,7 +208,7 @@ export function DependencyGraph({
           .id((d) => d.id)
           .distance(160),
       )
-      .force('charge', d3.forceManyBody().strength(-400))
+      .force('charge', d3.forceManyBody().strength(-150))
       .force(
         'center',
         d3.forceCenter(canvasSize.width / 2, canvasSize.height / 2),
@@ -234,10 +240,11 @@ export function DependencyGraph({
     if (finalNodes.length > 0 && !height && !editMode) {
       const xs = finalNodes.map((n) => n.x);
       const ys = finalNodes.map((n) => n.y);
-      const minX = Math.min(...xs) - NODE_RADIUS;
-      const maxX = Math.max(...xs) + NODE_RADIUS;
-      const minY = Math.min(...ys) - NODE_RADIUS;
-      const maxY = Math.max(...ys) + NODE_RADIUS;
+      // Account for label height below nodes in the bounding box
+      const minX = Math.min(...xs) - NODE_RADIUS - 4;
+      const maxX = Math.max(...xs) + NODE_RADIUS + 4;
+      const minY = Math.min(...ys) - NODE_RADIUS - 4;
+      const maxY = Math.max(...ys) + NODE_RADIUS + LABEL_OFFSET + 24;
       const graphW = maxX - minX;
       const graphH = maxY - minY;
       const cw = canvasSize.width;
@@ -268,6 +275,7 @@ export function DependencyGraph({
 
   const toWorld = useCallback(
     (sx: number, sy: number) => {
+      'worklet';
       return {
         x: (sx - translateX.value) / scale.value,
         y: (sy - translateY.value) / scale.value,
@@ -331,7 +339,7 @@ export function DependencyGraph({
   // ── Gesture: Long-press → edge drag (edit mode) ──
 
   const longPressDrag = Gesture.Pan()
-    .activateAfterLongPress(200)
+    .activateAfterLongPress(150)
     .onStart((e) => {
       if (!editMode || !onAddEdge) return;
       const world = toWorld(e.x, e.y);
@@ -339,7 +347,7 @@ export function DependencyGraph({
         const dx = world.x - node.x;
         const dy = world.y - node.y;
         if (Math.hypot(dx, dy) < HIT_RADIUS) {
-          dragSourceRef.current = node.id;
+          dragSourceId.value = node.id;
           dragSx.value = node.x;
           dragSy.value = node.y;
           dragEx.value = node.x;
@@ -350,28 +358,28 @@ export function DependencyGraph({
       }
     })
     .onUpdate((e) => {
-      if (!dragSourceRef.current) return;
+      if (!dragSourceId.value) return;
       const world = toWorld(e.x, e.y);
       dragEx.value = world.x;
       dragEy.value = world.y;
     })
     .onEnd((e) => {
-      if (!dragSourceRef.current || !onAddEdge) {
-        dragSourceRef.current = null;
+      if (!dragSourceId.value || !onAddEdge) {
+        dragSourceId.value = null;
         dragActive.value = 0;
         return;
       }
       const world = toWorld(e.x, e.y);
       for (const node of simNodes) {
-        if (node.id === dragSourceRef.current) continue;
+        if (node.id === dragSourceId.value) continue;
         const dx = world.x - node.x;
         const dy = world.y - node.y;
         if (Math.hypot(dx, dy) < HIT_RADIUS) {
-          runOnJS(onAddEdge)(dragSourceRef.current, node.id);
+          runOnJS(onAddEdge)(dragSourceId.value, node.id);
           break;
         }
       }
-      dragSourceRef.current = null;
+      dragSourceId.value = null;
       dragActive.value = 0;
     });
 
@@ -512,7 +520,9 @@ export function DependencyGraph({
                 : isHighlight
                   ? COLORS.red
                   : BRAND_COLOR;
-              const textColor = isDone ? '#666' : COLORS.white;
+              // Label is outside the node on a white background, so use
+              // dark text for readability (#294)
+              const textColor = isDone ? '#999' : '#333';
               const label = inputNode?.label ?? node.label;
 
               return (
@@ -525,7 +535,7 @@ export function DependencyGraph({
                   />
                   <NodeLabel
                     x={node.x}
-                    y={node.y}
+                    y={node.y + LABEL_OFFSET}
                     text={truncate(label, MAX_LABEL_CHARS)}
                     color={textColor}
                   />
@@ -559,6 +569,8 @@ function truncate(s: string, maxLen: number): string {
 // don't render on Android (Roboto lacks CJK). Paragraph's fontFamilies
 // list provides per-character fallback: Latin chars use sans-serif,
 // Japanese chars fall through to NotoSansCJK.
+// Label is drawn below the node (#294) with a white background pill so
+// it stays readable even when zoomed out.
 const NODE_LABEL_FONTS = Platform.select<string[]>({
   ios: ['Helvetica', 'Hiragino Sans', 'NotoSansCJK'],
   default: [
@@ -599,13 +611,28 @@ function NodeLabel({
   }, [text, color]);
 
   const h = paragraph.getHeight();
+  const padX = 6;
+  const padY = 3;
+  const bgRect = Skia.XYWHRect(
+    x - LABEL_WIDTH / 2 - padX,
+    y - padY,
+    LABEL_WIDTH + padX * 2,
+    h + padY * 2,
+  );
+  const bgPath = Skia.Path.Make();
+  bgPath.addRRect(Skia.RRectXY(bgRect, 6, 6));
+
   return (
-    <Paragraph
-      paragraph={paragraph}
-      x={x - LABEL_WIDTH / 2}
-      y={y - h / 2}
-      width={LABEL_WIDTH}
-    />
+    <>
+      {/* White background pill for readability when zoomed out */}
+      <Path path={bgPath} color="#ffffff" style="fill" opacity={0.85} />
+      <Paragraph
+        paragraph={paragraph}
+        x={x - LABEL_WIDTH / 2}
+        y={y}
+        width={LABEL_WIDTH}
+      />
+    </>
   );
 }
 
