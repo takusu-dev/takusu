@@ -65,6 +65,7 @@ interface ParallelGroupItem {
   hostScheduleStart?: string;
   hostScheduleEnd?: string;
   guestScheduleStarts: (string | undefined)[];
+  guestScheduleEnds: (string | undefined)[];
   isDone: boolean; // true if all tasks in the group are done
   dateKey: string;
 }
@@ -514,6 +515,9 @@ export function HomeView() {
           hostScheduleEnd: entry?.end_at,
           guestScheduleStarts: groupGuests.map(
             (g) => scheduleMap.get(g.id)?.start_at,
+          ),
+          guestScheduleEnds: groupGuests.map(
+            (g) => scheduleMap.get(g.id)?.end_at,
           ),
           isDone: allDone,
           dateKey: key,
@@ -1210,6 +1214,7 @@ export function HomeView() {
           hostScheduleStart={item.hostScheduleStart}
           hostScheduleEnd={item.hostScheduleEnd}
           guestScheduleStarts={item.guestScheduleStarts}
+          guestScheduleEnds={item.guestScheduleEnds}
           isDone={item.isDone}
           selected={isSelected}
           onHostPress={() => {
