@@ -349,7 +349,7 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
             let delta = eval_neighbor - eval_current;
 
             if delta > 0.0 || rng.random::<f64>() < (delta / temperature).exp() {
-                mark_tabu(&mut tabu, &neighbor);
+                mark_tabu(&mut tabu, &current, &neighbor);
                 current = neighbor;
                 eval_current = eval_neighbor;
 
@@ -373,7 +373,10 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
 
         temperature *= alpha;
         eval_current = evaluate(planner, &current, temperature, t0);
-        eval_best = evaluate(planner, &best, temperature, t0);
+        // eval_best is NOT re-evaluated at the new temperature — it keeps
+        // the score from when best was found. evaluate() is temperature-
+        // dependent (depend_score weight changes with temperature), so
+        // re-evaluating would corrupt the best/current comparison (#282).
     }
 
     repair_polish(planner, best, None)
@@ -432,7 +435,7 @@ pub fn sa_lns_partial(
             let delta = eval_neighbor - eval_current;
 
             if delta > 0.0 || rng.random::<f64>() < (delta / temperature).exp() {
-                mark_tabu(&mut tabu, &neighbor);
+                mark_tabu(&mut tabu, &current, &neighbor);
                 current = neighbor;
                 eval_current = eval_neighbor;
 
@@ -456,7 +459,7 @@ pub fn sa_lns_partial(
 
         temperature *= alpha;
         eval_current = evaluate(planner, &current, temperature, t0);
-        eval_best = evaluate(planner, &best, temperature, t0);
+        // eval_best is NOT re-evaluated at the new temperature — see sa_lns (#282).
     }
 
     repair_polish(planner, best, Some(&pinned_ids))
@@ -817,9 +820,21 @@ fn is_tabu(tabu: &TabuList, plan: &Plan) -> bool {
         .any(|(s, e, id)| tabu.contains(*id, *s, e.0 - s.0))
 }
 
-fn mark_tabu(tabu: &mut TabuList, plan: &Plan) {
-    for (s, e, id) in &plan.schedules {
-        tabu.push(*id, *s, e.0 - s.0);
+/// Mark only the tasks that differ between `current` and `neighbor` as tabu.
+/// This prevents re-visiting the same placement of a moved task, without
+/// over-restricting the search by marking ALL tasks as tabu (#281).
+fn mark_tabu(tabu: &mut TabuList, current: &Plan, neighbor: &Plan) {
+    // Build a lookup of current placements by task_id.
+    for (n_s, n_e, n_id) in &neighbor.schedules {
+        let n_dur = n_e.0 - n_s.0;
+        let changed = current
+            .schedules
+            .iter()
+            .find(|(_, _, c_id)| c_id == n_id)
+            .is_none_or(|(c_s, c_e, _)| c_s.0 != n_s.0 || (c_e.0 - c_s.0) != n_dur);
+        if changed {
+            tabu.push(*n_id, *n_s, n_dur);
+        }
     }
 }
 
@@ -1363,5 +1378,167 @@ mod tests {
             polished.schedules
         );
         assert!(polished.schedules.iter().any(|(_, _, id)| *id == 1));
+    }
+
+    // ── Bug fix tests ───────────────────────────────────────────────────
+
+    // #281: mark_tabu should only mark tasks that actually moved, not ALL
+    // tasks in the plan. After mark_tabu, only the moved task's placement
+    // should be tabu — unchanged tasks should not be tabu.
+    #[test]
+    fn mark_tabu_only_marks_moved_tasks() {
+        let current = Plan {
+            schedules: vec![
+                (Point(0), Point(5), 0),
+                (Point(10), Point(15), 1),
+                (Point(20), Point(25), 2),
+            ],
+        };
+        // Neighbor: only task 1 moved from (10,15) to (30,35)
+        let neighbor = Plan {
+            schedules: vec![
+                (Point(0), Point(5), 0),
+                (Point(30), Point(35), 1),
+                (Point(20), Point(25), 2),
+            ],
+        };
+
+        let mut tabu = TabuList::new(10);
+        mark_tabu(&mut tabu, &current, &neighbor);
+
+        // Task 1 at its new position should be tabu
+        assert!(tabu.contains(1, Point(30), 5));
+        // Task 0 at its unchanged position should NOT be tabu
+        assert!(!tabu.contains(0, Point(0), 5));
+        // Task 2 at its unchanged position should NOT be tabu
+        assert!(!tabu.contains(2, Point(20), 5));
+    }
+
+    // #281: is_tabu on a plan where NO task was moved should return false
+    // after mark_tabu (since mark_tabu only marks changed tasks).
+    #[test]
+    fn mark_tabu_empty_when_no_change() {
+        let plan = Plan {
+            schedules: vec![(Point(0), Point(5), 0), (Point(10), Point(15), 1)],
+        };
+
+        let mut tabu = TabuList::new(10);
+        mark_tabu(&mut tabu, &plan, &plan);
+
+        // Nothing changed, so nothing should be tabu
+        assert!(!is_tabu(&tabu, &plan));
+    }
+
+    // #281: LNS moves multiple tasks — all moved tasks should be tabu,
+    // but unchanged tasks should not.
+    #[test]
+    fn mark_tabu_marks_multiple_moved_tasks() {
+        let current = Plan {
+            schedules: vec![
+                (Point(0), Point(5), 0),
+                (Point(10), Point(15), 1),
+                (Point(20), Point(25), 2),
+            ],
+        };
+        // Neighbor: tasks 0 and 2 moved, task 1 unchanged
+        let neighbor = Plan {
+            schedules: vec![
+                (Point(30), Point(35), 0),
+                (Point(10), Point(15), 1),
+                (Point(40), Point(45), 2),
+            ],
+        };
+
+        let mut tabu = TabuList::new(10);
+        mark_tabu(&mut tabu, &current, &neighbor);
+
+        assert!(tabu.contains(0, Point(30), 5));
+        assert!(tabu.contains(2, Point(40), 5));
+        assert!(!tabu.contains(1, Point(10), 5));
+    }
+
+    // #282: sa_lns should not re-evaluate eval_best at new temperature.
+    // This is hard to test directly, but we can verify that sa_lns still
+    // produces valid plans and respects dependencies (regression test).
+    #[test]
+    fn sa_lns_does_not_corrupt_best_tracking() {
+        // Create a scenario where depend_score matters: task 1 depends on 0.
+        // If eval_best were re-evaluated at lower temperatures, the higher
+        // depend penalty could cause best to be overwritten incorrectly.
+        let t0 = Task {
+            id: 0,
+            start: Some(Point(0)),
+            end: Point(100),
+            cost_estimate: NormalDist { avg: 3, sigma: 0 },
+            depends: vec![],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: false,
+        };
+        let t1 = Task {
+            id: 1,
+            start: Some(Point(0)),
+            end: Point(100),
+            cost_estimate: NormalDist { avg: 3, sigma: 0 },
+            depends: vec![0],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: false,
+        };
+        let p = test_planner(vec![t0, t1]);
+        let mut rng = rng();
+        let plan = sa_lns(&p, &mut rng);
+
+        // The best plan should still respect dependencies.
+        let t0_entry = plan.schedules.iter().find(|(_, _, id)| *id == 0).unwrap();
+        let t1_entry = plan.schedules.iter().find(|(_, _, id)| *id == 1).unwrap();
+        assert!(
+            t0_entry.1.0 <= t1_entry.0.0,
+            "SA must respect dependencies even with eval_best fix"
+        );
+    }
+
+    // #282: sa_lns_partial should also not re-evaluate eval_best.
+    #[test]
+    fn sa_lns_partial_does_not_corrupt_best_tracking() {
+        let t0 = Task {
+            id: 0,
+            start: Some(Point(0)),
+            end: Point(100),
+            cost_estimate: NormalDist { avg: 3, sigma: 0 },
+            depends: vec![],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: false,
+        };
+        let t1 = Task {
+            id: 1,
+            start: Some(Point(0)),
+            end: Point(100),
+            cost_estimate: NormalDist { avg: 3, sigma: 0 },
+            depends: vec![0],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: false,
+        };
+        let p = test_planner(vec![t0, t1]);
+        let mut rng = rng();
+        // Pin task 0 at a fixed position
+        let pinned = vec![(Point(0), Point(3), 0)];
+        let plan = sa_lns_partial(&p, &pinned, &mut rng);
+
+        // Task 0 should be at its pinned position
+        let t0_entry = plan.schedules.iter().find(|(_, _, id)| *id == 0).unwrap();
+        assert_eq!(t0_entry.0, Point(0));
+        // Task 1 should start after task 0 ends
+        let t1_entry = plan.schedules.iter().find(|(_, _, id)| *id == 1).unwrap();
+        assert!(
+            t0_entry.1.0 <= t1_entry.0.0,
+            "sa_lns_partial must respect dependencies with eval_best fix"
+        );
     }
 }
