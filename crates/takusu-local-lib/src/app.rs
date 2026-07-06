@@ -277,6 +277,13 @@ impl TakusuApp {
     }
 
     pub async fn update_settings(&self, body: &UpdateSettings) -> Result<SettingsRow, AppError> {
+        if let Some(ref tz) = body.tz
+            && jiff::tz::TimeZone::get(tz).is_err()
+        {
+            return Err(AppError::BadRequest(format!(
+                "invalid timezone '{tz}' (e.g. Asia/Tokyo)"
+            )));
+        }
         self.storage
             .update_settings(body)
             .await
@@ -1337,5 +1344,16 @@ mod tests {
     fn iso_to_point_now() {
         let tz = jiff::tz::TimeZone::UTC;
         let _ = iso_to_point("now", &tz).unwrap();
+    }
+
+    #[test]
+    fn update_settings_rejects_invalid_timezone() {
+        // #277: invalid timezone strings should be rejected at the API
+        // boundary, not silently fall back to UTC.
+        let invalid_tz = "Asia/Tokyoo";
+        assert!(jiff::tz::TimeZone::get(invalid_tz).is_err());
+
+        let valid_tz = "Asia/Tokyo";
+        assert!(jiff::tz::TimeZone::get(valid_tz).is_ok());
     }
 }

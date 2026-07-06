@@ -19,6 +19,14 @@ pub async fn update(mut req: worker::Request, env: Env) -> Result<Response, Work
     let database = db(&env)?;
     let existing = get_inner(&database).await?;
     let tz = body.tz.clone().unwrap_or(existing.tz);
+    // Basic validation: IANA timezone names contain a '/' (e.g. Asia/Tokyo),
+    // except for fixed abbreviations like "UTC". jiff is not available in the
+    // WASM Worker, so we do a structural check.
+    if tz != "UTC" && !tz.contains('/') {
+        return Err(WorkerError::BadRequest(format!(
+            "invalid timezone '{tz}' (e.g. Asia/Tokyo, UTC)"
+        )));
+    }
     let sleep_start = body.sleep_start.clone().unwrap_or(existing.sleep_start);
     let sleep_end = body.sleep_end.clone().unwrap_or(existing.sleep_end);
     let stmt = database.prepare(
