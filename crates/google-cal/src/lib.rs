@@ -51,6 +51,22 @@ pub struct SyncEntry {
 pub struct SyncResult {
     pub mappings: Vec<(String, String)>,
     pub deleted: Vec<String>,
+    /// Operations that failed (network error, rate limit, auth, etc.).
+    /// Non-empty means the local DB and Google Calendar are out of sync;
+    /// the caller should report this to the user (#279).
+    pub failed: Vec<SyncFailure>,
+}
+
+/// A single failed sync operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncFailure {
+    /// "delete", "update", or "create".
+    pub op: String,
+    /// Task ID (for create/update) or Google event ID (for delete).
+    pub task_id: Option<String>,
+    pub event_id: Option<String>,
+    /// Error message from the API call.
+    pub error: String,
 }
 
 pub struct Client {
@@ -261,6 +277,7 @@ impl Client {
         let token = self.refresh_access_token().await?;
         let mut mappings = Vec::new();
         let mut deleted = Vec::new();
+        let mut failed = Vec::new();
 
         let entry_ids: Vec<&str> = entries.iter().map(|e| e.task_id.as_str()).collect();
 
@@ -268,7 +285,15 @@ impl Client {
             if !entry_ids.contains(&task_id.as_str()) {
                 match self.delete_event(&token, event_id).await {
                     Ok(()) => deleted.push(event_id.clone()),
-                    Err(e) => tracing::warn!("failed to delete event {event_id}: {e}"),
+                    Err(e) => {
+                        tracing::warn!("failed to delete event {event_id}: {e}");
+                        failed.push(SyncFailure {
+                            op: "delete".to_string(),
+                            task_id: Some(task_id.clone()),
+                            event_id: Some(event_id.clone()),
+                            error: e.to_string(),
+                        });
+                    }
                 }
             }
         }
@@ -289,6 +314,12 @@ impl Client {
                                     "failed to create event for task {}: {e2}",
                                     entry.task_id
                                 );
+                                failed.push(SyncFailure {
+                                    op: "create".to_string(),
+                                    task_id: Some(entry.task_id.clone()),
+                                    event_id: None,
+                                    error: format!("update failed: {e}; create failed: {e2}"),
+                                });
                             }
                         }
                     }
@@ -298,17 +329,28 @@ impl Client {
                     Ok(id) => mappings.push((entry.task_id.clone(), id)),
                     Err(e) => {
                         tracing::error!("failed to create event for task {}: {e}", entry.task_id);
+                        failed.push(SyncFailure {
+                            op: "create".to_string(),
+                            task_id: Some(entry.task_id.clone()),
+                            event_id: None,
+                            error: e.to_string(),
+                        });
                     }
                 }
             }
         }
 
-        Ok(SyncResult { mappings, deleted })
+        Ok(SyncResult {
+            mappings,
+            deleted,
+            failed,
+        })
     }
 
-    pub async fn delete_all(&self, event_ids: &[(String, String)]) -> Result<Vec<String>> {
+    pub async fn delete_all(&self, event_ids: &[(String, String)]) -> Result<DeleteAllResult> {
         let token = self.refresh_access_token().await?;
         let mut deleted = Vec::new();
+        let mut failed = Vec::new();
 
         for (task_id, event_id) in event_ids {
             match self.delete_event(&token, event_id).await {
@@ -317,10 +359,23 @@ impl Client {
                 }
                 Err(e) => {
                     tracing::warn!("failed to delete event {event_id}: {e}");
+                    failed.push(SyncFailure {
+                        op: "delete".to_string(),
+                        task_id: Some(task_id.clone()),
+                        event_id: Some(event_id.clone()),
+                        error: e.to_string(),
+                    });
                 }
             }
         }
 
-        Ok(deleted)
+        Ok(DeleteAllResult { deleted, failed })
     }
+}
+
+/// Result of `delete_all`: successfully deleted task IDs + any failures.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DeleteAllResult {
+    pub deleted: Vec<String>,
+    pub failed: Vec<SyncFailure>,
 }

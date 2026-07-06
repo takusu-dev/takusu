@@ -1007,10 +1007,31 @@ impl TakusuApp {
                     .await
                     .map_err(|e| e.to_string())?;
                 tracing::info!(
-                    "google calendar sync: created/updated {}, deleted {}",
+                    "google calendar sync: created/updated {}, deleted {}, failed {}",
                     result.mappings.len(),
-                    deleted_task_ids.len()
+                    deleted_task_ids.len(),
+                    result.failed.len()
                 );
+                if !result.failed.is_empty() {
+                    let summary = result
+                        .failed
+                        .iter()
+                        .map(|f| {
+                            let id = f
+                                .task_id
+                                .as_deref()
+                                .or(f.event_id.as_deref())
+                                .unwrap_or("?");
+                            format!("{}({}): {}", f.op, id, f.error)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    return Err(format!(
+                        "google calendar sync partially failed ({}/{} operations): {summary}",
+                        result.failed.len(),
+                        result.failed.len() + result.mappings.len() + deleted_task_ids.len()
+                    ));
+                }
                 Ok(())
             }
             None => {
@@ -1027,15 +1048,42 @@ impl TakusuApp {
                     .iter()
                     .map(|m| (m.task_id.clone(), m.google_event_id.clone()))
                     .collect();
-                client
+                let result = client
                     .delete_all(&event_ids)
                     .await
                     .map_err(|e| e.to_string())?;
+                // Only remove mappings for successfully deleted tasks, so
+                // failed events remain in the DB and can be retried on the
+                // next sync instead of being orphaned (#279).
                 self.storage
-                    .clear_gcal_mappings()
+                    .delete_gcal_mappings(&result.deleted)
                     .await
                     .map_err(|e| e.to_string())?;
-                tracing::info!("cleared {} google calendar events", event_ids.len());
+                tracing::info!(
+                    "cleared {} google calendar events, failed {}",
+                    result.deleted.len(),
+                    result.failed.len()
+                );
+                if !result.failed.is_empty() {
+                    let summary = result
+                        .failed
+                        .iter()
+                        .map(|f| {
+                            let id = f
+                                .task_id
+                                .as_deref()
+                                .or(f.event_id.as_deref())
+                                .unwrap_or("?");
+                            format!("{}({}): {}", f.op, id, f.error)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    return Err(format!(
+                        "google calendar delete_all partially failed ({}/{}): {summary}",
+                        result.failed.len(),
+                        event_ids.len()
+                    ));
+                }
                 Ok(())
             }
         }
