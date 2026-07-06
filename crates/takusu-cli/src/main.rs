@@ -508,7 +508,10 @@ async fn main() {
             process::exit(1);
         }),
         StorageKind::Sqlite => {
-            let root_token = LocalConfig::load_root_token();
+            let root_token = LocalConfig::load_root_token().unwrap_or_else(|e| {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            });
             let storage = SqliteStorage::init(&local_cfg, root_token)
                 .await
                 .unwrap_or_else(|e| {
@@ -519,7 +522,10 @@ async fn main() {
         }
     };
 
-    let root_token = LocalConfig::load_root_token();
+    let root_token = LocalConfig::load_root_token().unwrap_or_else(|e| {
+        eprintln!("Error: {e}");
+        process::exit(1);
+    });
 
     let token_cache = Arc::new(TokenCache::with_default_ttl());
     let app = TakusuApp::new(storage, root_token, token_cache);
