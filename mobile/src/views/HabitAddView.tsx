@@ -252,15 +252,51 @@ export function HabitAddView() {
         <View style={styles.row}>
           <View style={[styles.field, { flex: 1 }]}>
             <Text style={[styles.label, { color: colors.gray }]}>avg (分)</Text>
-            <TextInput
-              style={[
-                styles.input,
-                { borderColor: colors.separator, color: colors.black },
-              ]}
-              value={avgMinutes}
-              onChangeText={setAvgMinutes}
-              keyboardType="numeric"
-            />
+            <View style={styles.rowWithButton}>
+              <TextInput
+                style={[
+                  styles.input,
+                  styles.inputWithButton,
+                  { borderColor: colors.separator, color: colors.black },
+                ]}
+                value={avgMinutes}
+                onChangeText={setAvgMinutes}
+                keyboardType="numeric"
+              />
+              <Pressable
+                style={[styles.maximizeButton, { borderColor: BRAND_COLOR }]}
+                onPress={() => {
+                  const [sh, sm] = startTime
+                    .split(':')
+                    .map((n) => parseInt(n, 10) || 0);
+                  const [eh, em] = endTime
+                    .split(':')
+                    .map((n) => parseInt(n, 10) || 0);
+                  let diffMin = eh * 60 + em - (sh * 60 + sm);
+                  if (diffMin <= 0) diffMin += 24 * 60; // overnight
+                  if (diffMin <= 0) return;
+                  haptic.light();
+                  setAvgMinutes(String(Math.max(1, diffMin)));
+                }}
+              >
+                <Ionicons name="expand" size={16} color={BRAND_COLOR} />
+              </Pressable>
+            </View>
+            {(() => {
+              const [sh, sm] = startTime
+                .split(':')
+                .map((n) => parseInt(n, 10) || 0);
+              const [eh, em] = endTime
+                .split(':')
+                .map((n) => parseInt(n, 10) || 0);
+              let diffMin = eh * 60 + em - (sh * 60 + sm);
+              if (diffMin <= 0) diffMin += 24 * 60;
+              return diffMin > 0 ? (
+                <Text style={[styles.hint, { color: colors.grayLight }]}>
+                  window: {diffMin}分
+                </Text>
+              ) : null;
+            })()}
           </View>
           <View style={[styles.field, { flex: 1 }]}>
             <Text style={[styles.label, { color: colors.gray }]}>
@@ -423,6 +459,22 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     gap: 12,
+  },
+  rowWithButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  inputWithButton: {
+    flex: 1,
+  },
+  maximizeButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   rruleHeader: {
     flexDirection: 'row',
