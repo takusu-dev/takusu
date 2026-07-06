@@ -11,7 +11,25 @@ fn format_recurrence(raw: &str) -> String {
         .unwrap_or_else(|_| raw.to_string())
 }
 
-pub fn display_task_detail(task: &TaskRow, entry: Option<&ScheduleEntry>, tz: &jiff::tz::TimeZone) {
+/// Build the display label for a task ID.
+/// Habit-generated tasks show `h{habit_display_id}#{task_display_id}` (#305);
+/// other tasks show `#{task_display_id}`.
+fn task_id_label(task: &TaskRow, habit_map: &std::collections::HashMap<String, i64>) -> String {
+    if let Some(hid) = task.habit_id.as_deref()
+        && let Some(&hdisplay) = habit_map.get(hid)
+    {
+        format!("h{}#{}", hdisplay, task.display_id)
+    } else {
+        format!("#{}", task.display_id)
+    }
+}
+
+pub fn display_task_detail(
+    task: &TaskRow,
+    entry: Option<&ScheduleEntry>,
+    tz: &jiff::tz::TimeZone,
+    habit_map: &std::collections::HashMap<String, i64>,
+) {
     let status_color = match task.status.as_str() {
         "pending" => Color::Yellow,
         "scheduled" => Color::Green,
@@ -37,7 +55,7 @@ pub fn display_task_detail(task: &TaskRow, entry: Option<&ScheduleEntry>, tz: &j
         Cell::new("Abandon").fg(Color::Cyan),
     ]);
     table.add_row(vec![
-        Cell::new(format!("#{}", task.display_id)),
+        Cell::new(task_id_label(task, habit_map)),
         Cell::new(&task.title),
         Cell::new(&task.status).fg(status_color),
         Cell::new(
@@ -96,7 +114,7 @@ pub fn display_habits(habits: &[HabitRow]) {
         ]);
 
     for h in habits {
-        let short_id = &h.id[..8];
+        let short_id = format!("h{}", h.display_id);
         let time = format!("{}–{}", h.start_time, h.end_time);
         let active_color = if h.active {
             Color::Green
@@ -144,7 +162,7 @@ pub fn display_habit_detail(habit: &HabitRow) {
     ]);
     let time = format!("{}–{}", habit.start_time, habit.end_time);
     table.add_row(vec![
-        Cell::new(habit.id.as_str()),
+        Cell::new(format!("h{}", habit.display_id)),
         Cell::new(&habit.title),
         Cell::new(format_recurrence(&habit.recurrence)),
         Cell::new(time),
@@ -163,7 +181,11 @@ pub fn display_habit_detail(habit: &HabitRow) {
     }
 }
 
-pub fn display_tasks(tasks: &[TaskRow], tz: &jiff::tz::TimeZone) {
+pub fn display_tasks(
+    tasks: &[TaskRow],
+    tz: &jiff::tz::TimeZone,
+    habit_map: &std::collections::HashMap<String, i64>,
+) {
     if tasks.is_empty() {
         println!("No tasks found.");
         return;
@@ -194,7 +216,7 @@ pub fn display_tasks(tasks: &[TaskRow], tz: &jiff::tz::TimeZone) {
             "skipped" => Color::DarkGrey,
             _ => Color::White,
         };
-        let short_id = format!("#{}", t.display_id);
+        let short_id = task_id_label(t, habit_map);
         table.add_row(vec![
             Cell::new(short_id),
             Cell::new(&t.title),
@@ -215,7 +237,12 @@ pub fn display_tasks(tasks: &[TaskRow], tz: &jiff::tz::TimeZone) {
     println!("{table}");
 }
 
-pub fn display_schedule(entries: &[ScheduleEntry], tasks: &[TaskRow], tz: &jiff::tz::TimeZone) {
+pub fn display_schedule(
+    entries: &[ScheduleEntry],
+    tasks: &[TaskRow],
+    tz: &jiff::tz::TimeZone,
+    habit_map: &std::collections::HashMap<String, i64>,
+) {
     if entries.is_empty() {
         println!("No schedule found.");
         return;
@@ -244,7 +271,7 @@ pub fn display_schedule(entries: &[ScheduleEntry], tasks: &[TaskRow], tz: &jiff:
         let task = task_map.get(e.task_id.as_str());
         let title = task.map(|t| t.title.as_str()).unwrap_or("(unknown)");
         let id_label = task
-            .map(|t| format!("#{}", t.display_id))
+            .map(|t| task_id_label(t, habit_map))
             .unwrap_or_else(|| e.task_id[..8].to_string());
         let start = format_datetime(&e.start_at, tz);
         let end = format_datetime(&e.end_at, tz);

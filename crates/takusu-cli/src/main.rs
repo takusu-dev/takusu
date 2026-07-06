@@ -563,12 +563,25 @@ async fn run(
     Ok(())
 }
 
+/// Build a habit_id (UUID) → display_id map for task ID labels (h1#5, #305).
+/// Returns an empty map if the habit list cannot be fetched (e.g. empty DB),
+/// in which case task labels fall back to the plain `#N` form.
+async fn habit_display_map(app: &TakusuApp) -> std::collections::HashMap<String, i64> {
+    app.list_habits()
+        .await
+        .map(|habits| habits.into_iter().map(|h| (h.id, h.display_id)).collect())
+        .unwrap_or_default()
+}
+
 async fn run_task(
     mode: DisplayMode,
     app: &TakusuApp,
     tz: &jiff::tz::TimeZone,
     cmd: TaskCommands,
 ) -> Result<(), AppError> {
+    // Build habit_id → display_id map once for task ID labels (h1#5, #305).
+    // Habits are few, so fetching on every task command is cheap.
+    let habit_map = habit_display_map(app).await;
     match cmd {
         TaskCommands::List {
             status,
@@ -584,8 +597,8 @@ async fn run_task(
             };
             let tasks = app.list_tasks(&query).await?;
             match mode {
-                DisplayMode::Rich => display_rich::display_tasks(&tasks, tz),
-                DisplayMode::Simple => display_simple::display_tasks(&tasks, tz),
+                DisplayMode::Rich => display_rich::display_tasks(&tasks, tz, &habit_map),
+                DisplayMode::Simple => display_simple::display_tasks(&tasks, tz, &habit_map),
             }
         }
         TaskCommands::Show { id } => {
@@ -599,9 +612,11 @@ async fn run_task(
                 Err(_) => None,
             };
             match mode {
-                DisplayMode::Rich => display_rich::display_task_detail(&task, entry.as_ref(), tz),
+                DisplayMode::Rich => {
+                    display_rich::display_task_detail(&task, entry.as_ref(), tz, &habit_map)
+                }
                 DisplayMode::Simple => {
-                    display_simple::display_task_detail(&task, entry.as_ref(), tz)
+                    display_simple::display_task_detail(&task, entry.as_ref(), tz, &habit_map)
                 }
             }
         }
@@ -648,8 +663,8 @@ async fn run_task(
             };
             let task = app.create_task(&body).await?;
             match mode {
-                DisplayMode::Rich => display_rich::display_tasks(&[task], tz),
-                DisplayMode::Simple => display_simple::display_tasks(&[task], tz),
+                DisplayMode::Rich => display_rich::display_tasks(&[task], tz, &habit_map),
+                DisplayMode::Simple => display_simple::display_tasks(&[task], tz, &habit_map),
             }
         }
         TaskCommands::Edit { id } => {
@@ -662,8 +677,8 @@ async fn run_task(
                 .ok_or_else(|| AppError::BadRequest("failed to parse edited task".to_string()))?;
             let updated = app.update_task(&id, &update).await?;
             match mode {
-                DisplayMode::Rich => display_rich::display_tasks(&[updated], tz),
-                DisplayMode::Simple => display_simple::display_tasks(&[updated], tz),
+                DisplayMode::Rich => display_rich::display_tasks(&[updated], tz, &habit_map),
+                DisplayMode::Simple => display_simple::display_tasks(&[updated], tz, &habit_map),
             }
         }
         TaskCommands::Update {
@@ -709,8 +724,8 @@ async fn run_task(
             };
             let task = app.update_task(&id, &body).await?;
             match mode {
-                DisplayMode::Rich => display_rich::display_tasks(&[task], tz),
-                DisplayMode::Simple => display_simple::display_tasks(&[task], tz),
+                DisplayMode::Rich => display_rich::display_tasks(&[task], tz, &habit_map),
+                DisplayMode::Simple => display_simple::display_tasks(&[task], tz, &habit_map),
             }
         }
         TaskCommands::Replace {
@@ -750,8 +765,8 @@ async fn run_task(
             };
             let task = app.replace_task(&id, &body).await?;
             match mode {
-                DisplayMode::Rich => display_rich::display_tasks(&[task], tz),
-                DisplayMode::Simple => display_simple::display_tasks(&[task], tz),
+                DisplayMode::Rich => display_rich::display_tasks(&[task], tz, &habit_map),
+                DisplayMode::Simple => display_simple::display_tasks(&[task], tz, &habit_map),
             }
         }
         TaskCommands::Delete { id } => {
@@ -765,8 +780,8 @@ async fn run_task(
             };
             let task = app.update_task(&id, &body).await?;
             match mode {
-                DisplayMode::Rich => display_rich::display_tasks(&[task], tz),
-                DisplayMode::Simple => display_simple::display_tasks(&[task], tz),
+                DisplayMode::Rich => display_rich::display_tasks(&[task], tz, &habit_map),
+                DisplayMode::Simple => display_simple::display_tasks(&[task], tz, &habit_map),
             }
         }
     }
@@ -952,6 +967,7 @@ async fn run_schedule(
     tz: &jiff::tz::TimeZone,
     cmd: ScheduleCommands,
 ) -> Result<(), AppError> {
+    let habit_map = habit_display_map(app).await;
     match cmd {
         ScheduleCommands::Get => {
             let schedule = app.get_schedule().await?;
@@ -962,8 +978,12 @@ async fn run_schedule(
                 .await
                 .unwrap_or_default();
             match mode {
-                DisplayMode::Rich => display_rich::display_schedule(&entries, &tasks, tz),
-                DisplayMode::Simple => display_simple::display_schedule(&entries, &tasks, tz),
+                DisplayMode::Rich => {
+                    display_rich::display_schedule(&entries, &tasks, tz, &habit_map)
+                }
+                DisplayMode::Simple => {
+                    display_simple::display_schedule(&entries, &tasks, tz, &habit_map)
+                }
             }
         }
         ScheduleCommands::Generate { task_ids, sleep } => {
@@ -976,8 +996,12 @@ async fn run_schedule(
                 .await
                 .unwrap_or_default();
             match mode {
-                DisplayMode::Rich => display_rich::display_schedule(&entries, &tasks, tz),
-                DisplayMode::Simple => display_simple::display_schedule(&entries, &tasks, tz),
+                DisplayMode::Rich => {
+                    display_rich::display_schedule(&entries, &tasks, tz, &habit_map)
+                }
+                DisplayMode::Simple => {
+                    display_simple::display_schedule(&entries, &tasks, tz, &habit_map)
+                }
             }
         }
         ScheduleCommands::Reschedule {
@@ -1004,8 +1028,12 @@ async fn run_schedule(
                 .await
                 .unwrap_or_default();
             match mode {
-                DisplayMode::Rich => display_rich::display_schedule(&entries, &tasks, tz),
-                DisplayMode::Simple => display_simple::display_schedule(&entries, &tasks, tz),
+                DisplayMode::Rich => {
+                    display_rich::display_schedule(&entries, &tasks, tz, &habit_map)
+                }
+                DisplayMode::Simple => {
+                    display_simple::display_schedule(&entries, &tasks, tz, &habit_map)
+                }
             }
         }
         ScheduleCommands::Move {

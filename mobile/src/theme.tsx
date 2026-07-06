@@ -35,6 +35,63 @@ export function abandonabilityColorFor(
     : abandonabilityColor(abandonability);
 }
 
+// ── Habit-based color palette (issue #309) ──
+// 8 distinct pastel tints for light mode, dimmer tints for dark mode.
+// A task with a habit_id uses the habit's display_id to pick a color, so
+// all tasks from the same habit share a recognizable tint. Low-abandon
+// (must-do) tasks keep the red abandonability color regardless of habit.
+const HABIT_COLORS_LIGHT: readonly string[] = [
+  '#E6F0FA', // soft blue
+  '#E8F5E9', // soft green
+  '#FDECEC', // soft pink
+  '#FFF4E5', // soft orange
+  '#F3E8FA', // soft purple
+  '#E0F7FA', // soft cyan
+  '#F5F0E1', // soft beige
+  '#E8F0E8', // soft sage
+];
+
+const HABIT_COLORS_DARK: readonly string[] = [
+  '#1E2A38',
+  '#1E2E22',
+  '#321E22',
+  '#322A1E',
+  '#2A1E32',
+  '#1E2E32',
+  '#322E1E',
+  '#1E2A24',
+];
+
+export const HABIT_PALETTE_SIZE = 8;
+
+// Pick a habit color from the palette by habit display_id.
+export function habitColorFor(habitDisplayId: number, dark: boolean): string {
+  const palette = dark ? HABIT_COLORS_DARK : HABIT_COLORS_LIGHT;
+  const idx =
+    ((habitDisplayId % HABIT_PALETTE_SIZE) + HABIT_PALETTE_SIZE) %
+    HABIT_PALETTE_SIZE;
+  return palette[idx]!;
+}
+
+// Combined color rule for a task card (issue #309):
+//  - abandonability < 0.25 → red (must-do, keep abandonability color)
+//  - has habit_id → habit palette color (by habit display_id)
+//  - otherwise → abandonability color
+export function taskCardColor(
+  abandonability: number,
+  habitId: string | undefined,
+  habitDisplayId: number | undefined,
+  dark: boolean,
+): string {
+  if (abandonability < 0.25) {
+    return abandonabilityColorFor(abandonability, dark);
+  }
+  if (habitId && habitDisplayId !== undefined) {
+    return habitColorFor(habitDisplayId, dark);
+  }
+  return abandonabilityColorFor(abandonability, dark);
+}
+
 export const ABANDON_STEPS = [0.0, 0.25, 0.5, 0.75, 1.0] as const;
 
 // Light theme colors (default, backward-compatible export)

@@ -70,6 +70,7 @@ export interface TaskQuery {
 
 export interface HabitRow {
   id: string;
+  display_id: number;
   title: string;
   description?: string;
   recurrence: string;

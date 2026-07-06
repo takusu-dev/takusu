@@ -175,6 +175,12 @@ export function HomeView() {
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [schedule, setSchedule] = useState<ScheduleEntry[]>([]);
   const [habits, setHabits] = useState<HabitRow[]>([]);
+  // habit_id (UUID) → display_id map for habit-based task coloring (#309)
+  // and h1#5 ID labels (#305).
+  const habitDisplayIdMap = useMemo(
+    () => new Map(habits.map((h) => [h.id, h.display_id])),
+    [habits],
+  );
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [refreshing, setRefreshing] = useState(false);
   // Server-configured timezone (from GET /api/settings). Used by dateKey
@@ -1304,6 +1310,7 @@ export function HomeView() {
           guestScheduleEnds={item.guestScheduleEnds}
           isDone={item.isDone}
           selected={isSelected}
+          habitDisplayIdMap={habitDisplayIdMap}
           onHostPress={() => {
             if (selected.size > 0) {
               toggleGroupSelection();
@@ -1332,6 +1339,11 @@ export function HomeView() {
         scheduleEnd={item.scheduleEnd}
         isDone={item.isDone}
         selected={isSelected}
+        habitDisplayId={
+          item.task.habit_id
+            ? habitDisplayIdMap.get(item.task.habit_id)
+            : undefined
+        }
         onPress={() => {
           if (selected.size > 0) {
             toggleSelection(item.task.id);

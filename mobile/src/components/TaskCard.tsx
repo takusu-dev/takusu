@@ -18,12 +18,7 @@ import Reanimated, {
 import { Ionicons } from '@expo/vector-icons';
 import type { TaskRow } from '@/src/api/types';
 import { parseDepends } from '@/src/api/types';
-import {
-  abandonabilityColorFor,
-  BRAND_COLOR,
-  COLORS,
-  useTheme,
-} from '@/src/theme';
+import { taskCardColor, BRAND_COLOR, COLORS, useTheme } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
 
 interface TaskCardProps {
@@ -36,6 +31,9 @@ interface TaskCardProps {
   onDelete?: () => void;
   onLongPress?: () => void;
   selected?: boolean;
+  // Habit display_id for habit-based coloring (#309). Undefined when the
+  // task has no habit or the habit map is unavailable.
+  habitDisplayId?: number;
 }
 
 function formatTime(iso?: string): string {
@@ -57,6 +55,7 @@ function TaskCardImpl({
   onDelete,
   onLongPress,
   selected,
+  habitDisplayId,
 }: TaskCardProps) {
   const translateX = useSharedValue(0);
   // Track which direction the haptic last fired for (0=none, 1=right, -1=left)
@@ -113,7 +112,12 @@ function TaskCardImpl({
     opacity: Math.min(1, Math.max(0, -translateX.value / 80)),
   }));
 
-  const bgColor = abandonabilityColorFor(task.abandonability, dark);
+  const bgColor = taskCardColor(
+    task.abandonability,
+    task.habit_id,
+    habitDisplayId,
+    dark,
+  );
   const deps = parseDepends(task.depends);
 
   // Slide-right background preview: icon and color depend on what the
@@ -194,7 +198,9 @@ function TaskCardImpl({
             {/* Center: title */}
             <View style={styles.titleContainer}>
               <Text style={[styles.taskId, { color: colors.gray }]}>
-                #{task.display_id}
+                {task.habit_id && habitDisplayId !== undefined
+                  ? `h${habitDisplayId}#${task.display_id}`
+                  : `#${task.display_id}`}
               </Text>
               <Text
                 style={[
@@ -336,6 +342,8 @@ interface ParallelGroupCardProps {
   onLongPress: () => void;
   onDone?: () => void;
   onDelete?: () => void;
+  // habit_id → display_id map for habit-based coloring (#309).
+  habitDisplayIdMap?: Map<string, number>;
 }
 
 function ParallelGroupCardImpl({
@@ -352,6 +360,7 @@ function ParallelGroupCardImpl({
   onLongPress,
   onDone,
   onDelete,
+  habitDisplayIdMap,
 }: ParallelGroupCardProps) {
   const translateX = useSharedValue(0);
   // Track which direction the haptic last fired for (0=none, 1=right, -1=left)
@@ -401,7 +410,12 @@ function ParallelGroupCardImpl({
     opacity: Math.min(1, Math.max(0, -translateX.value / 80)),
   }));
 
-  const hostBgColor = abandonabilityColorFor(host.abandonability, dark);
+  const hostBgColor = taskCardColor(
+    host.abandonability,
+    host.habit_id,
+    host.habit_id ? habitDisplayIdMap?.get(host.habit_id) : undefined,
+    dark,
+  );
   const hostDone = host.status === 'completed' || host.status === 'skipped';
 
   const handleHostPress = () => {
@@ -485,8 +499,12 @@ function ParallelGroupCardImpl({
             {guests.map((guest, idx) => {
               const guestDone =
                 guest.status === 'completed' || guest.status === 'skipped';
-              const guestBg = abandonabilityColorFor(
+              const guestBg = taskCardColor(
                 guest.abandonability,
+                guest.habit_id,
+                guest.habit_id
+                  ? habitDisplayIdMap?.get(guest.habit_id)
+                  : undefined,
                 dark,
               );
               const guestDeps = parseDepends(guest.depends);
@@ -526,7 +544,10 @@ function ParallelGroupCardImpl({
                     <Text
                       style={[groupStyles.guestTaskId, { color: colors.gray }]}
                     >
-                      #{guest.display_id}
+                      {guest.habit_id &&
+                      habitDisplayIdMap?.get(guest.habit_id) !== undefined
+                        ? `h${habitDisplayIdMap.get(guest.habit_id)}#${guest.display_id}`
+                        : `#${guest.display_id}`}
                     </Text>
                     <Text
                       style={[

@@ -134,6 +134,8 @@ pub struct TaskQuery {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct HabitRow {
     pub id: String,
+    #[serde(default)]
+    pub display_id: i64,
     pub title: String,
     pub description: Option<String>,
     pub recurrence: String,

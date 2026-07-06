@@ -1,7 +1,25 @@
 use jiff::Timestamp;
 use takusu_storage::{HabitRow, ScheduleEntry, TaskRow, TokenRow};
 
-pub fn display_task_detail(task: &TaskRow, entry: Option<&ScheduleEntry>, tz: &jiff::tz::TimeZone) {
+/// Build the display label for a task ID.
+/// Habit-generated tasks show `h{habit_display_id}#{task_display_id}` (#305);
+/// other tasks show `#{task_display_id}`.
+fn task_id_label(task: &TaskRow, habit_map: &std::collections::HashMap<String, i64>) -> String {
+    if let Some(hid) = task.habit_id.as_deref()
+        && let Some(&hdisplay) = habit_map.get(hid)
+    {
+        format!("h{}#{}", hdisplay, task.display_id)
+    } else {
+        format!("#{}", task.display_id)
+    }
+}
+
+pub fn display_task_detail(
+    task: &TaskRow,
+    entry: Option<&ScheduleEntry>,
+    tz: &jiff::tz::TimeZone,
+    habit_map: &std::collections::HashMap<String, i64>,
+) {
     let status_marker = match task.status.as_str() {
         "pending" => "[ ]",
         "scheduled" => "[~]",
@@ -10,7 +28,12 @@ pub fn display_task_detail(task: &TaskRow, entry: Option<&ScheduleEntry>, tz: &j
         "skipped" => "[-]",
         _ => "[?]",
     };
-    println!("{} #{} {}", status_marker, task.display_id, task.title);
+    println!(
+        "{} {} {}",
+        status_marker,
+        task_id_label(task, habit_map),
+        task.title
+    );
     println!(
         "   deadline: {} | est: {}min (+/-{}) | abandon: {:.1} | parallel: {}",
         fmt_simple(&task.end_at, tz),
@@ -37,7 +60,11 @@ pub fn display_task_detail(task: &TaskRow, entry: Option<&ScheduleEntry>, tz: &j
     println!();
 }
 
-pub fn display_tasks(tasks: &[TaskRow], tz: &jiff::tz::TimeZone) {
+pub fn display_tasks(
+    tasks: &[TaskRow],
+    tz: &jiff::tz::TimeZone,
+    habit_map: &std::collections::HashMap<String, i64>,
+) {
     if tasks.is_empty() {
         println!("  (no tasks)");
         return;
@@ -52,7 +79,7 @@ pub fn display_tasks(tasks: &[TaskRow], tz: &jiff::tz::TimeZone) {
             "skipped" => "[-]",
             _ => "[?]",
         };
-        let short_id = format!("#{}", t.display_id);
+        let short_id = task_id_label(t, habit_map);
         println!("{} {} {}", status_marker, short_id, t.title);
         println!(
             "   deadline: {} | est: {}min (+/-{}) | abandon: {:.1}",
@@ -68,7 +95,12 @@ pub fn display_tasks(tasks: &[TaskRow], tz: &jiff::tz::TimeZone) {
     }
 }
 
-pub fn display_schedule(entries: &[ScheduleEntry], tasks: &[TaskRow], tz: &jiff::tz::TimeZone) {
+pub fn display_schedule(
+    entries: &[ScheduleEntry],
+    tasks: &[TaskRow],
+    tz: &jiff::tz::TimeZone,
+    habit_map: &std::collections::HashMap<String, i64>,
+) {
     if entries.is_empty() {
         println!("  (no schedule)");
         return;
@@ -84,7 +116,7 @@ pub fn display_schedule(entries: &[ScheduleEntry], tasks: &[TaskRow], tz: &jiff:
         let task = task_map.get(e.task_id.as_str());
         let title = task.map(|t| t.title.as_str()).unwrap_or("(unknown)");
         let id_label = task
-            .map(|t| format!("#{}", t.display_id))
+            .map(|t| task_id_label(t, habit_map))
             .unwrap_or_else(|| e.task_id[..8].to_string());
         let start = fmt_simple(&e.start_at, tz);
         let end = fmt_simple(&e.end_at, tz);
@@ -145,7 +177,7 @@ pub fn display_habits(habits: &[HabitRow]) {
 
     for h in habits {
         let active = if h.active { "active" } else { "inactive" };
-        let short_id = &h.id[..8];
+        let short_id = format!("h{}", h.display_id);
         println!(
             "  {} {} [{}] {}–{} {}",
             short_id, h.title, h.recurrence, h.start_time, h.end_time, active
@@ -169,8 +201,8 @@ pub fn display_habits(habits: &[HabitRow]) {
 pub fn display_habit_detail(habit: &HabitRow) {
     let active = if habit.active { "active" } else { "inactive" };
     println!(
-        "{} {} [{}] {}–{} {}",
-        habit.id, habit.title, habit.recurrence, habit.start_time, habit.end_time, active
+        "h{} {} [{}] {}–{} {}",
+        habit.display_id, habit.title, habit.recurrence, habit.start_time, habit.end_time, active
     );
     println!(
         "   est: {}min (+/-{}) | abandon: {:.1} | parallel: {} | allows_parallel: {}",
