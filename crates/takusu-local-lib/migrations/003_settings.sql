@@ -7,5 +7,5 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-INSERT INTO settings (id, tz, sleep_start, sleep_end)
+INSERT OR IGNORE INTO settings (id, tz, sleep_start, sleep_end)
     VALUES ('active', 'UTC', '22:00', '06:00');
