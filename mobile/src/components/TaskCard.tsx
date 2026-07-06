@@ -295,6 +295,7 @@ interface ParallelGroupCardProps {
   hostScheduleStart?: string;
   hostScheduleEnd?: string;
   guestScheduleStarts: (string | undefined)[];
+  guestScheduleEnds: (string | undefined)[];
   isDone: boolean;
   selected?: boolean;
   onHostPress: () => void;
@@ -310,6 +311,7 @@ function ParallelGroupCardImpl({
   hostScheduleStart,
   hostScheduleEnd,
   guestScheduleStarts,
+  guestScheduleEnds,
   isDone,
   selected,
   onHostPress,
@@ -459,6 +461,14 @@ function ParallelGroupCardImpl({
                       ]}
                     >
                       {formatTime(guestScheduleStarts[idx])}
+                    </Text>
+                    <Text
+                      style={[
+                        groupStyles.guestTime,
+                        { color: colors.grayDark },
+                      ]}
+                    >
+                      {formatTime(guestScheduleEnds[idx])}
                     </Text>
                   </View>
                   <View style={groupStyles.guestTitleContainer}>
