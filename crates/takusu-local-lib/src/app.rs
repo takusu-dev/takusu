@@ -1011,6 +1011,22 @@ impl TakusuApp {
                     result.mappings.len(),
                     deleted_task_ids.len()
                 );
+                if !result.failed.is_empty() {
+                    let summary = result
+                        .failed
+                        .iter()
+                        .map(|f| format!("{}({}): {}", f.task_id, f.operation, f.error))
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    tracing::warn!(
+                        "google calendar sync: {} failure(s): {summary}",
+                        result.failed.len()
+                    );
+                    return Err(format!(
+                        "google calendar sync partially failed: {} operation(s) could not complete — DB and Calendar may diverge",
+                        result.failed.len()
+                    ));
+                }
                 Ok(())
             }
             None => {

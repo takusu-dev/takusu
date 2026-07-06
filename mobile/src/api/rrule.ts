@@ -206,7 +206,11 @@ export function summarizeRule(r: RecurrenceRule): string {
 
   // by_month: show for all frequencies
   if (r.by_month.length > 0) {
-    parts.push(r.by_month.map((m) => MONTH_LABELS[m - 1]).join('・'));
+    parts.push(
+      r.by_month
+        .map((m) => (m >= 1 && m <= 12 ? MONTH_LABELS[m - 1] : `?${m}`))
+        .join('・'),
+    );
   }
 
   // by_month_day: show for monthly/yearly (including negative = from end)

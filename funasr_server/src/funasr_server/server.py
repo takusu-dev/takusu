@@ -62,6 +62,10 @@ def _extract_text(result: list) -> str:
 
 
 _model: AutoModel | None = None  # noqa: F821
+# Serializes access to _model.generate(). AutoModel is not documented as
+# thread-safe, so concurrent run_in_executor calls could crash or corrupt
+# results (#283). The lock wraps the entire executor call.
+_model_lock: asyncio.Lock  # initialized in _run()
 
 
 def _load_model(config: ServerConfig) -> AutoModel:  # noqa: F821
@@ -121,14 +125,15 @@ async def _handle(websocket: websockets.ServerConnection) -> None:
                     loop = asyncio.get_running_loop()
                     hotwords = session.request.hotwords
                     language = session.request.language
-                    result = await loop.run_in_executor(
-                        None,
-                        lambda audio=audio, hotwords=hotwords, language=language: _model.generate(
-                            input=audio,
-                            language=language,
-                            hotwords=hotwords,
-                        ),
-                    )
+                    async with _model_lock:
+                        result = await loop.run_in_executor(
+                            None,
+                            lambda audio=audio, hotwords=hotwords, language=language: _model.generate(
+                                input=audio,
+                                language=language,
+                                hotwords=hotwords,
+                            ),
+                        )
 
                     text = ""
                     raw = _extract_text(result)
@@ -148,6 +153,8 @@ async def _handle(websocket: websockets.ServerConnection) -> None:
 
 
 async def _run(config: ServerConfig) -> None:
+    global _model_lock
+    _model_lock = asyncio.Lock()
     model = _load_model(config)
     global _model
     _model = model
