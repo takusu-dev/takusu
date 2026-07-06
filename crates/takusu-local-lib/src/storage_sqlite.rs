@@ -2,10 +2,10 @@ use async_trait::async_trait;
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 use takusu_storage::{
-    CreateHabit, CreateTask, GoogleCalEventRow, GoogleCalSettingsRow, HabitRow,
-    SaveScheduleRequest, ScheduleRow, SettingsRow, Storage, StorageError, TaskQuery, TaskRow,
-    TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateSettings,
-    UpdateTask, storage::StorageResult,
+    CreateHabit, CreateHabitPause, CreateTask, GoogleCalEventRow, GoogleCalSettingsRow,
+    HabitPauseRow, HabitRow, SaveScheduleRequest, ScheduleRow, SettingsRow, Storage, StorageError,
+    TaskQuery, TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit,
+    UpdateSettings, UpdateTask, storage::StorageResult,
 };
 
 use crate::config::LocalConfig;
@@ -17,6 +17,7 @@ const MIGRATION_004: &str = include_str!("../migrations/004_indexes.sql");
 const MIGRATION_005: &str = include_str!("../migrations/005_task_display_id.sql");
 const MIGRATION_006: &str = include_str!("../migrations/006_user_edited.sql");
 const MIGRATION_007: &str = include_str!("../migrations/007_task_display_id_seq.sql");
+const MIGRATION_010: &str = include_str!("../migrations/010_habit_pauses.sql");
 
 // Migration 009 adds habits.display_id. The ALTER TABLE is not idempotent
 // (SQLite has no IF NOT EXISTS for ADD COLUMN), so it is run conditionally
@@ -138,6 +139,10 @@ impl SqliteStorage {
         }
         // Backfill + index + sequence table (idempotent statements).
         sqlx::raw_sql(MIGRATION_009_BACKFILL).execute(&pool).await?;
+
+        // Migration 010 creates the habit_pauses table (idempotent — uses
+        // IF NOT EXISTS for both the table and the index).
+        sqlx::raw_sql(MIGRATION_010).execute(&pool).await?;
 
         Ok(Self { pool, root_token })
     }
@@ -532,12 +537,83 @@ impl Storage for SqliteStorage {
             .execute(&mut *tx)
             .await
             .map_err(map_err)?;
+        // habit_pauses: same reason as above — FK cascade does not fire
+        // without PRAGMA foreign_keys = ON, so delete explicitly (#303).
+        sqlx::query("DELETE FROM habit_pauses WHERE habit_id = ?")
+            .bind(&full)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
         sqlx::query("DELETE FROM habits WHERE id = ?")
             .bind(&full)
             .execute(&mut *tx)
             .await
             .map_err(map_err)?;
         tx.commit().await.map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn list_habit_pauses(&self, habit_id: &str) -> StorageResult<Vec<HabitPauseRow>> {
+        let full = resolve_habit_id(&self.pool, habit_id).await?;
+        sqlx::query_as::<_, HabitPauseRow>(
+            "SELECT * FROM habit_pauses WHERE habit_id = ? ORDER BY start_date ASC, created_at ASC",
+        )
+        .bind(&full)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)
+    }
+
+    async fn list_all_habit_pauses(&self) -> StorageResult<Vec<HabitPauseRow>> {
+        sqlx::query_as::<_, HabitPauseRow>(
+            "SELECT * FROM habit_pauses ORDER BY habit_id, start_date ASC, created_at ASC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)
+    }
+
+    async fn create_habit_pause(
+        &self,
+        habit_id: &str,
+        body: &CreateHabitPause,
+    ) -> StorageResult<HabitPauseRow> {
+        validate_pause_dates(&body.start_date, &body.end_date)?;
+        let full = resolve_habit_id(&self.pool, habit_id).await?;
+        let id = uuid::Uuid::now_v7().to_string();
+        let now = jiff::Timestamp::now().to_string();
+        sqlx::query(
+            "INSERT INTO habit_pauses (id, habit_id, start_date, end_date, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(&full)
+        .bind(&body.start_date)
+        .bind(&body.end_date)
+        .bind(body.reason.as_deref())
+        .bind(&now)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        sqlx::query_as::<_, HabitPauseRow>("SELECT * FROM habit_pauses WHERE id = ?")
+            .bind(&id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_err)
+    }
+
+    async fn delete_habit_pause(&self, habit_id: &str, pause_id: &str) -> StorageResult<()> {
+        let full = resolve_habit_id(&self.pool, habit_id).await?;
+        let result = sqlx::query("DELETE FROM habit_pauses WHERE id = ? AND habit_id = ?")
+            .bind(pause_id)
+            .bind(&full)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        if result.rows_affected() == 0 {
+            return Err(StorageError::NotFound(format!(
+                "pause {pause_id} not found for habit {habit_id}"
+            )));
+        }
         Ok(())
     }
 
@@ -875,4 +951,53 @@ async fn resolve_depends(pool: &SqlitePool, deps: Option<&[String]>) -> StorageR
         resolved.push(resolve_task_id(pool, d).await?);
     }
     Ok(resolved)
+}
+
+/// Validate that `start` and `end` are real `YYYY-MM-DD` calendar dates and
+/// that `start <= end`. Mirrors the worker-side `validate_pause_dates`.
+fn validate_pause_dates(start: &str, end: &str) -> Result<(), StorageError> {
+    let s = parse_calendar_date(start)
+        .ok_or_else(|| StorageError::BadRequest(format!("invalid start_date: {start}")))?;
+    let e = parse_calendar_date(end)
+        .ok_or_else(|| StorageError::BadRequest(format!("invalid end_date: {end}")))?;
+    if s > e {
+        return Err(StorageError::BadRequest(format!(
+            "start_date ({start}) must be <= end_date ({end})"
+        )));
+    }
+    Ok(())
+}
+
+/// Parse a `YYYY-MM-DD` string into a `(year, month, day)` tuple if it is a
+/// real calendar date, else `None`.
+///
+/// Enforces zero-padded fields (4-digit year, 2-digit month/day) so that
+/// lexicographic comparison against `jiff`'s zero-padded `Date::to_string()`
+/// works correctly during pause matching (#303).
+fn parse_calendar_date(s: &str) -> Option<(i64, u32, u32)> {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    if parts[0].len() != 4 || parts[1].len() != 2 || parts[2].len() != 2 {
+        return None;
+    }
+    let y: i64 = parts[0].parse().ok()?;
+    let m: u32 = parts[1].parse().ok()?;
+    let d: u32 = parts[2].parse().ok()?;
+    if !(1..=12).contains(&m) {
+        return None;
+    }
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let max_day = match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return None,
+    };
+    if !(1..=max_day).contains(&d) {
+        return None;
+    }
+    Some((y, m, d))
 }

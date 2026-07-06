@@ -6,9 +6,10 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use takusu_core::{NormalDist, Planner, Point, RescheduleRange, SleepConfig, Task as CoreTask};
 use takusu_storage::{
-    CreateHabit, CreateTask, GoogleCalEventRow, HabitRow, SaveScheduleRequest, ScheduleEntry,
-    ScheduleRow, SettingsRow, Storage, TaskQuery, TaskRow, TokenCreateResponse, TokenRow,
-    UpdateGoogleCalSettings, UpdateHabit, UpdateSettings, UpdateTask,
+    CreateHabit, CreateHabitPause, CreateTask, GoogleCalEventRow, HabitPauseRow, HabitRow,
+    SaveScheduleRequest, ScheduleEntry, ScheduleRow, SettingsRow, Storage, TaskQuery, TaskRow,
+    TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateSettings,
+    UpdateTask,
 };
 
 use crate::error::AppError;
@@ -54,6 +55,55 @@ fn validate_timezone(tz: &str) -> Result<(), AppError> {
     jiff::tz::TimeZone::get(tz)
         .map(|_| ())
         .map_err(|_| AppError::BadRequest(format!("invalid timezone: {tz}")))
+}
+
+/// Validate that `start` and `end` are real `YYYY-MM-DD` calendar dates and
+/// that `start <= end` (#303).
+fn validate_pause_dates(start: &str, end: &str) -> Result<(), AppError> {
+    let s = parse_calendar_date(start)
+        .ok_or_else(|| AppError::BadRequest(format!("invalid start_date: {start}")))?;
+    let e = parse_calendar_date(end)
+        .ok_or_else(|| AppError::BadRequest(format!("invalid end_date: {end}")))?;
+    if s > e {
+        return Err(AppError::BadRequest(format!(
+            "start_date ({start}) must be <= end_date ({end})"
+        )));
+    }
+    Ok(())
+}
+
+/// Parse a `YYYY-MM-DD` string into a `(year, month, day)` tuple if it is a
+/// real calendar date, else `None`.
+///
+/// Enforces zero-padded fields (4-digit year, 2-digit month/day) so that
+/// lexicographic comparison against `jiff`'s zero-padded `Date::to_string()`
+/// works correctly during pause matching (#303).
+fn parse_calendar_date(s: &str) -> Option<(i64, u32, u32)> {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    if parts[0].len() != 4 || parts[1].len() != 2 || parts[2].len() != 2 {
+        return None;
+    }
+    let y: i64 = parts[0].parse().ok()?;
+    let m: u32 = parts[1].parse().ok()?;
+    let d: u32 = parts[2].parse().ok()?;
+    if !(1..=12).contains(&m) {
+        return None;
+    }
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let max_day = match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return None,
+    };
+    if !(1..=max_day).contains(&d) {
+        return None;
+    }
+    Some((y, m, d))
 }
 
 fn parse_sleep(s: &str, settings: &SettingsRow) -> SleepConfig {
@@ -572,6 +622,41 @@ impl TakusuApp {
 
     pub async fn delete_habit(&self, id: &str) -> Result<(), AppError> {
         self.storage.delete_habit(id).await.map_err(storage_to_app)
+    }
+
+    // ── Habit pauses (#303) ───────────────────────────────
+
+    pub async fn list_habit_pauses(&self, id: &str) -> Result<Vec<HabitPauseRow>, AppError> {
+        self.storage
+            .list_habit_pauses(id)
+            .await
+            .map_err(storage_to_app)
+    }
+
+    pub async fn list_all_habit_pauses(&self) -> Result<Vec<HabitPauseRow>, AppError> {
+        self.storage
+            .list_all_habit_pauses()
+            .await
+            .map_err(storage_to_app)
+    }
+
+    pub async fn create_habit_pause(
+        &self,
+        id: &str,
+        body: &CreateHabitPause,
+    ) -> Result<HabitPauseRow, AppError> {
+        validate_pause_dates(&body.start_date, &body.end_date)?;
+        self.storage
+            .create_habit_pause(id, body)
+            .await
+            .map_err(storage_to_app)
+    }
+
+    pub async fn delete_habit_pause(&self, id: &str, pause_id: &str) -> Result<(), AppError> {
+        self.storage
+            .delete_habit_pause(id, pause_id)
+            .await
+            .map_err(storage_to_app)
     }
 
     // ── Schedule ──────────────────────────────────────────
@@ -1181,14 +1266,39 @@ impl TakusuApp {
         let from = Point::from_timestamp(start_of_today, 5);
         let until = now + 14 * 24 * 12;
 
+        // Habit pauses (#303): fetch all pause periods once and build a
+        // habit_id → Vec<(start, end)> map. Occurrences whose local date
+        // falls inside any pause period are skipped, so the existing cleanup
+        // loop deletes the now-unexpected pending/unedited tasks.
+        let all_pauses = self
+            .storage
+            .list_all_habit_pauses()
+            .await
+            .map_err(storage_to_app)?;
+        let mut pauses_by_habit: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        for p in &all_pauses {
+            pauses_by_habit
+                .entry(p.habit_id.clone())
+                .or_default()
+                .push((p.start_date.clone(), p.end_date.clone()));
+        }
+
         let mut expected: Vec<(String, String, CoreTask, Option<String>)> = Vec::new();
         for row in &active_habits {
             let config = habit_row_to_config(row, tz)?;
             let mut store = takusu_habit::HabitStore::new();
             store.add(config);
+            let pauses = pauses_by_habit.get(&row.id);
             for gt in store.generate(from, until) {
                 let start_point = gt.task.start.unwrap_or(Point(0));
                 let date = point_to_local_date(start_point.0, tz);
+                if let Some(pauses) = pauses
+                    && pauses
+                        .iter()
+                        .any(|(s, e)| date.as_str() >= s.as_str() && date.as_str() <= e.as_str())
+                {
+                    continue;
+                }
                 expected.push((row.id.clone(), date, gt.task, row.description.clone()));
             }
         }

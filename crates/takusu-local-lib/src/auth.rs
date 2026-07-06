@@ -43,9 +43,10 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use takusu_storage::Storage;
     use takusu_storage::{
-        CreateHabit, CreateTask, GoogleCalEventRow, GoogleCalSettingsRow, HabitRow,
-        SaveScheduleRequest, ScheduleRow, SettingsRow, TaskQuery, TaskRow, TokenCreateResponse,
-        TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateSettings, UpdateTask,
+        CreateHabit, CreateHabitPause, CreateTask, GoogleCalEventRow, GoogleCalSettingsRow,
+        HabitPauseRow, HabitRow, SaveScheduleRequest, ScheduleRow, SettingsRow, TaskQuery, TaskRow,
+        TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateSettings,
+        UpdateTask,
     };
 
     // hash_token should be deterministic and 64 hex chars (SHA-256).
@@ -154,6 +155,31 @@ mod tests {
             unimplemented()
         }
         async fn delete_habit(&self, _: &str) -> Result<(), takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn list_habit_pauses(
+            &self,
+            _: &str,
+        ) -> Result<Vec<HabitPauseRow>, takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn list_all_habit_pauses(
+            &self,
+        ) -> Result<Vec<HabitPauseRow>, takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn create_habit_pause(
+            &self,
+            _: &str,
+            _: &CreateHabitPause,
+        ) -> Result<HabitPauseRow, takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn delete_habit_pause(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<(), takusu_storage::StorageError> {
             unimplemented()
         }
         async fn get_schedule(&self) -> Result<Option<ScheduleRow>, takusu_storage::StorageError> {

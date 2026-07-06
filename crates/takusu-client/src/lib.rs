@@ -256,6 +256,72 @@ impl Client {
         Ok(())
     }
 
+    // ── Habit pauses (#303) ──
+
+    pub async fn list_habit_pauses(&self, id: &str) -> Result<Vec<HabitPauseRow>, ClientError> {
+        let resp = self
+            .request(reqwest::Method::GET, &format!("/api/habits/{id}/pauses"))
+            .await
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn list_all_habit_pauses(&self) -> Result<Vec<HabitPauseRow>, ClientError> {
+        let resp = self
+            .request(reqwest::Method::GET, "/api/habits/pauses")
+            .await
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn create_habit_pause(
+        &self,
+        id: &str,
+        body: &CreateHabitPause,
+    ) -> Result<HabitPauseRow, ClientError> {
+        let resp = self
+            .request(reqwest::Method::POST, &format!("/api/habits/{id}/pauses"))
+            .await
+            .json(body)
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn delete_habit_pause(&self, id: &str, pause_id: &str) -> Result<(), ClientError> {
+        let resp = self
+            .request(
+                reqwest::Method::DELETE,
+                &format!("/api/habits/{id}/pauses/{pause_id}"),
+            )
+            .await
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(())
+    }
+
     // ── Schedule ──
 
     pub async fn get_schedule(&self) -> Result<ScheduleRow, ClientError> {
@@ -673,6 +739,25 @@ pub struct UpdateHabit {
     pub active: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub fixed: Option<bool>,
+}
+
+/// A pause period that suppresses task generation for a habit (#303).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitPauseRow {
+    pub id: String,
+    pub habit_id: String,
+    pub start_date: String,
+    pub end_date: String,
+    pub reason: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateHabitPause {
+    pub start_date: String,
+    pub end_date: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -191,6 +191,25 @@ pub struct UpdateHabit {
     pub fixed: Option<bool>,
 }
 
+/// A pause period that suppresses task generation for a habit (#303).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitPauseRow {
+    pub id: String,
+    pub habit_id: String,
+    pub start_date: String,
+    pub end_date: String,
+    pub reason: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateHabitPause {
+    pub start_date: String,
+    pub end_date: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleRow {
     pub id: String,

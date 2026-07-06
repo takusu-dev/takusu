@@ -205,6 +205,27 @@ pub struct UpdateHabit {
     pub fixed: Option<bool>,
 }
 
+/// A pause period that suppresses task generation for a habit (#303).
+/// `start_date` / `end_date` are inclusive `YYYY-MM-DD` strings in the
+/// user's local timezone.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct HabitPauseRow {
+    pub id: String,
+    pub habit_id: String,
+    pub start_date: String,
+    pub end_date: String,
+    pub reason: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateHabitPause {
+    pub start_date: String,
+    pub end_date: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ScheduleRow {
     pub id: String,

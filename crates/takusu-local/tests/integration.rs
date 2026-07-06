@@ -1709,3 +1709,354 @@ async fn task_replace_rejects_negative_avg_minutes() {
     let res = app.oneshot(replace_req).await.unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 }
+
+// ── Habit pauses (#303) ────────────────────────────────────────────────
+
+/// Create a daily habit and return its id.
+async fn create_daily_habit(app: &axum::Router, title: &str) -> String {
+    let req = auth_req_body(
+        Method::POST,
+        "/api/habits",
+        json!({
+            "title": title,
+            "recurrence": r#"{"freq":"daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#,
+            "start_time": "06:00",
+            "end_time": "07:00",
+            "avg_minutes": 30,
+            "sigma_minutes": 5,
+            "abandonability": 0.1
+        }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    body["id"].as_str().unwrap().to_string()
+}
+
+/// Trigger habit sync via schedule/generate and return the habit's tasks.
+async fn sync_habit_tasks(app: &axum::Router, habit_id: &str) -> Vec<serde_json::Value> {
+    let gen_req = auth_req_body(
+        Method::POST,
+        "/api/schedule/generate",
+        json!({ "sleep": "disabled" }),
+    );
+    let res = app.clone().oneshot(gen_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let list_req = auth_req(Method::GET, &format!("/api/tasks?habit_id={habit_id}"));
+    let res = app.clone().oneshot(list_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    serde_json::from_str(&body_str(res.into_body()).await).unwrap()
+}
+
+#[tokio::test]
+async fn habit_pause_skips_occurrences_in_range() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "朝のランニング").await;
+
+    // Pick a date 3 days from today as the pause start, 5 days as the end.
+    let today = jiff::Zoned::now().date();
+    let pause_start = today
+        .checked_add(jiff::Span::new().days(3))
+        .unwrap()
+        .to_string();
+    let pause_end = today
+        .checked_add(jiff::Span::new().days(5))
+        .unwrap()
+        .to_string();
+
+    // Add the pause before generating tasks.
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/habits/{habit_id}/pauses"),
+        json!({ "start_date": pause_start, "end_date": pause_end, "reason": "休暇" }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+
+    let tasks = sync_habit_tasks(&app, &habit_id).await;
+    assert!(
+        !tasks.is_empty(),
+        "habit should still generate tasks outside the pause"
+    );
+
+    // No task title should contain a date within the pause range.
+    for t in &tasks {
+        let title = t["title"].as_str().unwrap();
+        for d in 3..=5 {
+            let date = today
+                .checked_add(jiff::Span::new().days(d))
+                .unwrap()
+                .to_string();
+            assert!(
+                !title.contains(&date),
+                "task title '{title}' should not contain paused date {date}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn habit_pause_deletes_existing_pending_unedited_tasks() {
+    let (state, pool) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "ジム").await;
+
+    // Generate tasks first (no pause yet). generate_schedule marks tasks as
+    // 'scheduled', so reset the target task to 'pending' + unedited
+    // afterwards to make it eligible for the sync cleanup loop.
+    let tasks_before = sync_habit_tasks(&app, &habit_id).await;
+    assert!(!tasks_before.is_empty());
+
+    // Find a generated task's date to pause. Use the first task's date.
+    let first_title = tasks_before[0]["title"].as_str().unwrap();
+    // Title format: "ジム (YYYY-MM-DD)"
+    let pause_date = first_title
+        .split('(')
+        .nth(1)
+        .map(|s| s.trim_end_matches(')').trim())
+        .unwrap();
+    let pause_date = pause_date.to_string();
+    let first_id = tasks_before[0]["id"].as_str().unwrap().to_string();
+
+    // Reset to pending + unedited so the cleanup loop can delete it.
+    sqlx::query("UPDATE tasks SET status = 'pending', user_edited = 0 WHERE id = ?")
+        .bind(&first_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Add a pause covering that single date.
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/habits/{habit_id}/pauses"),
+        json!({ "start_date": pause_date, "end_date": pause_date }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+
+    // Re-sync; the paused date's pending unedited task should be deleted.
+    let tasks_after = sync_habit_tasks(&app, &habit_id).await;
+    for t in &tasks_after {
+        let title = t["title"].as_str().unwrap();
+        assert!(
+            !title.contains(&pause_date),
+            "task for paused date {pause_date} should have been deleted"
+        );
+    }
+}
+
+#[tokio::test]
+async fn habit_pause_protects_edited_and_nonpending_tasks() {
+    let (state, pool) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "読書").await;
+
+    // Generate tasks.
+    let tasks = sync_habit_tasks(&app, &habit_id).await;
+    assert!(!tasks.is_empty());
+
+    // Pick the first task and mark it user_edited + completed via direct SQL
+    // so the cleanup loop must protect it.
+    let first_id = tasks[0]["id"].as_str().unwrap().to_string();
+    sqlx::query("UPDATE tasks SET user_edited = 1, status = 'completed' WHERE id = ?")
+        .bind(&first_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Derive the date from the title to build a pause covering it.
+    let first_title = tasks[0]["title"].as_str().unwrap();
+    let pause_date = first_title
+        .split('(')
+        .nth(1)
+        .map(|s| s.trim_end_matches(')').trim())
+        .unwrap()
+        .to_string();
+
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/habits/{habit_id}/pauses"),
+        json!({ "start_date": pause_date, "end_date": pause_date }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+
+    // Re-sync; the protected task must still exist.
+    let _ = sync_habit_tasks(&app, &habit_id).await;
+    let get_req = auth_req(Method::GET, &format!("/api/tasks/{first_id}"));
+    let res = app.clone().oneshot(get_req).await.unwrap();
+    assert_eq!(
+        res.status(),
+        StatusCode::OK,
+        "completed/edited task should be protected from pause cleanup"
+    );
+}
+
+#[tokio::test]
+async fn habit_pause_rejects_reversed_dates() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "散歩").await;
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/habits/{habit_id}/pauses"),
+        json!({ "start_date": "2026-08-07", "end_date": "2026-08-01" }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn habit_pause_rejects_bad_date_format() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "瞑想").await;
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/habits/{habit_id}/pauses"),
+        json!({ "start_date": "2026/08/01", "end_date": "2026-08-07" }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn habit_pause_rejects_non_zero_padded_dates() {
+    // Non-zero-padded dates like "2026-8-1" would pass numeric parsing
+    // but break the lexicographic pause-matching comparison against
+    // jiff's zero-padded Date::to_string, so they must be rejected (#303).
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "ストレッチ").await;
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/habits/{habit_id}/pauses"),
+        json!({ "start_date": "2026-8-1", "end_date": "2026-08-07" }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // End date non-zero-padded should also fail.
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/habits/{habit_id}/pauses"),
+        json!({ "start_date": "2026-08-01", "end_date": "2026-8-7" }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn habit_pause_list_and_delete() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "日記").await;
+
+    // Add a pause.
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/habits/{habit_id}/pauses"),
+        json!({ "start_date": "2026-08-01", "end_date": "2026-08-07", "reason": "夏休み" }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let pause_body: serde_json::Value =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let pause_id = pause_body["id"].as_str().unwrap().to_string();
+
+    // List pauses.
+    let req = auth_req(Method::GET, &format!("/api/habits/{habit_id}/pauses"));
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let pauses: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(pauses.len(), 1);
+    assert_eq!(pauses[0]["id"].as_str().unwrap(), pause_id);
+    assert_eq!(pauses[0]["reason"].as_str().unwrap(), "夏休み");
+
+    // Delete the pause.
+    let req = auth_req(
+        Method::DELETE,
+        &format!("/api/habits/{habit_id}/pauses/{pause_id}"),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+    // List should now be empty.
+    let req = auth_req(Method::GET, &format!("/api/habits/{habit_id}/pauses"));
+    let res = app.clone().oneshot(req).await.unwrap();
+    let pauses: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(pauses.is_empty());
+}
+
+#[tokio::test]
+async fn habit_pause_list_all_endpoint() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let h1 = create_daily_habit(&app, "習慣A").await;
+    let h2 = create_daily_habit(&app, "習慣B").await;
+
+    // Add a pause to each.
+    for (hid, start) in [(&h1, "2026-09-01"), (&h2, "2026-10-01")] {
+        let req = auth_req_body(
+            Method::POST,
+            &format!("/api/habits/{hid}/pauses"),
+            json!({ "start_date": start, "end_date": start }),
+        );
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+    }
+
+    // GET /api/habits/pauses must return both (and not be shadowed by
+    // the /api/habits/{id} route).
+    let req = auth_req(Method::GET, "/api/habits/pauses");
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let pauses: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(pauses.len(), 2);
+}
+
+#[tokio::test]
+async fn habit_delete_removes_its_pauses() {
+    // Regression: deleting a habit must also delete its pause rows so
+    // they don't accumulate as orphans in list_all_habit_pauses (#303).
+    // SQLite does not enable PRAGMA foreign_keys, so the ON DELETE
+    // CASCADE in the schema does not fire — the cleanup must be explicit.
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "一時停止削除対象").await;
+
+    // Add a pause.
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/habits/{habit_id}/pauses"),
+        json!({ "start_date": "2026-08-01", "end_date": "2026-08-07" }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+
+    // Confirm it shows up in list-all.
+    let req = auth_req(Method::GET, "/api/habits/pauses");
+    let res = app.clone().oneshot(req).await.unwrap();
+    let pauses: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(pauses.len(), 1);
+
+    // Delete the habit.
+    let req = auth_req(Method::DELETE, &format!("/api/habits/{habit_id}"));
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+    // list-all must now be empty — no orphaned pause rows.
+    let req = auth_req(Method::GET, "/api/habits/pauses");
+    let res = app.clone().oneshot(req).await.unwrap();
+    let pauses: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(
+        pauses.is_empty(),
+        "deleting a habit should remove its pause rows, but found {pauses:?}"
+    );
+}
