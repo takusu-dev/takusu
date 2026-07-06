@@ -72,6 +72,32 @@ fn parse_date<'a>(map: &'a HashMap<String, String>, key: &str) -> Result<&'a str
         .ok_or_else(|| IcalError::MissingProperty(key.to_string()))
 }
 
+/// Unescape RFC 5545 §3.3.11 TEXT escaping:
+/// `\n` / `\N` → newline, `\,` → comma, `\;` → semicolon, `\\` → backslash.
+/// Other escaped characters are kept literally (backslash preserved).
+fn unescape_ical_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') | Some('N') => out.push('\n'),
+                Some(',') => out.push(','),
+                Some(';') => out.push(';'),
+                Some('\\') => out.push('\\'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn format_ical_date(raw: &str) -> Result<String, IcalError> {
     if raw.len() < 8 {
         return Err(IcalError::InvalidDate(raw.to_string()));
@@ -159,10 +185,10 @@ pub fn parse_ical(input: &str) -> Result<Vec<IcalTask>, IcalError> {
 
                     let title = properties
                         .get("SUMMARY")
-                        .cloned()
+                        .map(|s| unescape_ical_text(s))
                         .unwrap_or_else(|| "Untitled".to_string());
-                    let description = properties.get("DESCRIPTION").cloned();
-                    let uid = properties.get("UID").cloned();
+                    let description = properties.get("DESCRIPTION").map(|s| unescape_ical_text(s));
+                    let uid = properties.get("UID").map(|s| unescape_ical_text(s));
 
                     let start_raw = parse_date(&properties, "DTSTART")?;
                     let end_raw = parse_date(&properties, "DTEND")?;
@@ -444,5 +470,43 @@ END:VCALENDAR";
         // "2025010" is only 7 chars → invalid date.
         let ical = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:short\nDTSTART:2025010\nDTEND:20250101T100000Z\nSUMMARY:Short\nEND:VEVENT\nEND:VCALENDAR\n";
         assert!(parse_ical(ical).is_err());
+    }
+
+    // ── RFC 5545 text unescaping (#274) ─────────────────────────────────
+
+    #[test]
+    fn unescape_newline_in_summary() {
+        let ical = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:n\nDTSTART:20250101T090000Z\nDTEND:20250101T100000Z\nSUMMARY:Line one\\nLine two\nEND:VEVENT\nEND:VCALENDAR\n";
+        let result = parse_ical(ical).unwrap();
+        assert_eq!(result[0].title, "Line one\nLine two");
+    }
+
+    #[test]
+    fn unescape_uppercase_n_in_description() {
+        let ical = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:n\nDTSTART:20250101T090000Z\nDTEND:20250101T100000Z\nSUMMARY:S\nDESCRIPTION:Para one\\NPara two\nEND:VEVENT\nEND:VCALENDAR\n";
+        let result = parse_ical(ical).unwrap();
+        assert_eq!(result[0].description.as_deref(), Some("Para one\nPara two"));
+    }
+
+    #[test]
+    fn unescape_comma_semicolon_backslash() {
+        let ical = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:n\nDTSTART:20250101T090000Z\nDTEND:20250101T100000Z\nSUMMARY:A\\, B\\; C\\\\ D\nEND:VEVENT\nEND:VCALENDAR\n";
+        let result = parse_ical(ical).unwrap();
+        assert_eq!(result[0].title, "A, B; C\\ D");
+    }
+
+    #[test]
+    fn unescape_preserves_unknown_escape() {
+        // Unknown escape sequences keep the backslash (per the fix's contract).
+        let ical = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:n\nDTSTART:20250101T090000Z\nDTEND:20250101T100000Z\nSUMMARY:Path C\\ttemp\nEND:VEVENT\nEND:VCALENDAR\n";
+        let result = parse_ical(ical).unwrap();
+        assert_eq!(result[0].title, "Path C\\ttemp");
+    }
+
+    #[test]
+    fn unescape_trailing_backslash() {
+        let ical = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:n\nDTSTART:20250101T090000Z\nDTEND:20250101T100000Z\nSUMMARY:Trailing\\\nEND:VEVENT\nEND:VCALENDAR\n";
+        let result = parse_ical(ical).unwrap();
+        assert_eq!(result[0].title, "Trailing\\");
     }
 }
