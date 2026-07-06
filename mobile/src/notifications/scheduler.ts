@@ -105,8 +105,19 @@ function countIdlePendingTasks(
   }).length;
 }
 
-// Count active habits that don't have a completed task today
-function countIncompleteHabits(tasks: TaskRow[], habits: HabitRow[]): number {
+// Count active habits that have an uncompleted task scheduled for today.
+// Only counts habits that actually have a task today — habits whose
+// recurrence doesn't include today are not counted as incomplete (#336).
+// Prefers the schedule entry's start_at over the task's own start_at,
+// consistent with countTodaysTasks.
+function countIncompleteHabits(
+  tasks: TaskRow[],
+  habits: HabitRow[],
+  schedule: ScheduleEntry[],
+): number {
+  const scheduleMap = new Map<string, ScheduleEntry>();
+  for (const e of schedule) scheduleMap.set(e.task_id, e);
+
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
   const todayEnd = new Date();
@@ -115,18 +126,32 @@ function countIncompleteHabits(tasks: TaskRow[], habits: HabitRow[]): number {
   const activeHabits = habits.filter((h) => h.active);
   if (activeHabits.length === 0) return 0;
 
-  // A habit is "completed today" if there's a completed task with that habit_id today
-  const completedHabitIds = new Set(
-    tasks
-      .filter((t) => {
-        if (t.status !== 'completed' || !t.habit_id) return false;
-        const updated = new Date(t.updated_at);
-        return updated >= todayStart && updated <= todayEnd;
-      })
-      .map((t) => t.habit_id),
-  );
+  const activeHabitIds = new Set(activeHabits.map((h) => h.id));
 
-  return activeHabits.filter((h) => !completedHabitIds.has(h.id)).length;
+  // Group today's habit tasks by habit_id and check if any are not completed
+  const todaysHabitTasks = tasks.filter((t) => {
+    if (!t.habit_id || !activeHabitIds.has(t.habit_id)) return false;
+    // Prefer schedule entry's start_at, fall back to task's start_at
+    const entry = scheduleMap.get(t.id);
+    const start = entry
+      ? new Date(entry.start_at)
+      : t.start_at
+        ? new Date(t.start_at)
+        : null;
+    if (!start) return false;
+    return start >= todayStart && start <= todayEnd;
+  });
+
+  // A habit is incomplete if it has at least one task today that is not
+  // completed or skipped
+  const incompleteHabitIds = new Set<string>();
+  for (const t of todaysHabitTasks) {
+    if (t.status !== 'completed' && t.status !== 'skipped') {
+      incompleteHabitIds.add(t.habit_id!);
+    }
+  }
+
+  return incompleteHabitIds.size;
 }
 
 // Schedule a one-time notification for the next occurrence of a daily time.
@@ -299,7 +324,7 @@ export async function rescheduleNotifications(
   // ── 7. Habit reminder (next occurrence only) ──
   if (settings.habitReminder) {
     const { hour, minute } = minutesToTime(settings.habitReminderTime);
-    const incompleteCount = countIncompleteHabits(tasks, habits);
+    const incompleteCount = countIncompleteHabits(tasks, habits, schedule);
     if (incompleteCount > 0) {
       await scheduleNextOccurrence(
         CHANNELS.habitReminder,
