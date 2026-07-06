@@ -151,7 +151,7 @@ mod tests {
     }
 
     fn date_at(point: Point, tz: &TimeZone) -> jiff::civil::Date {
-        time::point_to_date(point, tz)
+        time::point_to_date(point, tz).unwrap()
     }
 
     #[test]
@@ -945,5 +945,155 @@ mod tests {
             !dates.contains(&date(2026, 7, 11)),
             "Saturday 7/11 should NOT be generated"
         );
+    }
+
+    // ── Bug fix tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn interval_zero_does_not_panic_daily() {
+        // #273: interval=0 arriving via deserialized JSON should be clamped
+        // to 1 instead of panicking on division-by-zero.
+        let tz = utc();
+        let start = point_at(date(2025, 3, 1), &TimeOfDay::new(9, 0).unwrap(), &tz);
+        let until = point_at(date(2025, 3, 4), &TimeOfDay::new(9, 0).unwrap(), &tz);
+
+        let rule_json = r#"{"freq":"daily","interval":0,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#;
+        let rule: RecurrenceRule = serde_json::from_str(rule_json).unwrap();
+
+        let iter = RecurrenceGenerator::new(
+            rule,
+            TimeOfDay::new(9, 0).unwrap(),
+            tz.clone(),
+            NormalDist::new(6, 0),
+            None,
+            false,
+            false,
+            0.0,
+            false,
+            start,
+            until,
+        );
+
+        // Should behave like interval=1 (daily): Mar 1, 2, 3
+        let tasks: Vec<_> = iter.collect();
+        assert_eq!(tasks.len(), 3);
+    }
+
+    #[test]
+    fn interval_zero_does_not_panic_weekly() {
+        // #273: weekly with interval=0 and by_day should also not panic.
+        let tz = utc();
+        let start = point_at(date(2025, 3, 3), &TimeOfDay::new(9, 0).unwrap(), &tz);
+        let until = point_at(date(2025, 3, 10), &TimeOfDay::new(9, 0).unwrap(), &tz);
+
+        let rule_json = r#"{"freq":"weekly","interval":0,"by_day":[{"n":null,"weekday":"mon"}],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#;
+        let rule: RecurrenceRule = serde_json::from_str(rule_json).unwrap();
+
+        let iter = RecurrenceGenerator::new(
+            rule,
+            TimeOfDay::new(9, 0).unwrap(),
+            tz.clone(),
+            NormalDist::new(6, 0),
+            None,
+            false,
+            false,
+            0.0,
+            false,
+            start,
+            until,
+        );
+
+        let tasks: Vec<_> = iter.collect();
+        // interval=0 clamped to 1: Mar 3 (Mon) and Mar 10 (Mon) — but until is
+        // exclusive at Mar 10 09:00, so only Mar 3.
+        assert_eq!(tasks.len(), 1);
+    }
+
+    #[test]
+    fn interval_zero_builder_clamps_to_one() {
+        // #273: the builder method should also clamp interval=0 to 1.
+        let rule = RecurrenceRule::daily().interval(0);
+        assert_eq!(rule.interval, 1);
+    }
+
+    #[test]
+    fn date_max_until_terminates() {
+        // #275: when end_date saturates to Date::MAX, the generator must
+        // terminate instead of looping forever.
+        let tz = utc();
+        let start = point_at(date(2025, 3, 1), &TimeOfDay::new(9, 0).unwrap(), &tz);
+        // Use count=1 so we only generate one task, but set until to a point
+        // that maps to Date::MAX (i64::MAX slots → overflow → None → Date::MAX).
+        let until = Point::from_raw(i64::MAX);
+
+        let iter = RecurrenceGenerator::new(
+            RecurrenceRule::daily().count(1),
+            TimeOfDay::new(9, 0).unwrap(),
+            tz,
+            NormalDist::new(6, 0),
+            None,
+            false,
+            false,
+            0.0,
+            false,
+            start,
+            until,
+        );
+
+        // This should terminate (not hang) and produce 1 task.
+        let tasks: Vec<_> = iter.collect();
+        assert_eq!(tasks.len(), 1);
+    }
+
+    #[test]
+    fn point_to_date_overflow_returns_none() {
+        // #276: point_to_date should return None for out-of-range points
+        // instead of silently mapping to 1970-01-01.
+        let tz = utc();
+        // i64::MAX slots × 5 min × 60 sec overflows i64
+        let overflow_point = Point::from_raw(i64::MAX);
+        assert!(time::point_to_date(overflow_point, &tz).is_none());
+
+        // Negative point also overflows when multiplied
+        let neg_point = Point::from_raw(i64::MIN);
+        assert!(time::point_to_date(neg_point, &tz).is_none());
+    }
+
+    #[test]
+    fn point_to_date_valid_point_returns_some() {
+        // #276: valid points should still work correctly.
+        let tz = utc();
+        let pt = point_at(date(2025, 6, 15), &TimeOfDay::new(14, 30).unwrap(), &tz);
+        assert_eq!(time::point_to_date(pt, &tz), Some(date(2025, 6, 15)));
+    }
+
+    #[test]
+    fn overflow_until_without_count_terminates() {
+        // #276 review follow-up: when until overflows but count is None,
+        // the generator must still terminate (until_point is capped to
+        // Date::MAX's point so the start_pt >= until_point check fires).
+        // Use a start date near Date::MAX so the loop is only ~2 iterations.
+        let tz = utc();
+        let start = point_at(date(9999, 12, 30), &TimeOfDay::new(9, 0).unwrap(), &tz);
+        let until = Point::from_raw(i64::MAX);
+
+        let iter = RecurrenceGenerator::new(
+            RecurrenceRule::daily(),
+            TimeOfDay::new(9, 0).unwrap(),
+            tz,
+            NormalDist::new(6, 0),
+            None,
+            false,
+            false,
+            0.0,
+            false,
+            start,
+            until,
+        );
+
+        // Should terminate quickly (not hang) and produce at most 1 task
+        // (Dec 30; Dec 31 == Date::MAX == capped until_point → excluded).
+        let tasks: Vec<_> = iter.collect();
+        assert!(tasks.len() <= 1);
     }
 }

@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use jiff::ToSpan;
 use jiff::civil::Date;
 use jiff::tz::TimeZone;
@@ -5,7 +6,7 @@ use takusu_core::{NormalDist, Point, Task};
 
 use crate::GeneratedTask;
 use crate::rule::{Frequency, NWeekday, RecurrenceRule, Weekday};
-use crate::time::{TimeOfDay, date_time_to_point, date_to_day_number, point_to_date};
+use crate::time::{SLOT_MINUTES, TimeOfDay, date_time_to_point, date_to_day_number, point_to_date};
 
 pub struct RecurrenceGenerator {
     rule: RecurrenceRule,
@@ -41,8 +42,33 @@ impl RecurrenceGenerator {
         start: Point,
         until: Point,
     ) -> Self {
-        let start_date = point_to_date(start, &tz);
-        let end_date = point_to_date(until, &tz);
+        // Clamp interval=0 to 1 to avoid division-by-zero panic in
+        // matches_frequency / is_in_weekly_interval. interval=0 can arrive
+        // via serde deserialization of untrusted recurrence JSON (#273).
+        let mut rule = rule;
+        if rule.interval == 0 {
+            rule.interval = 1;
+        }
+        let start_date_opt = point_to_date(start, &tz);
+        // If until is out of representable range, cap end_date to Date::MAX
+        // and also cap until_point to the maximum valid point (derived from
+        // Timestamp::MAX) so the start_pt >= until_point check in next()
+        // terminates the loop instead of iterating through ~2.9M days to
+        // Date::MAX (#276). We use Timestamp::MAX rather than
+        // date_time_to_point(Date::MAX, ...) because the latter fails for
+        // Date::MAX in jiff.
+        let (end_date, until_point) = match point_to_date(until, &tz) {
+            Some(d) => (d, until),
+            None => {
+                let max_point = Point::from_timestamp(Timestamp::MAX, SLOT_MINUTES as u16);
+                (Date::MAX, max_point)
+            }
+        };
+        let (start_date, done) = match start_date_opt {
+            Some(d) => (d, false),
+            // start point is out of representable range — no tasks to generate
+            None => (Date::MAX, true),
+        };
         Self {
             rule,
             start_time,
@@ -54,12 +80,12 @@ impl RecurrenceGenerator {
             abandonability,
             fixed,
             start_point: start,
-            until_point: until,
+            until_point,
             start_date,
             end_date,
             current_date: start_date,
             occurrence_count: 0,
-            done: false,
+            done,
         }
     }
 
@@ -80,9 +106,9 @@ impl RecurrenceGenerator {
                 }
             }
             Frequency::Monthly => {
-                let months = (date.year() - self.start_date.year()) * 12
-                    + (date.month() as i16 - self.start_date.month() as i16);
-                let in_interval = months >= 0 && months % (self.rule.interval as i16) == 0;
+                let months = (date.year() as i64 - self.start_date.year() as i64) * 12
+                    + (date.month() as i64 - self.start_date.month() as i64);
+                let in_interval = months >= 0 && months % (self.rule.interval as i64) == 0;
                 if self.rule.by_day.is_empty() && self.rule.by_month_day.is_empty() {
                     in_interval && date.day() == self.start_date.day()
                 } else {
@@ -90,8 +116,8 @@ impl RecurrenceGenerator {
                 }
             }
             Frequency::Yearly => {
-                let years = date.year() - self.start_date.year();
-                let in_interval = years >= 0 && years % (self.rule.interval as i16) == 0;
+                let years = date.year() as i64 - self.start_date.year() as i64;
+                let in_interval = years >= 0 && years % (self.rule.interval as i64) == 0;
                 if self.rule.by_day.is_empty()
                     && self.rule.by_month.is_empty()
                     && self.rule.by_month_day.is_empty()
@@ -191,7 +217,15 @@ impl Iterator for RecurrenceGenerator {
     fn next(&mut self) -> Option<Self::Item> {
         while self.current_date <= self.end_date && !self.done {
             let date = self.current_date;
-            self.current_date = date.checked_add(1.day()).unwrap_or(Date::MAX);
+            self.current_date = match date.checked_add(1.day()) {
+                Ok(d) => d,
+                // Date::MAX + 1 day: can't advance further, stop iterating
+                // to avoid infinite loop when end_date == Date::MAX (#275)
+                Err(_) => {
+                    self.done = true;
+                    Date::MAX
+                }
+            };
 
             if !self.matches_frequency(date) {
                 continue;

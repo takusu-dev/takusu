@@ -37,10 +37,10 @@ impl TimeOfDay {
     }
 }
 
-pub fn point_to_date(point: Point, tz: &TimeZone) -> Date {
-    let seconds = point.0 * SLOT_MINUTES * 60;
-    let ts = Timestamp::from_second(seconds).unwrap_or(Timestamp::UNIX_EPOCH);
-    ts.to_zoned(tz.clone()).date()
+pub fn point_to_date(point: Point, tz: &TimeZone) -> Option<Date> {
+    let seconds = point.0.checked_mul(SLOT_MINUTES)?.checked_mul(60)?;
+    let ts = Timestamp::from_second(seconds).ok()?;
+    Some(ts.to_zoned(tz.clone()).date())
 }
 
 pub fn date_time_to_point(date: Date, time: &TimeOfDay, tz: &TimeZone) -> Option<Point> {
@@ -53,7 +53,7 @@ pub fn date_time_to_point(date: Date, time: &TimeOfDay, tz: &TimeZone) -> Option
 
 #[allow(dead_code)]
 pub fn point_to_day_number(point: Point, tz: &TimeZone) -> i64 {
-    let date = point_to_date(point, tz);
+    let date = point_to_date(point, tz).unwrap_or(Date::MAX);
     date_to_day_number(date)
 }
 
