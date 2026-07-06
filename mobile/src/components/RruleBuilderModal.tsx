@@ -152,8 +152,13 @@ export function RruleBuilderModal({
       update({ by_day: rule.by_day.filter((d) => d.weekday !== wd) });
       if (editingNthWeekday === wd) setEditingNthWeekday(null);
     } else {
-      // Add with n=null (every occurrence)
-      update({ by_day: [...rule.by_day, { n: null, weekday: wd }] });
+      // Add with n=null (every occurrence), then sort by canonical weekday
+      // order (sun..sat) so the summary is independent of tap order (#302).
+      update({
+        by_day: [...rule.by_day, { n: null, weekday: wd }].sort(
+          (a, b) => WEEKDAYS.indexOf(a.weekday) - WEEKDAYS.indexOf(b.weekday),
+        ),
+      });
       // Open nth editor for non-daily frequencies
       if (rule.freq !== 'daily') setEditingNthWeekday(wd);
     }

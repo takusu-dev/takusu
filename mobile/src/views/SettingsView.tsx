@@ -160,6 +160,15 @@ export function SettingsDetailView({
     'morningBriefing' | 'eveningSummary' | 'habitReminder' | null
   >(null);
 
+  // Notification numeric inputs — local text state, committed on blur so
+  // the user can clear the field completely while typing (#307).
+  const [preStartInput, setPreStartInput] = useState(
+    String(notifications.preStartReminderMinutes),
+  );
+  const [idleHoursInput, setIdleHoursInput] = useState(
+    String(notifications.unscheduledIdleHours),
+  );
+
   // Sleep tab state
   const [sleepSettings, setSleepSettings] = useState<SettingsRow | null>(null);
   const [sleepTz, setSleepTz] = useState('');
@@ -223,6 +232,32 @@ export function SettingsDetailView({
     } else {
       // Revert to the current persisted value on invalid input
       setUndoStepsInput(String(undoSteps));
+    }
+  }
+
+  // Keep notification inputs in sync when the persisted value changes
+  useEffect(() => {
+    setPreStartInput(String(notifications.preStartReminderMinutes));
+  }, [notifications.preStartReminderMinutes]);
+  useEffect(() => {
+    setIdleHoursInput(String(notifications.unscheduledIdleHours));
+  }, [notifications.unscheduledIdleHours]);
+
+  function commitPreStart() {
+    const n = parseInt(preStartInput, 10);
+    if (!isNaN(n) && n > 0) {
+      setNotifications({ ...notifications, preStartReminderMinutes: n });
+    } else {
+      setPreStartInput(String(notifications.preStartReminderMinutes));
+    }
+  }
+
+  function commitIdleHours() {
+    const n = parseInt(idleHoursInput, 10);
+    if (!isNaN(n) && n > 0) {
+      setNotifications({ ...notifications, unscheduledIdleHours: n });
+    } else {
+      setIdleHoursInput(String(notifications.unscheduledIdleHours));
     }
   }
 
@@ -898,16 +933,10 @@ export function SettingsDetailView({
                               color: colors.black,
                             },
                           ]}
-                          value={String(notifications.preStartReminderMinutes)}
-                          onChangeText={(v) => {
-                            const n = parseInt(v, 10);
-                            if (!isNaN(n) && n > 0) {
-                              setNotifications({
-                                ...notifications,
-                                preStartReminderMinutes: n,
-                              });
-                            }
-                          }}
+                          value={preStartInput}
+                          onChangeText={setPreStartInput}
+                          onBlur={commitPreStart}
+                          onSubmitEditing={commitPreStart}
                           keyboardType="numeric"
                           placeholder="10"
                           placeholderTextColor={colors.gray}
@@ -966,16 +995,10 @@ export function SettingsDetailView({
                               color: colors.black,
                             },
                           ]}
-                          value={String(notifications.unscheduledIdleHours)}
-                          onChangeText={(v) => {
-                            const n = parseInt(v, 10);
-                            if (!isNaN(n) && n > 0) {
-                              setNotifications({
-                                ...notifications,
-                                unscheduledIdleHours: n,
-                              });
-                            }
-                          }}
+                          value={idleHoursInput}
+                          onChangeText={setIdleHoursInput}
+                          onBlur={commitIdleHours}
+                          onSubmitEditing={commitIdleHours}
                           keyboardType="numeric"
                           placeholder="24"
                           placeholderTextColor={colors.gray}
