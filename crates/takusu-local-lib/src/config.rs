@@ -67,7 +67,8 @@ impl LocalConfig {
             .try_deserialize()
     }
 
-    pub fn load_root_token() -> String {
-        std::env::var("TAKUSU_ROOT_TOKEN").expect("TAKUSU_ROOT_TOKEN is required")
+    pub fn load_root_token() -> Result<String, String> {
+        std::env::var("TAKUSU_ROOT_TOKEN")
+            .map_err(|_| "TAKUSU_ROOT_TOKEN environment variable is required".to_string())
     }
 }

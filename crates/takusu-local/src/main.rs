@@ -21,7 +21,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let cfg = LocalConfig::load()?;
-    let root_token = LocalConfig::load_root_token();
+    let root_token = LocalConfig::load_root_token().map_err(|e| {
+        eprintln!("{e}");
+        std::process::exit(1);
+    })?;
 
     let storage: Arc<dyn Storage> = match cfg.storage_kind() {
         #[cfg(feature = "sqlite")]
