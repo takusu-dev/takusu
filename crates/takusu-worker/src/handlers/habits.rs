@@ -7,6 +7,7 @@ use crate::handlers::auth::db;
 use crate::handlers::d1::safe_all;
 use crate::handlers::tokens::{json_created, json_ok, parse_json};
 use crate::models::{CreateHabit, HabitRow, UpdateHabit};
+use crate::validate::{validate_minutes, validate_recurrence};
 
 const HABIT_COLS: &str = "id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed, created_at, updated_at";
 
@@ -26,6 +27,8 @@ pub async fn list(_req: worker::Request, env: Env) -> Result<Response, WorkerErr
 
 pub async fn create(mut req: worker::Request, env: Env) -> Result<Response, WorkerError> {
     let body: CreateHabit = parse_json(&mut req).await?;
+    validate_minutes(body.avg_minutes, body.sigma_minutes)?;
+    validate_recurrence(&body.recurrence)?;
     let database = db(&env)?;
     let id = uuid::Uuid::now_v7().to_string();
     let sigma = body.sigma_minutes.unwrap_or((body.avg_minutes / 5).max(1));
@@ -70,6 +73,14 @@ pub async fn get(_req: worker::Request, env: Env, id: &str) -> Result<Response, 
 
 pub async fn update(mut req: worker::Request, env: Env, id: &str) -> Result<Response, WorkerError> {
     let body: UpdateHabit = parse_json(&mut req).await?;
+    if let Some(avg) = body.avg_minutes {
+        validate_minutes(avg, body.sigma_minutes)?;
+    } else if let Some(sigma) = body.sigma_minutes {
+        validate_minutes(0, Some(sigma))?;
+    }
+    if let Some(ref recurrence) = body.recurrence {
+        validate_recurrence(recurrence)?;
+    }
     let database = db(&env)?;
     let stmt = database.prepare(
         "UPDATE habits SET title=COALESCE(?1,title), description=COALESCE(?2,description), recurrence=COALESCE(?3,recurrence), start_time=COALESCE(?4,start_time), end_time=COALESCE(?5,end_time), avg_minutes=COALESCE(?6,avg_minutes), sigma_minutes=COALESCE(?7,sigma_minutes), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), active=COALESCE(?11,active), fixed=COALESCE(?12,fixed), updated_at=datetime('now') WHERE id = ?13"
@@ -128,6 +139,8 @@ pub async fn replace(
     id: &str,
 ) -> Result<Response, WorkerError> {
     let body: CreateHabit = parse_json(&mut req).await?;
+    validate_minutes(body.avg_minutes, body.sigma_minutes)?;
+    validate_recurrence(&body.recurrence)?;
     let database = db(&env)?;
     let sigma = body.sigma_minutes.unwrap_or((body.avg_minutes / 5).max(1));
     let parallelizable = body.parallelizable.unwrap_or(false);

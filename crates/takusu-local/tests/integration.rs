@@ -1568,3 +1568,98 @@ async fn habit_sync_uses_local_date_in_non_utc_timezone() {
         );
     }
 }
+
+#[tokio::test]
+async fn task_create_rejects_negative_avg_minutes() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let req = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "bad",
+            "end_at": "2026-07-06T18:00:00Z",
+            "avg_minutes": -10,
+        }),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn task_create_rejects_negative_sigma_minutes() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let req = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "bad",
+            "end_at": "2026-07-06T18:00:00Z",
+            "avg_minutes": 30,
+            "sigma_minutes": -5,
+        }),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn habit_create_rejects_invalid_recurrence() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let req = auth_req_body(
+        Method::POST,
+        "/api/habits",
+        json!({
+            "title": "bad",
+            "recurrence": "not json",
+            "start_time": "06:00",
+            "end_time": "07:00",
+            "avg_minutes": 30,
+        }),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn settings_update_rejects_invalid_timezone() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let req = auth_req_body(Method::PUT, "/api/settings", json!({ "tz": "Asia/Tokyoo" }));
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn task_replace_rejects_negative_avg_minutes() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    // First create a valid task to replace.
+    let create_req = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "good",
+            "end_at": "2026-07-06T18:00:00Z",
+            "avg_minutes": 30,
+        }),
+    );
+    let res = app.clone().oneshot(create_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let task_id = body["id"].as_str().unwrap();
+
+    let replace_req = auth_req_body(
+        Method::PUT,
+        &format!("/api/tasks/{task_id}"),
+        json!({
+            "title": "bad",
+            "end_at": "2026-07-06T18:00:00Z",
+            "avg_minutes": -10,
+        }),
+    );
+    let res = app.oneshot(replace_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}

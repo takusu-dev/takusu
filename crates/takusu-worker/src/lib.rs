@@ -15,6 +15,7 @@ mod error;
 mod handlers;
 mod models;
 mod router;
+mod validate;
 
 use std::sync::Once;
 use worker::{Context, Env, Request, Response};
