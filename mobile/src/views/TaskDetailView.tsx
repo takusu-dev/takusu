@@ -751,17 +751,34 @@ export function TaskDetailView() {
           </Text>
           {editing ? (
             <View style={styles.costEditContainer}>
-              <PaperTextInput
-                mode="outlined"
-                label="avg (分)"
-                value={avgMinutes}
-                onChangeText={setAvgMinutes}
-                keyboardType="numeric"
-                outlineColor={colors.separator}
-                activeOutlineColor={BRAND_COLOR}
-                style={styles.costInput}
-                dense
-              />
+              <View style={styles.avgInputContainer}>
+                <PaperTextInput
+                  mode="outlined"
+                  label="avg (分)"
+                  value={avgMinutes}
+                  onChangeText={setAvgMinutes}
+                  keyboardType="numeric"
+                  outlineColor={colors.separator}
+                  activeOutlineColor={BRAND_COLOR}
+                  style={styles.costInput}
+                  dense
+                />
+                <IconButton
+                  icon="arrow-expand"
+                  size={18}
+                  iconColor={BRAND_COLOR}
+                  disabled={!startAt || !endAt}
+                  onPress={() => {
+                    if (!startAt || !endAt) return;
+                    haptic.light();
+                    const diffMin = Math.max(
+                      1,
+                      Math.round((endAt.getTime() - startAt.getTime()) / 60000),
+                    );
+                    setAvgMinutes(String(diffMin));
+                  }}
+                />
+              </View>
               <View style={styles.costInput}>
                 <PaperTextInput
                   mode="outlined"
@@ -1356,6 +1373,11 @@ const styles = StyleSheet.create({
   costEditContainer: {
     flexDirection: 'row',
     gap: 12,
+  },
+  avgInputContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   costInput: {
     flex: 1,

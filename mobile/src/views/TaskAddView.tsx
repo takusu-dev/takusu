@@ -252,15 +252,49 @@ export function TaskAddView({
         <View style={styles.row}>
           <View style={[styles.field, { flex: 1 }]}>
             <Text style={[styles.label, { color: colors.gray }]}>avg (分)</Text>
-            <TextInput
-              style={[
-                styles.input,
-                { borderColor: colors.separator, color: colors.black },
-              ]}
-              value={avgMinutes}
-              onChangeText={setAvgMinutes}
-              keyboardType="numeric"
-            />
+            <View style={styles.rowWithButton}>
+              <TextInput
+                style={[
+                  styles.input,
+                  styles.inputWithButton,
+                  { borderColor: colors.separator, color: colors.black },
+                ]}
+                value={avgMinutes}
+                onChangeText={setAvgMinutes}
+                keyboardType="numeric"
+              />
+              <Pressable
+                style={[
+                  styles.maximizeButton,
+                  { borderColor: BRAND_COLOR },
+                  (!startAt || !endAt) && styles.maximizeButtonDisabled,
+                ]}
+                disabled={!startAt || !endAt}
+                onPress={() => {
+                  if (!startAt || !endAt) return;
+                  haptic.light();
+                  const diffMin = Math.max(
+                    1,
+                    Math.round((endAt.getTime() - startAt.getTime()) / 60000),
+                  );
+                  setAvgMinutes(String(diffMin));
+                }}
+              >
+                <Ionicons name="expand" size={16} color={BRAND_COLOR} />
+              </Pressable>
+            </View>
+            {startAt &&
+              endAt &&
+              (() => {
+                const diffMin = Math.round(
+                  (endAt.getTime() - startAt.getTime()) / 60000,
+                );
+                return diffMin > 0 ? (
+                  <Text style={[styles.hint, { color: colors.grayLight }]}>
+                    window: {diffMin}分
+                  </Text>
+                ) : null;
+              })()}
           </View>
           <View style={[styles.field, { flex: 1 }]}>
             <Text style={[styles.label, { color: colors.gray }]}>
@@ -618,6 +652,26 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     gap: 12,
+  },
+  rowWithButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  inputWithButton: {
+    flex: 1,
+  },
+  maximizeButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  maximizeButtonDisabled: {
+    borderColor: '#CCC',
+    opacity: 0.4,
   },
   label: {
     fontSize: 13,
