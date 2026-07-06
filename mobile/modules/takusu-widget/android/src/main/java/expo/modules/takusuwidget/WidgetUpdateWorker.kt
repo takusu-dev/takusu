@@ -86,6 +86,7 @@ class WidgetUpdateWorker(
             val arr = org.json.JSONArray()
             for (u in s.upcoming) {
                 val o = org.json.JSONObject()
+                o.put("id", u.id)
                 o.put("title", u.title)
                 o.put("start_at", u.startAt ?: org.json.JSONObject.NULL)
                 o.put("end_at", u.endAt)

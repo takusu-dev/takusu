@@ -7,13 +7,13 @@
   android:padding="12dp"
   android:background="@drawable/widget_background">
 
-  <!-- Doing task section -->
+  <!-- Doing task section (fixed at top) -->
   <LinearLayout
     android:id="@+id/widget_doing_section"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:layout_marginBottom="8dp">
+    android:layout_marginBottom="6dp">
 
     <TextView
       android:id="@+id/widget_doing_label"
@@ -31,11 +31,11 @@
       android:textSize="14sp"
       android:textColor="#FFFFFF"
       android:textStyle="bold"
-      android:maxLines="2"
+      android:maxLines="1"
       android:ellipsize="end" />
   </LinearLayout>
 
-  <!-- Upcoming tasks section -->
+  <!-- Upcoming tasks label -->
   <TextView
     android:id="@+id/widget_upcoming_label"
     android:layout_width="wrap_content"
@@ -44,42 +44,23 @@
     android:textColor="#AAAAAA"
     android:layout_marginBottom="4dp" />
 
-  <TextView
-    android:id="@+id/widget_upcoming_1"
+  <!-- Scrollable upcoming tasks list (fills remaining space) -->
+  <ListView
+    android:id="@+id/widget_upcoming_list"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:textSize="13sp"
-    android:textColor="#DDDDDD"
-    android:maxLines="1"
-    android:ellipsize="end"
-    android:layout_marginBottom="2dp" />
-
-  <TextView
-    android:id="@+id/widget_upcoming_2"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:textSize="13sp"
-    android:textColor="#DDDDDD"
-    android:maxLines="1"
-    android:ellipsize="end"
-    android:layout_marginBottom="2dp" />
-
-  <TextView
-    android:id="@+id/widget_upcoming_3"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:textSize="13sp"
-    android:textColor="#DDDDDD"
-    android:maxLines="1"
-    android:ellipsize="end"
-    android:layout_marginBottom="8dp" />
+    android:layout_height="0dp"
+    android:layout_weight="1"
+    android:divider="@null"
+    android:dividerHeight="0dp"
+    android:overScrollMode="never" />
 
   <!-- Footer: unscheduled count + last updated -->
   <LinearLayout
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="horizontal"
-    android:gravity="center_vertical">
+    android:gravity="center_vertical"
+    android:layout_marginTop="4dp">
 
     <TextView
       android:id="@+id/widget_unscheduled"
