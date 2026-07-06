@@ -62,6 +62,11 @@ def _extract_text(result: list) -> str:
 
 
 _model: AutoModel | None = None  # noqa: F821
+# Serializes access to `_model.generate()`. FunASR's AutoModel is not
+# documented as thread-safe, and `run_in_executor` dispatches to the default
+# thread pool, so concurrent clients could otherwise invoke inference from
+# multiple threads at once (#283).
+_model_lock: asyncio.Lock | None = None
 
 
 def _load_model(config: ServerConfig) -> AutoModel:  # noqa: F821
@@ -121,14 +126,22 @@ async def _handle(websocket: websockets.ServerConnection) -> None:
                     loop = asyncio.get_running_loop()
                     hotwords = session.request.hotwords
                     language = session.request.language
-                    result = await loop.run_in_executor(
-                        None,
-                        lambda audio=audio, hotwords=hotwords, language=language: _model.generate(
-                            input=audio,
-                            language=language,
-                            hotwords=hotwords,
-                        ),
-                    )
+                    # Hold the asyncio lock across the executor call so only
+                    # one inference runs at a time. The executor thread still
+                    # runs `_model.generate`, but the lock prevents another
+                    # coroutine from dispatching a second concurrent call
+                    # while this one is in flight (#283).
+                    async with _model_lock:
+                        result = await loop.run_in_executor(
+                            None,
+                            lambda audio=audio, hotwords=hotwords, language=language: (
+                                _model.generate(
+                                    input=audio,
+                                    language=language,
+                                    hotwords=hotwords,
+                                )
+                            ),
+                        )
 
                     text = ""
                     raw = _extract_text(result)
@@ -149,8 +162,9 @@ async def _handle(websocket: websockets.ServerConnection) -> None:
 
 async def _run(config: ServerConfig) -> None:
     model = _load_model(config)
-    global _model
+    global _model, _model_lock
     _model = model
+    _model_lock = asyncio.Lock()
 
     server = await websockets.serve(
         _handle,

@@ -13,6 +13,12 @@ dependencies = [
     "huggingface_hub",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
 [tool.uv]
 extra-index-url = ["https://download.pytorch.org/whl/cpu"]
 find-links = ["https://download.pytorch.org/whl/torch_stable.html"]
@@ -32,6 +38,10 @@ python_version = "3.10"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
 
 [build-system]
 requires = ["hatchling"]
