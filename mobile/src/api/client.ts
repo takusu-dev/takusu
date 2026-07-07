@@ -24,6 +24,7 @@ import type {
   SyncTriggerResponse,
   GoogleCalEventMapping,
   IcalImportResult,
+  DependencyAnalysisResponse,
 } from './types';
 
 export class ApiError extends Error {
@@ -113,6 +114,11 @@ export class TakusuClient {
     return this.request('DELETE', `/api/tasks/${id}`);
   }
 
+  // ── Composite dependency analysis (#355) ──
+  async analyzeTaskDependencies(): Promise<DependencyAnalysisResponse> {
+    return this.request('GET', '/api/tasks/dependency-analysis');
+  }
+
   async importIcal(icalText: string): Promise<IcalImportResult> {
     const url = `${this.baseUrl}/api/tasks/import/ical`;
     const resp = await fetch(url, {
@@ -192,6 +198,12 @@ export class TakusuClient {
     steps: HabitStepInput[],
   ): Promise<HabitStepRow[]> {
     return this.request('PUT', `/api/habits/${id}/steps`, steps);
+  }
+
+  async analyzeHabitStepDependencies(
+    id: string,
+  ): Promise<DependencyAnalysisResponse> {
+    return this.request('GET', `/api/habits/${id}/steps/dependency-analysis`);
   }
 
   // ── Schedule ──

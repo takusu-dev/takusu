@@ -275,6 +275,28 @@ export interface IcalImportResult {
   task_ids: string[];
 }
 
+// ── Composite (redundant) dependency detection (#355) ──
+// A redundant edge is a direct dependency that is already implied by a
+// longer path (transitive reduction). `via` is the witness path including
+// both endpoints (length >= 3).
+
+export interface DependencyNode {
+  id: string;
+  title: string;
+}
+
+export interface RedundantDependency {
+  from: string;
+  from_title: string;
+  to: string;
+  to_title: string;
+  via: DependencyNode[];
+}
+
+export interface DependencyAnalysisResponse {
+  redundant: RedundantDependency[];
+}
+
 // Helper: parse depends JSON string
 export function parseDepends(depends: string): string[] {
   try {
