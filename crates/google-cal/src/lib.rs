@@ -297,9 +297,19 @@ impl Client {
                     Ok(new_id) => mappings.push((entry.task_id.clone(), new_id)),
                     Err(e) => {
                         tracing::warn!(
-                            "failed to update event for task {}: {e}, trying create",
+                            "failed to update event {event_id} for task {}: {e}, trying delete+create",
                             entry.task_id
                         );
+                        // Best-effort cleanup of the orphaned event before
+                        // creating a replacement. Ignore errors: the event
+                        // may already be gone (404/410) or the delete may
+                        // fail transiently — either way we still want to
+                        // create the replacement so the task stays in sync.
+                        if let Err(de) = self.delete_event(&token, event_id).await {
+                            tracing::warn!(
+                                "best-effort delete of orphaned event {event_id} failed: {de}"
+                            );
+                        }
                         match self.create_event(&token, entry).await {
                             Ok(id) => mappings.push((entry.task_id.clone(), id)),
                             Err(e2) => {
