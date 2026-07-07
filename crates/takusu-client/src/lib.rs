@@ -679,6 +679,10 @@ pub struct CreateTask {
     pub allows_parallel: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub abandonability: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ical_uid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub habit_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub fixed: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -709,6 +713,8 @@ pub struct UpdateTask {
     pub abandonability: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub habit_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_edited: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
