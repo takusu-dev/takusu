@@ -98,12 +98,39 @@ fn unescape_ical_text(s: &str) -> String {
     out
 }
 
+/// Split a trailing UTC designator (`Z`) or explicit UTC offset (`+HHMM` /
+/// `-HHMM`, RFC 5545 §3.3.5) off the end of an iCal date-time value.
+/// Returns the body (with the suffix removed) and the ISO 8601 suffix to
+/// append to the formatted output (`Z`, `+09:00`, `-05:30`, …). When no
+/// suffix is present the body is the original input and the suffix is empty.
+fn split_offset(raw: &str) -> (&str, String) {
+    if let Some(stripped) = raw.strip_suffix('Z') {
+        return (stripped, "Z".to_string());
+    }
+    let bytes = raw.as_bytes();
+    if bytes.len() >= 6 {
+        let sign_idx = bytes.len() - 5;
+        if matches!(bytes[sign_idx], b'+' | b'-') {
+            let off = &raw[sign_idx..];
+            // off is "+HHMM" / "-HHMM"; the four chars after the sign must
+            // be digits for this to be a real offset rather than a date
+            // whose 5th-from-last char happens to be a sign.
+            if off[1..].chars().all(|c| c.is_ascii_digit()) {
+                let body = &raw[..sign_idx];
+                let norm = format!("{}:{}", &off[..3], &off[3..5]);
+                return (body, norm);
+            }
+        }
+    }
+    (raw, String::new())
+}
+
 fn format_ical_date(raw: &str) -> Result<String, IcalError> {
     if raw.len() < 8 {
         return Err(IcalError::InvalidDate(raw.to_string()));
     }
 
-    let s = raw.strip_suffix('Z').unwrap_or(raw);
+    let (s, suffix) = split_offset(raw);
 
     if let Some(idx) = s.find('T') {
         let date_part = &s[..idx];
@@ -118,7 +145,7 @@ fn format_ical_date(raw: &str) -> Result<String, IcalError> {
                 &rest[0..2],
                 &rest[2..4],
                 &rest[4..6],
-                if raw.ends_with('Z') { "Z" } else { "" }
+                suffix
             ));
         }
     }
@@ -132,7 +159,7 @@ fn format_ical_date(raw: &str) -> Result<String, IcalError> {
             &s[8..10],
             &s[10..12],
             &s[12..14],
-            if raw.ends_with('Z') { "Z" } else { "" }
+            suffix
         ));
     }
 
@@ -142,7 +169,7 @@ fn format_ical_date(raw: &str) -> Result<String, IcalError> {
             &s[0..4],
             &s[4..6],
             &s[6..8],
-            if raw.ends_with('Z') { "Z" } else { "" }
+            suffix
         ));
     }
 
@@ -508,5 +535,52 @@ END:VCALENDAR";
         let ical = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:n\nDTSTART:20250101T090000Z\nDTEND:20250101T100000Z\nSUMMARY:Trailing\\\nEND:VEVENT\nEND:VCALENDAR\n";
         let result = parse_ical(ical).unwrap();
         assert_eq!(result[0].title, "Trailing\\");
+    }
+
+    // ── Explicit UTC offsets (#345) ─────────────────────────────────────
+
+    #[test]
+    fn parse_positive_offset() {
+        let ical = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:t\r\nDTSTART:20250101T090000+0900\r\nDTEND:20250101T100000+0900\r\nSUMMARY:Test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let tasks = parse_ical(ical).unwrap();
+        assert_eq!(tasks[0].start_at, "2025-01-01T09:00:00+09:00");
+        assert_eq!(tasks[0].end_at, "2025-01-01T10:00:00+09:00");
+    }
+
+    #[test]
+    fn parse_negative_offset() {
+        let ical = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:t\r\nDTSTART:20250101T090000-0500\r\nDTEND:20250101T100000-0500\r\nSUMMARY:Test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let tasks = parse_ical(ical).unwrap();
+        assert_eq!(tasks[0].start_at, "2025-01-01T09:00:00-05:00");
+        assert_eq!(tasks[0].end_at, "2025-01-01T10:00:00-05:00");
+    }
+
+    #[test]
+    fn parse_offset_zero() {
+        let ical = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:t\r\nDTSTART:20250101T090000+0000\r\nDTEND:20250101T100000+0000\r\nSUMMARY:Test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let tasks = parse_ical(ical).unwrap();
+        assert_eq!(tasks[0].start_at, "2025-01-01T09:00:00+00:00");
+    }
+
+    #[test]
+    fn format_ical_date_offset_unit() {
+        assert_eq!(
+            format_ical_date("20250101T090000+0900").unwrap(),
+            "2025-01-01T09:00:00+09:00"
+        );
+        assert_eq!(
+            format_ical_date("20250101T090000-0530").unwrap(),
+            "2025-01-01T09:00:00-05:30"
+        );
+        // UTC and naive still work.
+        assert_eq!(
+            format_ical_date("20250101T090000Z").unwrap(),
+            "2025-01-01T09:00:00Z"
+        );
+        assert_eq!(
+            format_ical_date("20250101T090000").unwrap(),
+            "2025-01-01T09:00:00"
+        );
+        assert_eq!(format_ical_date("20250101").unwrap(), "2025-01-01T00:00:00");
     }
 }
