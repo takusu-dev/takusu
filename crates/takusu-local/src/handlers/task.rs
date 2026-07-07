@@ -81,3 +81,10 @@ pub async fn import_ical(
         "task_ids": result.task_ids,
     })))
 }
+
+pub async fn dependency_analysis(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    let redundant = state.app.analyze_task_dependencies().await?;
+    Ok(Json(serde_json::json!({ "redundant": redundant })))
+}

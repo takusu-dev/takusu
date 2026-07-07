@@ -159,6 +159,22 @@ impl Client {
         Ok(())
     }
 
+    pub async fn analyze_task_dependencies(
+        &self,
+    ) -> Result<DependencyAnalysisResponse, ClientError> {
+        let resp = self
+            .request(reqwest::Method::GET, "/api/tasks/dependency-analysis")
+            .await
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
     // ── Habit ──
 
     pub async fn list_habits(&self) -> Result<Vec<HabitRow>, ClientError> {
@@ -361,6 +377,26 @@ impl Client {
             .request(reqwest::Method::PUT, &format!("/api/habits/{id}/steps"))
             .await
             .json(steps)
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn analyze_habit_step_dependencies(
+        &self,
+        habit_id: &str,
+    ) -> Result<DependencyAnalysisResponse, ClientError> {
+        let resp = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/api/habits/{habit_id}/steps/dependency-analysis"),
+            )
+            .await
             .send()
             .await?;
         let status = resp.status().as_u16();
@@ -879,6 +915,30 @@ pub struct HabitDetail {
     #[serde(flatten)]
     pub habit: HabitRow,
     pub steps: Vec<HabitStepRow>,
+}
+
+/// A node on a dependency witness path (#355).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DependencyNode {
+    pub id: String,
+    pub title: String,
+}
+
+/// A redundant (composite) dependency edge with a witness path (#355).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedundantDependency {
+    pub from: String,
+    pub from_title: String,
+    pub to: String,
+    pub to_title: String,
+    pub via: Vec<DependencyNode>,
+}
+
+/// Response for `GET /api/tasks/dependency-analysis` and the habit step
+/// variant (#355).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DependencyAnalysisResponse {
+    pub redundant: Vec<RedundantDependency>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
