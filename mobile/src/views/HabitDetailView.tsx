@@ -226,9 +226,11 @@ export function HabitDetailView() {
     }
     const prev = { ...habit };
     setSaving(true);
+    let habitUpdated = false;
     try {
       if (Object.keys(updates).length > 0) {
         await client.updateHabit(habit.id, updates);
+        habitUpdated = true;
       }
       if (stepsChanged) {
         await saveHabitSteps(client, habit.id, stepDrafts);
@@ -271,6 +273,27 @@ export function HabitDetailView() {
         },
       });
     } catch (e) {
+      // If the habit body was updated but the step save failed, roll
+      // back the body update so the habit isn't left in a partial state.
+      if (habitUpdated) {
+        await client
+          .updateHabit(habit.id, {
+            title: prev.title,
+            description: prev.description,
+            recurrence: prev.recurrence,
+            start_time: prev.start_time,
+            end_time: prev.end_time,
+            avg_minutes: prev.avg_minutes,
+            sigma_minutes: prev.sigma_minutes,
+            abandonability: prev.abandonability,
+            parallelizable: prev.parallelizable,
+            allows_parallel: prev.allows_parallel,
+            active: prev.active,
+            fixed: prev.fixed,
+            window_mode: prev.window_mode,
+          })
+          .catch(() => {});
+      }
       showError(e, 'ハビットの保存に失敗');
       setSaving(false);
       return;
