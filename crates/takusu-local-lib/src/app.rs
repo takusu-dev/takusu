@@ -321,8 +321,16 @@ fn iso_to_local_date(iso: &str, tz: &jiff::tz::TimeZone) -> String {
     if let Ok(ts) = Timestamp::from_str(iso) {
         ts.to_zoned(tz.clone()).date().to_string()
     } else {
-        // フォールバック: naive 日付文字列の先頭 10 文字
-        iso.chars().take(10).collect()
+        // フォールバック: naive 日時は設定 tz で解釈してローカル日付を得る。
+        // iso_to_point と同じアプローチ。純粋な日付文字列 (YYYY-MM-DD) など
+        // DateTime::from_str でも失敗する場合は先頭 10 文字を返す。
+        match jiff::civil::DateTime::from_str(iso) {
+            Ok(dt) => dt
+                .to_zoned(tz.clone())
+                .map(|zdt| zdt.date().to_string())
+                .unwrap_or_else(|_| iso.chars().take(10).collect()),
+            Err(_) => iso.chars().take(10).collect(),
+        }
     }
 }
 
@@ -1920,5 +1928,42 @@ mod tests {
     fn iso_to_point_now() {
         let tz = jiff::tz::TimeZone::UTC;
         let _ = iso_to_point("now", &tz).unwrap();
+    }
+
+    // ── iso_to_local_date naive fallback (#348) ─────────────────────────
+
+    #[test]
+    fn iso_to_local_date_with_offset() {
+        let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+        // 20:00 UTC = 05:00 JST next day
+        let d = iso_to_local_date("2026-07-06T20:00:00Z", &tz);
+        assert_eq!(d, "2026-07-07");
+    }
+
+    #[test]
+    fn iso_to_local_date_naive_interprets_in_tz() {
+        let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+        // Naive datetime should be interpreted in the configured tz, so the
+        // local date is the same date as the naive string (no offset shift).
+        let d = iso_to_local_date("2026-07-06T20:00:00", &tz);
+        assert_eq!(d, "2026-07-06");
+    }
+
+    #[test]
+    fn iso_to_local_date_naive_matches_offset_version() {
+        let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+        // A naive datetime interpreted in tz should yield the same local
+        // date as the same wall-clock time with the tz's offset.
+        let naive = iso_to_local_date("2026-07-06T20:00:00", &tz);
+        let with_offset = iso_to_local_date("2026-07-06T20:00:00+09:00", &tz);
+        assert_eq!(naive, with_offset);
+    }
+
+    #[test]
+    fn iso_to_local_date_date_only_fallback() {
+        let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+        // Pure date string (no time) → first 10 chars as before.
+        let d = iso_to_local_date("2026-07-06", &tz);
+        assert_eq!(d, "2026-07-06");
     }
 }
