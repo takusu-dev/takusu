@@ -49,7 +49,7 @@ depends: {depends}"#,
     )
 }
 
-pub fn parse_edited_task(content: &str) -> Option<UpdateTask> {
+pub fn parse_edited_task(content: &str) -> Result<UpdateTask, String> {
     let mut title = None;
     let mut description = None;
     let mut start_at = None;
@@ -68,7 +68,13 @@ pub fn parse_edited_task(content: &str) -> Option<UpdateTask> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let (key, value) = line.split_once(':')?;
+        let (key, value) = match line.split_once(':') {
+            Some(kv) => kv,
+            None => {
+                eprintln!("warning: skipping malformed line (no ':'): {line}");
+                continue;
+            }
+        };
         let key = key.trim();
         let value = value.trim();
         match key {
@@ -95,12 +101,48 @@ pub fn parse_edited_task(content: &str) -> Option<UpdateTask> {
                 }
             }
             "status" => status = Some(value.to_string()),
-            "avg_minutes" => avg_minutes = Some(value.parse().ok()?),
-            "sigma_minutes" => sigma_minutes = Some(value.parse().ok()?),
-            "parallelizable" => parallelizable = Some(value.parse().ok()?),
-            "allows_parallel" => allows_parallel = Some(value.parse().ok()?),
-            "abandonability" => abandonability = Some(value.parse().ok()?),
-            "fixed" => fixed = Some(value.parse().ok()?),
+            "avg_minutes" => {
+                avg_minutes = Some(
+                    value
+                        .parse()
+                        .map_err(|e| format!("invalid avg_minutes '{value}': {e}"))?,
+                )
+            }
+            "sigma_minutes" => {
+                sigma_minutes = Some(
+                    value
+                        .parse()
+                        .map_err(|e| format!("invalid sigma_minutes '{value}': {e}"))?,
+                )
+            }
+            "parallelizable" => {
+                parallelizable = Some(
+                    value
+                        .parse()
+                        .map_err(|e| format!("invalid parallelizable '{value}': {e}"))?,
+                )
+            }
+            "allows_parallel" => {
+                allows_parallel = Some(
+                    value
+                        .parse()
+                        .map_err(|e| format!("invalid allows_parallel '{value}': {e}"))?,
+                )
+            }
+            "abandonability" => {
+                abandonability = Some(
+                    value
+                        .parse()
+                        .map_err(|e| format!("invalid abandonability '{value}': {e}"))?,
+                )
+            }
+            "fixed" => {
+                fixed = Some(
+                    value
+                        .parse()
+                        .map_err(|e| format!("invalid fixed '{value}': {e}"))?,
+                )
+            }
             "depends" => {
                 let items: Vec<String> = if value.is_empty() {
                     vec![]
@@ -117,7 +159,7 @@ pub fn parse_edited_task(content: &str) -> Option<UpdateTask> {
         }
     }
 
-    Some(UpdateTask {
+    Ok(UpdateTask {
         title,
         description: description.flatten(),
         start_at: start_at.flatten(),
@@ -167,7 +209,7 @@ active: {active}"#,
     )
 }
 
-pub fn parse_edited_habit(content: &str) -> Option<UpdateHabit> {
+pub fn parse_edited_habit(content: &str) -> Result<UpdateHabit, String> {
     let mut title = None;
     let mut description = None;
     let mut recurrence = None;
@@ -186,7 +228,13 @@ pub fn parse_edited_habit(content: &str) -> Option<UpdateHabit> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let (key, value) = line.split_once(':')?;
+        let (key, value) = match line.split_once(':') {
+            Some(kv) => kv,
+            None => {
+                eprintln!("warning: skipping malformed line (no ':'): {line}");
+                continue;
+            }
+        };
         let key = key.trim();
         let value = value.trim();
         match key {
@@ -213,18 +261,60 @@ pub fn parse_edited_habit(content: &str) -> Option<UpdateHabit> {
                     Some(Some(value.to_string()))
                 }
             }
-            "avg_minutes" => avg_minutes = Some(value.parse().ok()?),
-            "sigma_minutes" => sigma_minutes = Some(value.parse().ok()?),
-            "parallelizable" => parallelizable = Some(value.parse().ok()?),
-            "allows_parallel" => allows_parallel = Some(value.parse().ok()?),
-            "abandonability" => abandonability = Some(value.parse().ok()?),
-            "fixed" => fixed = Some(value.parse().ok()?),
-            "active" => active = Some(value.parse().ok()?),
+            "avg_minutes" => {
+                avg_minutes = Some(
+                    value
+                        .parse()
+                        .map_err(|e| format!("invalid avg_minutes '{value}': {e}"))?,
+                )
+            }
+            "sigma_minutes" => {
+                sigma_minutes = Some(
+                    value
+                        .parse()
+                        .map_err(|e| format!("invalid sigma_minutes '{value}': {e}"))?,
+                )
+            }
+            "parallelizable" => {
+                parallelizable = Some(
+                    value
+                        .parse()
+                        .map_err(|e| format!("invalid parallelizable '{value}': {e}"))?,
+                )
+            }
+            "allows_parallel" => {
+                allows_parallel = Some(
+                    value
+                        .parse()
+                        .map_err(|e| format!("invalid allows_parallel '{value}': {e}"))?,
+                )
+            }
+            "abandonability" => {
+                abandonability = Some(
+                    value
+                        .parse()
+                        .map_err(|e| format!("invalid abandonability '{value}': {e}"))?,
+                )
+            }
+            "fixed" => {
+                fixed = Some(
+                    value
+                        .parse()
+                        .map_err(|e| format!("invalid fixed '{value}': {e}"))?,
+                )
+            }
+            "active" => {
+                active = Some(
+                    value
+                        .parse()
+                        .map_err(|e| format!("invalid active '{value}': {e}"))?,
+                )
+            }
             _ => {}
         }
     }
 
-    Some(UpdateHabit {
+    Ok(UpdateHabit {
         title,
         description: description.flatten(),
         recurrence,
@@ -308,5 +398,56 @@ mod tests {
         let update = parse_edited_habit(input).unwrap();
         assert_eq!(update.start_time.as_deref(), Some("09:00"));
         assert_eq!(update.end_time.as_deref(), Some("10:00"));
+    }
+
+    // ── Per-line error reporting (#347) ─────────────────────────────────
+
+    #[test]
+    fn parse_edited_task_line_without_colon_is_skipped() {
+        // A malformed line should NOT discard the whole edit.
+        let input = "title: t\nthis line has no colon\navg_minutes: 30\n";
+        let update = parse_edited_task(input).unwrap();
+        assert_eq!(update.title.as_deref(), Some("t"));
+        assert_eq!(update.avg_minutes, Some(30));
+    }
+
+    #[test]
+    fn parse_edited_task_bad_numeric_field_reports_error() {
+        let input = "title: t\navg_minutes: abc\n";
+        let err = parse_edited_task(input).unwrap_err();
+        assert!(
+            err.contains("avg_minutes"),
+            "error should mention the field: {err}"
+        );
+        assert!(
+            err.contains("abc"),
+            "error should mention the bad value: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_edited_task_bad_field_does_not_discard_valid_fields() {
+        // Even when one numeric field is bad, the error should be returned
+        // (we do not silently drop the valid `title`). The caller can show
+        // the error so the user fixes the one bad line and re-edits.
+        let input = "title: t\nsigma_minutes: xyz\nfixed: true\n";
+        let err = parse_edited_task(input).unwrap_err();
+        assert!(err.contains("sigma_minutes"), "error: {err}");
+    }
+
+    #[test]
+    fn parse_edited_habit_line_without_colon_is_skipped() {
+        let input = "title: h\nno colon here\nactive: true\n";
+        let update = parse_edited_habit(input).unwrap();
+        assert_eq!(update.title.as_deref(), Some("h"));
+        assert_eq!(update.active, Some(true));
+    }
+
+    #[test]
+    fn parse_edited_habit_bad_bool_field_reports_error() {
+        let input = "title: h\nactive: maybe\n";
+        let err = parse_edited_habit(input).unwrap_err();
+        assert!(err.contains("active"), "error: {err}");
+        assert!(err.contains("maybe"), "error: {err}");
     }
 }
