@@ -182,6 +182,24 @@ mod tests {
         ) -> Result<(), takusu_storage::StorageError> {
             unimplemented()
         }
+        async fn list_habit_steps(
+            &self,
+            _: &str,
+        ) -> Result<Vec<takusu_storage::HabitStepRow>, takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn list_all_habit_steps(
+            &self,
+        ) -> Result<Vec<takusu_storage::HabitStepRow>, takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn replace_habit_steps(
+            &self,
+            _: &str,
+            _: &[takusu_storage::HabitStepInput],
+        ) -> Result<Vec<takusu_storage::HabitStepRow>, takusu_storage::StorageError> {
+            unimplemented()
+        }
         async fn get_schedule(&self) -> Result<Option<ScheduleRow>, takusu_storage::StorageError> {
             unimplemented()
         }

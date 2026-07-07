@@ -39,6 +39,10 @@ async fn setup_mock_db() -> SqlitePool {
         include_str!("../migrations/005_task_display_id.sql"),
         include_str!("../migrations/006_user_edited.sql"),
         include_str!("../migrations/007_fixed.sql"),
+        include_str!("../../takusu-local-lib/migrations/007_task_display_id_seq.sql"),
+        include_str!("../migrations/009_habit_display_id.sql"),
+        include_str!("../../takusu-local-lib/migrations/010_habit_pauses.sql"),
+        include_str!("../../takusu-local-lib/migrations/011_habit_steps.sql"),
     ];
     for s in sqls {
         sqlx::raw_sql(*s).execute(&pool).await.unwrap();
@@ -94,7 +98,7 @@ async fn list_tasks(
     axum::extract::Query(q): axum::extract::Query<TaskQuery>,
 ) -> Json<Vec<TaskRow>> {
     let mut sql = String::from(
-        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, created_at, updated_at FROM tasks WHERE 1=1",
+        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, created_at, updated_at FROM tasks WHERE 1=1",
     );
     if q.status.is_some() {
         sql.push_str(" AND status = ?");
@@ -140,7 +144,7 @@ async fn create_task(
     let fixed = body.fixed.unwrap_or(false);
 
     sqlx::query(
-        "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, fixed) VALUES (?, (SELECT COALESCE(MAX(display_id), 0) + 1 FROM tasks), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)"
+        "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, fixed, habit_step_id) VALUES (?, (SELECT COALESCE(MAX(display_id), 0) + 1 FROM tasks), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)"
     )
     .bind(&id)
     .bind(&body.title)
@@ -155,12 +159,13 @@ async fn create_task(
     .bind(abandonability)
     .bind(&body.ical_uid)
     .bind(fixed)
+    .bind(&body.habit_step_id)
     .execute(&state.pool)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row: TaskRow = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, created_at, updated_at FROM tasks WHERE id = ?",
+        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, created_at, updated_at FROM tasks WHERE id = ?",
     )
     .bind(&id)
     .fetch_one(&state.pool)
@@ -174,7 +179,7 @@ async fn get_task(
     Path(id): Path<String>,
 ) -> Result<Json<TaskRow>, StatusCode> {
     let row: Option<TaskRow> = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, created_at, updated_at FROM tasks WHERE id = ?",
+        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, created_at, updated_at FROM tasks WHERE id = ?",
     )
     .bind(&id)
     .fetch_optional(&state.pool)
@@ -206,7 +211,7 @@ async fn update_task(
         .map(|d| serde_json::to_string(d).unwrap_or_else(|_| "[]".into()));
 
     let existing: TaskRow = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, created_at, updated_at FROM tasks WHERE id = ?",
+        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, created_at, updated_at FROM tasks WHERE id = ?",
     )
     .bind(&id)
     .fetch_one(&state.pool)
@@ -235,7 +240,7 @@ async fn update_task(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row: TaskRow = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, created_at, updated_at FROM tasks WHERE id = ?",
+        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, created_at, updated_at FROM tasks WHERE id = ?",
     )
     .bind(&id)
     .fetch_one(&state.pool)
@@ -275,7 +280,7 @@ async fn replace_task(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row: TaskRow = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, created_at, updated_at FROM tasks WHERE id = ?",
+        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, created_at, updated_at FROM tasks WHERE id = ?",
     )
     .bind(&id)
     .fetch_one(&state.pool)
@@ -405,6 +410,7 @@ async fn workers_storage_e2e() {
         ical_uid: None,
         habit_id: None,
         fixed: None,
+        habit_step_id: None,
     };
     let task = storage.create_task(&create_body).await.unwrap();
     assert_eq!(task.title, "e2e task");

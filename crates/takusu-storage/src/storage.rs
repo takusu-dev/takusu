@@ -43,6 +43,22 @@ pub trait Storage: Send + Sync + 'static {
     /// Delete a pause period by its id.
     async fn delete_habit_pause(&self, habit_id: &str, pause_id: &str) -> StorageResult<()>;
 
+    // ── Habit steps (#95) ─────────────────────────────────
+    /// List steps for a single habit, ordered by position.
+    async fn list_habit_steps(&self, habit_id: &str) -> StorageResult<Vec<HabitStepRow>>;
+    /// List steps for all habits (used by sync_habit_tasks).
+    async fn list_all_habit_steps(&self) -> StorageResult<Vec<HabitStepRow>>;
+    /// Bulk-replace a habit's steps. Steps with an `id` matching an existing
+    /// row are updated; steps without a matching `id` are created; existing
+    /// steps absent from `steps` are deleted. Runs atomically. DAG validation
+    /// (cycle detection, intra-habit references) is the caller's
+    /// responsibility.
+    async fn replace_habit_steps(
+        &self,
+        habit_id: &str,
+        steps: &[HabitStepInput],
+    ) -> StorageResult<Vec<HabitStepRow>>;
+
     async fn get_schedule(&self) -> StorageResult<Option<ScheduleRow>>;
     async fn save_schedule(&self, req: &SaveScheduleRequest) -> StorageResult<ScheduleRow>;
     async fn clear_schedule(&self) -> StorageResult<()>;

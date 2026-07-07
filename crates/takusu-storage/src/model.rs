@@ -60,6 +60,10 @@ pub struct TaskRow {
     pub user_edited: bool,
     #[serde(with = "bool_compat", default)]
     pub fixed: bool,
+    /// The habit step that generated this task, if any (#95). NULL for simple
+    /// (step-less) habits and manually created tasks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub habit_step_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -89,6 +93,9 @@ pub struct CreateTask {
     pub habit_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub fixed: Option<bool>,
+    /// habit step link (#95). Set by sync_habit_tasks for step-generated tasks.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub habit_step_id: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -121,6 +128,8 @@ pub struct UpdateTask {
     pub user_edited: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub fixed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub habit_step_id: Option<String>,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -224,6 +233,71 @@ pub struct CreateHabitPause {
     pub end_date: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+/// A step of a multi-step habit (#95). Each step produces one task per
+/// occurrence with its own window / cost / flags. Steps form a DAG via
+/// `depends_on` (JSON array of step ids within the same habit).
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct HabitStepRow {
+    pub id: String,
+    pub habit_id: String,
+    pub position: i64,
+    pub title: String,
+    pub description: Option<String>,
+    pub start_time: String,
+    pub end_time: String,
+    pub avg_minutes: i64,
+    pub sigma_minutes: i64,
+    #[serde(with = "bool_compat", default)]
+    pub parallelizable: bool,
+    #[serde(with = "bool_compat", default)]
+    pub allows_parallel: bool,
+    pub abandonability: f64,
+    #[serde(with = "bool_compat", default)]
+    pub fixed: bool,
+    /// JSON array of step ids this step depends on (within the same habit).
+    pub depends_on: String,
+    pub created_at: String,
+}
+
+/// Input element for `PUT /api/habits/:id/steps` (bulk replace, #95).
+/// An `id` present in the DB keeps the existing step (preserving its link to
+/// generated tasks); an `id` absent or unknown creates a new step. Existing
+/// steps not in the array are deleted. `depends_on` references step ids that
+/// must exist in the resulting set.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitStepInput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub position: i64,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub start_time: String,
+    pub end_time: String,
+    pub avg_minutes: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sigma_minutes: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parallelizable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allows_parallel: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub abandonability: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixed: Option<bool>,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+}
+
+/// Habit detail response: the habit row plus its steps (#95). Used by
+/// `GET /api/habits/:id` so clients receive steps in one round-trip.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitDetail {
+    #[serde(flatten)]
+    pub habit: HabitRow,
+    pub steps: Vec<HabitStepRow>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -437,6 +511,7 @@ mod tests {
             ical_uid: None,
             habit_id: None,
             fixed: None,
+            habit_step_id: None,
         };
         let json = serde_json::to_string(&c).unwrap();
         let back: CreateTask = serde_json::from_str(&json).unwrap();

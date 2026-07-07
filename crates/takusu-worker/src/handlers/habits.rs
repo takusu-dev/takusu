@@ -6,10 +6,16 @@ use crate::error::WorkerError;
 use crate::handlers::auth::db;
 use crate::handlers::d1::safe_all;
 use crate::handlers::tokens::{json_created, json_ok, parse_json};
-use crate::models::{CreateHabit, CreateHabitPause, HabitPauseRow, HabitRow, UpdateHabit};
-use crate::validate::{validate_minutes, validate_pause_dates, validate_recurrence};
+use crate::models::{
+    CreateHabit, CreateHabitPause, HabitDetail, HabitPauseRow, HabitRow, HabitStepInput,
+    HabitStepRow, UpdateHabit,
+};
+use crate::validate::{
+    validate_minutes, validate_pause_dates, validate_recurrence, validate_steps,
+};
 
 const HABIT_COLS: &str = "id, display_id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed, created_at, updated_at";
+const STEP_COLS: &str = "id, habit_id, position, title, description, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, fixed, depends_on, created_at";
 
 fn select_habits() -> String {
     format!("SELECT {HABIT_COLS} FROM habits")
@@ -79,8 +85,10 @@ pub async fn create(mut req: worker::Request, env: Env) -> Result<Response, Work
 pub async fn get(_req: worker::Request, env: Env, id: &str) -> Result<Response, WorkerError> {
     let database = db(&env)?;
     let full = resolve_habit_id(&database, id).await?;
-    let row = select_one(&database, &full).await?;
-    json_ok(&row)
+    let habit = select_one(&database, &full).await?;
+    // Include steps in the GET response (#95).
+    let steps = select_steps_for_habit(&database, &full).await?;
+    json_ok(&HabitDetail { habit, steps })
 }
 
 pub async fn update(mut req: worker::Request, env: Env, id: &str) -> Result<Response, WorkerError> {
@@ -213,6 +221,9 @@ pub async fn delete(_req: worker::Request, env: Env, id: &str) -> Result<Respons
             .bind(&[JsValue::from_str(&full)])?,
         database
             .prepare("DELETE FROM habit_pauses WHERE habit_id = ?1")
+            .bind(&[JsValue::from_str(&full)])?,
+        database
+            .prepare("DELETE FROM habit_steps WHERE habit_id = ?1")
             .bind(&[JsValue::from_str(&full)])?,
         database
             .prepare("DELETE FROM habits WHERE id = ?1")
@@ -374,4 +385,148 @@ async fn select_one_pause(
         .await
         .map_err(WorkerError::Worker)?;
     row.ok_or_else(|| WorkerError::Internal("inserted pause not found".into()))
+}
+
+// ── Habit steps (#95) ────────────────────────────────────────────────────
+
+async fn select_steps_for_habit(
+    database: &worker::D1Database,
+    habit_id: &str,
+) -> Result<Vec<HabitStepRow>, WorkerError> {
+    let stmt = database.prepare(format!(
+        "SELECT {STEP_COLS} FROM habit_steps WHERE habit_id = ?1 ORDER BY position ASC, created_at ASC"
+    ));
+    safe_all(&stmt.bind(&[JsValue::from_str(habit_id)])?).await
+}
+
+pub async fn list_steps(
+    _req: worker::Request,
+    env: Env,
+    id: &str,
+) -> Result<Response, WorkerError> {
+    let database = db(&env)?;
+    let full = resolve_habit_id(&database, id).await?;
+    let rows = select_steps_for_habit(&database, &full).await?;
+    json_ok(&rows)
+}
+
+pub async fn list_all_steps(_req: worker::Request, env: Env) -> Result<Response, WorkerError> {
+    let database = db(&env)?;
+    let stmt = database.prepare(format!(
+        "SELECT {STEP_COLS} FROM habit_steps ORDER BY habit_id, position ASC, created_at ASC"
+    ));
+    let rows: Vec<HabitStepRow> = safe_all(&stmt).await?;
+    json_ok(&rows)
+}
+
+pub async fn replace_steps(
+    mut req: worker::Request,
+    env: Env,
+    id: &str,
+) -> Result<Response, WorkerError> {
+    let body: Vec<HabitStepInput> = parse_json(&mut req).await?;
+    validate_steps(&body)?;
+    let database = db(&env)?;
+    let full = resolve_habit_id(&database, id).await?;
+
+    // Fetch existing step ids for this habit.
+    let id_stmt = database.prepare("SELECT id FROM habit_steps WHERE habit_id = ?1");
+    let existing: Vec<IdRow> = id_stmt
+        .bind(&[JsValue::from_str(&full)])?
+        .all()
+        .await
+        .map_err(WorkerError::Worker)?
+        .results()
+        .map_err(WorkerError::Worker)?;
+    let existing_ids: std::collections::HashSet<String> =
+        existing.into_iter().map(|r| r.id).collect();
+
+    let mut input_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut stmts: Vec<_> = Vec::new();
+
+    for s in &body {
+        let id =
+            s.id.clone()
+                .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+        input_ids.insert(id.clone());
+        let sigma = s.sigma_minutes.unwrap_or((s.avg_minutes / 5).max(1));
+        let parallelizable = s.parallelizable.unwrap_or(false);
+        let allows_parallel = s.allows_parallel.unwrap_or(false);
+        let abandonability = s.abandonability.unwrap_or(0.5);
+        let fixed = s.fixed.unwrap_or(false);
+        let depends_json =
+            serde_json::to_string(&s.depends_on).unwrap_or_else(|_| "[]".to_string());
+
+        if existing_ids.contains(&id) {
+            let stmt = database.prepare(
+                "UPDATE habit_steps SET position=?1, title=?2, description=?3, start_time=?4, end_time=?5, avg_minutes=?6, sigma_minutes=?7, parallelizable=?8, allows_parallel=?9, abandonability=?10, fixed=?11, depends_on=?12 WHERE id = ?13 AND habit_id = ?14",
+            );
+            stmts.push(
+                stmt.bind(&[
+                    JsValue::from_f64(s.position as f64),
+                    JsValue::from_str(&s.title),
+                    s.description
+                        .as_deref()
+                        .map(JsValue::from_str)
+                        .unwrap_or(JsValue::NULL),
+                    JsValue::from_str(&s.start_time),
+                    JsValue::from_str(&s.end_time),
+                    JsValue::from_f64(s.avg_minutes as f64),
+                    JsValue::from_f64(sigma as f64),
+                    JsValue::from_bool(parallelizable),
+                    JsValue::from_bool(allows_parallel),
+                    JsValue::from_f64(abandonability),
+                    JsValue::from_bool(fixed),
+                    JsValue::from_str(&depends_json),
+                    JsValue::from_str(&id),
+                    JsValue::from_str(&full),
+                ])?,
+            );
+        } else {
+            let stmt = database.prepare(
+                "INSERT INTO habit_steps (id, habit_id, position, title, description, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, fixed, depends_on, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, datetime('now'))",
+            );
+            stmts.push(
+                stmt.bind(&[
+                    JsValue::from_str(&id),
+                    JsValue::from_str(&full),
+                    JsValue::from_f64(s.position as f64),
+                    JsValue::from_str(&s.title),
+                    s.description
+                        .as_deref()
+                        .map(JsValue::from_str)
+                        .unwrap_or(JsValue::NULL),
+                    JsValue::from_str(&s.start_time),
+                    JsValue::from_str(&s.end_time),
+                    JsValue::from_f64(s.avg_minutes as f64),
+                    JsValue::from_f64(sigma as f64),
+                    JsValue::from_bool(parallelizable),
+                    JsValue::from_bool(allows_parallel),
+                    JsValue::from_f64(abandonability),
+                    JsValue::from_bool(fixed),
+                    JsValue::from_str(&depends_json),
+                ])?,
+            );
+        }
+    }
+
+    // Delete existing steps not present in the input.
+    for old_id in &existing_ids {
+        if !input_ids.contains(old_id) {
+            let stmt = database.prepare("DELETE FROM habit_steps WHERE id = ?1 AND habit_id = ?2");
+            stmts.push(stmt.bind(&[JsValue::from_str(old_id), JsValue::from_str(&full)])?);
+        }
+    }
+
+    if !stmts.is_empty() {
+        database.batch(stmts).await.map_err(WorkerError::Worker)?;
+    }
+
+    let rows = select_steps_for_habit(&database, &full).await?;
+    json_ok(&rows)
+}
+
+#[derive(serde::Deserialize)]
+struct IdRow {
+    id: String,
 }

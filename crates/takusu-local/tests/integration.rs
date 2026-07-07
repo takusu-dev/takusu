@@ -2060,3 +2060,315 @@ async fn habit_delete_removes_its_pauses() {
         "deleting a habit should remove its pause rows, but found {pauses:?}"
     );
 }
+
+// ── Habit steps (#95) ────────────────────────────────────────────────
+
+#[tokio::test]
+async fn habit_steps_replace_and_get() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "マルチステップ習慣").await;
+
+    // GET detail initially has no steps.
+    let req = auth_req(Method::GET, &format!("/api/habits/{habit_id}"));
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let detail: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(detail["id"], habit_id);
+    assert!(detail["steps"].as_array().unwrap().is_empty());
+
+    // PUT two steps.
+    let req = auth_req_body(
+        Method::PUT,
+        &format!("/api/habits/{habit_id}/steps"),
+        json!([
+            {
+                "position": 0,
+                "title": "準備",
+                "start_time": "06:00",
+                "end_time": "06:15",
+                "avg_minutes": 15
+            },
+            {
+                "position": 1,
+                "title": "実行",
+                "start_time": "06:15",
+                "end_time": "06:45",
+                "avg_minutes": 30,
+                "depends_on": []
+            }
+        ]),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let steps: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(steps.len(), 2);
+    assert_eq!(steps[0]["title"], "準備");
+    assert_eq!(steps[1]["title"], "実行");
+    let step0_id = steps[0]["id"].as_str().unwrap().to_string();
+    let step1_id = steps[1]["id"].as_str().unwrap().to_string();
+
+    // GET detail now shows the steps.
+    let req = auth_req(Method::GET, &format!("/api/habits/{habit_id}"));
+    let res = app.clone().oneshot(req).await.unwrap();
+    let detail: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let steps = detail["steps"].as_array().unwrap();
+    assert_eq!(steps.len(), 2);
+    assert_eq!(steps[0]["id"], step0_id);
+    assert_eq!(steps[1]["id"], step1_id);
+
+    // GET /habits/steps returns all steps for all habits.
+    let req = auth_req(Method::GET, "/api/habits/steps");
+    let res = app.clone().oneshot(req).await.unwrap();
+    let all: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(all.len(), 2);
+
+    // GET /habits/:id/steps returns just this habit's steps.
+    let req = auth_req(Method::GET, &format!("/api/habits/{habit_id}/steps"));
+    let res = app.clone().oneshot(req).await.unwrap();
+    let steps: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(steps.len(), 2);
+
+    // Replace with a single step (bulk replace semantics).
+    let req = auth_req_body(
+        Method::PUT,
+        &format!("/api/habits/{habit_id}/steps"),
+        json!([
+            {
+                "position": 0,
+                "title": "統合",
+                "start_time": "06:00",
+                "end_time": "06:30",
+                "avg_minutes": 30
+            }
+        ]),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let steps: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(steps.len(), 1);
+    assert_eq!(steps[0]["title"], "統合");
+}
+
+#[tokio::test]
+async fn habit_steps_reject_cycle() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "サイクル習慣").await;
+
+    // Two steps that depend on each other → cycle.
+    let req = auth_req_body(
+        Method::PUT,
+        &format!("/api/habits/{habit_id}/steps"),
+        json!([
+            {
+                "id": "step-a",
+                "position": 0,
+                "title": "A",
+                "start_time": "06:00",
+                "end_time": "06:30",
+                "avg_minutes": 30,
+                "depends_on": ["step-b"]
+            },
+            {
+                "id": "step-b",
+                "position": 1,
+                "title": "B",
+                "start_time": "06:30",
+                "end_time": "07:00",
+                "avg_minutes": 30,
+                "depends_on": ["step-a"]
+            }
+        ]),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn habit_steps_reject_unknown_dep() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "不明依存習慣").await;
+
+    let req = auth_req_body(
+        Method::PUT,
+        &format!("/api/habits/{habit_id}/steps"),
+        json!([
+            {
+                "position": 0,
+                "title": "A",
+                "start_time": "06:00",
+                "end_time": "06:30",
+                "avg_minutes": 30,
+                "depends_on": ["nonexistent"]
+            }
+        ]),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn habit_steps_reject_bad_time() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "時間フォーマット習慣").await;
+
+    let req = auth_req_body(
+        Method::PUT,
+        &format!("/api/habits/{habit_id}/steps"),
+        json!([
+            {
+                "position": 0,
+                "title": "A",
+                "start_time": "25:00",
+                "end_time": "06:30",
+                "avg_minutes": 30
+            }
+        ]),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn habit_steps_reject_negative_avg() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "負の時間習慣").await;
+
+    let req = auth_req_body(
+        Method::PUT,
+        &format!("/api/habits/{habit_id}/steps"),
+        json!([
+            {
+                "position": 0,
+                "title": "A",
+                "start_time": "06:00",
+                "end_time": "06:30",
+                "avg_minutes": -5
+            }
+        ]),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn habit_delete_removes_its_steps() {
+    // Regression: deleting a habit must also delete its step rows (#95).
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "ステップ削除対象").await;
+
+    // Add steps.
+    let req = auth_req_body(
+        Method::PUT,
+        &format!("/api/habits/{habit_id}/steps"),
+        json!([
+            {
+                "position": 0,
+                "title": "A",
+                "start_time": "06:00",
+                "end_time": "06:30",
+                "avg_minutes": 30
+            }
+        ]),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // Confirm steps exist in list-all.
+    let req = auth_req(Method::GET, "/api/habits/steps");
+    let res = app.clone().oneshot(req).await.unwrap();
+    let all: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(all.len(), 1);
+
+    // Delete the habit.
+    let req = auth_req(Method::DELETE, &format!("/api/habits/{habit_id}"));
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+    // list-all must now be empty.
+    let req = auth_req(Method::GET, "/api/habits/steps");
+    let res = app.clone().oneshot(req).await.unwrap();
+    let all: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(
+        all.is_empty(),
+        "deleting a habit should remove its step rows, but found {all:?}"
+    );
+}
+
+#[tokio::test]
+async fn habit_steps_sync_generates_one_task_per_step() {
+    // #95: a multi-step habit should generate one task per step per
+    // occurrence, with each task carrying the corresponding habit_step_id.
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "ステップ同期習慣").await;
+
+    // Add two steps.
+    let req = auth_req_body(
+        Method::PUT,
+        &format!("/api/habits/{habit_id}/steps"),
+        json!([
+            {
+                "position": 0,
+                "title": "準備",
+                "start_time": "06:00",
+                "end_time": "06:15",
+                "avg_minutes": 15
+            },
+            {
+                "position": 1,
+                "title": "実行",
+                "start_time": "06:15",
+                "end_time": "06:45",
+                "avg_minutes": 30
+            }
+        ]),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let steps: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let step0_id = steps[0]["id"].as_str().unwrap();
+    let step1_id = steps[1]["id"].as_str().unwrap();
+
+    // Sync via schedule/generate.
+    let tasks = sync_habit_tasks(&app, &habit_id).await;
+
+    // Should have at least 2 tasks (one per step) for the first occurrence.
+    // (The exact count depends on the planning horizon, but each occurrence
+    // produces one task per step, so the total is a multiple of 2.)
+    assert!(
+        tasks.len() >= 2,
+        "expected at least 2 tasks for a 2-step habit, got {}",
+        tasks.len()
+    );
+    assert_eq!(tasks.len() % 2, 0, "task count should be a multiple of 2");
+
+    // Each task should have a non-null habit_step_id, and both step ids
+    // should appear among the generated tasks.
+    let step_ids: Vec<&str> = tasks
+        .iter()
+        .filter_map(|t| t["habit_step_id"].as_str())
+        .collect();
+    assert!(step_ids.contains(&step0_id), "step 0 task not found");
+    assert!(step_ids.contains(&step1_id), "step 1 task not found");
+    // Every task for this habit should have a habit_step_id.
+    for t in &tasks {
+        assert!(
+            t["habit_step_id"].as_str().is_some(),
+            "task {:?} missing habit_step_id",
+            t["id"]
+        );
+    }
+}

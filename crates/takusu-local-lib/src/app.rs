@@ -6,10 +6,10 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use takusu_core::{NormalDist, Planner, Point, RescheduleRange, SleepConfig, Task as CoreTask};
 use takusu_storage::{
-    CreateHabit, CreateHabitPause, CreateTask, GoogleCalEventRow, HabitPauseRow, HabitRow,
-    SaveScheduleRequest, ScheduleEntry, ScheduleRow, SettingsRow, Storage, TaskQuery, TaskRow,
-    TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateSettings,
-    UpdateTask,
+    CreateHabit, CreateHabitPause, CreateTask, GoogleCalEventRow, HabitDetail, HabitPauseRow,
+    HabitRow, HabitStepInput, HabitStepRow, SaveScheduleRequest, ScheduleEntry, ScheduleRow,
+    SettingsRow, Storage, TaskQuery, TaskRow, TokenCreateResponse, TokenRow,
+    UpdateGoogleCalSettings, UpdateHabit, UpdateSettings, UpdateTask,
 };
 
 use crate::error::AppError;
@@ -49,12 +49,154 @@ fn validate_recurrence(recurrence: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Validate a `HH:MM` time string (#95).
+fn validate_hhmm(s: &str) -> Result<(), AppError> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 2 {
+        return Err(AppError::BadRequest(format!("invalid time: {s}")));
+    }
+    let h: u32 = parts[0]
+        .parse()
+        .map_err(|_| AppError::BadRequest(format!("invalid time: {s}")))?;
+    let m: u32 = parts[1]
+        .parse()
+        .map_err(|_| AppError::BadRequest(format!("invalid time: {s}")))?;
+    if h > 23 || m > 59 {
+        return Err(AppError::BadRequest(format!("invalid time: {s}")));
+    }
+    Ok(())
+}
+
+/// Validate a bulk-replace step array (#95): per-field sanity + DAG integrity
+/// (intra-habit references, cycle detection). Mirrors the worker-side
+/// `validate_steps`.
+fn validate_steps(steps: &[HabitStepInput]) -> Result<(), AppError> {
+    use std::collections::HashMap;
+
+    for s in steps {
+        validate_minutes(s.avg_minutes, s.sigma_minutes)?;
+        validate_hhmm(&s.start_time)?;
+        validate_hhmm(&s.end_time)?;
+    }
+
+    // Build id → index map for steps that carry an id. A depends_on reference
+    // must point at a sibling step with a known id.
+    let mut id_to_idx: HashMap<String, usize> = HashMap::new();
+    for (i, s) in steps.iter().enumerate() {
+        if let Some(ref id) = s.id {
+            id_to_idx.insert(id.clone(), i);
+        }
+    }
+
+    let mut adj = vec![Vec::new(); steps.len()];
+    for (i, s) in steps.iter().enumerate() {
+        for dep in &s.depends_on {
+            let Some(&dep_idx) = id_to_idx.get(dep) else {
+                return Err(AppError::BadRequest(format!(
+                    "step depends_on references unknown step id: {dep}"
+                )));
+            };
+            adj[i].push(dep_idx);
+        }
+    }
+
+    detect_cycle(&adj)?;
+    Ok(())
+}
+
+/// Topologically sort habit steps by their `depends_on` DAG (#95). Steps with
+/// no dependencies come first. Returns indices into `steps`. Cycles are
+/// rejected (defensive — validation already caught them at replace time).
+fn topo_sort_steps(steps: &[HabitStepRow]) -> Result<Vec<usize>, AppError> {
+    let mut id_to_idx: HashMap<String, usize> = HashMap::new();
+    for (i, s) in steps.iter().enumerate() {
+        id_to_idx.insert(s.id.clone(), i);
+    }
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); steps.len()];
+    let mut indeg = vec![0usize; steps.len()];
+    for (i, s) in steps.iter().enumerate() {
+        let deps: Vec<String> = serde_json::from_str(&s.depends_on).unwrap_or_default();
+        for dep in &deps {
+            if let Some(&dep_idx) = id_to_idx.get(dep) {
+                // edge dep_idx → i (dep must come before i)
+                adj[dep_idx].push(i);
+                indeg[i] += 1;
+            }
+        }
+    }
+    let mut queue: std::collections::VecDeque<usize> =
+        (0..steps.len()).filter(|&i| indeg[i] == 0).collect();
+    let mut order = Vec::with_capacity(steps.len());
+    while let Some(v) = queue.pop_front() {
+        order.push(v);
+        for &u in &adj[v] {
+            indeg[u] -= 1;
+            if indeg[u] == 0 {
+                queue.push_back(u);
+            }
+        }
+    }
+    if order.len() != steps.len() {
+        return Err(AppError::BadRequest(
+            "circular dependency detected in habit steps".into(),
+        ));
+    }
+    Ok(order)
+}
+
 /// Verify the timezone string resolves to a real `jiff::tz::TimeZone` so that
 /// typos don't silently fall back to UTC (#277).
 fn validate_timezone(tz: &str) -> Result<(), AppError> {
     jiff::tz::TimeZone::get(tz)
         .map(|_| ())
         .map_err(|_| AppError::BadRequest(format!("invalid timezone: {tz}")))
+}
+
+/// Build a `CoreTask` for a single step occurrence (#95). The step's window is
+/// derived from the occurrence date (taken from `occ_start`) combined with the
+/// step's `start_time`/`end_time`. For fixed steps the deadline is the window
+/// length (end_time - start_time); otherwise it is `avg_minutes`.
+fn step_to_core_task(
+    step: &HabitStepRow,
+    occ_start: Point,
+    tz: &jiff::tz::TimeZone,
+) -> Result<CoreTask, AppError> {
+    let date = takusu_habit::point_to_date(occ_start, tz)
+        .ok_or_else(|| AppError::Internal("occurrence date out of range".into()))?;
+    let (sh, sm) = parse_hhmm(&step.start_time);
+    let start_time = takusu_habit::TimeOfDay::new(sh, sm).ok_or_else(|| {
+        AppError::BadRequest(format!("invalid step start_time: {}", step.start_time))
+    })?;
+    let start_pt = takusu_habit::date_time_to_point(date, &start_time, tz)
+        .ok_or_else(|| AppError::Internal("step start point out of range".into()))?;
+    let (eh, em) = parse_hhmm(&step.end_time);
+    let start_minutes = sh as i64 * 60 + sm as i64;
+    let end_minutes = eh as i64 * 60 + em as i64;
+    let avg_slots = (step.avg_minutes / 5) as u64;
+    let sigma_slots = (step.sigma_minutes / 5) as u64;
+    let end_pt = if step.fixed {
+        let diff = end_minutes - start_minutes;
+        if diff > 0 {
+            start_pt + diff / 5
+        } else {
+            // overnight fixed step — fall back to avg-based deadline
+            start_pt + avg_slots as i64
+        }
+    } else {
+        start_pt + avg_slots as i64
+    };
+    Ok(CoreTask {
+        id: 0,
+        start: Some(start_pt),
+        end: end_pt,
+        cost_estimate: NormalDist::new(avg_slots, sigma_slots),
+        depends: vec![],
+        parallelizable: step.parallelizable,
+        allows_parallel: step.allows_parallel,
+        abandonability: step.abandonability,
+        fixed: step.fixed,
+        habit_group: None,
+    })
 }
 
 /// Validate that `start` and `end` are real `YYYY-MM-DD` calendar dates and
@@ -559,6 +701,7 @@ impl TakusuApp {
                     ical_uid: event.uid.clone(),
                     habit_id: None,
                     fixed: None,
+                    habit_step_id: None,
                 })
                 .await
                 .map_err(storage_to_app)?;
@@ -592,8 +735,14 @@ impl TakusuApp {
         self.storage.list_habits().await.map_err(storage_to_app)
     }
 
-    pub async fn get_habit(&self, id: &str) -> Result<HabitRow, AppError> {
-        self.storage.get_habit(id).await.map_err(storage_to_app)
+    pub async fn get_habit(&self, id: &str) -> Result<HabitDetail, AppError> {
+        let habit = self.storage.get_habit(id).await.map_err(storage_to_app)?;
+        let steps = self
+            .storage
+            .list_habit_steps(id)
+            .await
+            .map_err(storage_to_app)?;
+        Ok(HabitDetail { habit, steps })
     }
 
     pub async fn update_habit(&self, id: &str, body: &UpdateHabit) -> Result<HabitRow, AppError> {
@@ -655,6 +804,34 @@ impl TakusuApp {
     pub async fn delete_habit_pause(&self, id: &str, pause_id: &str) -> Result<(), AppError> {
         self.storage
             .delete_habit_pause(id, pause_id)
+            .await
+            .map_err(storage_to_app)
+    }
+
+    // ── Habit steps (#95) ───────────────────────────────
+
+    pub async fn list_habit_steps(&self, id: &str) -> Result<Vec<HabitStepRow>, AppError> {
+        self.storage
+            .list_habit_steps(id)
+            .await
+            .map_err(storage_to_app)
+    }
+
+    pub async fn list_all_habit_steps(&self) -> Result<Vec<HabitStepRow>, AppError> {
+        self.storage
+            .list_all_habit_steps()
+            .await
+            .map_err(storage_to_app)
+    }
+
+    pub async fn replace_habit_steps(
+        &self,
+        id: &str,
+        steps: &[HabitStepInput],
+    ) -> Result<Vec<HabitStepRow>, AppError> {
+        validate_steps(steps)?;
+        self.storage
+            .replace_habit_steps(id, steps)
             .await
             .map_err(storage_to_app)
     }
@@ -1283,12 +1460,42 @@ impl TakusuApp {
                 .push((p.start_date.clone(), p.end_date.clone()));
         }
 
-        let mut expected: Vec<(String, String, CoreTask, Option<String>)> = Vec::new();
+        // Habit steps (#95): fetch all steps once and group by habit_id.
+        // Habits with at least one step emit one task per step per occurrence
+        // (each with its own window/cost/flags and step-id-keyed depends);
+        // habits with no steps keep the legacy single-task-per-occurrence
+        // behavior.
+        let all_steps = self
+            .storage
+            .list_all_habit_steps()
+            .await
+            .map_err(storage_to_app)?;
+        let mut steps_by_habit: HashMap<String, Vec<HabitStepRow>> = HashMap::new();
+        for s in all_steps {
+            steps_by_habit
+                .entry(s.habit_id.clone())
+                .or_default()
+                .push(s);
+        }
+
+        // expected entry:
+        //   (habit_id, step_id_opt, date, core_task, habit_desc, step_title_opt)
+        #[allow(clippy::type_complexity)]
+        let mut expected: Vec<(
+            String,
+            Option<String>,
+            String,
+            CoreTask,
+            Option<String>,
+            Option<String>,
+        )> = Vec::new();
         for row in &active_habits {
             let config = habit_row_to_config(row, tz)?;
             let mut store = takusu_habit::HabitStore::new();
             store.add(config);
             let pauses = pauses_by_habit.get(&row.id);
+            let steps = steps_by_habit.get(&row.id);
+
             for gt in store.generate(from, until) {
                 let start_point = gt.task.start.unwrap_or(Point(0));
                 let date = point_to_local_date(start_point.0, tz);
@@ -1299,7 +1506,41 @@ impl TakusuApp {
                 {
                     continue;
                 }
-                expected.push((row.id.clone(), date, gt.task, row.description.clone()));
+
+                if let Some(steps) = steps
+                    && !steps.is_empty()
+                {
+                    // Multi-step habit: emit one task per step. The habit's
+                    // own window/cost is ignored; each step carries its own.
+                    // Steps are emitted in topological order so dependencies
+                    // are created before dependents. The actual depends
+                    // wiring (step ids → task ids) happens in the post-pass
+                    // below, after we know the created task ids.
+                    let order = topo_sort_steps(steps)?;
+                    let occ_start = start_point;
+                    for &idx in &order {
+                        let step = &steps[idx];
+                        let core = step_to_core_task(step, occ_start, tz)?;
+                        expected.push((
+                            row.id.clone(),
+                            Some(step.id.clone()),
+                            date.clone(),
+                            core,
+                            step.description.clone(),
+                            Some(step.title.clone()),
+                        ));
+                    }
+                } else {
+                    // Legacy single-task habit.
+                    expected.push((
+                        row.id.clone(),
+                        None,
+                        date,
+                        gt.task,
+                        row.description.clone(),
+                        None,
+                    ));
+                }
             }
         }
 
@@ -1309,7 +1550,11 @@ impl TakusuApp {
             .await
             .map_err(storage_to_app)?;
 
-        let mut existing_by_key: HashMap<(String, String), TaskRow> = HashMap::new();
+        // Key: (habit_id, step_id_opt, date). step_id_opt is None for legacy
+        // single-task habits and "" is not a valid step id, so the tuple
+        // distinguishes step-generated tasks from legacy ones.
+        let mut existing_by_key: HashMap<(String, Option<String>, String), TaskRow> =
+            HashMap::new();
         for task in &all_tasks {
             if let Some(ref hid) = task.habit_id {
                 let date = task
@@ -1318,19 +1563,28 @@ impl TakusuApp {
                     .map(|s| iso_to_local_date(s, tz))
                     .unwrap_or_default();
                 if !date.is_empty() {
-                    existing_by_key.insert((hid.clone(), date), task.clone());
+                    existing_by_key.insert(
+                        (hid.clone(), task.habit_step_id.clone(), date),
+                        task.clone(),
+                    );
                 }
             }
         }
 
         let mut result: Vec<TaskRow> = Vec::new();
+        // Per-occurrence map: (habit_id, date) → step_id → created/updated
+        // task id, used to wire step depends after the create/update pass.
+        let mut occ_task_ids: HashMap<(String, String), HashMap<String, String>> = HashMap::new();
 
-        for (habit_id, date, core_task, habit_desc) in &expected {
-            let key = (habit_id.clone(), date.clone());
+        for (habit_id, step_id_opt, date, core_task, habit_desc, step_title_opt) in &expected {
+            let key = (habit_id.clone(), step_id_opt.clone(), date.clone());
             let habit_row = active_habits.iter().find(|h| h.id == *habit_id);
-            let title = habit_row
-                .map(|h| format!("{} ({})", h.title, date))
-                .unwrap_or_else(|| format!("habit:{}", date));
+            let title = match (habit_row, step_title_opt) {
+                (Some(h), Some(st)) => format!("{} — {} ({})", h.title, st, date),
+                (Some(h), None) => format!("{} ({})", h.title, date),
+                (None, Some(st)) => format!("{} ({})", st, date),
+                (None, None) => format!("habit:{}", date),
+            };
 
             if let Some(existing) = existing_by_key.remove(&key) {
                 if existing.status == "pending" && !existing.user_edited {
@@ -1347,6 +1601,7 @@ impl TakusuApp {
                         allows_parallel: Some(core_task.allows_parallel),
                         abandonability: Some(core_task.abandonability),
                         fixed: Some(core_task.fixed),
+                        habit_step_id: step_id_opt.clone(),
                         ..Default::default()
                     };
                     let updated = self
@@ -1354,9 +1609,21 @@ impl TakusuApp {
                         .update_task(&existing.id, &update)
                         .await
                         .map_err(storage_to_app)?;
+                    if let Some(sid) = step_id_opt {
+                        occ_task_ids
+                            .entry((habit_id.clone(), date.clone()))
+                            .or_default()
+                            .insert(sid.clone(), updated.id.clone());
+                    }
                     result.push(updated);
                 } else {
                     // 非 pending またはユーザーが編集済みの場合は何も変更しない。
+                    if let Some(sid) = step_id_opt {
+                        occ_task_ids
+                            .entry((habit_id.clone(), date.clone()))
+                            .or_default()
+                            .insert(sid.clone(), existing.id.clone());
+                    }
                     result.push(existing.clone());
                 }
             } else {
@@ -1374,13 +1641,69 @@ impl TakusuApp {
                     ical_uid: None,
                     habit_id: Some(habit_id.clone()),
                     fixed: Some(core_task.fixed),
+                    habit_step_id: step_id_opt.clone(),
                 };
                 let created = self
                     .storage
                     .create_task(&create)
                     .await
                     .map_err(storage_to_app)?;
+                if let Some(sid) = step_id_opt {
+                    occ_task_ids
+                        .entry((habit_id.clone(), date.clone()))
+                        .or_default()
+                        .insert(sid.clone(), created.id.clone());
+                }
                 result.push(created);
+            }
+        }
+
+        // Wire step depends (#95): for each occurrence, set each step task's
+        // depends to the task ids of its step-level dependencies. Only
+        // pending + unedited tasks are updated (consistent with the sync
+        // overwrite policy above).
+        let steps_by_habit_ref = &steps_by_habit;
+        for ((habit_id, _date), step_to_task) in &occ_task_ids {
+            let Some(steps) = steps_by_habit_ref.get(habit_id) else {
+                continue;
+            };
+            for step in steps {
+                let Some(task_id) = step_to_task.get(&step.id) else {
+                    continue;
+                };
+                let deps: Vec<String> = serde_json::from_str(&step.depends_on).unwrap_or_default();
+                if deps.is_empty() {
+                    continue;
+                }
+                let mut dep_task_ids: Vec<String> = Vec::new();
+                for dep_step_id in &deps {
+                    if let Some(dep_task_id) = step_to_task.get(dep_step_id) {
+                        dep_task_ids.push(dep_task_id.clone());
+                    }
+                }
+                if dep_task_ids.is_empty() {
+                    continue;
+                }
+                // Find the task row to check pending + unedited.
+                let Some(task_row) = result.iter().find(|t| &t.id == task_id) else {
+                    continue;
+                };
+                if task_row.status != "pending" || task_row.user_edited {
+                    continue;
+                }
+                let update = UpdateTask {
+                    depends: Some(dep_task_ids),
+                    ..Default::default()
+                };
+                let updated = self
+                    .storage
+                    .update_task(task_id, &update)
+                    .await
+                    .map_err(storage_to_app)?;
+                // Replace the entry in result.
+                if let Some(slot) = result.iter_mut().find(|t| t.id == *task_id) {
+                    *slot = updated;
+                }
             }
         }
 

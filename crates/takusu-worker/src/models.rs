@@ -54,6 +54,8 @@ pub struct TaskRow {
     pub user_edited: bool,
     #[serde(with = "bool_compat", default)]
     pub fixed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub habit_step_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -83,6 +85,8 @@ pub struct CreateTask {
     pub habit_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fixed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub habit_step_id: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -115,6 +119,8 @@ pub struct UpdateTask {
     pub user_edited: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fixed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub habit_step_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -208,6 +214,63 @@ pub struct CreateHabitPause {
     pub end_date: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+/// A step of a multi-step habit (#95). Mirrors `takusu_storage::HabitStepRow`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitStepRow {
+    pub id: String,
+    pub habit_id: String,
+    pub position: i64,
+    pub title: String,
+    pub description: Option<String>,
+    pub start_time: String,
+    pub end_time: String,
+    pub avg_minutes: i64,
+    pub sigma_minutes: i64,
+    #[serde(with = "bool_compat", default)]
+    pub parallelizable: bool,
+    #[serde(with = "bool_compat", default)]
+    pub allows_parallel: bool,
+    pub abandonability: f64,
+    #[serde(with = "bool_compat", default)]
+    pub fixed: bool,
+    pub depends_on: String,
+    pub created_at: String,
+}
+
+/// Input element for `PUT /api/habits/:id/steps` (bulk replace, #95).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitStepInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub position: i64,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub start_time: String,
+    pub end_time: String,
+    pub avg_minutes: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sigma_minutes: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallelizable: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allows_parallel: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub abandonability: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixed: Option<bool>,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+}
+
+/// Habit detail response: the habit row plus its steps (#95).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitDetail {
+    #[serde(flatten)]
+    pub habit: HabitRow,
+    pub steps: Vec<HabitStepRow>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

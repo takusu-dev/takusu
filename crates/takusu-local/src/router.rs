@@ -17,12 +17,14 @@ pub fn router(state: AppState) -> Router {
         .route("/tasks/{id}", delete(handlers::task::delete_task))
         .route("/habits", post(handlers::habit::create_habit))
         .route("/habits", get(handlers::habit::list_habits))
-        // `/habits/pauses` must be declared before `/habits/{id}` so axum
-        // matches the literal segment instead of treating "pauses" as an id.
+        // `/habits/pauses` and `/habits/steps` must be declared before
+        // `/habits/{id}` so axum matches the literal segment instead of
+        // treating "pauses" / "steps" as an id (#303 / #95).
         .route(
             "/habits/pauses",
             get(handlers::habit::list_all_habit_pauses),
         )
+        .route("/habits/steps", get(handlers::habit::list_all_habit_steps))
         .route("/habits/{id}", get(handlers::habit::get_habit))
         .route("/habits/{id}", put(handlers::habit::replace_habit))
         .route("/habits/{id}", patch(handlers::habit::update_habit))
@@ -38,6 +40,11 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/habits/{id}/pauses/{pause_id}",
             delete(handlers::habit::delete_habit_pause),
+        )
+        .route("/habits/{id}/steps", get(handlers::habit::list_habit_steps))
+        .route(
+            "/habits/{id}/steps",
+            put(handlers::habit::replace_habit_steps),
         )
         .route("/schedule", get(handlers::schedule::get_schedule))
         .route(

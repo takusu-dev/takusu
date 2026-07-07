@@ -22,9 +22,9 @@ use takusu_local_lib::storage_workers::WorkersStorage;
 use takusu_local_lib::token_cache::TokenCache;
 use takusu_storage::{
     CreateHabit, CreateHabitPause, CreateTask, GoogleCalEventRow, GoogleCalSettingsRow,
-    HabitPauseRow, HabitRow, SaveScheduleRequest, ScheduleRow, SettingsRow, Storage, StorageError,
-    TaskQuery, TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit,
-    UpdateSettings, UpdateTask, storage::StorageResult,
+    HabitPauseRow, HabitRow, HabitStepInput, HabitStepRow, SaveScheduleRequest, ScheduleRow,
+    SettingsRow, Storage, StorageError, TaskQuery, TaskRow, TokenCreateResponse, TokenRow,
+    UpdateGoogleCalSettings, UpdateHabit, UpdateSettings, UpdateTask, storage::StorageResult,
 };
 use tokio::net::TcpListener;
 use tower::ServiceExt;
@@ -124,6 +124,19 @@ impl Storage for CountingStorage {
     }
     async fn delete_habit_pause(&self, _id: &str, _pause_id: &str) -> StorageResult<()> {
         Ok(())
+    }
+    async fn list_habit_steps(&self, _id: &str) -> StorageResult<Vec<HabitStepRow>> {
+        Ok(vec![])
+    }
+    async fn list_all_habit_steps(&self) -> StorageResult<Vec<HabitStepRow>> {
+        Ok(vec![])
+    }
+    async fn replace_habit_steps(
+        &self,
+        _id: &str,
+        _steps: &[HabitStepInput],
+    ) -> StorageResult<Vec<HabitStepRow>> {
+        Ok(vec![])
     }
     async fn get_schedule(&self) -> StorageResult<Option<ScheduleRow>> {
         Ok(None)

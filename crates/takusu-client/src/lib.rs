@@ -175,7 +175,7 @@ impl Client {
         Ok(resp.json().await?)
     }
 
-    pub async fn get_habit(&self, id: &str) -> Result<HabitRow, ClientError> {
+    pub async fn get_habit(&self, id: &str) -> Result<HabitDetail, ClientError> {
         let resp = self
             .request(reqwest::Method::GET, &format!("/api/habits/{id}"))
             .await
@@ -320,6 +320,55 @@ impl Client {
             return Err(ClientError::Api { status, body });
         }
         Ok(())
+    }
+
+    // ── Habit steps (#95) ──
+
+    pub async fn list_habit_steps(&self, id: &str) -> Result<Vec<HabitStepRow>, ClientError> {
+        let resp = self
+            .request(reqwest::Method::GET, &format!("/api/habits/{id}/steps"))
+            .await
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn list_all_habit_steps(&self) -> Result<Vec<HabitStepRow>, ClientError> {
+        let resp = self
+            .request(reqwest::Method::GET, "/api/habits/steps")
+            .await
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn replace_habit_steps(
+        &self,
+        id: &str,
+        steps: &[HabitStepInput],
+    ) -> Result<Vec<HabitStepRow>, ClientError> {
+        let resp = self
+            .request(reqwest::Method::PUT, &format!("/api/habits/{id}/steps"))
+            .await
+            .json(steps)
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
     }
 
     // ── Schedule ──
@@ -605,6 +654,8 @@ pub struct TaskRow {
     pub user_edited: bool,
     #[serde(default)]
     pub fixed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub habit_step_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -630,6 +681,8 @@ pub struct CreateTask {
     pub abandonability: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub fixed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub habit_step_id: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -660,6 +713,8 @@ pub struct UpdateTask {
     pub user_edited: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub fixed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub habit_step_id: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -758,6 +813,60 @@ pub struct CreateHabitPause {
     pub end_date: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+/// A step of a multi-step habit (#95).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitStepRow {
+    pub id: String,
+    pub habit_id: String,
+    pub position: i64,
+    pub title: String,
+    pub description: Option<String>,
+    pub start_time: String,
+    pub end_time: String,
+    pub avg_minutes: i64,
+    pub sigma_minutes: i64,
+    pub parallelizable: bool,
+    pub allows_parallel: bool,
+    pub abandonability: f64,
+    pub fixed: bool,
+    pub depends_on: String,
+    pub created_at: String,
+}
+
+/// Input element for `PUT /api/habits/:id/steps` (bulk replace, #95).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitStepInput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub position: i64,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub start_time: String,
+    pub end_time: String,
+    pub avg_minutes: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sigma_minutes: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parallelizable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allows_parallel: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub abandonability: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixed: Option<bool>,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+}
+
+/// Habit detail response: the habit row plus its steps (#95).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitDetail {
+    #[serde(flatten)]
+    pub habit: HabitRow,
+    pub steps: Vec<HabitStepRow>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

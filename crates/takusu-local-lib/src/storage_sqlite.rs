@@ -3,9 +3,9 @@ use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 use takusu_storage::{
     CreateHabit, CreateHabitPause, CreateTask, GoogleCalEventRow, GoogleCalSettingsRow,
-    HabitPauseRow, HabitRow, SaveScheduleRequest, ScheduleRow, SettingsRow, Storage, StorageError,
-    TaskQuery, TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit,
-    UpdateSettings, UpdateTask, storage::StorageResult,
+    HabitPauseRow, HabitRow, HabitStepInput, HabitStepRow, SaveScheduleRequest, ScheduleRow,
+    SettingsRow, Storage, StorageError, TaskQuery, TaskRow, TokenCreateResponse, TokenRow,
+    UpdateGoogleCalSettings, UpdateHabit, UpdateSettings, UpdateTask, storage::StorageResult,
 };
 
 use crate::config::LocalConfig;
@@ -18,6 +18,28 @@ const MIGRATION_005: &str = include_str!("../migrations/005_task_display_id.sql"
 const MIGRATION_006: &str = include_str!("../migrations/006_user_edited.sql");
 const MIGRATION_007: &str = include_str!("../migrations/007_task_display_id_seq.sql");
 const MIGRATION_010: &str = include_str!("../migrations/010_habit_pauses.sql");
+// Migration 011 creates the habit_steps table (idempotent — uses IF NOT EXISTS
+// for both the table and the index). The `ALTER TABLE tasks ADD COLUMN
+// habit_step_id` is not idempotent (SQLite has no IF NOT EXISTS for ADD
+// COLUMN), so it is run conditionally in `init` below.
+const MIGRATION_011_TABLE: &str = "CREATE TABLE IF NOT EXISTS habit_steps (
+    id              TEXT PRIMARY KEY,
+    habit_id        TEXT NOT NULL REFERENCES habits(id) ON DELETE CASCADE,
+    position        INTEGER NOT NULL,
+    title           TEXT NOT NULL,
+    description     TEXT,
+    start_time      TEXT NOT NULL,
+    end_time        TEXT NOT NULL,
+    avg_minutes     INTEGER NOT NULL,
+    sigma_minutes   INTEGER NOT NULL DEFAULT 0,
+    parallelizable  BOOLEAN NOT NULL DEFAULT 0,
+    allows_parallel BOOLEAN NOT NULL DEFAULT 0,
+    abandonability  REAL NOT NULL DEFAULT 0.0,
+    fixed           BOOLEAN NOT NULL DEFAULT 0,
+    depends_on      TEXT NOT NULL DEFAULT '[]',
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_habit_steps_habit ON habit_steps(habit_id);";
 
 // Migration 009 adds habits.display_id. The ALTER TABLE is not idempotent
 // (SQLite has no IF NOT EXISTS for ADD COLUMN), so it is run conditionally
@@ -144,6 +166,20 @@ impl SqliteStorage {
         // IF NOT EXISTS for both the table and the index).
         sqlx::raw_sql(MIGRATION_010).execute(&pool).await?;
 
+        // Migration 011 creates the habit_steps table (idempotent) and adds
+        // tasks.habit_step_id (not idempotent — guarded by a column check).
+        sqlx::raw_sql(MIGRATION_011_TABLE).execute(&pool).await?;
+        let has_habit_step_id: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name = 'habit_step_id'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        if !has_habit_step_id {
+            sqlx::query("ALTER TABLE tasks ADD COLUMN habit_step_id TEXT")
+                .execute(&pool)
+                .await?;
+        }
+
         Ok(Self { pool, root_token })
     }
 
@@ -258,7 +294,7 @@ impl Storage for SqliteStorage {
         .await
         .map_err(map_err)?;
         sqlx::query(
-            "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)"
+            "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)"
         )
         .bind(&id)
         .bind(display_id)
@@ -275,6 +311,7 @@ impl Storage for SqliteStorage {
         .bind(&body.ical_uid)
         .bind(&body.habit_id)
         .bind(fixed)
+        .bind(&body.habit_step_id)
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
@@ -317,7 +354,7 @@ impl Storage for SqliteStorage {
         }
 
         sqlx::query(
-            "UPDATE tasks SET title=COALESCE(?,title), description=COALESCE(?,description), start_at=COALESCE(?,start_at), end_at=COALESCE(?,end_at), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), depends=COALESCE(?,depends), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), status=?, habit_id=COALESCE(?,habit_id), user_edited=COALESCE(?,user_edited), fixed=COALESCE(?,fixed), updated_at=datetime('now') WHERE id = ?"
+            "UPDATE tasks SET title=COALESCE(?,title), description=COALESCE(?,description), start_at=COALESCE(?,start_at), end_at=COALESCE(?,end_at), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), depends=COALESCE(?,depends), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), status=?, habit_id=COALESCE(?,habit_id), user_edited=COALESCE(?,user_edited), fixed=COALESCE(?,fixed), habit_step_id=COALESCE(?,habit_step_id), updated_at=datetime('now') WHERE id = ?"
         )
         .bind(body.title.as_ref())
         .bind(body.description.as_ref())
@@ -333,6 +370,7 @@ impl Storage for SqliteStorage {
         .bind(body.habit_id.as_ref())
         .bind(body.user_edited)
         .bind(body.fixed)
+        .bind(body.habit_step_id.as_ref())
         .bind(&full)
         .execute(&self.pool)
         .await
@@ -355,7 +393,7 @@ impl Storage for SqliteStorage {
         let abandonability = body.abandonability.unwrap_or(0.5);
         let fixed = body.fixed.unwrap_or(false);
         sqlx::query(
-            "UPDATE tasks SET title=?, description=?, start_at=?, end_at=?, avg_minutes=?, sigma_minutes=?, depends=?, parallelizable=?, allows_parallel=?, abandonability=?, habit_id=COALESCE(?,habit_id), fixed=?, updated_at=datetime('now') WHERE id = ?"
+            "UPDATE tasks SET title=?, description=?, start_at=?, end_at=?, avg_minutes=?, sigma_minutes=?, depends=?, parallelizable=?, allows_parallel=?, abandonability=?, habit_id=COALESCE(?,habit_id), fixed=?, habit_step_id=?, updated_at=datetime('now') WHERE id = ?"
         )
         .bind(&body.title)
         .bind(&body.description)
@@ -369,6 +407,7 @@ impl Storage for SqliteStorage {
         .bind(abandonability)
         .bind(&body.habit_id)
         .bind(fixed)
+        .bind(&body.habit_step_id)
         .bind(&full)
         .execute(&self.pool)
         .await
@@ -544,6 +583,14 @@ impl Storage for SqliteStorage {
             .execute(&mut *tx)
             .await
             .map_err(map_err)?;
+        // habit_steps: same reason (#95). Tasks referencing the habit were
+        // already deleted above, so the habit_step_id FK is no longer
+        // referenced.
+        sqlx::query("DELETE FROM habit_steps WHERE habit_id = ?")
+            .bind(&full)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
         sqlx::query("DELETE FROM habits WHERE id = ?")
             .bind(&full)
             .execute(&mut *tx)
@@ -615,6 +662,133 @@ impl Storage for SqliteStorage {
             )));
         }
         Ok(())
+    }
+
+    // ── Habit steps (#95) ─────────────────────────────────────────────────
+
+    async fn list_habit_steps(&self, habit_id: &str) -> StorageResult<Vec<HabitStepRow>> {
+        let full = resolve_habit_id(&self.pool, habit_id).await?;
+        sqlx::query_as::<_, HabitStepRow>(
+            "SELECT * FROM habit_steps WHERE habit_id = ? ORDER BY position ASC, created_at ASC",
+        )
+        .bind(&full)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)
+    }
+
+    async fn list_all_habit_steps(&self) -> StorageResult<Vec<HabitStepRow>> {
+        sqlx::query_as::<_, HabitStepRow>(
+            "SELECT * FROM habit_steps ORDER BY habit_id, position ASC, created_at ASC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)
+    }
+
+    async fn replace_habit_steps(
+        &self,
+        habit_id: &str,
+        steps: &[HabitStepInput],
+    ) -> StorageResult<Vec<HabitStepRow>> {
+        let full = resolve_habit_id(&self.pool, habit_id).await?;
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+
+        // Fetch existing step ids for this habit.
+        let existing_ids: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM habit_steps WHERE habit_id = ?")
+                .bind(&full)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(map_err)?;
+        let existing_set: std::collections::HashSet<&String> = existing_ids.iter().collect();
+
+        // Track ids present in the input so we can delete the rest.
+        let mut input_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let now = jiff::Timestamp::now().to_string();
+
+        for s in steps {
+            let id =
+                s.id.clone()
+                    .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+            input_ids.insert(id.clone());
+            let sigma = s.sigma_minutes.unwrap_or((s.avg_minutes / 5).max(1));
+            let parallelizable = s.parallelizable.unwrap_or(false);
+            let allows_parallel = s.allows_parallel.unwrap_or(false);
+            let abandonability = s.abandonability.unwrap_or(0.5);
+            let fixed = s.fixed.unwrap_or(false);
+            let depends_json =
+                serde_json::to_string(&s.depends_on).unwrap_or_else(|_| "[]".to_string());
+
+            if existing_set.contains(&id) {
+                sqlx::query(
+                    "UPDATE habit_steps SET position=?, title=?, description=?, start_time=?, end_time=?, avg_minutes=?, sigma_minutes=?, parallelizable=?, allows_parallel=?, abandonability=?, fixed=?, depends_on=? WHERE id = ? AND habit_id = ?",
+                )
+                .bind(s.position)
+                .bind(&s.title)
+                .bind(s.description.as_ref())
+                .bind(&s.start_time)
+                .bind(&s.end_time)
+                .bind(s.avg_minutes)
+                .bind(sigma)
+                .bind(parallelizable)
+                .bind(allows_parallel)
+                .bind(abandonability)
+                .bind(fixed)
+                .bind(&depends_json)
+                .bind(&id)
+                .bind(&full)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_err)?;
+            } else {
+                sqlx::query(
+                    "INSERT INTO habit_steps (id, habit_id, position, title, description, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, fixed, depends_on, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&id)
+                .bind(&full)
+                .bind(s.position)
+                .bind(&s.title)
+                .bind(s.description.as_ref())
+                .bind(&s.start_time)
+                .bind(&s.end_time)
+                .bind(s.avg_minutes)
+                .bind(sigma)
+                .bind(parallelizable)
+                .bind(allows_parallel)
+                .bind(abandonability)
+                .bind(fixed)
+                .bind(&depends_json)
+                .bind(&now)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_err)?;
+            }
+        }
+
+        // Delete existing steps not present in the input. Tasks referencing
+        // them (via habit_step_id) are left in place; sync_habit_tasks cleans
+        // them up on the next sync (pending + unedited only).
+        for old_id in &existing_ids {
+            if !input_ids.contains(old_id) {
+                sqlx::query("DELETE FROM habit_steps WHERE id = ? AND habit_id = ?")
+                    .bind(old_id)
+                    .bind(&full)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(map_err)?;
+            }
+        }
+
+        tx.commit().await.map_err(map_err)?;
+
+        sqlx::query_as::<_, HabitStepRow>(
+            "SELECT * FROM habit_steps WHERE habit_id = ? ORDER BY position ASC, created_at ASC",
+        )
+        .bind(&full)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)
     }
 
     async fn get_schedule(&self) -> StorageResult<Option<ScheduleRow>> {

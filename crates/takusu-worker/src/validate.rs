@@ -146,6 +146,91 @@ pub(crate) fn validate_pause_dates(start: &str, end: &str) -> Result<(), WorkerE
     Ok(())
 }
 
+/// Validate a `HH:MM` time string. Returns `()` if valid, else an error.
+fn validate_hhmm(s: &str) -> Result<(), WorkerError> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 2 {
+        return Err(WorkerError::BadRequest(format!("invalid time: {s}")));
+    }
+    let h: u32 = parts[0]
+        .parse()
+        .map_err(|_| WorkerError::BadRequest(format!("invalid time: {s}")))?;
+    let m: u32 = parts[1]
+        .parse()
+        .map_err(|_| WorkerError::BadRequest(format!("invalid time: {s}")))?;
+    if h > 23 || m > 59 {
+        return Err(WorkerError::BadRequest(format!("invalid time: {s}")));
+    }
+    Ok(())
+}
+
+/// Validate a bulk-replace step array (#95): per-field sanity + DAG integrity
+/// (intra-habit references, cycle detection). Mirrors the app-side
+/// `validate_steps`.
+pub(crate) fn validate_steps(steps: &[crate::models::HabitStepInput]) -> Result<(), WorkerError> {
+    use std::collections::HashMap;
+
+    // Per-field validation.
+    for s in steps {
+        validate_minutes(s.avg_minutes, s.sigma_minutes)?;
+        validate_hhmm(&s.start_time)?;
+        validate_hhmm(&s.end_time)?;
+    }
+
+    // Build id → index map for steps that carry an id. A depends_on reference
+    // must point at a sibling step with a known id.
+    let mut id_to_idx: HashMap<String, usize> = HashMap::new();
+    for (i, s) in steps.iter().enumerate() {
+        if let Some(ref id) = s.id {
+            id_to_idx.insert(id.clone(), i);
+        }
+    }
+
+    // Build adjacency (depends_on → indices) and validate references.
+    let mut adj = vec![Vec::new(); steps.len()];
+    for (i, s) in steps.iter().enumerate() {
+        for dep in &s.depends_on {
+            let Some(&dep_idx) = id_to_idx.get(dep) else {
+                return Err(WorkerError::BadRequest(format!(
+                    "step depends_on references unknown step id: {dep}"
+                )));
+            };
+            adj[i].push(dep_idx);
+        }
+    }
+
+    detect_cycle(&adj)?;
+    Ok(())
+}
+
+/// DFS cycle detection over an adjacency list. Returns an error if a cycle
+/// exists. Mirrors `takusu_local_lib::app::detect_cycle`.
+fn detect_cycle(adj: &[Vec<usize>]) -> Result<(), WorkerError> {
+    let n = adj.len();
+    let mut color = vec![0u8; n];
+    fn dfs(v: usize, adj: &[Vec<usize>], color: &mut [u8]) -> bool {
+        color[v] = 1;
+        for &u in &adj[v] {
+            if color[u] == 1 {
+                return true;
+            }
+            if color[u] == 0 && dfs(u, adj, color) {
+                return true;
+            }
+        }
+        color[v] = 2;
+        false
+    }
+    for v in 0..n {
+        if color[v] == 0 && dfs(v, adj, &mut color) {
+            return Err(WorkerError::BadRequest(
+                "circular dependency detected in habit steps".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Parse a `YYYY-MM-DD` string into a `(year, month, day)` tuple if it is a
 /// real calendar date, else `None`.
 ///
@@ -266,5 +351,57 @@ mod tests {
         assert!(validate_pause_dates("2026-8-1", "2026-08-07").is_err());
         assert!(validate_pause_dates("2026-08-01", "2026-8-7").is_err());
         assert!(validate_pause_dates("026-08-01", "2026-08-07").is_err());
+    }
+
+    use crate::models::HabitStepInput;
+
+    fn step(id: &str, deps: Vec<&str>) -> HabitStepInput {
+        HabitStepInput {
+            id: Some(id.to_string()),
+            position: 0,
+            title: "s".into(),
+            description: None,
+            start_time: "08:00".into(),
+            end_time: "09:00".into(),
+            avg_minutes: 30,
+            sigma_minutes: Some(5),
+            parallelizable: None,
+            allows_parallel: None,
+            abandonability: None,
+            fixed: None,
+            depends_on: deps.into_iter().map(String::from).collect(),
+        }
+    }
+
+    #[test]
+    fn steps_accept_valid_dag() {
+        let steps = vec![step("a", vec![]), step("b", vec!["a"])];
+        assert!(validate_steps(&steps).is_ok());
+    }
+
+    #[test]
+    fn steps_reject_cycle() {
+        let steps = vec![step("a", vec!["b"]), step("b", vec!["a"])];
+        assert!(validate_steps(&steps).is_err());
+    }
+
+    #[test]
+    fn steps_reject_unknown_dep() {
+        let steps = vec![step("a", vec!["nope"])];
+        assert!(validate_steps(&steps).is_err());
+    }
+
+    #[test]
+    fn steps_reject_bad_time() {
+        let mut s = step("a", vec![]);
+        s.start_time = "25:00".into();
+        assert!(validate_steps(&[s]).is_err());
+    }
+
+    #[test]
+    fn steps_reject_negative_avg() {
+        let mut s = step("a", vec![]);
+        s.avg_minutes = -1;
+        assert!(validate_steps(&[s]).is_err());
     }
 }

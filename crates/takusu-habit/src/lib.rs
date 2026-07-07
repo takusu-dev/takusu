@@ -47,7 +47,7 @@ pub use error::Error;
 pub use generator::RecurrenceGenerator;
 pub use rule::{Frequency, NWeekday, RecurrenceRule, Weekday};
 pub use summarize::summarize;
-pub use time::TimeOfDay;
+pub use time::{TimeOfDay, date_time_to_point, point_to_date};
 
 use jiff::tz::TimeZone;
 use takusu_core::{NormalDist, Point, Task};
