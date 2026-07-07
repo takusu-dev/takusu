@@ -182,6 +182,7 @@ pub fn format_habit_for_editing(habit: &HabitRow) -> String {
     format!(
         r#"# Edit habit. Lines starting with '#' are comments.
 # Empty fields will not be updated. Save and quit to apply changes.
+# window_mode: 'day' (occurrence day) or 'period' (until next occurrence)
 title: {title}
 description: {desc}
 recurrence: {recurrence}
@@ -193,7 +194,8 @@ parallelizable: {par}
 allows_parallel: {apar}
 abandonability: {abandon}
 fixed: {fixed}
-active: {active}"#,
+active: {active}
+window_mode: {window_mode}"#,
         title = habit.title,
         desc = habit.description.as_deref().unwrap_or(""),
         recurrence = habit.recurrence,
@@ -206,6 +208,7 @@ active: {active}"#,
         abandon = habit.abandonability,
         fixed = habit.fixed,
         active = habit.active,
+        window_mode = habit.window_mode,
     )
 }
 
@@ -222,6 +225,7 @@ pub fn parse_edited_habit(content: &str) -> Result<UpdateHabit, String> {
     let mut abandonability = None;
     let mut fixed = None;
     let mut active = None;
+    let mut window_mode = None;
 
     for line in content.lines() {
         let line = line.trim();
@@ -310,6 +314,9 @@ pub fn parse_edited_habit(content: &str) -> Result<UpdateHabit, String> {
                         .map_err(|e| format!("invalid active '{value}': {e}"))?,
                 )
             }
+            "window_mode" if !value.is_empty() => {
+                window_mode = Some(value.to_string());
+            }
             _ => {}
         }
     }
@@ -327,6 +334,7 @@ pub fn parse_edited_habit(content: &str) -> Result<UpdateHabit, String> {
         abandonability,
         active,
         fixed,
+        window_mode,
     })
 }
 

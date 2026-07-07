@@ -205,12 +205,13 @@ pub fn display_habit_detail(habit: &HabitRow) {
         habit.display_id, habit.title, habit.recurrence, habit.start_time, habit.end_time, active
     );
     println!(
-        "   est: {}min (+/-{}) | abandon: {:.1} | parallel: {} | allows_parallel: {}",
+        "   est: {}min (+/-{}) | abandon: {:.1} | parallel: {} | allows_parallel: {} | window: {}",
         habit.avg_minutes,
         habit.sigma_minutes,
         habit.abandonability,
         if habit.parallelizable { "yes" } else { "no" },
         if habit.allows_parallel { "yes" } else { "no" },
+        habit.window_mode,
     );
     if let Some(ref desc) = habit.description
         && !desc.is_empty()

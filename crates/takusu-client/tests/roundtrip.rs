@@ -138,6 +138,7 @@ fn create_habit_serialization() {
         allows_parallel: None,
         abandonability: None,
         fixed: None,
+        window_mode: None,
     };
 
     let json = serde_json::to_value(&ch).unwrap();
