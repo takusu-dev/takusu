@@ -105,12 +105,18 @@ export function HabitView({ client }: HabitViewProps) {
     // so undo can restore them alongside the recreated habits.
     let tasksPerHabit: TaskRow[][];
     let stepsPerHabit: HabitStepRow[][];
+    let pausesPerHabit: HabitPauseRow[][];
     try {
-      [tasksPerHabit, stepsPerHabit] = await Promise.all([
+      [tasksPerHabit, stepsPerHabit, pausesPerHabit] = await Promise.all([
         Promise.all(toDelete.map((h) => client!.listTasks({ habit_id: h.id }))),
         Promise.all(
           toDelete.map((h) =>
             client!.listHabitSteps(h.id).catch(() => [] as HabitStepRow[]),
+          ),
+        ),
+        Promise.all(
+          toDelete.map((h) =>
+            client!.listHabitPauses(h.id).catch(() => [] as HabitPauseRow[]),
           ),
         ),
       ]);
@@ -146,6 +152,7 @@ export function HabitView({ client }: HabitViewProps) {
     const deleted: HabitRow[] = [];
     const deletedTasksPerHabit: TaskRow[][] = [];
     const deletedStepsPerHabit: HabitStepRow[][] = [];
+    const deletedPausesPerHabit: HabitPauseRow[][] = [];
     let failed = 0;
     for (let i = 0; i < toDelete.length; i++) {
       const h = toDelete[i];
@@ -154,6 +161,7 @@ export function HabitView({ client }: HabitViewProps) {
         deleted.push(h);
         deletedTasksPerHabit.push(tasksPerHabit[i] ?? []);
         deletedStepsPerHabit.push(stepsPerHabit[i] ?? []);
+        deletedPausesPerHabit.push(pausesPerHabit[i] ?? []);
       } catch (e) {
         failed++;
         logError(`ハビット削除 (${h.id})`, e);
@@ -222,6 +230,15 @@ export function HabitView({ client }: HabitViewProps) {
               recreated.id,
               steps.map(stepRowToDraft),
             );
+          }
+          // Restore pauses (#303).
+          const pauses = deletedPausesPerHabit[i] ?? [];
+          for (const p of pauses) {
+            await client.createHabitPause(recreated.id, {
+              start_date: p.start_date,
+              end_date: p.end_date,
+              reason: p.reason,
+            });
           }
           currentIds[i] = recreated.id;
           createdIdx.add(i);

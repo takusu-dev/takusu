@@ -77,6 +77,7 @@ export function HabitAddView() {
     const sigmaRaw = parseDuration(sigmaMinutes);
     // sigma=0/未入力の時は未送信にしてサーバーの auto (avg/5) に任せる
     const sigma = sigmaRaw !== null && sigmaRaw > 0 ? sigmaRaw : undefined;
+    let createdHabit: { id: string } | null = null;
     try {
       const habit = await client.createHabit({
         title,
@@ -91,6 +92,7 @@ export function HabitAddView() {
         fixed,
         window_mode: windowMode,
       });
+      createdHabit = habit;
       // Save steps if any (#95). Habit body fields are ignored server-side
       // when steps exist, but we still send them for the simple case.
       if (stepDrafts.length > 0) {
@@ -124,6 +126,11 @@ export function HabitAddView() {
       });
       router.back();
     } catch (e) {
+      // If the habit was created but step-save failed, roll back the
+      // orphaned habit so the server isn't left in a partial state.
+      if (createdHabit) {
+        await client.deleteHabit(createdHabit.id).catch(() => {});
+      }
       showError(e, 'Habitの追加に失敗');
     } finally {
       setSaving(false);
