@@ -354,10 +354,20 @@ export function HabitDetailView() {
             allows_parallel: prev.allows_parallel,
             abandonability: prev.abandonability,
             fixed: prev.fixed,
+            window_mode: prev.window_mode,
           });
           // CreateHabit does not accept `active`; restore it via update.
           if (!prev.active) {
             await client.updateHabit(recreated.id, { active: prev.active });
+          }
+          // Restore steps (#95) — createHabit doesn't accept steps, so
+          // bulk-replace them via the steps endpoint.
+          if (prev.steps.length > 0) {
+            await saveHabitSteps(
+              client,
+              recreated.id,
+              prev.steps.map(stepRowToDraft),
+            );
           }
           currentId = recreated.id;
           habitCreated = true;

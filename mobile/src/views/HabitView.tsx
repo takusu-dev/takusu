@@ -17,7 +17,12 @@ import { Ionicons } from '@expo/vector-icons';
 import type { TakusuClient } from '@/src/api/client';
 import { showError, logError } from '@/src/api/errors';
 import { parseDepends } from '@/src/api/types';
-import type { HabitPauseRow, HabitRow, TaskRow } from '@/src/api/types';
+import type {
+  HabitPauseRow,
+  HabitRow,
+  HabitStepRow,
+  TaskRow,
+} from '@/src/api/types';
 import { WINDOW_MODE_PERIOD } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -25,6 +30,7 @@ import { ContextMenu } from '@/src/components/ContextMenu';
 import { haptic } from '@/src/components/haptics';
 import { undoRedo } from '@/src/api/undoRedo';
 import { parseRule, summarizeRule } from '@/src/api/rrule';
+import { stepRowToDraft, saveHabitSteps } from '@/src/utils/habitSteps';
 
 interface HabitViewProps {
   client: TakusuClient | null;
@@ -98,10 +104,16 @@ export function HabitView({ client }: HabitViewProps) {
     // tasks will also be cascade-deleted. Capture the tasks per habit
     // so undo can restore them alongside the recreated habits.
     let tasksPerHabit: TaskRow[][];
+    let stepsPerHabit: HabitStepRow[][];
     try {
-      tasksPerHabit = await Promise.all(
-        toDelete.map((h) => client!.listTasks({ habit_id: h.id })),
-      );
+      [tasksPerHabit, stepsPerHabit] = await Promise.all([
+        Promise.all(toDelete.map((h) => client!.listTasks({ habit_id: h.id }))),
+        Promise.all(
+          toDelete.map((h) =>
+            client!.listHabitSteps(h.id).catch(() => [] as HabitStepRow[]),
+          ),
+        ),
+      ]);
     } catch (e) {
       showError(e, 'ハビットのタスク取得に失敗');
       return;
@@ -195,9 +207,19 @@ export function HabitView({ client }: HabitViewProps) {
             allows_parallel: h.allows_parallel,
             abandonability: h.abandonability,
             fixed: h.fixed,
+            window_mode: h.window_mode,
           });
           if (!h.active) {
             await client.updateHabit(recreated.id, { active: h.active });
+          }
+          // Restore steps (#95).
+          const steps = stepsPerHabit[i] ?? [];
+          if (steps.length > 0) {
+            await saveHabitSteps(
+              client,
+              recreated.id,
+              steps.map(stepRowToDraft),
+            );
           }
           currentIds[i] = recreated.id;
           createdIdx.add(i);

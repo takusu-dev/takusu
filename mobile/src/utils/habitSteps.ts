@@ -87,7 +87,7 @@ function draftToInput(
     .map((t) => idMap.get(t))
     .filter((v): v is string => Boolean(v));
   return {
-    id: d.id,
+    id: idMap.get(d.tempId) ?? d.id,
     position: d.position,
     title: d.title,
     description: d.description,

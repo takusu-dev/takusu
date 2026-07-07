@@ -96,10 +96,11 @@ export function HabitAddView() {
       if (stepDrafts.length > 0) {
         await saveHabitSteps(client, habit.id, stepDrafts);
       }
+      let currentId = habit.id;
       undoRedo.push({
         description: `create habit: ${title}`,
         undo: async () => {
-          await client.deleteHabit(habit.id);
+          await client.deleteHabit(currentId);
         },
         redo: async () => {
           const recreated = await client.createHabit({
@@ -115,6 +116,7 @@ export function HabitAddView() {
             fixed,
             window_mode: windowMode,
           });
+          currentId = recreated.id;
           if (stepDrafts.length > 0) {
             await saveHabitSteps(client, recreated.id, stepDrafts);
           }
