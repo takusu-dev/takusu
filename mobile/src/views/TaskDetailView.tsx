@@ -29,12 +29,14 @@ import type {
   HabitDetail,
   ScheduleEntry,
   TaskStatus,
+  RedundantDependency,
 } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { haptic } from '@/src/components/haptics';
 import { CancelConfirmButton } from '@/src/components/CancelConfirmButton';
+import { RedundantDepWarning } from '@/src/components/RedundantDepWarning';
 import { formatDate } from '@/src/formatDate';
 import { parseDuration } from '@/src/utils/duration';
 import {
@@ -103,6 +105,9 @@ export function TaskDetailView() {
   const [statusMenuVisible, setStatusMenuVisible] = useState(false);
   const [depModalVisible, setDepModalVisible] = useState(false);
   const [depSearch, setDepSearch] = useState('');
+  const [redundantEdges, setRedundantEdges] = useState<RedundantDependency[]>(
+    [],
+  );
   const [status, setStatus] = useState<TaskStatus>('pending');
   const [menuVisible, setMenuVisible] = useState(false);
   // Double-tap detection ref — must be before the early return to satisfy
@@ -146,14 +151,25 @@ export function TaskDetailView() {
 
     // Load all tasks for deps editing and parallel task lookup
     try {
-      const [tasks, sched] = await Promise.all([
+      const [tasks, sched, analysis] = await Promise.all([
         client.listTasks(),
         client.getSchedule().catch((e) => {
           logError('スケジュール取得', e);
           return null;
         }),
+        client.analyzeTaskDependencies().catch((e) => {
+          logError('依存分析取得', e);
+          return null;
+        }),
       ]);
       setAllTasks(tasks);
+      if (analysis) {
+        setRedundantEdges(
+          analysis.redundant.filter((e) => e.from === id || e.to === id),
+        );
+      } else {
+        setRedundantEdges([]);
+      }
       const entries: ScheduleEntry[] = sched
         ? parseSchedule(sched.schedule)
         : [];
@@ -273,6 +289,34 @@ export function TaskDetailView() {
     });
     editingRef.current = false;
     setEditing(false);
+    await refresh();
+  }
+
+  // Resolve a redundant dependency edge by removing `toId` from the
+  // `fromId` task's depends list (#355).
+  async function resolveRedundantEdge(fromId: string, toId: string) {
+    if (!client) return;
+    const fromTask = allTasks.find((t) => t.id === fromId);
+    if (!fromTask) return;
+    const prevDeps = parseDepends(fromTask.depends);
+    const newDeps = prevDeps.filter((d) => d !== toId);
+    try {
+      await client.updateTask(fromId, { depends: newDeps });
+    } catch (e) {
+      showError(e, '冗長な依存の削除に失敗');
+      throw e;
+    }
+    undoRedo.push({
+      description: `remove redundant dep: ${fromTask.title}`,
+      undo: async () => {
+        await client.updateTask(fromId, { depends: prevDeps });
+        await refresh();
+      },
+      redo: async () => {
+        await client.updateTask(fromId, { depends: newDeps });
+        await refresh();
+      },
+    });
     await refresh();
   }
 
@@ -1024,6 +1068,16 @@ export function TaskDetailView() {
               </Button>
             )}
           </View>
+          {!editing && (
+            <RedundantDepWarning
+              edges={redundantEdges}
+              onResolve={resolveRedundantEdge}
+              nodeLabel={(nid, ntitle) => {
+                const nt = allTasks.find((t) => t.id === nid);
+                return nt ? `#${nt.display_id} ${nt.title}` : ntitle;
+              }}
+            />
+          )}
           {deps.length > 0 ? (
             deps.map((depId) => {
               const depTask = allTasks.find((t) => t.id === depId);

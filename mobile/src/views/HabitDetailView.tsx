@@ -23,12 +23,14 @@ import { Slider } from '@expo/ui/community/slider';
 import { useServer } from '@/src/api/ServerProvider';
 import { undoRedo } from '@/src/api/undoRedo';
 import { showError, logError } from '@/src/api/errors';
-import { parseDepends } from '@/src/api/types';
+import { parseDepends, parseDependsOn } from '@/src/api/types';
 import type {
   HabitDetail,
   HabitPauseRow,
   TaskRow,
   WindowMode,
+  RedundantDependency,
+  HabitStepInput,
 } from '@/src/api/types';
 import { WINDOW_MODE_DAY, WINDOW_MODE_PERIOD } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
@@ -36,6 +38,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RruleBuilderModal } from '@/src/components/RruleBuilderModal';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { HabitStepEditor } from '@/src/components/HabitStepEditor';
+import { RedundantDepWarning } from '@/src/components/RedundantDepWarning';
 import { parseRule, summarizeRule } from '@/src/api/rrule';
 import { haptic } from '@/src/components/haptics';
 import { CancelConfirmButton } from '@/src/components/CancelConfirmButton';
@@ -73,6 +76,9 @@ export function HabitDetailView() {
   const [active, setActive] = useState(true);
   const [windowMode, setWindowMode] = useState<WindowMode>(WINDOW_MODE_DAY);
   const [stepDrafts, setStepDrafts] = useState<StepDraft[]>([]);
+  const [stepRedundantEdges, setStepRedundantEdges] = useState<
+    RedundantDependency[]
+  >([]);
   const [saving, setSaving] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
   const [pickerField, setPickerField] = useState<'start' | 'end' | null>(null);
@@ -125,6 +131,19 @@ export function HabitDetailView() {
             : WINDOW_MODE_DAY) as WindowMode,
         );
         setStepDrafts(h.steps.map(stepRowToDraft));
+      }
+      // Fetch step dependency analysis (#355) — only meaningful for saved
+      // steps, but we fetch always so the warning is available in view mode.
+      if (h.steps.length > 0) {
+        try {
+          const analysis = await client.analyzeHabitStepDependencies(id);
+          setStepRedundantEdges(analysis.redundant);
+        } catch (e) {
+          logError('ステップ依存分析の取得', e);
+          setStepRedundantEdges([]);
+        }
+      } else {
+        setStepRedundantEdges([]);
       }
     } catch (e) {
       showError(e, 'Habitの取得に失敗');
@@ -459,6 +478,67 @@ export function HabitDetailView() {
       },
     });
     router.back();
+  }
+
+  // Resolve a redundant step dependency edge by removing `toId` from the
+  // `fromId` step's depends_on, then replacing all steps (#355).
+  async function resolveStepRedundantEdge(fromId: string, toId: string) {
+    if (!client || !habit) return;
+    const prevSteps = habit.steps;
+    const newSteps: HabitStepInput[] = prevSteps.map((s) => {
+      const deps = parseDependsOn(s.depends_on);
+      const filtered = s.id === fromId ? deps.filter((d) => d !== toId) : deps;
+      return {
+        id: s.id,
+        position: s.position,
+        title: s.title,
+        description: s.description,
+        start_time: s.start_time,
+        end_time: s.end_time,
+        avg_minutes: s.avg_minutes,
+        sigma_minutes: s.sigma_minutes > 0 ? s.sigma_minutes : undefined,
+        parallelizable: s.parallelizable,
+        allows_parallel: s.allows_parallel,
+        abandonability: s.abandonability,
+        fixed: s.fixed,
+        depends_on: filtered,
+      };
+    });
+    try {
+      await client.replaceHabitSteps(habit.id, newSteps);
+    } catch (e) {
+      showError(e, '冗長な依存の削除に失敗');
+      throw e;
+    }
+    undoRedo.push({
+      description: `remove redundant step dep`,
+      undo: async () => {
+        await client.replaceHabitSteps(
+          habit.id,
+          prevSteps.map((s) => ({
+            id: s.id,
+            position: s.position,
+            title: s.title,
+            description: s.description,
+            start_time: s.start_time,
+            end_time: s.end_time,
+            avg_minutes: s.avg_minutes,
+            sigma_minutes: s.sigma_minutes > 0 ? s.sigma_minutes : undefined,
+            parallelizable: s.parallelizable,
+            allows_parallel: s.allows_parallel,
+            abandonability: s.abandonability,
+            fixed: s.fixed,
+            depends_on: parseDependsOn(s.depends_on),
+          })),
+        );
+        await refresh();
+      },
+      redo: async () => {
+        await client.replaceHabitSteps(habit.id, newSteps);
+        await refresh();
+      },
+    });
+    await refresh();
   }
 
   async function toggleActive() {
@@ -1137,6 +1217,18 @@ export function HabitDetailView() {
             <Text style={[styles.hint, { color: colors.grayLight }]}>
               ステップ設定が優先されます (habit 本体の時間帯・コストは無効)
             </Text>
+          )}
+          {!editing && stepDrafts.length > 0 && (
+            <RedundantDepWarning
+              edges={stepRedundantEdges}
+              onResolve={resolveStepRedundantEdge}
+              nodeLabel={(nid, ntitle) => {
+                const idx = habit.steps.findIndex((s) => s.id === nid);
+                return idx >= 0
+                  ? `${idx + 1}. ${habit.steps[idx]!.title || '(無題)'}`
+                  : ntitle;
+              }}
+            />
           )}
           {editing ? (
             <HabitStepEditor
