@@ -687,6 +687,7 @@ async fn run_task(
                 ical_uid: None,
                 habit_id: None,
                 fixed,
+                habit_step_id: None,
             };
             let task = app.create_task(&body).await?;
             match mode {
@@ -748,6 +749,7 @@ async fn run_task(
                 habit_id: None,
                 user_edited: None,
                 fixed,
+                habit_step_id: None,
             };
             let task = app.update_task(&id, &body).await?;
             match mode {
@@ -789,6 +791,7 @@ async fn run_task(
                 ical_uid: None,
                 habit_id: None,
                 fixed,
+                habit_step_id: None,
             };
             let task = app.replace_task(&id, &body).await?;
             match mode {
@@ -825,10 +828,31 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
             }
         }
         HabitCommands::Show { id } => {
-            let habit = app.get_habit(&id).await?;
+            let detail = app.get_habit(&id).await?;
             match mode {
-                DisplayMode::Rich => display_rich::display_habit_detail(&habit),
-                DisplayMode::Simple => display_simple::display_habit_detail(&habit),
+                DisplayMode::Rich => display_rich::display_habit_detail(&detail.habit),
+                DisplayMode::Simple => display_simple::display_habit_detail(&detail.habit),
+            }
+            // Show steps (#95) if any.
+            if !detail.steps.is_empty() {
+                println!("   steps:");
+                for s in &detail.steps {
+                    let deps: Vec<String> = serde_json::from_str(&s.depends_on).unwrap_or_default();
+                    println!(
+                        "     {} [{}] {} ({}–{}, {}min){}",
+                        s.id,
+                        s.position,
+                        s.title,
+                        s.start_time,
+                        s.end_time,
+                        s.avg_minutes,
+                        if deps.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" ← {}", deps.join(","))
+                        }
+                    );
+                }
             }
             // Show pause periods (#303) if any.
             let pauses = app.list_habit_pauses(&id).await.unwrap_or_default();
@@ -898,8 +922,9 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
             }
         }
         HabitCommands::Edit { id } => {
-            let habit = app.get_habit(&id).await?;
-            let original = editor::format_habit_for_editing(&habit);
+            let detail = app.get_habit(&id).await?;
+            let habit = &detail.habit;
+            let original = editor::format_habit_for_editing(habit);
             let edited = editor::open_editor(&original, &habit.id)
                 .map_err(|e| AppError::BadRequest(e.to_string()))?;
             let update = editor::parse_edited_habit(&edited)

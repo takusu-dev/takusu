@@ -132,6 +132,7 @@ pub fn parse_edited_task(content: &str) -> Option<UpdateTask> {
         habit_id: None,
         user_edited: None,
         fixed,
+        habit_step_id: None,
     })
 }
 

@@ -1,7 +1,10 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use takusu_storage::{CreateHabit, CreateHabitPause, HabitPauseRow, HabitRow, UpdateHabit};
+use takusu_storage::{
+    CreateHabit, CreateHabitPause, HabitDetail, HabitPauseRow, HabitRow, HabitStepInput,
+    HabitStepRow, UpdateHabit,
+};
 
 use crate::error::HttpError;
 use crate::state::AppState;
@@ -22,7 +25,7 @@ pub async fn list_habits(State(state): State<AppState>) -> Result<Json<Vec<Habit
 pub async fn get_habit(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<HabitRow>, HttpError> {
+) -> Result<Json<HabitDetail>, HttpError> {
     let habit = state.app.get_habit(&id).await?;
     Ok(Json(habit))
 }
@@ -89,4 +92,30 @@ pub async fn delete_habit_pause(
 ) -> Result<StatusCode, HttpError> {
     state.app.delete_habit_pause(&id, &pause_id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ── Habit steps (#95) ────────────────────────────────────────────────────
+
+pub async fn list_habit_steps(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<HabitStepRow>>, HttpError> {
+    let steps = state.app.list_habit_steps(&id).await?;
+    Ok(Json(steps))
+}
+
+pub async fn list_all_habit_steps(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<HabitStepRow>>, HttpError> {
+    let steps = state.app.list_all_habit_steps().await?;
+    Ok(Json(steps))
+}
+
+pub async fn replace_habit_steps(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<Vec<HabitStepInput>>,
+) -> Result<Json<Vec<HabitStepRow>>, HttpError> {
+    let steps = state.app.replace_habit_steps(&id, &body).await?;
+    Ok(Json(steps))
 }

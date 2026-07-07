@@ -8,9 +8,9 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 use takusu_storage::{
     CreateHabit, CreateHabitPause, CreateTask, GoogleCalEventRow, GoogleCalSettingsRow,
-    HabitPauseRow, HabitRow, SaveScheduleRequest, ScheduleRow, SettingsRow, Storage, StorageError,
-    TaskQuery, TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit,
-    UpdateSettings, UpdateTask, storage::StorageResult,
+    HabitPauseRow, HabitRow, HabitStepInput, HabitStepRow, SaveScheduleRequest, ScheduleRow,
+    SettingsRow, Storage, StorageError, TaskQuery, TaskRow, TokenCreateResponse, TokenRow,
+    UpdateGoogleCalSettings, UpdateHabit, UpdateSettings, UpdateTask, storage::StorageResult,
 };
 
 use crate::config::LocalConfig;
@@ -350,6 +350,32 @@ impl Storage for WorkersStorage {
                 url_encode(habit_id),
                 url_encode(pause_id)
             ),
+        )
+        .await
+    }
+
+    async fn list_habit_steps(&self, habit_id: &str) -> StorageResult<Vec<HabitStepRow>> {
+        self.request(
+            reqwest::Method::GET,
+            &format!("/api/habits/{}/steps", url_encode(habit_id)),
+        )
+        .await
+    }
+
+    async fn list_all_habit_steps(&self) -> StorageResult<Vec<HabitStepRow>> {
+        self.request(reqwest::Method::GET, "/api/habits/steps")
+            .await
+    }
+
+    async fn replace_habit_steps(
+        &self,
+        habit_id: &str,
+        steps: &[HabitStepInput],
+    ) -> StorageResult<Vec<HabitStepRow>> {
+        self.request_body(
+            reqwest::Method::PUT,
+            &format!("/api/habits/{}/steps", url_encode(habit_id)),
+            &steps,
         )
         .await
     }

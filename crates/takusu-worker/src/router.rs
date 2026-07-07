@@ -103,9 +103,10 @@ async fn dispatch(req: Request, env: Env) -> Result<Response, crate::error::Work
         (Method::Delete, ["tasks", id]) => handlers::tasks::delete(req, env, id).await,
         (Method::Get, ["habits"]) => handlers::habits::list(req, env).await,
         (Method::Post, ["habits"]) => handlers::habits::create(req, env).await,
-        // `["habits", "pauses"]` must precede the `["habits", id]` arms so the
-        // literal "pauses" segment is not treated as a habit id (#303).
+        // Literal "pauses" / "steps" segments must precede the `["habits", id]`
+        // arms so they are not treated as a habit id (#303 / #95).
         (Method::Get, ["habits", "pauses"]) => handlers::habits::list_all_pauses(req, env).await,
+        (Method::Get, ["habits", "steps"]) => handlers::habits::list_all_steps(req, env).await,
         (Method::Get, ["habits", id]) => handlers::habits::get(req, env, id).await,
         (Method::Patch, ["habits", id]) => handlers::habits::update(req, env, id).await,
         (Method::Put, ["habits", id]) => handlers::habits::replace(req, env, id).await,
@@ -118,6 +119,10 @@ async fn dispatch(req: Request, env: Env) -> Result<Response, crate::error::Work
         }
         (Method::Delete, ["habits", id, "pauses", pause_id]) => {
             handlers::habits::delete_pause(req, env, id, pause_id).await
+        }
+        (Method::Get, ["habits", id, "steps"]) => handlers::habits::list_steps(req, env, id).await,
+        (Method::Put, ["habits", id, "steps"]) => {
+            handlers::habits::replace_steps(req, env, id).await
         }
         (Method::Get, ["schedule"]) => handlers::schedule::get(req, env).await,
         (Method::Post, ["schedule", "save"]) => handlers::schedule::save(req, env).await,
