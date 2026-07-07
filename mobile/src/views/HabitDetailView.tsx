@@ -287,8 +287,12 @@ export function HabitDetailView() {
     // tasks will also be cascade-deleted. Fetch the task list first
     // so the confirmation is accurate and undo can restore them.
     let deletedTasks: TaskRow[];
+    let deletedPauses: HabitPauseRow[];
     try {
-      deletedTasks = await client.listTasks({ habit_id: habit.id });
+      [deletedTasks, deletedPauses] = await Promise.all([
+        client.listTasks({ habit_id: habit.id }),
+        client.listHabitPauses(habit.id).catch(() => [] as HabitPauseRow[]),
+      ]);
     } catch (e) {
       showError(e, 'ハビットのタスク取得に失敗');
       return;
@@ -368,6 +372,14 @@ export function HabitDetailView() {
               recreated.id,
               prev.steps.map(stepRowToDraft),
             );
+          }
+          // Restore pauses (#303).
+          for (const p of deletedPauses) {
+            await client.createHabitPause(recreated.id, {
+              start_date: p.start_date,
+              end_date: p.end_date,
+              reason: p.reason,
+            });
           }
           currentId = recreated.id;
           habitCreated = true;
