@@ -6,7 +6,7 @@
 // not scheduled here.
 
 import * as Notifications from 'expo-notifications';
-import type { TaskRow, ScheduleEntry, HabitRow } from '@/src/api/types';
+import type { TaskRow, ScheduleEntry } from '@/src/api/types';
 import { parseSchedule } from '@/src/api/types';
 import { type NotificationSettings, minutesToTime } from './settings';
 import { CHANNELS } from './channels';
@@ -19,7 +19,6 @@ const MAX_SCHEDULED_PER_TYPE = 25;
 interface ScheduleData {
   tasks: TaskRow[];
   schedule: ScheduleEntry[];
-  habits: HabitRow[];
   settings: NotificationSettings;
 }
 
@@ -50,8 +49,11 @@ function isFuture(date: Date): boolean {
   return date.getTime() > Date.now();
 }
 
-// Count tasks scheduled for today
-function countTodaysTasks(tasks: TaskRow[], schedule: ScheduleEntry[]): number {
+// Count incomplete tasks scheduled for today (excludes completed/skipped)
+function countTodaysIncompleteTasks(
+  tasks: TaskRow[],
+  schedule: ScheduleEntry[],
+): number {
   const scheduleMap = new Map<string, ScheduleEntry>();
   for (const e of schedule) scheduleMap.set(e.task_id, e);
 
@@ -61,11 +63,7 @@ function countTodaysTasks(tasks: TaskRow[], schedule: ScheduleEntry[]): number {
   todayEnd.setHours(23, 59, 59, 999);
 
   return tasks.filter((t) => {
-    if (
-      t.status === 'pending' ||
-      t.status === 'completed' ||
-      t.status === 'skipped'
-    ) {
+    if (t.status === 'completed' || t.status === 'skipped') {
       return false;
     }
     const entry = scheduleMap.get(t.id);
@@ -79,20 +77,6 @@ function countTodaysTasks(tasks: TaskRow[], schedule: ScheduleEntry[]): number {
   }).length;
 }
 
-// Count tasks completed today (using updated_at as proxy for completed_at)
-function countCompletedToday(tasks: TaskRow[]): number {
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const todayEnd = new Date();
-  todayEnd.setHours(23, 59, 59, 999);
-
-  return tasks.filter((t) => {
-    if (t.status !== 'completed') return false;
-    const updated = new Date(t.updated_at);
-    return updated >= todayStart && updated <= todayEnd;
-  }).length;
-}
-
 // Count pending tasks idle for more than threshold hours
 function countIdlePendingTasks(
   tasks: TaskRow[],
@@ -103,55 +87,6 @@ function countIdlePendingTasks(
     if (t.status !== 'pending') return false;
     return new Date(t.created_at).getTime() < threshold;
   }).length;
-}
-
-// Count active habits that have an uncompleted task scheduled for today.
-// Only counts habits that actually have a task today — habits whose
-// recurrence doesn't include today are not counted as incomplete (#336).
-// Prefers the schedule entry's start_at over the task's own start_at,
-// consistent with countTodaysTasks.
-function countIncompleteHabits(
-  tasks: TaskRow[],
-  habits: HabitRow[],
-  schedule: ScheduleEntry[],
-): number {
-  const scheduleMap = new Map<string, ScheduleEntry>();
-  for (const e of schedule) scheduleMap.set(e.task_id, e);
-
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const todayEnd = new Date();
-  todayEnd.setHours(23, 59, 59, 999);
-
-  const activeHabits = habits.filter((h) => h.active);
-  if (activeHabits.length === 0) return 0;
-
-  const activeHabitIds = new Set(activeHabits.map((h) => h.id));
-
-  // Group today's habit tasks by habit_id and check if any are not completed
-  const todaysHabitTasks = tasks.filter((t) => {
-    if (!t.habit_id || !activeHabitIds.has(t.habit_id)) return false;
-    // Prefer schedule entry's start_at, fall back to task's start_at
-    const entry = scheduleMap.get(t.id);
-    const start = entry
-      ? new Date(entry.start_at)
-      : t.start_at
-        ? new Date(t.start_at)
-        : null;
-    if (!start) return false;
-    return start >= todayStart && start <= todayEnd;
-  });
-
-  // A habit is incomplete if it has at least one task today that is not
-  // completed or skipped
-  const incompleteHabitIds = new Set<string>();
-  for (const t of todaysHabitTasks) {
-    if (t.status !== 'completed' && t.status !== 'skipped') {
-      incompleteHabitIds.add(t.habit_id!);
-    }
-  }
-
-  return incompleteHabitIds.size;
 }
 
 // Schedule a one-time notification for the next occurrence of a daily time.
@@ -206,7 +141,7 @@ async function scheduleAt(
 export async function rescheduleNotifications(
   data: ScheduleData,
 ): Promise<void> {
-  const { tasks, schedule, habits, settings } = data;
+  const { tasks, schedule, settings } = data;
 
   if (!settings.enabled) {
     await Notifications.cancelAllScheduledNotificationsAsync();
@@ -222,9 +157,11 @@ export async function rescheduleNotifications(
   // ── 1. Morning briefing (next occurrence only) ──
   if (settings.morningBriefing) {
     const { hour, minute } = minutesToTime(settings.morningBriefingTime);
-    const count = countTodaysTasks(tasks, schedule);
+    const count = countTodaysIncompleteTasks(tasks, schedule);
     const title =
-      count === 0 ? 'おはようございます' : `今日は${count}個のタスクがあります`;
+      count === 0
+        ? 'おはようございます'
+        : `今日は${count}個の未完了タスクがあります`;
     const body = count === 0 ? 'タスクを追加しましょう' : 'タップして確認';
     await scheduleNextOccurrence(
       CHANNELS.taskSummary,
@@ -306,36 +243,6 @@ export async function rescheduleNotifications(
       );
     }
   }
-
-  // ── 6. Evening summary (next occurrence only) ──
-  if (settings.eveningSummary) {
-    const { hour, minute } = minutesToTime(settings.eveningSummaryTime);
-    const completedCount = countCompletedToday(tasks);
-    await scheduleNextOccurrence(
-      CHANNELS.taskSummary,
-      hour,
-      minute,
-      '今日のサマリー',
-      `今日は${completedCount}個のタスクを完了しました`,
-      { url: '/' },
-    );
-  }
-
-  // ── 7. Habit reminder (next occurrence only) ──
-  if (settings.habitReminder) {
-    const { hour, minute } = minutesToTime(settings.habitReminderTime);
-    const incompleteCount = countIncompleteHabits(tasks, habits, schedule);
-    if (incompleteCount > 0) {
-      await scheduleNextOccurrence(
-        CHANNELS.habitReminder,
-        hour,
-        minute,
-        'Habitリマインダー',
-        `今日のHabitが${incompleteCount}個未完了です`,
-        { url: '/' },
-      );
-    }
-  }
 }
 
 // ── In-progress notification (#5) — posted immediately, not scheduled ──
@@ -386,9 +293,8 @@ export async function dismissTaskNotifications(taskId: string): Promise<void> {
 export async function rescheduleFromRaw(
   tasks: TaskRow[],
   scheduleJson: string | null,
-  habits: HabitRow[],
   settings: NotificationSettings,
 ): Promise<void> {
   const schedule = scheduleJson ? parseSchedule(scheduleJson) : [];
-  await rescheduleNotifications({ tasks, schedule, habits, settings });
+  await rescheduleNotifications({ tasks, schedule, settings });
 }

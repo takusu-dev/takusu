@@ -350,18 +350,17 @@ export function HomeView() {
     refresh();
   }, [refresh]);
 
-  // Reschedule notifications when tasks, schedule, habits, or notification
+  // Reschedule notifications when tasks, schedule, or notification
   // settings change. This is separate from refresh() to avoid triggering a
   // full server refetch when only notification settings are toggled.
   useEffect(() => {
-    if (tasks.length === 0 && habits.length === 0) return;
+    if (tasks.length === 0) return;
     rescheduleFromRaw(
       tasks,
       schedule.length > 0 ? JSON.stringify(schedule) : null,
-      habits,
       notifications,
     ).catch((e) => logError('通知の再スケジュール', e));
-  }, [tasks, schedule, habits, notifications]);
+  }, [tasks, schedule, notifications]);
 
   // Close the task-add sheet on Android hardware back button.  Without this
   // the back button would navigate away from HomeView (or exit the app)

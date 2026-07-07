@@ -150,7 +150,7 @@ export function SettingsDetailView({
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const [notifPickerField, setNotifPickerField] = useState<
-    'morningBriefing' | 'eveningSummary' | 'habitReminder' | null
+    'morningBriefing' | null
   >(null);
 
   // Notification numeric inputs — local text state, committed on blur so
@@ -970,86 +970,6 @@ export function SettingsDetailView({
                       trackColor={{ true: BRAND_COLOR }}
                     />
                   </View>
-
-                  {/* Evening summary */}
-                  <View style={styles.notifGroup}>
-                    <View style={styles.settingRow}>
-                      <Text
-                        style={[styles.settingLabel, { color: colors.black }]}
-                      >
-                        夕方サマリー
-                      </Text>
-                      <Switch
-                        value={notifications.eveningSummary}
-                        onValueChange={(v) => {
-                          haptic.select();
-                          setNotifications({
-                            ...notifications,
-                            eveningSummary: v,
-                          });
-                        }}
-                        trackColor={{ true: BRAND_COLOR }}
-                      />
-                    </View>
-                    {notifications.eveningSummary && (
-                      <Pressable
-                        style={[
-                          styles.timeField,
-                          { borderColor: colors.separator },
-                        ]}
-                        onPress={() => {
-                          haptic.select();
-                          setNotifPickerField('eveningSummary');
-                        }}
-                      >
-                        <Text
-                          style={[styles.timeText, { color: colors.black }]}
-                        >
-                          {formatTime(notifications.eveningSummaryTime)}
-                        </Text>
-                      </Pressable>
-                    )}
-                  </View>
-
-                  {/* Habit reminder */}
-                  <View style={styles.notifGroup}>
-                    <View style={styles.settingRow}>
-                      <Text
-                        style={[styles.settingLabel, { color: colors.black }]}
-                      >
-                        Habit未完了リマインダー
-                      </Text>
-                      <Switch
-                        value={notifications.habitReminder}
-                        onValueChange={(v) => {
-                          haptic.select();
-                          setNotifications({
-                            ...notifications,
-                            habitReminder: v,
-                          });
-                        }}
-                        trackColor={{ true: BRAND_COLOR }}
-                      />
-                    </View>
-                    {notifications.habitReminder && (
-                      <Pressable
-                        style={[
-                          styles.timeField,
-                          { borderColor: colors.separator },
-                        ]}
-                        onPress={() => {
-                          haptic.select();
-                          setNotifPickerField('habitReminder');
-                        }}
-                      >
-                        <Text
-                          style={[styles.timeText, { color: colors.black }]}
-                        >
-                          {formatTime(notifications.habitReminderTime)}
-                        </Text>
-                      </Pressable>
-                    )}
-                  </View>
                 </>
               )}
             </>
@@ -1456,12 +1376,7 @@ export function SettingsDetailView({
           mode="time"
           label="通知時刻"
           value={(() => {
-            const min =
-              notifPickerField === 'morningBriefing'
-                ? notifications.morningBriefingTime
-                : notifPickerField === 'eveningSummary'
-                  ? notifications.eveningSummaryTime
-                  : notifications.habitReminderTime;
+            const min = notifications.morningBriefingTime;
             const { hour, minute } = minutesToTime(min);
             const d = new Date();
             d.setHours(hour, minute, 0, 0);
@@ -1477,16 +1392,6 @@ export function SettingsDetailView({
               setNotifications({
                 ...notifications,
                 morningBriefingTime: minutes,
-              });
-            } else if (notifPickerField === 'eveningSummary') {
-              setNotifications({
-                ...notifications,
-                eveningSummaryTime: minutes,
-              });
-            } else if (notifPickerField === 'habitReminder') {
-              setNotifications({
-                ...notifications,
-                habitReminderTime: minutes,
               });
             }
             setNotifPickerField(null);
