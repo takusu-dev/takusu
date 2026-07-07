@@ -18,6 +18,7 @@ import type {
   UpdateGoogleCalSettings,
   SyncTriggerResponse,
   GoogleCalEventMapping,
+  IcalImportResult,
 } from './types';
 
 export class ApiError extends Error {
@@ -105,6 +106,26 @@ export class TakusuClient {
 
   async deleteTask(id: string): Promise<void> {
     return this.request('DELETE', `/api/tasks/${id}`);
+  }
+
+  async importIcal(icalText: string): Promise<IcalImportResult> {
+    const url = `${this.baseUrl}/api/tasks/import/ical`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        'Content-Type': 'text/plain',
+      },
+      body: icalText,
+    });
+    const status = resp.status;
+    if (status >= 400) {
+      const text = await resp.text().catch(() => '');
+      throw new ApiError(status, text);
+    }
+    const text = await resp.text();
+    if (!text) return { imported: 0, task_ids: [] };
+    return JSON.parse(text) as IcalImportResult;
   }
 
   // ── Habit ──

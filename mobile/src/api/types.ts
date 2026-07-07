@@ -202,6 +202,13 @@ export interface GoogleCalEventMapping {
   google_event_id: string;
 }
 
+// ── iCal Import ──
+
+export interface IcalImportResult {
+  imported: number;
+  task_ids: string[];
+}
+
 // Helper: parse depends JSON string
 export function parseDepends(depends: string): string[] {
   try {
