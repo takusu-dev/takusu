@@ -19,7 +19,15 @@
       "expo-router",
       "expo-secure-store",
       "expo-file-system",
-      "expo-sharing",
+      [
+        "expo-sharing",
+        {
+          "android": {
+            "enabled": true,
+            "singleShareMimeTypes": ["text/calendar", "text/plain"]
+          }
+        }
+      ],
       "@react-native-community/datetimepicker",
       [
         "expo-splash-screen",

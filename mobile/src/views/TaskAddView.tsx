@@ -4,6 +4,7 @@
 
 import { useState } from 'react';
 import {
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -72,6 +73,9 @@ export function TaskAddView({
   const [depSearch, setDepSearch] = useState('');
   const [pickerField, setPickerField] = useState<'start' | 'end' | null>(null);
   const [saving, setSaving] = useState(false);
+  const [showIcal, setShowIcal] = useState(false);
+  const [icalText, setIcalText] = useState('');
+  const [importing, setImporting] = useState(false);
 
   async function loadTasks() {
     if (!client) return;
@@ -130,6 +134,26 @@ export function TaskAddView({
       showError(e, 'タスクの追加に失敗');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function importIcal() {
+    if (!client || !icalText.trim() || importing) return;
+    haptic.medium();
+    setImporting(true);
+    try {
+      const result = await client.importIcal(icalText);
+      Alert.alert(
+        'インポート完了',
+        `${result.imported}件のタスクをインポートしました`,
+      );
+      setIcalText('');
+      setShowIcal(false);
+      close();
+    } catch (e) {
+      showError(e, 'iCalインポートに失敗');
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -400,6 +424,57 @@ export function TaskAddView({
             placeholder="説明 (任意)"
             placeholderTextColor={colors.grayLight}
           />
+        </View>
+
+        {/* iCal import (foldable) */}
+        <View style={styles.field}>
+          <Pressable
+            style={styles.icalHeader}
+            onPress={() => {
+              haptic.light();
+              setShowIcal(!showIcal);
+            }}
+          >
+            <Ionicons
+              name={showIcal ? 'chevron-down' : 'chevron-forward'}
+              size={18}
+              color={colors.gray}
+            />
+            <Text style={[styles.label, { color: colors.gray, flex: 1 }]}>
+              iCalインポート
+            </Text>
+          </Pressable>
+          {showIcal && (
+            <>
+              <TextInput
+                style={[
+                  styles.input,
+                  styles.multiline,
+                  styles.icalInput,
+                  { borderColor: colors.separator, color: colors.black },
+                ]}
+                value={icalText}
+                onChangeText={setIcalText}
+                multiline
+                placeholder="BEGIN:VCALENDAR... を貼り付け"
+                placeholderTextColor={colors.grayLight}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <Pressable
+                style={[
+                  styles.icalImportButton,
+                  (!icalText.trim() || importing) && styles.saveButtonDisabled,
+                ]}
+                onPress={importIcal}
+                disabled={!icalText.trim() || importing}
+              >
+                <Text style={styles.saveButtonText}>
+                  {importing ? 'インポート中…' : 'iCalをインポート'}
+                </Text>
+              </Pressable>
+            </>
+          )}
         </View>
 
         {/* Dependencies */}
@@ -711,6 +786,25 @@ const styles = StyleSheet.create({
   },
   multiline: {
     minHeight: 80,
+  },
+  icalInput: {
+    minHeight: 120,
+    fontFamily: 'monospace',
+    fontSize: 12,
+  },
+  icalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 4,
+  },
+  icalImportButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: BRAND_COLOR,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8,
   },
   toggleRow: {
     flexDirection: 'row',
