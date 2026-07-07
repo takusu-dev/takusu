@@ -113,7 +113,8 @@ fn validate_steps(steps: &[HabitStepInput]) -> Result<(), AppError> {
         }
     }
 
-    detect_cycle(&adj)?;
+    crate::graph::detect_cycle(&adj)
+        .map_err(|_| AppError::BadRequest("circular dependency detected".into()))?;
     Ok(())
 }
 
@@ -126,35 +127,17 @@ fn topo_sort_steps(steps: &[HabitStepRow]) -> Result<Vec<usize>, AppError> {
         id_to_idx.insert(s.id.clone(), i);
     }
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); steps.len()];
-    let mut indeg = vec![0usize; steps.len()];
     for (i, s) in steps.iter().enumerate() {
         let deps: Vec<String> = serde_json::from_str(&s.depends_on).unwrap_or_default();
         for dep in &deps {
             if let Some(&dep_idx) = id_to_idx.get(dep) {
                 // edge dep_idx → i (dep must come before i)
                 adj[dep_idx].push(i);
-                indeg[i] += 1;
             }
         }
     }
-    let mut queue: std::collections::VecDeque<usize> =
-        (0..steps.len()).filter(|&i| indeg[i] == 0).collect();
-    let mut order = Vec::with_capacity(steps.len());
-    while let Some(v) = queue.pop_front() {
-        order.push(v);
-        for &u in &adj[v] {
-            indeg[u] -= 1;
-            if indeg[u] == 0 {
-                queue.push_back(u);
-            }
-        }
-    }
-    if order.len() != steps.len() {
-        return Err(AppError::BadRequest(
-            "circular dependency detected in habit steps".into(),
-        ));
-    }
-    Ok(order)
+    crate::graph::topo_sort(&adj)
+        .map_err(|_| AppError::BadRequest("circular dependency detected in habit steps".into()))
 }
 
 /// Verify the timezone string resolves to a real `jiff::tz::TimeZone` so that
@@ -383,30 +366,6 @@ fn iso_to_local_date(iso: &str, tz: &jiff::tz::TimeZone) -> String {
     }
 }
 
-fn detect_cycle(adj: &[Vec<usize>]) -> Result<(), AppError> {
-    let n = adj.len();
-    let mut color = vec![0u8; n];
-    fn dfs(v: usize, adj: &[Vec<usize>], color: &mut [u8]) -> bool {
-        color[v] = 1;
-        for &u in &adj[v] {
-            if color[u] == 1 {
-                return true;
-            }
-            if color[u] == 0 && dfs(u, adj, color) {
-                return true;
-            }
-        }
-        color[v] = 2;
-        false
-    }
-    for v in 0..n {
-        if color[v] == 0 && dfs(v, adj, &mut color) {
-            return Err(AppError::BadRequest("circular dependency detected".into()));
-        }
-    }
-    Ok(())
-}
-
 #[allow(clippy::type_complexity)]
 fn build_dep_graph(
     tasks: &[TaskRow],
@@ -507,6 +466,25 @@ pub struct GoogleCalSettingsOutput {
     pub client_id: String,
     pub has_client_secret: bool,
     pub has_refresh_token: bool,
+}
+
+/// A node on a dependency witness path (task or habit step) (#355).
+#[derive(Debug, Clone, Serialize)]
+pub struct DependencyNode {
+    pub id: String,
+    pub title: String,
+}
+
+/// A redundant (composite / transitively implied) dependency edge with a
+/// witness path proving the direct edge is unnecessary (#355).
+#[derive(Debug, Clone, Serialize)]
+pub struct RedundantDependency {
+    pub from: String,
+    pub from_title: String,
+    pub to: String,
+    pub to_title: String,
+    /// Witness path `from → … → to` (endpoints included, length >= 3).
+    pub via: Vec<DependencyNode>,
 }
 
 fn default_settings_row() -> SettingsRow {
@@ -649,7 +627,8 @@ impl TakusuApp {
                 .iter()
                 .filter_map(|did| id_to_idx.get(did).copied())
                 .collect();
-            detect_cycle(&adj)?;
+            crate::graph::detect_cycle(&adj)
+                .map_err(|_| AppError::BadRequest("circular dependency detected".into()))?;
             body.depends = Some(resolved);
         }
 
@@ -712,7 +691,8 @@ impl TakusuApp {
                 .iter()
                 .filter_map(|did| id_to_idx.get(did).copied())
                 .collect();
-            detect_cycle(&adj)?;
+            crate::graph::detect_cycle(&adj)
+                .map_err(|_| AppError::BadRequest("circular dependency detected".into()))?;
             let mut body = body.clone();
             body.depends = Some(resolved);
             return self
@@ -900,6 +880,95 @@ impl TakusuApp {
             .replace_habit_steps(id, steps)
             .await
             .map_err(storage_to_app)
+    }
+
+    // ── Dependency analysis (#355) ───────────────────────
+
+    /// Detect redundant (composite) edges in the task dependency DAG.
+    /// Only non-completed tasks are considered — cleaning up dependencies
+    /// on already-completed tasks is pointless. `depends` references to
+    /// non-existent task ids are silently ignored (defensive against
+    /// legacy data).
+    pub async fn analyze_task_dependencies(&self) -> Result<Vec<RedundantDependency>, AppError> {
+        let tasks = self
+            .storage
+            .list_tasks(&TaskQuery::default())
+            .await
+            .map_err(storage_to_app)?;
+        let active: Vec<&TaskRow> = tasks
+            .iter()
+            .filter(|t| t.status != "completed" && t.status != "skipped")
+            .collect();
+        let mut id_to_idx: HashMap<String, usize> = HashMap::new();
+        for (i, t) in active.iter().enumerate() {
+            id_to_idx.insert(t.id.clone(), i);
+        }
+        let mut adj = vec![Vec::new(); active.len()];
+        for (i, t) in active.iter().enumerate() {
+            let deps: Vec<String> = serde_json::from_str(&t.depends).unwrap_or_default();
+            for dep_id in &deps {
+                if let Some(&dep_idx) = id_to_idx.get(dep_id) {
+                    adj[i].push(dep_idx);
+                }
+            }
+        }
+        let redundant = crate::graph::find_redundant_edges(&adj)
+            .map_err(|_| AppError::BadRequest("circular dependency detected".into()))?;
+        let node = |idx: usize| DependencyNode {
+            id: active[idx].id.clone(),
+            title: active[idx].title.clone(),
+        };
+        Ok(redundant
+            .into_iter()
+            .map(|e| RedundantDependency {
+                from: active[e.from].id.clone(),
+                from_title: active[e.from].title.clone(),
+                to: active[e.to].id.clone(),
+                to_title: active[e.to].title.clone(),
+                via: e.via.iter().map(|&i| node(i)).collect(),
+            })
+            .collect())
+    }
+
+    /// Detect redundant (composite) edges in a habit's step dependency DAG.
+    pub async fn analyze_habit_step_dependencies(
+        &self,
+        habit_id: &str,
+    ) -> Result<Vec<RedundantDependency>, AppError> {
+        let steps = self
+            .storage
+            .list_habit_steps(habit_id)
+            .await
+            .map_err(storage_to_app)?;
+        let mut id_to_idx: HashMap<String, usize> = HashMap::new();
+        for (i, s) in steps.iter().enumerate() {
+            id_to_idx.insert(s.id.clone(), i);
+        }
+        let mut adj = vec![Vec::new(); steps.len()];
+        for (i, s) in steps.iter().enumerate() {
+            let deps: Vec<String> = serde_json::from_str(&s.depends_on).unwrap_or_default();
+            for dep_id in &deps {
+                if let Some(&dep_idx) = id_to_idx.get(dep_id) {
+                    adj[i].push(dep_idx);
+                }
+            }
+        }
+        let redundant = crate::graph::find_redundant_edges(&adj)
+            .map_err(|_| AppError::BadRequest("circular dependency detected".into()))?;
+        let node = |idx: usize| DependencyNode {
+            id: steps[idx].id.clone(),
+            title: steps[idx].title.clone(),
+        };
+        Ok(redundant
+            .into_iter()
+            .map(|e| RedundantDependency {
+                from: steps[e.from].id.clone(),
+                from_title: steps[e.from].title.clone(),
+                to: steps[e.to].id.clone(),
+                to_title: steps[e.to].title.clone(),
+                via: e.via.iter().map(|&i| node(i)).collect(),
+            })
+            .collect())
     }
 
     // ── Schedule ──────────────────────────────────────────
@@ -1956,7 +2025,8 @@ impl TakusuApp {
             all_depends.push(resolved);
         }
 
-        detect_cycle(&all_depends)?;
+        crate::graph::detect_cycle(&all_depends)
+            .map_err(|_| AppError::BadRequest("circular dependency detected".into()))?;
 
         // #306: Build habit_id → group index map so that tasks from the same
         // habit share a habit_group index, enabling the consistency bonus.

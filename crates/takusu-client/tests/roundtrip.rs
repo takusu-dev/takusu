@@ -340,3 +340,34 @@ fn client_error_is_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<ClientError>();
 }
+
+#[test]
+fn dependency_analysis_response_deserialization() {
+    let json = json!({
+        "redundant": [
+            {
+                "from": "task-1", "from_title": "レポート提出",
+                "to": "task-3", "to_title": "資料集め",
+                "via": [
+                    {"id": "task-1", "title": "レポート提出"},
+                    {"id": "task-2", "title": "下書き"},
+                    {"id": "task-3", "title": "資料集め"}
+                ]
+            }
+        ]
+    });
+    let resp: DependencyAnalysisResponse = serde_json::from_value(json).unwrap();
+    assert_eq!(resp.redundant.len(), 1);
+    let r = &resp.redundant[0];
+    assert_eq!(r.from, "task-1");
+    assert_eq!(r.to, "task-3");
+    assert_eq!(r.via.len(), 3);
+    assert_eq!(r.via[1].title, "下書き");
+}
+
+#[test]
+fn dependency_analysis_empty_response() {
+    let json = json!({ "redundant": [] });
+    let resp: DependencyAnalysisResponse = serde_json::from_value(json).unwrap();
+    assert!(resp.redundant.is_empty());
+}

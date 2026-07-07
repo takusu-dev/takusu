@@ -2646,3 +2646,204 @@ async fn habit_period_update_changes_window_mode() {
     let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
     assert_eq!(body["window_mode"].as_str().unwrap(), "day");
 }
+
+// ── Dependency analysis (#355) ─────────────────────────────────────────
+
+/// Helper: create a bare task and return its id.
+async fn create_task_simple(app: &axum::Router, title: &str) -> String {
+    let req = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": title,
+            "end_at": "2026-07-08T18:00:00Z",
+            "avg_minutes": 30,
+            "depends": [],
+            "abandonability": 0.5
+        }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    body["id"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn task_dependency_analysis_detects_redundant_edge() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let t1 = create_task_simple(&app, "資料集め").await;
+    let t2 = create_task_simple(&app, "下書き").await;
+    let t3 = create_task_simple(&app, "レポート提出").await;
+
+    // t2 depends on t1; t3 depends on t2 and t1 (t3→t1 redundant via t3→t2→t1).
+    let req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{t2}"),
+        json!({ "depends": [t1] }),
+    );
+    app.clone().oneshot(req).await.unwrap();
+    let req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{t3}"),
+        json!({ "depends": [t2, t1] }),
+    );
+    app.clone().oneshot(req).await.unwrap();
+
+    let req = auth_req(Method::GET, "/api/tasks/dependency-analysis");
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let redundant = body["redundant"].as_array().unwrap();
+    assert_eq!(redundant.len(), 1);
+    assert_eq!(redundant[0]["from"], t3);
+    assert_eq!(redundant[0]["to"], t1);
+    let via = redundant[0]["via"].as_array().unwrap();
+    assert_eq!(via.len(), 3);
+    assert_eq!(via[0]["id"], t3);
+    assert_eq!(via[2]["id"], t1);
+
+    // Remove the redundant edge (t3→t1) → analysis becomes empty.
+    let req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{t3}"),
+        json!({ "depends": [t2] }),
+    );
+    app.clone().oneshot(req).await.unwrap();
+    let req = auth_req(Method::GET, "/api/tasks/dependency-analysis");
+    let res = app.clone().oneshot(req).await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(body["redundant"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn task_dependency_analysis_excludes_done_tasks() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let t1 = create_task_simple(&app, "資料集め").await;
+    let t2 = create_task_simple(&app, "下書き").await;
+    let t3 = create_task_simple(&app, "レポート提出").await;
+
+    let req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{t2}"),
+        json!({ "depends": [t1] }),
+    );
+    app.clone().oneshot(req).await.unwrap();
+    let req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{t3}"),
+        json!({ "depends": [t2, t1] }),
+    );
+    app.clone().oneshot(req).await.unwrap();
+
+    // Mark t1 completed — the redundant edge t3→t1 should disappear
+    // because t1 is excluded from analysis.
+    let req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{t1}"),
+        json!({ "status": "completed" }),
+    );
+    app.clone().oneshot(req).await.unwrap();
+
+    let req = auth_req(Method::GET, "/api/tasks/dependency-analysis");
+    let res = app.clone().oneshot(req).await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(body["redundant"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn task_dependency_analysis_empty_when_no_deps() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    create_task_simple(&app, "単独タスク").await;
+
+    let req = auth_req(Method::GET, "/api/tasks/dependency-analysis");
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(body["redundant"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn habit_step_dependency_analysis_detects_redundant_edge() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "ステップ依存習慣").await;
+
+    // 3 steps: s1 (no deps), s2 depends on s1, s3 depends on s2 and s1.
+    let req = auth_req_body(
+        Method::PUT,
+        &format!("/api/habits/{habit_id}/steps"),
+        json!([
+            { "id": "s1", "position": 0, "title": "資料集め", "start_time": "06:00", "end_time": "06:30", "avg_minutes": 30 },
+            { "id": "s2", "position": 1, "title": "下書き", "start_time": "06:30", "end_time": "07:00", "avg_minutes": 30, "depends_on": ["s1"] },
+            { "id": "s3", "position": 2, "title": "提出", "start_time": "07:00", "end_time": "07:30", "avg_minutes": 30, "depends_on": ["s2", "s1"] }
+        ]),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let req = auth_req(
+        Method::GET,
+        &format!("/api/habits/{habit_id}/steps/dependency-analysis"),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let redundant = body["redundant"].as_array().unwrap();
+    assert_eq!(redundant.len(), 1);
+    assert_eq!(redundant[0]["from"], "s3");
+    assert_eq!(redundant[0]["to"], "s1");
+    let via = redundant[0]["via"].as_array().unwrap();
+    assert_eq!(via.len(), 3);
+    assert_eq!(via[0]["id"], "s3");
+    assert_eq!(via[2]["id"], "s1");
+
+    // Remove the redundant edge (s3→s1) → analysis becomes empty.
+    let req = auth_req_body(
+        Method::PUT,
+        &format!("/api/habits/{habit_id}/steps"),
+        json!([
+            { "id": "s1", "position": 0, "title": "資料集め", "start_time": "06:00", "end_time": "06:30", "avg_minutes": 30 },
+            { "id": "s2", "position": 1, "title": "下書き", "start_time": "06:30", "end_time": "07:00", "avg_minutes": 30, "depends_on": ["s1"] },
+            { "id": "s3", "position": 2, "title": "提出", "start_time": "07:00", "end_time": "07:30", "avg_minutes": 30, "depends_on": ["s2"] }
+        ]),
+    );
+    app.clone().oneshot(req).await.unwrap();
+    let req = auth_req(
+        Method::GET,
+        &format!("/api/habits/{habit_id}/steps/dependency-analysis"),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(body["redundant"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn habit_step_dependency_analysis_empty_when_no_deps() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "無依存習慣").await;
+
+    let req = auth_req_body(
+        Method::PUT,
+        &format!("/api/habits/{habit_id}/steps"),
+        json!([
+            { "id": "s1", "position": 0, "title": "A", "start_time": "06:00", "end_time": "06:30", "avg_minutes": 30 },
+            { "id": "s2", "position": 1, "title": "B", "start_time": "06:30", "end_time": "07:00", "avg_minutes": 30 }
+        ]),
+    );
+    app.clone().oneshot(req).await.unwrap();
+
+    let req = auth_req(
+        Method::GET,
+        &format!("/api/habits/{habit_id}/steps/dependency-analysis"),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(body["redundant"].as_array().unwrap().is_empty());
+}

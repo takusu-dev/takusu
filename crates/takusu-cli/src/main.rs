@@ -257,6 +257,10 @@ enum TaskCommands {
 
     /// Change task status (pending, scheduled, in_progress, completed, skipped)
     Status { id: String, status: String },
+
+    /// Detect and offer to remove redundant (composite) dependency edges (#355)
+    #[command(visible_alias = "deps-check")]
+    DepsCheck,
 }
 
 #[derive(Subcommand)]
@@ -394,6 +398,10 @@ enum HabitCommands {
         #[command(subcommand)]
         command: PauseCommands,
     },
+
+    /// Detect and offer to remove redundant step dependency edges (#355)
+    #[command(visible_alias = "steps-check")]
+    StepsCheck { id: String },
 }
 
 #[derive(Subcommand)]
@@ -828,6 +836,9 @@ async fn run_task(
                 DisplayMode::Simple => display_simple::display_tasks(&[task], tz, &habit_map),
             }
         }
+        TaskCommands::DepsCheck => {
+            deps_check_tasks(app).await?;
+        }
     }
     Ok(())
 }
@@ -1043,6 +1054,9 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
             println!("Habit {id} deleted.");
         }
         HabitCommands::Pause { command } => run_pause(mode, app, command).await?,
+        HabitCommands::StepsCheck { id } => {
+            deps_check_steps(app, &id).await?;
+        }
     }
     Ok(())
 }
@@ -1303,6 +1317,240 @@ async fn run_config(cmd: ConfigCommands, app: &TakusuApp) -> Result<(), AppError
                 resp.tz, resp.sleep_start, resp.sleep_end
             );
         }
+    }
+    Ok(())
+}
+
+// ── Dependency analysis (#355) ─────────────────────────────────────────
+
+use takusu_local_lib::app::DependencyNode;
+
+fn format_path(via: &[DependencyNode]) -> String {
+    via.iter()
+        .map(|n| n.title.clone())
+        .collect::<Vec<_>>()
+        .join("→")
+}
+
+/// Remove `to_id` from the `depends` list of task `from_id` via PATCH.
+async fn remove_task_dep(app: &TakusuApp, from_id: &str, to_id: &str) -> Result<(), AppError> {
+    let task = app.get_task(from_id).await?;
+    let mut deps: Vec<String> = serde_json::from_str(&task.depends).unwrap_or_default();
+    deps.retain(|d| d != to_id);
+    let body = takusu_storage::UpdateTask {
+        depends: Some(deps),
+        ..Default::default()
+    };
+    app.update_task(from_id, &body).await?;
+    Ok(())
+}
+
+/// Interactive loop: detect redundant task dependency edges and let the
+/// user choose which edge to remove. Iterates through all detected edges;
+/// re-analyzes only after a deletion (which may introduce new redundancies
+/// or remove some).
+async fn deps_check_tasks(app: &TakusuApp) -> Result<(), AppError> {
+    let mut redundant = app.analyze_task_dependencies().await?;
+    if redundant.is_empty() {
+        println!("冗長な依存はありません");
+        return Ok(());
+    }
+    if !is_interactive() {
+        println!("冗長な依存が見つかりました:");
+        for r in &redundant {
+            println!(
+                "  「{}」→「{}」  (経路: {})",
+                r.from_title,
+                r.to_title,
+                format_path(&r.via)
+            );
+        }
+        return Ok(());
+    }
+    let mut idx = 0;
+    while idx < redundant.len() {
+        let r = &redundant[idx];
+        println!(
+            "冗長な依存が見つかりました ({}/{}):",
+            idx + 1,
+            redundant.len()
+        );
+        println!(
+            "  「{}」 の経路があるため「{}」→「{}」 は冗長です。",
+            format_path(&r.via),
+            r.from_title,
+            r.to_title
+        );
+        // [1] remove redundant edge; [2.N] remove the Nth path edge
+        let path_pairs: Vec<(String, String)> = r
+            .via
+            .windows(2)
+            .map(|w| (w[0].id.clone(), w[1].id.clone()))
+            .collect();
+        println!("[1] 冗長な辺 {}→{} を削除", r.from_title, r.to_title);
+        for (i, (a, b)) in path_pairs.iter().enumerate() {
+            let ta = r.via.iter().find(|n| &n.id == a).unwrap().title.clone();
+            let tb = r.via.iter().find(|n| &n.id == b).unwrap().title.clone();
+            println!("[2.{}] 経路上の辺 {}→{} を削除", i + 1, ta, tb);
+        }
+        println!("[s] スキップ  [q] 終了");
+        let choice = prompt(">");
+        if choice == "q" || choice == "Q" {
+            return Ok(());
+        }
+        if choice == "s" || choice == "S" {
+            idx += 1;
+            continue;
+        }
+        if choice == "1" {
+            remove_task_dep(app, &r.from, &r.to).await?;
+            println!("削除しました: {}→{}", r.from_title, r.to_title);
+            // Re-analyze: deletion may change the set.
+            redundant = app.analyze_task_dependencies().await?;
+            // Keep current index if still valid, otherwise restart from 0.
+            if idx >= redundant.len() {
+                idx = 0;
+            }
+            continue;
+        }
+        // Try 2.1, 2.2, ...
+        if let Some(rest) = choice.strip_prefix("2.")
+            && let Ok(n) = rest.parse::<usize>()
+            && n >= 1
+            && n <= path_pairs.len()
+        {
+            let (a, b) = &path_pairs[n - 1];
+            remove_task_dep(app, a, b).await?;
+            println!("削除しました: 経路上の辺");
+            redundant = app.analyze_task_dependencies().await?;
+            if idx >= redundant.len() {
+                idx = 0;
+            }
+            continue;
+        }
+        println!("無効な選択です");
+    }
+    Ok(())
+}
+
+/// Remove `to_id` from the `depends_on` of step `from_id` within habit
+/// `habit_id` via bulk replace.
+async fn remove_step_dep(
+    app: &TakusuApp,
+    habit_id: &str,
+    from_id: &str,
+    to_id: &str,
+) -> Result<(), AppError> {
+    let steps = app.list_habit_steps(habit_id).await?;
+    let inputs: Vec<takusu_storage::HabitStepInput> = steps
+        .iter()
+        .map(|s| {
+            let mut deps: Vec<String> = serde_json::from_str(&s.depends_on).unwrap_or_default();
+            if s.id == from_id {
+                deps.retain(|d| d != to_id);
+            }
+            takusu_storage::HabitStepInput {
+                id: Some(s.id.clone()),
+                position: s.position,
+                title: s.title.clone(),
+                description: s.description.clone(),
+                start_time: s.start_time.clone(),
+                end_time: s.end_time.clone(),
+                avg_minutes: s.avg_minutes,
+                sigma_minutes: if s.sigma_minutes > 0 {
+                    Some(s.sigma_minutes)
+                } else {
+                    None
+                },
+                parallelizable: Some(s.parallelizable),
+                allows_parallel: Some(s.allows_parallel),
+                abandonability: Some(s.abandonability),
+                fixed: Some(s.fixed),
+                depends_on: deps,
+            }
+        })
+        .collect();
+    app.replace_habit_steps(habit_id, &inputs).await?;
+    Ok(())
+}
+
+/// Interactive loop for habit step redundant dependencies (#355).
+async fn deps_check_steps(app: &TakusuApp, habit_id: &str) -> Result<(), AppError> {
+    let mut redundant = app.analyze_habit_step_dependencies(habit_id).await?;
+    if redundant.is_empty() {
+        println!("冗長な依存はありません");
+        return Ok(());
+    }
+    if !is_interactive() {
+        println!("冗長な依存が見つかりました:");
+        for r in &redundant {
+            println!(
+                "  「{}」→「{}」  (経路: {})",
+                r.from_title,
+                r.to_title,
+                format_path(&r.via)
+            );
+        }
+        return Ok(());
+    }
+    let mut idx = 0;
+    while idx < redundant.len() {
+        let r = &redundant[idx];
+        println!(
+            "冗長な依存が見つかりました ({}/{}):",
+            idx + 1,
+            redundant.len()
+        );
+        println!(
+            "  「{}」 の経路があるため「{}」→「{}」 は冗長です。",
+            format_path(&r.via),
+            r.from_title,
+            r.to_title
+        );
+        let path_pairs: Vec<(String, String)> = r
+            .via
+            .windows(2)
+            .map(|w| (w[0].id.clone(), w[1].id.clone()))
+            .collect();
+        println!("[1] 冗長な辺 {}→{} を削除", r.from_title, r.to_title);
+        for (i, (a, b)) in path_pairs.iter().enumerate() {
+            let ta = r.via.iter().find(|n| &n.id == a).unwrap().title.clone();
+            let tb = r.via.iter().find(|n| &n.id == b).unwrap().title.clone();
+            println!("[2.{}] 経路上の辺 {}→{} を削除", i + 1, ta, tb);
+        }
+        println!("[s] スキップ  [q] 終了");
+        let choice = prompt(">");
+        if choice == "q" || choice == "Q" {
+            return Ok(());
+        }
+        if choice == "s" || choice == "S" {
+            idx += 1;
+            continue;
+        }
+        if choice == "1" {
+            remove_step_dep(app, habit_id, &r.from, &r.to).await?;
+            println!("削除しました: {}→{}", r.from_title, r.to_title);
+            redundant = app.analyze_habit_step_dependencies(habit_id).await?;
+            if idx >= redundant.len() {
+                idx = 0;
+            }
+            continue;
+        }
+        if let Some(rest) = choice.strip_prefix("2.")
+            && let Ok(n) = rest.parse::<usize>()
+            && n >= 1
+            && n <= path_pairs.len()
+        {
+            let (a, b) = &path_pairs[n - 1];
+            remove_step_dep(app, habit_id, a, b).await?;
+            println!("削除しました: 経路上の辺");
+            redundant = app.analyze_habit_step_dependencies(habit_id).await?;
+            if idx >= redundant.len() {
+                idx = 0;
+            }
+            continue;
+        }
+        println!("無効な選択です");
     }
     Ok(())
 }

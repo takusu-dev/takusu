@@ -11,6 +11,10 @@ pub fn router(state: AppState) -> Router {
         .route("/tasks", post(handlers::task::create_task))
         .route("/tasks", get(handlers::task::list_tasks))
         .route("/tasks/import/ical", post(handlers::task::import_ical))
+        .route(
+            "/tasks/dependency-analysis",
+            get(handlers::task::dependency_analysis),
+        )
         .route("/tasks/{id}", get(handlers::task::get_task))
         .route("/tasks/{id}", put(handlers::task::replace_task))
         .route("/tasks/{id}", patch(handlers::task::update_task))
@@ -45,6 +49,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/habits/{id}/steps",
             put(handlers::habit::replace_habit_steps),
+        )
+        .route(
+            "/habits/{id}/steps/dependency-analysis",
+            get(handlers::habit::step_dependency_analysis),
         )
         .route("/schedule", get(handlers::schedule::get_schedule))
         .route(

@@ -119,3 +119,11 @@ pub async fn replace_habit_steps(
     let steps = state.app.replace_habit_steps(&id, &body).await?;
     Ok(Json(steps))
 }
+
+pub async fn step_dependency_analysis(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    let redundant = state.app.analyze_habit_step_dependencies(&id).await?;
+    Ok(Json(serde_json::json!({ "redundant": redundant })))
+}
