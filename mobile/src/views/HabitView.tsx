@@ -145,6 +145,7 @@ export function HabitView({ client }: HabitViewProps) {
     if (!confirmed) return;
     const deleted: HabitRow[] = [];
     const deletedTasksPerHabit: TaskRow[][] = [];
+    const deletedStepsPerHabit: HabitStepRow[][] = [];
     let failed = 0;
     for (let i = 0; i < toDelete.length; i++) {
       const h = toDelete[i];
@@ -152,6 +153,7 @@ export function HabitView({ client }: HabitViewProps) {
         await client.deleteHabit(h.id);
         deleted.push(h);
         deletedTasksPerHabit.push(tasksPerHabit[i] ?? []);
+        deletedStepsPerHabit.push(stepsPerHabit[i] ?? []);
       } catch (e) {
         failed++;
         logError(`ハビット削除 (${h.id})`, e);
@@ -213,7 +215,7 @@ export function HabitView({ client }: HabitViewProps) {
             await client.updateHabit(recreated.id, { active: h.active });
           }
           // Restore steps (#95).
-          const steps = stepsPerHabit[i] ?? [];
+          const steps = deletedStepsPerHabit[i] ?? [];
           if (steps.length > 0) {
             await saveHabitSteps(
               client,
