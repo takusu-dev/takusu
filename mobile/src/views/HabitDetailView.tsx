@@ -472,14 +472,16 @@ export function HabitDetailView() {
       return;
     }
     setShowPauseModal(false);
+    let currentPauseId = created.id;
     undoRedo.push({
       description: `add pause: ${habit.title}`,
       undo: async () => {
-        await client.deleteHabitPause(habit.id, created.id);
+        await client.deleteHabitPause(habit.id, currentPauseId);
         await refresh();
       },
       redo: async () => {
-        await client.createHabitPause(habit.id, body);
+        const recreated = await client.createHabitPause(habit.id, body);
+        currentPauseId = recreated.id;
         await refresh();
       },
     });
@@ -496,18 +498,20 @@ export function HabitDetailView() {
       showError(e, '休止期間の削除に失敗');
       return;
     }
+    let currentPauseId = pauseId;
     undoRedo.push({
       description: `delete pause: ${habit.title}`,
       undo: async () => {
-        await client.createHabitPause(habit.id, {
+        const recreated = await client.createHabitPause(habit.id, {
           start_date: prev.start_date,
           end_date: prev.end_date,
           reason: prev.reason,
         });
+        currentPauseId = recreated.id;
         await refresh();
       },
       redo: async () => {
-        await client.deleteHabitPause(habit.id, pauseId);
+        await client.deleteHabitPause(habit.id, currentPauseId);
         await refresh();
       },
     });
