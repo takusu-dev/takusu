@@ -14,6 +14,8 @@ fn create_task_serialization() {
         parallelizable: Some(true),
         allows_parallel: Some(false),
         abandonability: Some(0.3),
+        ical_uid: Some("ical-123@example.com".to_string()),
+        habit_id: Some("habit-1".to_string()),
         fixed: None,
         habit_step_id: None,
     };
@@ -23,6 +25,8 @@ fn create_task_serialization() {
     assert_eq!(json["avg_minutes"], 60);
     assert_eq!(json["sigma_minutes"], 10);
     assert_eq!(json["abandonability"], 0.3);
+    assert_eq!(json["ical_uid"], "ical-123@example.com");
+    assert_eq!(json["habit_id"], "habit-1");
 }
 
 #[test]
@@ -38,6 +42,8 @@ fn create_task_defaults_are_skipped() {
         parallelizable: None,
         allows_parallel: None,
         abandonability: None,
+        ical_uid: None,
+        habit_id: None,
         fixed: None,
         habit_step_id: None,
     };
@@ -47,6 +53,8 @@ fn create_task_defaults_are_skipped() {
     assert_eq!(json["avg_minutes"], 30);
     assert!(!json.as_object().unwrap().contains_key("sigma_minutes"));
     assert!(!json.as_object().unwrap().contains_key("parallelizable"));
+    assert!(!json.as_object().unwrap().contains_key("ical_uid"));
+    assert!(!json.as_object().unwrap().contains_key("habit_id"));
 }
 
 #[test]
@@ -55,6 +63,7 @@ fn update_task_serialization() {
         title: Some("Updated".to_string()),
         status: Some("in_progress".to_string()),
         parallelizable: Some(true),
+        habit_id: Some("habit-2".to_string()),
         ..Default::default()
     };
 
@@ -62,6 +71,7 @@ fn update_task_serialization() {
     assert_eq!(json["title"], "Updated");
     assert_eq!(json["status"], "in_progress");
     assert_eq!(json["parallelizable"], true);
+    assert_eq!(json["habit_id"], "habit-2");
 }
 
 #[test]
