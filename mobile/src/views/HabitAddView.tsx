@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Checkbox } from 'react-native-paper';
+import { Checkbox, SegmentedButtons } from 'react-native-paper';
 import { Slider } from '@expo/ui/community/slider';
 import { useServer } from '@/src/api/ServerProvider';
 import { undoRedo } from '@/src/api/undoRedo';
@@ -21,14 +21,18 @@ import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RruleBuilderModal } from '@/src/components/RruleBuilderModal';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
+import { HabitStepEditor } from '@/src/components/HabitStepEditor';
 import { haptic } from '@/src/components/haptics';
 import { parseDuration } from '@/src/utils/duration';
+import { type StepDraft, saveHabitSteps } from '@/src/utils/habitSteps';
 import {
   defaultRule,
   parseRule,
   serializeRule,
   summarizeRule,
 } from '@/src/api/rrule';
+import type { WindowMode } from '@/src/api/types';
+import { WINDOW_MODE_DAY, WINDOW_MODE_PERIOD } from '@/src/api/types';
 
 export function HabitAddView() {
   const { client } = useServer();
@@ -47,6 +51,8 @@ export function HabitAddView() {
   const [parallelizable, setParallelizable] = useState(false);
   const [allowsParallel, setAllowsParallel] = useState(false);
   const [fixed, setFixed] = useState(false);
+  const [windowMode, setWindowMode] = useState<WindowMode>(WINDOW_MODE_DAY);
+  const [stepDrafts, setStepDrafts] = useState<StepDraft[]>([]);
   const [saving, setSaving] = useState(false);
   const [pickerField, setPickerField] = useState<'start' | 'end' | null>(null);
 
@@ -83,14 +89,20 @@ export function HabitAddView() {
         parallelizable,
         allows_parallel: allowsParallel,
         fixed,
+        window_mode: windowMode,
       });
+      // Save steps if any (#95). Habit body fields are ignored server-side
+      // when steps exist, but we still send them for the simple case.
+      if (stepDrafts.length > 0) {
+        await saveHabitSteps(client, habit.id, stepDrafts);
+      }
       undoRedo.push({
         description: `create habit: ${title}`,
         undo: async () => {
           await client.deleteHabit(habit.id);
         },
         redo: async () => {
-          await client.createHabit({
+          const recreated = await client.createHabit({
             title,
             recurrence,
             start_time: startTime,
@@ -101,7 +113,11 @@ export function HabitAddView() {
             parallelizable,
             allows_parallel: allowsParallel,
             fixed,
+            window_mode: windowMode,
           });
+          if (stepDrafts.length > 0) {
+            await saveHabitSteps(client, recreated.id, stepDrafts);
+          }
         },
       });
       router.back();
@@ -205,6 +221,28 @@ export function HabitAddView() {
           </Pressable>
         </View>
 
+        {/* Window mode (#window_mode) */}
+        <View style={styles.field}>
+          <Text style={[styles.label, { color: colors.gray }]}>
+            スケジュール枠
+          </Text>
+          <SegmentedButtons
+            value={windowMode}
+            onValueChange={(v) => setWindowMode(v as WindowMode)}
+            buttons={[
+              { value: WINDOW_MODE_DAY, label: '当日' },
+              { value: WINDOW_MODE_PERIOD, label: '期間内どこでも' },
+            ]}
+            theme={{ colors: { primary: BRAND_COLOR } }}
+          />
+          {windowMode === WINDOW_MODE_PERIOD && (
+            <Text style={[styles.hint, { color: colors.grayLight }]}>
+              次の周期の直前が締め切りになります
+              {stepDrafts.length > 0 && '・全ステップが期間枠を共有します'}
+            </Text>
+          )}
+        </View>
+
         <View style={styles.row}>
           <View style={[styles.field, { flex: 1 }]}>
             <Text style={[styles.label, { color: colors.gray }]}>開始時刻</Text>
@@ -236,7 +274,9 @@ export function HabitAddView() {
                   borderColor: colors.separator,
                   backgroundColor: colors.white,
                 },
+                windowMode === WINDOW_MODE_PERIOD && { opacity: 0.4 },
               ]}
+              disabled={windowMode === WINDOW_MODE_PERIOD}
               onPress={() => {
                 haptic.select();
                 setPickerField('end');
@@ -386,6 +426,21 @@ export function HabitAddView() {
           <Text style={[styles.hint, { color: colors.grayLight }]}>
             開始時刻を固定し、スケジューラの移動を許可しない
           </Text>
+        </View>
+
+        {/* Steps (#95) */}
+        <View style={styles.field}>
+          <Text style={[styles.label, { color: colors.gray }]}>ステップ</Text>
+          {stepDrafts.length > 0 && (
+            <Text style={[styles.hint, { color: colors.grayLight }]}>
+              ステップ設定が優先されます (habit 本体の時間帯・コストは無効)
+            </Text>
+          )}
+          <HabitStepEditor
+            drafts={stepDrafts}
+            onChange={setStepDrafts}
+            stepsActive={stepDrafts.length > 0}
+          />
         </View>
       </ScrollView>
 

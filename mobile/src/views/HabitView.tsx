@@ -13,10 +13,12 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { IconButton } from 'react-native-paper';
+import { Ionicons } from '@expo/vector-icons';
 import type { TakusuClient } from '@/src/api/client';
 import { showError, logError } from '@/src/api/errors';
 import { parseDepends } from '@/src/api/types';
-import type { HabitRow, TaskRow } from '@/src/api/types';
+import type { HabitPauseRow, HabitRow, TaskRow } from '@/src/api/types';
+import { WINDOW_MODE_PERIOD } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ContextMenu } from '@/src/components/ContextMenu';
@@ -35,12 +37,48 @@ export function HabitView({ client }: HabitViewProps) {
   const [habits, setHabits] = useState<HabitRow[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Badge data: step counts per habit id, and active pause per habit id.
+  const [stepCounts, setStepCounts] = useState<Map<string, number>>(new Map());
+  const [activePauses, setActivePauses] = useState<Map<string, HabitPauseRow>>(
+    new Map(),
+  );
 
   const refresh = useCallback(async () => {
     if (!client) return;
     setRefreshing(true);
     try {
-      setHabits(await client.listHabits());
+      const [habitsData, allSteps, allPauses] = await Promise.all([
+        client.listHabits(),
+        client.listAllHabitSteps().catch((e) => {
+          logError('ステップ一覧取得', e);
+          return [];
+        }),
+        client.listAllHabitPauses().catch((e) => {
+          logError('休止期間一覧取得', e);
+          return [];
+        }),
+      ]);
+      setHabits(habitsData);
+      // Build step count map.
+      const counts = new Map<string, number>();
+      for (const s of allSteps) {
+        counts.set(s.habit_id, (counts.get(s.habit_id) ?? 0) + 1);
+      }
+      setStepCounts(counts);
+      // Build active-pause map: a pause whose [start, end] contains today.
+      const today = new Date();
+      const todayStr = `${today.getFullYear()}-${(today.getMonth() + 1).toString().padStart(2, '0')}-${today.getDate().toString().padStart(2, '0')}`;
+      const active = new Map<string, HabitPauseRow>();
+      for (const p of allPauses) {
+        if (p.start_date <= todayStr && todayStr <= p.end_date) {
+          // Keep the latest-ending active pause if multiple.
+          const prev = active.get(p.habit_id);
+          if (!prev || p.end_date > prev.end_date) {
+            active.set(p.habit_id, p);
+          }
+        }
+      }
+      setActivePauses(active);
     } catch (e) {
       showError(e, 'Habit一覧の取得に失敗');
     } finally {
@@ -280,6 +318,7 @@ export function HabitView({ client }: HabitViewProps) {
                 borderColor: colors.separator,
               },
               selected.has(h.id) && styles.habitCardSelected,
+              activePauses.has(h.id) && styles.habitCardPaused,
             ]}
             onPress={() => {
               if (selected.size > 0) {
@@ -307,6 +346,59 @@ export function HabitView({ client }: HabitViewProps) {
               >
                 {h.title}
               </Text>
+              <View style={styles.badgeRow}>
+                {h.window_mode === WINDOW_MODE_PERIOD && (
+                  <View
+                    style={[
+                      styles.chip,
+                      { backgroundColor: colors.surfaceTint },
+                    ]}
+                  >
+                    <Ionicons
+                      name="calendar-number-outline"
+                      size={11}
+                      color={BRAND_COLOR}
+                    />
+                    <Text style={[styles.chipText, { color: BRAND_COLOR }]}>
+                      自由枠
+                    </Text>
+                  </View>
+                )}
+                {(stepCounts.get(h.id) ?? 0) > 0 && (
+                  <View
+                    style={[
+                      styles.chip,
+                      { backgroundColor: colors.surfaceTint },
+                    ]}
+                  >
+                    <Ionicons
+                      name="layers-outline"
+                      size={11}
+                      color={BRAND_COLOR}
+                    />
+                    <Text style={[styles.chipText, { color: BRAND_COLOR }]}>
+                      {stepCounts.get(h.id)} steps
+                    </Text>
+                  </View>
+                )}
+                {activePauses.has(h.id) && (
+                  <View
+                    style={[
+                      styles.chip,
+                      { backgroundColor: colors.surfaceTint },
+                    ]}
+                  >
+                    <Ionicons
+                      name="pause-circle"
+                      size={11}
+                      color={COLORS.red}
+                    />
+                    <Text style={[styles.chipText, { color: COLORS.red }]}>
+                      ⏸ 〜{formatPauseShort(activePauses.get(h.id)!.end_date)}
+                    </Text>
+                  </View>
+                )}
+              </View>
             </View>
             <Text style={[styles.habitTime, { color: colors.gray }]}>
               時間: {h.start_time} → {h.end_time}
@@ -343,6 +435,12 @@ export function HabitView({ client }: HabitViewProps) {
       />
     </View>
   );
+}
+
+// YYYY-MM-DD → M/D
+function formatPauseShort(s: string): string {
+  const [, m, d] = s.split('-').map((n) => parseInt(n, 10));
+  return `${m}/${d}`;
 }
 
 const styles = StyleSheet.create({
@@ -388,11 +486,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 8,
   },
   habitTitle: {
     fontSize: 16,
     fontWeight: '600',
     flex: 1,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    alignItems: 'center',
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  chipText: {
+    fontSize: 10,
+    fontWeight: '500',
+  },
+  habitCardPaused: {
+    opacity: 0.6,
   },
   habitRecurrence: {
     fontSize: 13,

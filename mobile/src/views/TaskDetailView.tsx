@@ -26,7 +26,7 @@ import { showError, logError } from '@/src/api/errors';
 import { parseDepends, parseSchedule } from '@/src/api/types';
 import type {
   TaskRow,
-  HabitRow,
+  HabitDetail,
   ScheduleEntry,
   TaskStatus,
 } from '@/src/api/types';
@@ -80,7 +80,7 @@ export function TaskDetailView() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [task, setTask] = useState<TaskRow | null>(null);
-  const [habit, setHabit] = useState<HabitRow | null>(null);
+  const [habit, setHabit] = useState<HabitDetail | null>(null);
   const [parallelTask, setParallelTask] = useState<TaskRow | null>(null);
   const [allTasks, setAllTasks] = useState<TaskRow[]>([]);
   const [editing, setEditing] = useState(false);
@@ -855,7 +855,18 @@ export function TaskDetailView() {
             <Text style={[styles.sectionLabel, { color: colors.gray }]}>
               Habit
             </Text>
-            <Text style={styles.habitLink}>{habit.title} ›</Text>
+            <Text style={styles.habitLink}>
+              {task.habit_step_id
+                ? (() => {
+                    const step = habit.steps.find(
+                      (s) => s.id === task.habit_step_id,
+                    );
+                    return step
+                      ? `${habit.title} › ${step.title}`
+                      : `${habit.title} ›`;
+                  })()
+                : `${habit.title} ›`}
+            </Text>
           </Pressable>
         )}
 

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Pressable,
   Alert,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,6 +16,7 @@ import {
   Checkbox,
   IconButton,
   Menu,
+  SegmentedButtons,
   TextInput as PaperTextInput,
 } from 'react-native-paper';
 import { Slider } from '@expo/ui/community/slider';
@@ -22,15 +24,27 @@ import { useServer } from '@/src/api/ServerProvider';
 import { undoRedo } from '@/src/api/undoRedo';
 import { showError, logError } from '@/src/api/errors';
 import { parseDepends } from '@/src/api/types';
-import type { HabitRow, TaskRow } from '@/src/api/types';
+import type {
+  HabitDetail,
+  HabitPauseRow,
+  TaskRow,
+  WindowMode,
+} from '@/src/api/types';
+import { WINDOW_MODE_DAY, WINDOW_MODE_PERIOD } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RruleBuilderModal } from '@/src/components/RruleBuilderModal';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
+import { HabitStepEditor } from '@/src/components/HabitStepEditor';
 import { parseRule, summarizeRule } from '@/src/api/rrule';
 import { haptic } from '@/src/components/haptics';
 import { CancelConfirmButton } from '@/src/components/CancelConfirmButton';
 import { parseDuration } from '@/src/utils/duration';
+import {
+  type StepDraft,
+  stepRowToDraft,
+  saveHabitSteps,
+} from '@/src/utils/habitSteps';
 
 export function HabitDetailView() {
   const { client } = useServer();
@@ -38,8 +52,9 @@ export function HabitDetailView() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const [habit, setHabit] = useState<HabitRow | null>(null);
+  const [habit, setHabit] = useState<HabitDetail | null>(null);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
+  const [pauses, setPauses] = useState<HabitPauseRow[]>([]);
 
   // edit state
   const [editing, setEditing] = useState(false);
@@ -56,9 +71,17 @@ export function HabitDetailView() {
   const [allowsParallel, setAllowsParallel] = useState(false);
   const [fixed, setFixed] = useState(false);
   const [active, setActive] = useState(true);
+  const [windowMode, setWindowMode] = useState<WindowMode>(WINDOW_MODE_DAY);
+  const [stepDrafts, setStepDrafts] = useState<StepDraft[]>([]);
   const [saving, setSaving] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
   const [pickerField, setPickerField] = useState<'start' | 'end' | null>(null);
+  // Pause-add modal state
+  const [showPauseModal, setShowPauseModal] = useState(false);
+  const [pauseFrom, setPauseFrom] = useState<Date | null>(null);
+  const [pauseTo, setPauseTo] = useState<Date | null>(null);
+  const [pauseReason, setPauseReason] = useState('');
+  const [pausePicker, setPausePicker] = useState<'from' | 'to' | null>(null);
   // Ref mirror of `editing` so refresh() can skip overwriting unsaved edits
   // when called from menu actions (toggleActive) while editing.
   const editingRef = useRef(false);
@@ -96,10 +119,24 @@ export function HabitDetailView() {
         setAllowsParallel(h.allows_parallel);
         setActive(h.active);
         setFixed(h.fixed);
+        setWindowMode(
+          (h.window_mode === WINDOW_MODE_PERIOD
+            ? WINDOW_MODE_PERIOD
+            : WINDOW_MODE_DAY) as WindowMode,
+        );
+        setStepDrafts(h.steps.map(stepRowToDraft));
       }
     } catch (e) {
       showError(e, 'Habitの取得に失敗');
       return;
+    }
+    // Fetch pauses (always, even while editing — pause add/delete are
+    // immediate actions outside the edit save flow).
+    try {
+      setPauses(await client.listHabitPauses(id));
+    } catch (e) {
+      logError('休止期間の取得', e);
+      setPauses([]);
     }
     try {
       const allTasks = await client.listTasks({ habit_id: id });
@@ -151,44 +188,93 @@ export function HabitDetailView() {
       updates.allows_parallel = allowsParallel;
     if (active !== habit.active) updates.active = active;
     if (fixed !== habit.fixed) updates.fixed = fixed;
+    if (windowMode !== habit.window_mode) updates.window_mode = windowMode;
 
-    if (Object.keys(updates).length === 0) {
+    // Detect whether steps changed (compare count + per-field equality).
+    const prevSteps = habit.steps;
+    const stepsChanged =
+      stepDrafts.length !== prevSteps.length ||
+      stepDrafts.some((d, i) => {
+        const r = prevSteps[i];
+        if (!r) return true;
+        let prevDeps: string[] = [];
+        try {
+          const parsed = JSON.parse(r.depends_on);
+          if (Array.isArray(parsed)) prevDeps = parsed as string[];
+        } catch {
+          prevDeps = [];
+        }
+        return (
+          d.id !== r.id ||
+          d.title !== r.title ||
+          d.description !== (r.description ?? undefined) ||
+          d.start_time !== r.start_time ||
+          d.end_time !== r.end_time ||
+          d.avg_minutes !== r.avg_minutes ||
+          d.sigma_minutes !== r.sigma_minutes ||
+          d.parallelizable !== r.parallelizable ||
+          d.allows_parallel !== r.allows_parallel ||
+          d.abandonability !== r.abandonability ||
+          d.fixed !== r.fixed ||
+          JSON.stringify(d.depends_on) !== JSON.stringify(prevDeps)
+        );
+      });
+
+    if (Object.keys(updates).length === 0 && !stepsChanged) {
       setEditing(false);
       return;
     }
     const prev = { ...habit };
     setSaving(true);
     try {
-      await client.updateHabit(habit.id, updates);
+      if (Object.keys(updates).length > 0) {
+        await client.updateHabit(habit.id, updates);
+      }
+      if (stepsChanged) {
+        await saveHabitSteps(client, habit.id, stepDrafts);
+      }
+      // Snapshot for undo/redo.
+      const prevUpdates = { ...updates };
+      const prevDrafts = prevSteps.map(stepRowToDraft);
+      const newDrafts = stepDrafts;
+      undoRedo.push({
+        description: `edit habit: ${habit.title}`,
+        undo: async () => {
+          await client.updateHabit(habit.id, {
+            title: prev.title,
+            description: prev.description,
+            recurrence: prev.recurrence,
+            start_time: prev.start_time,
+            end_time: prev.end_time,
+            avg_minutes: prev.avg_minutes,
+            sigma_minutes: prev.sigma_minutes,
+            abandonability: prev.abandonability,
+            parallelizable: prev.parallelizable,
+            allows_parallel: prev.allows_parallel,
+            active: prev.active,
+            fixed: prev.fixed,
+            window_mode: prev.window_mode,
+          });
+          if (stepsChanged) {
+            await saveHabitSteps(client, habit.id, prevDrafts);
+          }
+          await refresh();
+        },
+        redo: async () => {
+          if (Object.keys(prevUpdates).length > 0) {
+            await client.updateHabit(habit.id, prevUpdates);
+          }
+          if (stepsChanged) {
+            await saveHabitSteps(client, habit.id, newDrafts);
+          }
+          await refresh();
+        },
+      });
     } catch (e) {
       showError(e, 'ハビットの保存に失敗');
       setSaving(false);
       return;
     }
-    undoRedo.push({
-      description: `edit habit: ${habit.title}`,
-      undo: async () => {
-        await client.updateHabit(habit.id, {
-          title: prev.title,
-          description: prev.description,
-          recurrence: prev.recurrence,
-          start_time: prev.start_time,
-          end_time: prev.end_time,
-          avg_minutes: prev.avg_minutes,
-          sigma_minutes: prev.sigma_minutes,
-          abandonability: prev.abandonability,
-          parallelizable: prev.parallelizable,
-          allows_parallel: prev.allows_parallel,
-          active: prev.active,
-          fixed: prev.fixed,
-        });
-        await refresh();
-      },
-      redo: async () => {
-        await client.updateHabit(habit.id, updates);
-        await refresh();
-      },
-    });
     setSaving(false);
     setEditing(false);
     await refresh();
@@ -355,6 +441,92 @@ export function HabitDetailView() {
     await refresh();
   }
 
+  function openPauseModal() {
+    setMenuVisible(false);
+    setPauseFrom(null);
+    setPauseTo(null);
+    setPauseReason('');
+    setShowPauseModal(true);
+  }
+
+  function dateToYMD(d: Date): string {
+    return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+  }
+
+  async function addPause() {
+    if (!client || !habit || !pauseFrom || !pauseTo) return;
+    if (pauseTo < pauseFrom) {
+      showError('終了日は開始日以降にしてください', '休止期間');
+      return;
+    }
+    const body = {
+      start_date: dateToYMD(pauseFrom),
+      end_date: dateToYMD(pauseTo),
+      reason: pauseReason.trim() || undefined,
+    };
+    let created: HabitPauseRow;
+    try {
+      created = await client.createHabitPause(habit.id, body);
+    } catch (e) {
+      showError(e, '休止期間の追加に失敗');
+      return;
+    }
+    setShowPauseModal(false);
+    undoRedo.push({
+      description: `add pause: ${habit.title}`,
+      undo: async () => {
+        await client.deleteHabitPause(habit.id, created.id);
+        await refresh();
+      },
+      redo: async () => {
+        await client.createHabitPause(habit.id, body);
+        await refresh();
+      },
+    });
+    await refresh();
+  }
+
+  async function deletePause(pauseId: string) {
+    if (!client || !habit) return;
+    const prev = pauses.find((p) => p.id === pauseId);
+    if (!prev) return;
+    try {
+      await client.deleteHabitPause(habit.id, pauseId);
+    } catch (e) {
+      showError(e, '休止期間の削除に失敗');
+      return;
+    }
+    undoRedo.push({
+      description: `delete pause: ${habit.title}`,
+      undo: async () => {
+        await client.createHabitPause(habit.id, {
+          start_date: prev.start_date,
+          end_date: prev.end_date,
+          reason: prev.reason,
+        });
+        await refresh();
+      },
+      redo: async () => {
+        await client.deleteHabitPause(habit.id, pauseId);
+        await refresh();
+      },
+    });
+    await refresh();
+  }
+
+  // Is today within a pause period? (for highlighting the active pause.)
+  function pauseIsActive(p: HabitPauseRow): boolean {
+    const today = new Date();
+    const todayStr = dateToYMD(today);
+    return p.start_date <= todayStr && todayStr <= p.end_date;
+  }
+
+  function formatPauseDate(s: string): string {
+    // YYYY-MM-DD → M/D
+    const [, m, d] = s.split('-').map((n) => parseInt(n, 10));
+    return `${m}/${d}`;
+  }
+
   if (!habit) {
     return (
       <View style={[styles.container, { backgroundColor: colors.white }]}>
@@ -451,6 +623,11 @@ export function HabitDetailView() {
                 }
               />
               <Menu.Item
+                onPress={openPauseModal}
+                title="休止期間を追加..."
+                leadingIcon="calendar-remove-outline"
+              />
+              <Menu.Item
                 onPress={deleteHabit}
                 title="削除"
                 leadingIcon="trash-can-outline"
@@ -505,6 +682,52 @@ export function HabitDetailView() {
           )}
         </View>
 
+        {/* Pause periods (#303) */}
+        <View style={styles.section}>
+          <Text style={[styles.label, { color: colors.gray }]}>休止期間</Text>
+          {pauses.length === 0 ? (
+            <Text style={[styles.value, { color: colors.black }]}>(なし)</Text>
+          ) : (
+            pauses.map((p) => (
+              <View
+                key={p.id}
+                style={[
+                  styles.pauseRow,
+                  {
+                    backgroundColor: pauseIsActive(p)
+                      ? colors.surfaceTint
+                      : colors.surface,
+                    borderColor: pauseIsActive(p)
+                      ? BRAND_COLOR
+                      : colors.separator,
+                  },
+                ]}
+              >
+                <Ionicons
+                  name="pause-circle-outline"
+                  size={18}
+                  color={pauseIsActive(p) ? BRAND_COLOR : colors.gray}
+                />
+                <Text style={[styles.pauseText, { color: colors.black }]}>
+                  {formatPauseDate(p.start_date)} 〜{' '}
+                  {formatPauseDate(p.end_date)}
+                  {p.reason ? `  ${p.reason}` : ''}
+                </Text>
+                <Pressable onPress={() => deletePause(p.id)} hitSlop={8}>
+                  <Ionicons name="close" size={18} color={COLORS.red} />
+                </Pressable>
+              </View>
+            ))
+          )}
+          <Pressable
+            style={[styles.addPauseButton, { borderColor: BRAND_COLOR }]}
+            onPress={openPauseModal}
+          >
+            <Ionicons name="add" size={18} color={BRAND_COLOR} />
+            <Text style={styles.addPauseText}>休止期間を追加</Text>
+          </Pressable>
+        </View>
+
         {/* Recurrence */}
         <View style={styles.section}>
           <View style={styles.rruleHeader}>
@@ -556,8 +779,52 @@ export function HabitDetailView() {
           )}
         </View>
 
-        {/* Time */}
+        {/* Window mode (#window_mode) */}
         <View style={styles.section}>
+          <Text style={[styles.label, { color: colors.gray }]}>
+            スケジュール枠
+          </Text>
+          {editing ? (
+            <>
+              <SegmentedButtons
+                value={windowMode}
+                onValueChange={(v) => setWindowMode(v as WindowMode)}
+                buttons={[
+                  {
+                    value: WINDOW_MODE_DAY,
+                    label: '当日',
+                  },
+                  {
+                    value: WINDOW_MODE_PERIOD,
+                    label: '期間内どこでも',
+                  },
+                ]}
+                theme={{ colors: { primary: BRAND_COLOR } }}
+              />
+              {windowMode === WINDOW_MODE_PERIOD && (
+                <Text style={[styles.hint, { color: colors.grayLight }]}>
+                  次の周期の直前が締め切りになります
+                  {stepDrafts.length > 0 && '・全ステップが期間枠を共有します'}
+                </Text>
+              )}
+            </>
+          ) : (
+            <Text style={[styles.value, { color: colors.black }]}>
+              {habit.window_mode === WINDOW_MODE_PERIOD
+                ? '期間内どこでも'
+                : '当日'}
+            </Text>
+          )}
+        </View>
+
+        {/* Time */}
+        <View
+          style={[
+            styles.section,
+            stepDrafts.length > 0 && editing && styles.sectionDimmed,
+          ]}
+          pointerEvents={stepDrafts.length > 0 && editing ? 'none' : 'auto'}
+        >
           <Text style={[styles.label, { color: colors.gray }]}>時間</Text>
           {editing ? (
             <View style={styles.row}>
@@ -588,7 +855,9 @@ export function HabitDetailView() {
                     borderColor: colors.separator,
                     backgroundColor: colors.white,
                   },
+                  windowMode === WINDOW_MODE_PERIOD && { opacity: 0.4 },
                 ]}
+                disabled={windowMode === WINDOW_MODE_PERIOD}
                 onPress={() => {
                   haptic.select();
                   setPickerField('end');
@@ -607,10 +876,21 @@ export function HabitDetailView() {
               {habit.start_time} → {habit.end_time}
             </Text>
           )}
+          {editing && windowMode === WINDOW_MODE_PERIOD && (
+            <Text style={[styles.hint, { color: colors.grayLight }]}>
+              終了時刻は次の周期の直前が自動設定されます
+            </Text>
+          )}
         </View>
 
         {/* Cost */}
-        <View style={styles.section}>
+        <View
+          style={[
+            styles.section,
+            stepDrafts.length > 0 && editing && styles.sectionDimmed,
+          ]}
+          pointerEvents={stepDrafts.length > 0 && editing ? 'none' : 'auto'}
+        >
           <Text style={[styles.label, { color: colors.gray }]}>コスト</Text>
           {editing ? (
             <View style={styles.row}>
@@ -658,7 +938,13 @@ export function HabitDetailView() {
         </View>
 
         {/* Abandonability */}
-        <View style={styles.section}>
+        <View
+          style={[
+            styles.section,
+            stepDrafts.length > 0 && editing && styles.sectionDimmed,
+          ]}
+          pointerEvents={stepDrafts.length > 0 && editing ? 'none' : 'auto'}
+        >
           <Text style={[styles.label, { color: colors.gray }]}>
             abandonability
           </Text>
@@ -685,7 +971,13 @@ export function HabitDetailView() {
         </View>
 
         {/* Parallel config */}
-        <View style={styles.section}>
+        <View
+          style={[
+            styles.section,
+            stepDrafts.length > 0 && editing && styles.sectionDimmed,
+          ]}
+          pointerEvents={stepDrafts.length > 0 && editing ? 'none' : 'auto'}
+        >
           <Text style={[styles.label, { color: colors.gray }]}>並列設定</Text>
           {editing ? (
             <View style={styles.toggleRow}>
@@ -761,7 +1053,13 @@ export function HabitDetailView() {
         </View>
 
         {/* Fixed */}
-        <View style={styles.section}>
+        <View
+          style={[
+            styles.section,
+            stepDrafts.length > 0 && editing && styles.sectionDimmed,
+          ]}
+          pointerEvents={stepDrafts.length > 0 && editing ? 'none' : 'auto'}
+        >
           <Text style={[styles.label, { color: colors.gray }]}>時間固定</Text>
           {editing ? (
             <>
@@ -780,6 +1078,66 @@ export function HabitDetailView() {
               disabled
               color={BRAND_COLOR}
             />
+          )}
+        </View>
+
+        {/* Steps (#95) */}
+        <View style={styles.section}>
+          <Text style={[styles.label, { color: colors.gray }]}>ステップ</Text>
+          {stepDrafts.length > 0 && editing && (
+            <Text style={[styles.hint, { color: colors.grayLight }]}>
+              ステップ設定が優先されます (habit 本体の時間帯・コストは無効)
+            </Text>
+          )}
+          {editing ? (
+            <HabitStepEditor
+              drafts={stepDrafts}
+              onChange={setStepDrafts}
+              stepsActive={stepDrafts.length > 0}
+            />
+          ) : stepDrafts.length === 0 ? (
+            <Text style={[styles.value, { color: colors.black }]}>(なし)</Text>
+          ) : (
+            <View style={styles.stepList}>
+              {stepDrafts.map((d, i) => {
+                const depLabels = d.depends_on
+                  .map((t) => stepDrafts.find((x) => x.tempId === t))
+                  .filter(Boolean)
+                  .map(
+                    (x) =>
+                      `${stepDrafts.indexOf(x!) + 1}.${x!.title || '(無題)'}`,
+                  );
+                return (
+                  <View
+                    key={d.tempId}
+                    style={[
+                      styles.stepViewCard,
+                      { backgroundColor: colors.surface },
+                    ]}
+                  >
+                    <Text style={[styles.stepViewIdx, { color: BRAND_COLOR }]}>
+                      {i + 1}
+                    </Text>
+                    <View style={styles.stepViewBody}>
+                      <Text
+                        style={[styles.stepViewTitle, { color: colors.black }]}
+                      >
+                        {d.title || '(無題)'}
+                      </Text>
+                      <Text
+                        style={[styles.stepViewMeta, { color: colors.gray }]}
+                      >
+                        {d.start_time}-{d.end_time} · {d.avg_minutes}m
+                        {d.sigma_minutes > 0 ? `±${d.sigma_minutes}` : ''}
+                        {depLabels.length > 0
+                          ? ` · 依存: ${depLabels.join(', ')}`
+                          : ''}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
           )}
         </View>
 
@@ -861,6 +1219,133 @@ export function HabitDetailView() {
           setPickerField(null);
         }}
         onCancel={() => setPickerField(null)}
+      />
+
+      {/* Pause-add modal (#303) */}
+      <Modal
+        visible={showPauseModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowPauseModal(false)}
+      >
+        <Pressable
+          style={pauseStyles.overlay}
+          onPress={() => setShowPauseModal(false)}
+        >
+          <Pressable
+            style={[
+              pauseStyles.sheet,
+              {
+                backgroundColor: colors.white,
+                paddingBottom: 24 + insets.bottom,
+              },
+            ]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={pauseStyles.header}>
+              <Text style={[pauseStyles.title, { color: colors.black }]}>
+                休止期間を追加
+              </Text>
+              <Pressable onPress={() => setShowPauseModal(false)}>
+                <Ionicons name="close" size={24} color={colors.gray} />
+              </Pressable>
+            </View>
+
+            <Pressable
+              style={[pauseStyles.fieldRow, { borderColor: colors.separator }]}
+              onPress={() => {
+                haptic.select();
+                setPausePicker('from');
+              }}
+            >
+              <Ionicons name="calendar-outline" size={20} color={BRAND_COLOR} />
+              <Text style={[pauseStyles.fieldLabel, { color: colors.gray }]}>
+                開始日
+              </Text>
+              <Text style={[pauseStyles.fieldValue, { color: colors.black }]}>
+                {pauseFrom ? dateToYMD(pauseFrom) : '選択…'}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              style={[pauseStyles.fieldRow, { borderColor: colors.separator }]}
+              onPress={() => {
+                haptic.select();
+                setPausePicker('to');
+              }}
+            >
+              <Ionicons name="calendar-outline" size={20} color={BRAND_COLOR} />
+              <Text style={[pauseStyles.fieldLabel, { color: colors.gray }]}>
+                終了日
+              </Text>
+              <Text style={[pauseStyles.fieldValue, { color: colors.black }]}>
+                {pauseTo ? dateToYMD(pauseTo) : '選択…'}
+              </Text>
+            </Pressable>
+
+            <PaperTextInput
+              mode="outlined"
+              label="理由 (任意)"
+              value={pauseReason}
+              onChangeText={setPauseReason}
+              outlineColor={colors.separator}
+              activeOutlineColor={BRAND_COLOR}
+              style={{ marginTop: 8 }}
+            />
+
+            <View style={pauseStyles.actionRow}>
+              <Pressable
+                style={[
+                  pauseStyles.cancelButton,
+                  { borderColor: colors.separator },
+                ]}
+                onPress={() => setShowPauseModal(false)}
+              >
+                <Text
+                  style={[pauseStyles.cancelText, { color: colors.grayDark }]}
+                >
+                  キャンセル
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  pauseStyles.confirmButton,
+                  { backgroundColor: BRAND_COLOR },
+                  (!pauseFrom || !pauseTo) && { opacity: 0.4 },
+                ]}
+                disabled={!pauseFrom || !pauseTo}
+                onPress={() => {
+                  haptic.medium();
+                  addPause();
+                }}
+              >
+                <Text style={pauseStyles.confirmText}>追加</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <DateTimePickerModal
+        visible={pausePicker !== null}
+        mode="date"
+        label={pausePicker === 'from' ? '開始日' : '終了日'}
+        value={
+          pausePicker === 'from'
+            ? (pauseFrom ?? new Date())
+            : (pauseTo ?? pauseFrom ?? new Date())
+        }
+        minimumDate={
+          pausePicker === 'to' ? (pauseFrom ?? undefined) : undefined
+        }
+        onConfirm={(date) => {
+          if (date) {
+            if (pausePicker === 'from') setPauseFrom(date);
+            else setPauseTo(date);
+          }
+          setPausePicker(null);
+        }}
+        onCancel={() => setPausePicker(null)}
       />
     </View>
   );
@@ -1011,5 +1496,133 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     fontSize: 18,
     fontWeight: '700',
+  },
+  sectionDimmed: {
+    opacity: 0.45,
+  },
+  pauseRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    marginTop: 4,
+  },
+  pauseText: {
+    flex: 1,
+    fontSize: 14,
+  },
+  addPauseButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderRadius: 8,
+    paddingVertical: 8,
+    marginTop: 6,
+  },
+  addPauseText: {
+    color: BRAND_COLOR,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  stepList: {
+    gap: 6,
+    marginTop: 4,
+  },
+  stepViewCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  stepViewIdx: {
+    fontSize: 16,
+    fontWeight: '700',
+    minWidth: 20,
+  },
+  stepViewBody: {
+    flex: 1,
+    gap: 2,
+  },
+  stepViewTitle: {
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  stepViewMeta: {
+    fontSize: 12,
+  },
+});
+
+const pauseStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  fieldRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    marginBottom: 8,
+  },
+  fieldLabel: {
+    flex: 1,
+    fontSize: 15,
+  },
+  fieldValue: {
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 16,
+  },
+  cancelButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  cancelText: {
+    fontSize: 15,
+  },
+  confirmButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  confirmText: {
+    color: COLORS.white,
+    fontSize: 15,
+    fontWeight: '600',
   },
 });

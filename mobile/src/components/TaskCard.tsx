@@ -45,6 +45,23 @@ function formatTime(iso?: string): string {
     .padStart(2, '0')}`;
 }
 
+// Format a deadline hint "〜M/D" when the task's deadline (end_at) falls on
+// a different day than the scheduled start — i.e. a multi-day window
+// (period-mode habits, #window_mode). Returns '' for same-day tasks.
+function deadlineHint(task: TaskRow, scheduleStart?: string): string {
+  if (!task.end_at || !scheduleStart) return '';
+  const start = new Date(scheduleStart);
+  const end = new Date(task.end_at);
+  if (
+    start.getFullYear() === end.getFullYear() &&
+    start.getMonth() === end.getMonth() &&
+    start.getDate() === end.getDate()
+  ) {
+    return '';
+  }
+  return `〜${end.getMonth() + 1}/${end.getDate()}`;
+}
+
 function TaskCardImpl({
   task,
   scheduleStart,
@@ -227,6 +244,14 @@ function TaskCardImpl({
               <Text style={[styles.costText, { color: colors.gray }]}>
                 {task.avg_minutes}m ±{task.sigma_minutes}
               </Text>
+              {(() => {
+                const hint = deadlineHint(task, scheduleStart);
+                return hint ? (
+                  <Text style={[styles.deadlineHint, { color: colors.gray }]}>
+                    {hint}
+                  </Text>
+                ) : null;
+              })()}
             </View>
           </Pressable>
         </Reanimated.View>
@@ -317,6 +342,12 @@ const styles = StyleSheet.create({
   costText: {
     fontSize: 11,
     fontVariant: ['tabular-nums'],
+  },
+  deadlineHint: {
+    fontSize: 10,
+    fontVariant: ['tabular-nums'],
+    textAlign: 'right',
+    marginTop: 1,
   },
 });
 

@@ -4,8 +4,13 @@ import type {
   UpdateTask,
   TaskQuery,
   HabitRow,
+  HabitDetail,
   CreateHabit,
   UpdateHabit,
+  HabitPauseRow,
+  CreateHabitPause,
+  HabitStepRow,
+  HabitStepInput,
   ScheduleRow,
   GenerateSchedule,
   RescheduleRequest,
@@ -112,7 +117,7 @@ export class TakusuClient {
     return this.request('GET', '/api/habits');
   }
 
-  async getHabit(id: string): Promise<HabitRow> {
+  async getHabit(id: string): Promise<HabitDetail> {
     return this.request('GET', `/api/habits/${id}`);
   }
 
@@ -130,6 +135,42 @@ export class TakusuClient {
 
   async deleteHabit(id: string): Promise<void> {
     return this.request('DELETE', `/api/habits/${id}`);
+  }
+
+  // ── Habit pauses (#303) ──
+  async listHabitPauses(id: string): Promise<HabitPauseRow[]> {
+    return this.request('GET', `/api/habits/${id}/pauses`);
+  }
+
+  async listAllHabitPauses(): Promise<HabitPauseRow[]> {
+    return this.request('GET', '/api/habits/pauses');
+  }
+
+  async createHabitPause(
+    id: string,
+    body: CreateHabitPause,
+  ): Promise<HabitPauseRow> {
+    return this.request('POST', `/api/habits/${id}/pauses`, body);
+  }
+
+  async deleteHabitPause(id: string, pauseId: string): Promise<void> {
+    return this.request('DELETE', `/api/habits/${id}/pauses/${pauseId}`);
+  }
+
+  // ── Habit steps (#95) ──
+  async listHabitSteps(id: string): Promise<HabitStepRow[]> {
+    return this.request('GET', `/api/habits/${id}/steps`);
+  }
+
+  async listAllHabitSteps(): Promise<HabitStepRow[]> {
+    return this.request('GET', '/api/habits/steps');
+  }
+
+  async replaceHabitSteps(
+    id: string,
+    steps: HabitStepInput[],
+  ): Promise<HabitStepRow[]> {
+    return this.request('PUT', `/api/habits/${id}/steps`, steps);
   }
 
   // ── Schedule ──

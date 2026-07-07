@@ -25,6 +25,7 @@ export interface TaskRow {
   ical_uid?: string;
   user_edited: boolean;
   fixed: boolean;
+  habit_step_id?: string; // habit step that generated this task (#95)
   created_at: string;
   updated_at: string;
 }
@@ -119,6 +120,71 @@ export interface UpdateHabit {
   window_mode?: string;
 }
 
+// ── Habit pauses (#303) ──
+// A pause period suppresses task generation for a habit.
+// start_date / end_date are inclusive 'YYYY-MM-DD' strings in the user's
+// local timezone.
+
+export interface HabitPauseRow {
+  id: string;
+  habit_id: string;
+  start_date: string;
+  end_date: string;
+  reason?: string;
+  created_at: string;
+}
+
+export interface CreateHabitPause {
+  start_date: string;
+  end_date: string;
+  reason?: string;
+}
+
+// ── Habit steps (#95) ──
+// A step of a multi-step habit. Each step produces one task per
+// occurrence with its own window / cost / flags. Steps form a DAG via
+// depends_on (JSON array of step ids within the same habit).
+
+export interface HabitStepRow {
+  id: string;
+  habit_id: string;
+  position: number;
+  title: string;
+  description?: string;
+  start_time: string;
+  end_time: string;
+  avg_minutes: number;
+  sigma_minutes: number;
+  parallelizable: boolean;
+  allows_parallel: boolean;
+  abandonability: number;
+  fixed: boolean;
+  depends_on: string; // JSON-encoded Vec<String>
+  created_at: string;
+}
+
+export interface HabitStepInput {
+  id?: string;
+  position: number;
+  title: string;
+  description?: string;
+  start_time: string;
+  end_time: string;
+  avg_minutes: number;
+  sigma_minutes?: number;
+  parallelizable?: boolean;
+  allows_parallel?: boolean;
+  abandonability?: number;
+  fixed?: boolean;
+  depends_on: string[];
+}
+
+// Habit detail response: habit fields + steps (#95). GET /api/habits/:id
+// returns this shape (steps flattened alongside the habit fields).
+export interface HabitDetail extends HabitRow {
+  steps: HabitStepRow[];
+}
+
 export interface ScheduleEntry {
   task_id: string;
   start_at: string;
@@ -211,6 +277,21 @@ export function parseDepends(depends: string): string[] {
     return [];
   }
 }
+
+// Helper: parse depends_on JSON string (habit steps, #95)
+export function parseDependsOn(dependsOn: string): string[] {
+  try {
+    const parsed = JSON.parse(dependsOn);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+// window_mode values for habits (#window_mode)
+export const WINDOW_MODE_DAY = 'day';
+export const WINDOW_MODE_PERIOD = 'period';
+export type WindowMode = typeof WINDOW_MODE_DAY | typeof WINDOW_MODE_PERIOD;
 
 // Helper: parse schedule JSON string
 export function parseSchedule(schedule: string): ScheduleEntry[] {
