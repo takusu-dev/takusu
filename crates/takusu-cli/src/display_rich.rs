@@ -179,6 +179,9 @@ pub fn display_habit_detail(habit: &HabitRow) {
     {
         println!("\nDescription: {desc}");
     }
+    if habit.window_mode == "period" {
+        println!("\nWindow: period (schedulable anywhere until next occurrence)");
+    }
 }
 
 pub fn display_tasks(

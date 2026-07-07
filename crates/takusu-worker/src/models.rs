@@ -144,6 +144,8 @@ pub struct HabitRow {
     pub active: bool,
     #[serde(with = "bool_compat", default)]
     pub fixed: bool,
+    #[serde(default)]
+    pub window_mode: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -167,6 +169,8 @@ pub struct CreateHabit {
     pub abandonability: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fixed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_mode: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -195,6 +199,8 @@ pub struct UpdateHabit {
     pub active: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fixed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_mode: Option<String>,
 }
 
 /// A pause period that suppresses task generation for a habit (#303).

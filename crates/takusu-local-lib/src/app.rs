@@ -49,6 +49,19 @@ fn validate_recurrence(recurrence: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Validate the `window_mode` field of a habit (#window_mode). Accepts
+/// `'day'` (default) or `'period'`. Mirrors the worker-side
+/// `validate_window_mode`.
+fn validate_window_mode(mode: &str) -> Result<(), AppError> {
+    if mode == "day" || mode == "period" {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest(format!(
+            "window_mode must be 'day' or 'period' (got {mode:?})"
+        )))
+    }
+}
+
 /// Validate a `HH:MM` time string (#95).
 fn validate_hhmm(s: &str) -> Result<(), AppError> {
     let parts: Vec<&str> = s.split(':').collect();
@@ -197,6 +210,42 @@ fn step_to_core_task(
         fixed: step.fixed,
         habit_group: None,
     })
+}
+
+/// Build a `CoreTask` for a step occurrence in `period` window mode
+/// (#window_mode). All steps of a period-mode habit share the same window
+/// (`window_start`..`deadline`), so the step's own `start_time`/`end_time`
+/// are ignored. The step's avg/sigma/flags still apply.
+fn step_to_core_task_period(step: &HabitStepRow, window_start: Point, deadline: Point) -> CoreTask {
+    let avg_slots = (step.avg_minutes / 5) as u64;
+    let sigma_slots = (step.sigma_minutes / 5) as u64;
+    CoreTask {
+        id: 0,
+        start: Some(window_start),
+        end: deadline,
+        cost_estimate: NormalDist::new(avg_slots, sigma_slots),
+        depends: vec![],
+        parallelizable: step.parallelizable,
+        allows_parallel: step.allows_parallel,
+        abandonability: step.abandonability,
+        fixed: step.fixed,
+        habit_group: None,
+    }
+}
+
+/// Fallback deadline (in slots) for the last occurrence of a period-mode
+/// habit when there is no next occurrence to derive the deadline from
+/// (e.g. count-limited rules). Returns an approximate interval duration
+/// based on the recurrence frequency and interval (#window_mode).
+fn freq_fallback_slots(rule: &takusu_habit::RecurrenceRule) -> i64 {
+    let interval = rule.interval.max(1) as i64;
+    let days = match rule.freq {
+        takusu_habit::Frequency::Daily => interval,
+        takusu_habit::Frequency::Weekly => interval * 7,
+        takusu_habit::Frequency::Monthly => interval * 30,
+        takusu_habit::Frequency::Yearly => interval * 365,
+    };
+    days * 288 // 288 slots per day (5-min slots)
 }
 
 /// Validate that `start` and `end` are real `YYYY-MM-DD` calendar dates and
@@ -725,6 +774,9 @@ impl TakusuApp {
     pub async fn create_habit(&self, body: &CreateHabit) -> Result<HabitRow, AppError> {
         validate_minutes(body.avg_minutes, body.sigma_minutes)?;
         validate_recurrence(&body.recurrence)?;
+        if let Some(ref wm) = body.window_mode {
+            validate_window_mode(wm)?;
+        }
         self.storage
             .create_habit(body)
             .await
@@ -754,6 +806,9 @@ impl TakusuApp {
         if let Some(recurrence) = &body.recurrence {
             validate_recurrence(recurrence)?;
         }
+        if let Some(ref wm) = body.window_mode {
+            validate_window_mode(wm)?;
+        }
         self.storage
             .update_habit(id, body)
             .await
@@ -763,6 +818,9 @@ impl TakusuApp {
     pub async fn replace_habit(&self, id: &str, body: &CreateHabit) -> Result<HabitRow, AppError> {
         validate_minutes(body.avg_minutes, body.sigma_minutes)?;
         validate_recurrence(&body.recurrence)?;
+        if let Some(ref wm) = body.window_mode {
+            validate_window_mode(wm)?;
+        }
         self.storage
             .replace_habit(id, body)
             .await
@@ -868,8 +926,9 @@ impl TakusuApp {
             // 既に scheduled 状態になっているため、再生成でそれらも対象にする。
             .filter(|t| t.status == "pending" || t.status == "scheduled")
             .collect();
-        let (mut planner, id_map, id_to_idx) =
-            self.build_planner(from_point, sleep, &all_rows, &tz)?;
+        let (mut planner, id_map, id_to_idx) = self
+            .build_planner(from_point, sleep, &all_rows, &tz)
+            .await?;
 
         // #211: 前回スケジュールを参照として渡し、直近タスクの移動に
         // ペナルティを課す（pinではなく軟制約）。SAは必要なら動かせるが、
@@ -955,7 +1014,8 @@ impl TakusuApp {
                 .filter(|t| t.status == "pending" || t.status == "scheduled"),
         );
 
-        let (planner, id_map, id_to_idx) = self.build_planner(now_point, sleep, &active, &tz)?;
+        let (planner, id_map, id_to_idx) =
+            self.build_planner(now_point, sleep, &active, &tz).await?;
 
         // Note: stability penalty (#211) is intentionally NOT applied here.
         // reschedule is a user-initiated partial reconfiguration — the user
@@ -1510,50 +1570,154 @@ impl TakusuApp {
             let pauses = pauses_by_habit.get(&row.id);
             let steps = steps_by_habit.get(&row.id);
 
-            for gt in store.generate(from, until) {
-                let start_point = gt.task.start.unwrap_or(Point(0));
-                let date = point_to_local_date(start_point.0, tz);
-                if let Some(pauses) = pauses
-                    && pauses
-                        .iter()
-                        .any(|(s, e)| date.as_str() >= s.as_str() && date.as_str() <= e.as_str())
-                {
-                    continue;
-                }
+            // window_mode (#window_mode): 'period' widens the task window from
+            // the occurrence day to the whole interval (occurrence start ..
+            // next occurrence start). 'day' (default) keeps the legacy
+            // per-day window. The core planner needs no change — it already
+            // schedules freely within [start, end].
+            let is_period = row.window_mode == "period";
 
-                if let Some(steps) = steps
-                    && !steps.is_empty()
-                {
-                    // Multi-step habit: emit one task per step. The habit's
-                    // own window/cost is ignored; each step carries its own.
-                    // Steps are emitted in topological order so dependencies
-                    // are created before dependents. The actual depends
-                    // wiring (step ids → task ids) happens in the post-pass
-                    // below, after we know the created task ids.
-                    let order = topo_sort_steps(steps)?;
-                    let occ_start = start_point;
-                    for &idx in &order {
-                        let step = &steps[idx];
-                        let core = step_to_core_task(step, occ_start, tz)?;
+            if is_period {
+                // Lookahead past `until` so we can compute the deadline of
+                // the last in-range occurrence (deadline = next occurrence
+                // start). 365 days covers even yearly habits; for count-
+                // limited rules the generator stops early anyway.
+                let until_lookahead = Point(until.0 + 365 * 288);
+                let today_str = point_to_local_date(from.0, tz);
+                let rule: takusu_habit::RecurrenceRule = serde_json::from_str(&row.recurrence)
+                    .map_err(|e| AppError::BadRequest(format!("invalid recurrence: {e}")))?;
+                let occs: Vec<(String, Point)> = store
+                    .generate(from, until_lookahead)
+                    .into_iter()
+                    .map(|gt| {
+                        let sp = gt.task.start.unwrap_or(Point(0));
+                        (point_to_local_date(sp.0, tz), sp)
+                    })
+                    .collect();
+
+                for (i, (date, occ_start)) in occs.iter().enumerate() {
+                    // Only generate tasks for occurrences within the sync
+                    // window. Occurrences past `until` are kept in `occs`
+                    // solely as lookahead for the previous deadline.
+                    if occ_start.0 >= until.0 {
+                        break;
+                    }
+                    if let Some(pauses) = pauses
+                        && pauses.iter().any(|(s, e)| {
+                            date.as_str() >= s.as_str() && date.as_str() <= e.as_str()
+                        })
+                    {
+                        continue;
+                    }
+
+                    // deadline = next occurrence's start (just-before semantics
+                    // are satisfied since the next occurrence's task starts at
+                    // that point). Fall back to occurrence + freq-interval when
+                    // there is no next occurrence (e.g. count-limited rules).
+                    let deadline_pt = if let Some((_, next_start)) = occs.get(i + 1) {
+                        *next_start
+                    } else {
+                        Point(occ_start.0 + freq_fallback_slots(&rule))
+                    };
+                    // Clamp the window start to today's 0:00 for the in-progress
+                    // period (today's occurrence) so the planner can place the
+                    // task later today instead of being anchored to a start
+                    // time that may already be in the past (#204/#205).
+                    let window_start = if *date == today_str { from } else { *occ_start };
+
+                    if let Some(steps) = steps
+                        && !steps.is_empty()
+                    {
+                        // period + steps: all steps share the period window;
+                        // each step's own start_time/end_time is ignored
+                        // (meaningful only in 'day' mode). Step avg/sigma/
+                        // flags still apply.
+                        let order = topo_sort_steps(steps)?;
+                        for &idx in &order {
+                            let step = &steps[idx];
+                            let core = step_to_core_task_period(step, window_start, deadline_pt);
+                            expected.push((
+                                row.id.clone(),
+                                Some(step.id.clone()),
+                                date.clone(),
+                                core,
+                                step.description.clone(),
+                                Some(step.title.clone()),
+                            ));
+                        }
+                    } else {
+                        let avg_slots = (row.avg_minutes / 5) as u64;
+                        let sigma_slots = (row.sigma_minutes / 5) as u64;
+                        let core = CoreTask {
+                            id: 0,
+                            start: Some(window_start),
+                            end: deadline_pt,
+                            cost_estimate: NormalDist::new(avg_slots, sigma_slots),
+                            depends: vec![],
+                            parallelizable: row.parallelizable,
+                            allows_parallel: row.allows_parallel,
+                            abandonability: row.abandonability,
+                            fixed: row.fixed,
+                            // period mode: no habit_group (the consistency bonus
+                            // is meaningless when the window spans days).
+                            habit_group: None,
+                        };
                         expected.push((
                             row.id.clone(),
-                            Some(step.id.clone()),
+                            None,
                             date.clone(),
                             core,
-                            step.description.clone(),
-                            Some(step.title.clone()),
+                            row.description.clone(),
+                            None,
                         ));
                     }
-                } else {
-                    // Legacy single-task habit.
-                    expected.push((
-                        row.id.clone(),
-                        None,
-                        date,
-                        gt.task,
-                        row.description.clone(),
-                        None,
-                    ));
+                }
+            } else {
+                for gt in store.generate(from, until) {
+                    let start_point = gt.task.start.unwrap_or(Point(0));
+                    let date = point_to_local_date(start_point.0, tz);
+                    if let Some(pauses) = pauses
+                        && pauses.iter().any(|(s, e)| {
+                            date.as_str() >= s.as_str() && date.as_str() <= e.as_str()
+                        })
+                    {
+                        continue;
+                    }
+
+                    if let Some(steps) = steps
+                        && !steps.is_empty()
+                    {
+                        // Multi-step habit: emit one task per step. The habit's
+                        // own window/cost is ignored; each step carries its own.
+                        // Steps are emitted in topological order so dependencies
+                        // are created before dependents. The actual depends
+                        // wiring (step ids → task ids) happens in the post-pass
+                        // below, after we know the created task ids.
+                        let order = topo_sort_steps(steps)?;
+                        let occ_start = start_point;
+                        for &idx in &order {
+                            let step = &steps[idx];
+                            let core = step_to_core_task(step, occ_start, tz)?;
+                            expected.push((
+                                row.id.clone(),
+                                Some(step.id.clone()),
+                                date.clone(),
+                                core,
+                                step.description.clone(),
+                                Some(step.title.clone()),
+                            ));
+                        }
+                    } else {
+                        // Legacy single-task habit.
+                        expected.push((
+                            row.id.clone(),
+                            None,
+                            date,
+                            gt.task,
+                            row.description.clone(),
+                            None,
+                        ));
+                    }
                 }
             }
         }
@@ -1755,7 +1919,7 @@ impl TakusuApp {
     /// 両者は同じ順序なので一致するが、一部の add が失敗すると
     /// 不整合が生じる。その場合は関数全体がエラーを返すため問題ない。
     #[allow(clippy::type_complexity)]
-    fn build_planner(
+    async fn build_planner(
         &self,
         start: Point,
         sleep: SleepConfig,
@@ -1788,11 +1952,45 @@ impl TakusuApp {
 
         // #306: Build habit_id → group index map so that tasks from the same
         // habit share a habit_group index, enabling the consistency bonus.
+        // #window_mode: period-mode habits with multi-day windows (weekly,
+        // monthly, yearly) get no group — the consistency bonus is
+        // meaningless when the window spans days. Daily period-mode habits
+        // (~24h windows) still benefit from consistency, so they keep the
+        // group.
+        let no_group_habits: std::collections::HashSet<String> = self
+            .storage
+            .list_habits()
+            .await
+            .map_err(storage_to_app)?
+            .into_iter()
+            .filter(|h| {
+                if h.window_mode != "period" {
+                    return false;
+                }
+                // Only exclude habits whose recurrence interval is > 1 day.
+                let rule: Option<takusu_habit::RecurrenceRule> =
+                    serde_json::from_str(&h.recurrence).ok();
+                match rule {
+                    Some(r) => {
+                        let days = match r.freq {
+                            takusu_habit::Frequency::Daily => r.interval.max(1),
+                            takusu_habit::Frequency::Weekly => r.interval.max(1) * 7,
+                            takusu_habit::Frequency::Monthly => r.interval.max(1) * 30,
+                            takusu_habit::Frequency::Yearly => r.interval.max(1) * 365,
+                        };
+                        days > 1
+                    }
+                    None => true, // unknown recurrence → safe default: no group
+                }
+            })
+            .map(|h| h.id)
+            .collect();
         let mut habit_group_map: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
         let mut next_group = 0usize;
         for row in task_rows.iter() {
             if let Some(ref hid) = row.habit_id
+                && !no_group_habits.contains(hid)
                 && !habit_group_map.contains_key(hid)
             {
                 habit_group_map.insert(hid.clone(), next_group);

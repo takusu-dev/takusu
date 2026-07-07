@@ -2441,3 +2441,208 @@ async fn habit_steps_sync_generates_one_task_per_step() {
         );
     }
 }
+
+/// Create a weekly habit with `window_mode = "period"` and return its id.
+async fn create_weekly_period_habit(app: &axum::Router, title: &str) -> String {
+    let req = auth_req_body(
+        Method::POST,
+        "/api/habits",
+        json!({
+            "title": title,
+            "recurrence": r#"{"freq":"weekly","interval":1,"by_day":[{"n":null,"weekday":"mon"}],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#,
+            "start_time": "09:00",
+            "end_time": "10:00",
+            "avg_minutes": 30,
+            "sigma_minutes": 5,
+            "abandonability": 0.1,
+            "window_mode": "period"
+        }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    let status = res.status();
+    let raw = body_str(res.into_body()).await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {raw}");
+    let body: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    body["id"].as_str().unwrap().to_string()
+}
+fn iso_to_ts(iso: &str) -> jiff::Timestamp {
+    iso.parse().unwrap()
+}
+
+#[tokio::test]
+async fn habit_window_mode_validation_rejects_unknown() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let req = auth_req_body(
+        Method::POST,
+        "/api/habits",
+        json!({
+            "title": "bad window",
+            "recurrence": r#"{"freq":"daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#,
+            "start_time": "06:00",
+            "end_time": "07:00",
+            "avg_minutes": 30,
+            "window_mode": "weekly"
+        }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn habit_window_mode_defaults_to_day() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "デフォルト").await;
+    let req = auth_req(Method::GET, &format!("/api/habits/{habit_id}"));
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    // HabitDetail uses #[serde(flatten)] so habit fields are top-level.
+    assert_eq!(body["window_mode"].as_str().unwrap(), "day");
+}
+
+#[tokio::test]
+async fn habit_period_window_spans_to_next_occurrence() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_weekly_period_habit(&app, "週次period").await;
+
+    let tasks = sync_habit_tasks(&app, &habit_id).await;
+    assert!(!tasks.is_empty(), "period habit should generate tasks");
+
+    // For a weekly habit in period mode, the deadline of the first occurrence
+    // is the start of the next occurrence (≈7 days later). Verify the window
+    // spans multiple days rather than a single day.
+    let first = &tasks[0];
+    let start = iso_to_ts(first["start_at"].as_str().unwrap());
+    let end = iso_to_ts(first["end_at"].as_str().unwrap());
+    let span_secs = (end.as_second() - start.as_second()) as i64;
+    // 7 days = 604800 secs; allow a tolerance because the next occurrence
+    // start is at 09:00 next week while the (clamped) start may be today 00:00.
+    assert!(
+        span_secs >= 6 * 24 * 3600,
+        "period window should span ~7 days, got {} secs ({})",
+        span_secs,
+        first
+    );
+}
+
+#[tokio::test]
+async fn habit_period_clamps_today_start_to_midnight() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    // Use a daily period habit with a late start_time (23:59) so that
+    // today's occurrence hasn't passed yet regardless of when the test
+    // runs, ensuring the window-start clamping logic is exercised.
+    let req = auth_req_body(
+        Method::POST,
+        "/api/habits",
+        json!({
+            "title": "日次period",
+            "recurrence": r#"{"freq":"daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#,
+            "start_time": "23:59",
+            "end_time": "23:59",
+            "avg_minutes": 30,
+            "sigma_minutes": 5,
+            "abandonability": 0.1,
+            "window_mode": "period"
+        }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    let status = res.status();
+    let raw = body_str(res.into_body()).await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {raw}");
+    let body: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let habit_id = body["id"].as_str().unwrap().to_string();
+
+    let tasks = sync_habit_tasks(&app, &habit_id).await;
+    assert!(!tasks.is_empty());
+
+    // The first occurrence's window start should be clamped to today's 00:00
+    // (the occurrence's 23:59 start time is ignored for the window start).
+    let first = &tasks[0];
+    let start = iso_to_ts(first["start_at"].as_str().unwrap());
+    let zdt = start.to_zoned(jiff::tz::TimeZone::UTC);
+    assert_eq!(
+        zdt.hour(),
+        0,
+        "period window start for today's occurrence should be clamped to 00:00, got {first}"
+    );
+    assert_eq!(zdt.minute(), 0);
+}
+
+#[tokio::test]
+async fn habit_period_pause_skips_occurrence() {
+    let (state, pool) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_weekly_period_habit(&app, "週次period休止").await;
+
+    // First sync to materialise tasks and discover the first occurrence date.
+    let tasks = sync_habit_tasks(&app, &habit_id).await;
+    assert!(!tasks.is_empty());
+    let first_title = tasks[0]["title"].as_str().unwrap();
+    let first_date = first_title
+        .split('(')
+        .nth(1)
+        .map(|s| s.trim_end_matches(')').trim())
+        .unwrap()
+        .to_string();
+    let first_id = tasks[0]["id"].as_str().unwrap().to_string();
+
+    // generate_schedule marks tasks as 'scheduled', so reset to 'pending' +
+    // unedited to make the task eligible for the sync cleanup loop.
+    sqlx::query("UPDATE tasks SET status = 'pending', user_edited = 0 WHERE id = ?")
+        .bind(&first_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Add a pause covering the first occurrence date.
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/habits/{habit_id}/pauses"),
+        json!({ "start_date": first_date, "end_date": first_date }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+
+    // Re-sync; no task should carry the paused date in its title.
+    let tasks = sync_habit_tasks(&app, &habit_id).await;
+    for t in &tasks {
+        let title = t["title"].as_str().unwrap();
+        assert!(
+            !title.contains(&format!("({first_date})")),
+            "paused occurrence should not generate a task: {title}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn habit_period_update_changes_window_mode() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "day→period").await;
+
+    // Update to period mode.
+    let req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/habits/{habit_id}"),
+        json!({ "window_mode": "period" }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(body["window_mode"].as_str().unwrap(), "period");
+
+    // Update back to day mode.
+    let req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/habits/{habit_id}"),
+        json!({ "window_mode": "day" }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(body["window_mode"].as_str().unwrap(), "day");
+}

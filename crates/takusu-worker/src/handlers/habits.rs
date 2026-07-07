@@ -12,9 +12,10 @@ use crate::models::{
 };
 use crate::validate::{
     validate_minutes, validate_pause_dates, validate_recurrence, validate_steps,
+    validate_window_mode,
 };
 
-const HABIT_COLS: &str = "id, display_id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed, created_at, updated_at";
+const HABIT_COLS: &str = "id, display_id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed, window_mode, created_at, updated_at";
 const STEP_COLS: &str = "id, habit_id, position, title, description, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, fixed, depends_on, created_at";
 
 fn select_habits() -> String {
@@ -35,6 +36,8 @@ pub async fn create(mut req: worker::Request, env: Env) -> Result<Response, Work
     let body: CreateHabit = parse_json(&mut req).await?;
     validate_minutes(body.avg_minutes, body.sigma_minutes)?;
     validate_recurrence(&body.recurrence)?;
+    let window_mode = body.window_mode.as_deref().unwrap_or("day");
+    validate_window_mode(window_mode)?;
     let database = db(&env)?;
     let id = uuid::Uuid::now_v7().to_string();
     let sigma = body.sigma_minutes.unwrap_or((body.avg_minutes / 5).max(1));
@@ -54,7 +57,7 @@ pub async fn create(mut req: worker::Request, env: Env) -> Result<Response, Work
         .display_id;
 
     let stmt = database.prepare(
-        "INSERT INTO habits (id, display_id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, ?13)"
+        "INSERT INTO habits (id, display_id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed, window_mode) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, ?13, ?14)"
     );
     stmt.bind(&[
         JsValue::from_str(&id),
@@ -73,6 +76,7 @@ pub async fn create(mut req: worker::Request, env: Env) -> Result<Response, Work
         JsValue::from_bool(allows_parallel),
         JsValue::from_f64(abandonability),
         JsValue::from_bool(fixed),
+        JsValue::from_str(window_mode),
     ])?
     .run()
     .await
@@ -101,10 +105,13 @@ pub async fn update(mut req: worker::Request, env: Env, id: &str) -> Result<Resp
     if let Some(ref recurrence) = body.recurrence {
         validate_recurrence(recurrence)?;
     }
+    if let Some(ref wm) = body.window_mode {
+        validate_window_mode(wm)?;
+    }
     let database = db(&env)?;
     let full = resolve_habit_id(&database, id).await?;
     let stmt = database.prepare(
-        "UPDATE habits SET title=COALESCE(?1,title), description=COALESCE(?2,description), recurrence=COALESCE(?3,recurrence), start_time=COALESCE(?4,start_time), end_time=COALESCE(?5,end_time), avg_minutes=COALESCE(?6,avg_minutes), sigma_minutes=COALESCE(?7,sigma_minutes), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), active=COALESCE(?11,active), fixed=COALESCE(?12,fixed), updated_at=datetime('now') WHERE id = ?13"
+        "UPDATE habits SET title=COALESCE(?1,title), description=COALESCE(?2,description), recurrence=COALESCE(?3,recurrence), start_time=COALESCE(?4,start_time), end_time=COALESCE(?5,end_time), avg_minutes=COALESCE(?6,avg_minutes), sigma_minutes=COALESCE(?7,sigma_minutes), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), active=COALESCE(?11,active), fixed=COALESCE(?12,fixed), window_mode=COALESCE(?13,window_mode), updated_at=datetime('now') WHERE id = ?14"
     );
     stmt.bind(&[
         body.title
@@ -144,6 +151,10 @@ pub async fn update(mut req: worker::Request, env: Env, id: &str) -> Result<Resp
             .unwrap_or(JsValue::NULL),
         body.active.map(JsValue::from_bool).unwrap_or(JsValue::NULL),
         body.fixed.map(JsValue::from_bool).unwrap_or(JsValue::NULL),
+        body.window_mode
+            .as_deref()
+            .map(JsValue::from_str)
+            .unwrap_or(JsValue::NULL),
         JsValue::from_str(&full),
     ])?
     .run()
@@ -162,6 +173,8 @@ pub async fn replace(
     let body: CreateHabit = parse_json(&mut req).await?;
     validate_minutes(body.avg_minutes, body.sigma_minutes)?;
     validate_recurrence(&body.recurrence)?;
+    let window_mode = body.window_mode.as_deref().unwrap_or("day");
+    validate_window_mode(window_mode)?;
     let database = db(&env)?;
     let full = resolve_habit_id(&database, id).await?;
     let sigma = body.sigma_minutes.unwrap_or((body.avg_minutes / 5).max(1));
@@ -171,7 +184,7 @@ pub async fn replace(
     let fixed = body.fixed.unwrap_or(false);
 
     let stmt = database.prepare(
-        "UPDATE habits SET title=?1, description=?2, recurrence=?3, start_time=?4, end_time=?5, avg_minutes=?6, sigma_minutes=?7, parallelizable=?8, allows_parallel=?9, abandonability=?10, fixed=?11, updated_at=datetime('now') WHERE id = ?12"
+        "UPDATE habits SET title=?1, description=?2, recurrence=?3, start_time=?4, end_time=?5, avg_minutes=?6, sigma_minutes=?7, parallelizable=?8, allows_parallel=?9, abandonability=?10, fixed=?11, window_mode=?12, updated_at=datetime('now') WHERE id = ?13"
     );
     stmt.bind(&[
         JsValue::from_str(&body.title),
@@ -188,6 +201,7 @@ pub async fn replace(
         JsValue::from_bool(allows_parallel),
         JsValue::from_f64(abandonability),
         JsValue::from_bool(fixed),
+        JsValue::from_str(window_mode),
         JsValue::from_str(&full),
     ])?
     .run()

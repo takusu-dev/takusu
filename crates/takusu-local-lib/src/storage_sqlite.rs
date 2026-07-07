@@ -18,6 +18,7 @@ const MIGRATION_005: &str = include_str!("../migrations/005_task_display_id.sql"
 const MIGRATION_006: &str = include_str!("../migrations/006_user_edited.sql");
 const MIGRATION_007: &str = include_str!("../migrations/007_task_display_id_seq.sql");
 const MIGRATION_010: &str = include_str!("../migrations/010_habit_pauses.sql");
+const MIGRATION_012: &str = include_str!("../migrations/012_window_mode.sql");
 // Migration 011 creates the habit_steps table (idempotent — uses IF NOT EXISTS
 // for both the table and the index). The `ALTER TABLE tasks ADD COLUMN
 // habit_step_id` is not idempotent (SQLite has no IF NOT EXISTS for ADD
@@ -178,6 +179,18 @@ impl SqliteStorage {
             sqlx::query("ALTER TABLE tasks ADD COLUMN habit_step_id TEXT")
                 .execute(&pool)
                 .await?;
+        }
+
+        // Migration 012 adds habits.window_mode (not idempotent — SQLite has
+        // no IF NOT EXISTS for ADD COLUMN). The column defaults to 'day' so
+        // existing habits keep the legacy per-day window behavior.
+        let has_window_mode: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('habits') WHERE name = 'window_mode'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        if !has_window_mode {
+            sqlx::raw_sql(MIGRATION_012).execute(&pool).await?;
         }
 
         Ok(Self { pool, root_token })
@@ -455,6 +468,7 @@ impl Storage for SqliteStorage {
         let allows_parallel = body.allows_parallel.unwrap_or(false);
         let abandonability = body.abandonability.unwrap_or(0.5);
         let fixed = body.fixed.unwrap_or(false);
+        let window_mode = body.window_mode.as_deref().unwrap_or("day");
         // Atomically reserve a monotonic display_id from the sequence table
         // (mirrors tasks.display_id, issue #186 / #305).
         let display_id: i64 = sqlx::query_scalar(
@@ -464,7 +478,7 @@ impl Storage for SqliteStorage {
         .await
         .map_err(map_err)?;
         sqlx::query(
-            "INSERT INTO habits (id, display_id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)"
+            "INSERT INTO habits (id, display_id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed, window_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)"
         )
         .bind(&id)
         .bind(display_id)
@@ -479,6 +493,7 @@ impl Storage for SqliteStorage {
         .bind(allows_parallel)
         .bind(abandonability)
         .bind(fixed)
+        .bind(window_mode)
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
@@ -492,7 +507,7 @@ impl Storage for SqliteStorage {
     async fn update_habit(&self, id: &str, body: &UpdateHabit) -> StorageResult<HabitRow> {
         let full = resolve_habit_id(&self.pool, id).await?;
         sqlx::query(
-            "UPDATE habits SET title=COALESCE(?,title), description=COALESCE(?,description), recurrence=COALESCE(?,recurrence), start_time=COALESCE(?,start_time), end_time=COALESCE(?,end_time), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), active=COALESCE(?,active), fixed=COALESCE(?,fixed), updated_at=datetime('now') WHERE id = ?"
+            "UPDATE habits SET title=COALESCE(?,title), description=COALESCE(?,description), recurrence=COALESCE(?,recurrence), start_time=COALESCE(?,start_time), end_time=COALESCE(?,end_time), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), active=COALESCE(?,active), fixed=COALESCE(?,fixed), window_mode=COALESCE(?,window_mode), updated_at=datetime('now') WHERE id = ?"
         )
         .bind(body.title.as_ref())
         .bind(body.description.as_ref())
@@ -506,6 +521,7 @@ impl Storage for SqliteStorage {
         .bind(body.abandonability)
         .bind(body.active)
         .bind(body.fixed)
+        .bind(body.window_mode.as_ref())
         .bind(&full)
         .execute(&self.pool)
         .await
@@ -527,8 +543,9 @@ impl Storage for SqliteStorage {
         let allows_parallel = body.allows_parallel.unwrap_or(false);
         let abandonability = body.abandonability.unwrap_or(0.5);
         let fixed = body.fixed.unwrap_or(false);
+        let window_mode = body.window_mode.as_deref().unwrap_or("day");
         sqlx::query(
-            "UPDATE habits SET title=?, description=?, recurrence=?, start_time=?, end_time=?, avg_minutes=?, sigma_minutes=?, parallelizable=?, allows_parallel=?, abandonability=?, fixed=?, updated_at=datetime('now') WHERE id = ?"
+            "UPDATE habits SET title=?, description=?, recurrence=?, start_time=?, end_time=?, avg_minutes=?, sigma_minutes=?, parallelizable=?, allows_parallel=?, abandonability=?, fixed=?, window_mode=?, updated_at=datetime('now') WHERE id = ?"
         )
         .bind(&body.title)
         .bind(&body.description)
@@ -541,6 +558,7 @@ impl Storage for SqliteStorage {
         .bind(allows_parallel)
         .bind(abandonability)
         .bind(fixed)
+        .bind(window_mode)
         .bind(&full)
         .execute(&self.pool)
         .await

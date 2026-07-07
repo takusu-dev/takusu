@@ -83,6 +83,7 @@ export interface HabitRow {
   abandonability: number;
   active: boolean;
   fixed: boolean;
+  window_mode: string;
   created_at: string;
   updated_at: string;
 }
@@ -99,6 +100,7 @@ export interface CreateHabit {
   allows_parallel?: boolean;
   abandonability?: number;
   fixed?: boolean;
+  window_mode?: string;
 }
 
 export interface UpdateHabit {
@@ -114,6 +116,7 @@ export interface UpdateHabit {
   abandonability?: number;
   active?: boolean;
   fixed?: boolean;
+  window_mode?: string;
 }
 
 export interface ScheduleEntry {

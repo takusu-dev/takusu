@@ -301,6 +301,11 @@ enum HabitCommands {
         allows_parallel: bool,
         #[arg(long, help = "Lock start time (scheduler cannot move)")]
         fixed: bool,
+        #[arg(
+            long,
+            help = "Window mode: 'day' (occurrence day) or 'period' (until next occurrence)"
+        )]
+        window: Option<String>,
     },
 
     /// Edit a habit in $EDITOR
@@ -333,6 +338,11 @@ enum HabitCommands {
         active: Option<bool>,
         #[arg(long, help = "Lock start time (scheduler cannot move)")]
         fixed: Option<bool>,
+        #[arg(
+            long,
+            help = "Window mode: 'day' (occurrence day) or 'period' (until next occurrence)"
+        )]
+        window: Option<String>,
     },
 
     /// Full replace a habit (PUT)
@@ -368,6 +378,11 @@ enum HabitCommands {
         allows_parallel: bool,
         #[arg(long, help = "Lock start time (scheduler cannot move)")]
         fixed: bool,
+        #[arg(
+            long,
+            help = "Window mode: 'day' (occurrence day) or 'period' (until next occurrence)"
+        )]
+        window: Option<String>,
     },
 
     /// Delete a habit
@@ -880,6 +895,7 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
             parallelizable,
             allows_parallel,
             fixed,
+            window,
         } => {
             let (title, recurrence, start_time, end_time) = if is_interactive()
                 && title.is_none()
@@ -913,6 +929,7 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
                 abandonability: Some(abandonability),
                 description,
                 fixed: if fixed { Some(true) } else { None },
+                window_mode: window,
             };
             let habit = app.create_habit(&body).await?;
             match mode {
@@ -947,6 +964,7 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
             abandonability,
             active,
             fixed,
+            window,
         } => {
             let avg_minutes = avg_time
                 .as_ref()
@@ -971,6 +989,7 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
                 abandonability,
                 active,
                 fixed,
+                window_mode: window,
             };
             let habit = app.update_habit(&id, &body).await?;
             match mode {
@@ -991,6 +1010,7 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
             parallelizable,
             allows_parallel,
             fixed,
+            window,
         } => {
             let avg_minutes = parse_duration(&avg_time).map_err(AppError::BadRequest)?;
             let sigma_minutes: i64 = parse_duration(&sigma_time).map_err(AppError::BadRequest)?;
@@ -1010,6 +1030,7 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
                 abandonability: Some(abandonability),
                 description,
                 fixed: if fixed { Some(true) } else { None },
+                window_mode: window,
             };
             let habit = app.replace_habit(&id, &body).await?;
             match mode {
