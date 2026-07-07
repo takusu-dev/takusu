@@ -3,9 +3,10 @@ import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { PaperProvider, MD3DarkTheme, MD3LightTheme } from 'react-native-paper';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
+import type { TakusuClient } from '@/src/api/client';
 import { ServerProvider, useServer } from '@/src/api/ServerProvider';
 import { installGlobalErrorHandler } from '@/src/api/installGlobalErrorHandler';
 import { ThemeProvider } from '@/src/theme';
@@ -43,11 +44,92 @@ function isValidRoute(url: string): boolean {
   );
 }
 
+// Process a notification action response (START / DONE / CANCEL).
+// Returns true if the response was an action button (handled), false otherwise.
+// When `client` is null the action is queued via `pendingActions` so it can
+// be replayed once the server is ready — this fixes #353 where tapping "開始"
+// on a notification silently did nothing because the local server hadn't
+// finished starting yet.
+function handleActionResponse(
+  response: Notifications.NotificationResponse,
+  client: TakusuClient | null,
+  inProgressNotifEnabled: boolean,
+  pendingActions: RefObject<Notifications.NotificationResponse[]>,
+): boolean {
+  const actionId = response.actionIdentifier;
+
+  // Handle START action (task start reminder → mark in_progress)
+  if (actionId === ACTION_START) {
+    const taskId = response.notification.request.content.data?.taskId;
+    if (typeof taskId !== 'string' || !taskId) return true;
+    if (!client) {
+      pendingActions.current.push(response);
+      return true;
+    }
+    haptic.medium();
+    client
+      .updateTask(taskId, { status: 'in_progress' })
+      .then(() => {
+        // Dismiss the start reminder notification (#257)
+        dismissTaskNotifications(taskId).catch((err) =>
+          console.warn('Notification action: dismiss failed', err),
+        );
+        // Post in-progress notification with DONE/CANCEL actions
+        if (inProgressNotifEnabled) {
+          client
+            .getTask(taskId)
+            .then((task) =>
+              postInProgressNotification(task).catch((err) =>
+                console.warn(
+                  'Notification action: post in-progress failed',
+                  err,
+                ),
+              ),
+            )
+            .catch((err) =>
+              console.warn('Notification action: getTask failed', err),
+            );
+        }
+      })
+      .catch((err) =>
+        console.warn('Notification action: updateTask failed', err),
+      );
+    return true;
+  }
+
+  // Handle action button taps (DONE / CANCEL for in-progress tasks)
+  if (actionId === ACTION_DONE || actionId === ACTION_CANCEL) {
+    const taskId = response.notification.request.content.data?.taskId;
+    if (typeof taskId !== 'string' || !taskId) return true;
+    if (!client) {
+      pendingActions.current.push(response);
+      return true;
+    }
+    const newStatus = actionId === ACTION_DONE ? 'completed' : 'skipped';
+    if (actionId === ACTION_DONE) haptic.success();
+    else haptic.warning();
+    client
+      .updateTask(taskId, { status: newStatus })
+      .catch((err) =>
+        console.warn('Notification action: updateTask failed', err),
+      );
+    dismissInProgressNotification(taskId).catch((err) =>
+      console.warn('Notification action: dismiss failed', err),
+    );
+    return true;
+  }
+
+  return false;
+}
+
 function ThemedApp() {
   const { darkMode, client, notifications } = useServer();
   // Track whether the initial cold-start notification response has been handled
   // to prevent duplicate navigation when client transitions from null to non-null
   const initialResponseHandled = useRef(false);
+  // Queue of notification action responses that arrived before `client` was
+  // ready (server still starting on cold launch). Drained once `client` is set.
+  const pendingActions = useRef<Notifications.NotificationResponse[]>([]);
 
   // Set up notification channels, categories, permissions, and listeners
   useEffect(() => {
@@ -57,6 +139,22 @@ function ThemedApp() {
     }
     setupNotifications();
   }, []);
+
+  // Drain queued action responses once `client` becomes available (#353).
+  useEffect(() => {
+    if (!client) return;
+    if (pendingActions.current.length === 0) return;
+    const queued = pendingActions.current;
+    pendingActions.current = [];
+    for (const response of queued) {
+      handleActionResponse(
+        response,
+        client,
+        notifications.inProgress,
+        pendingActions,
+      );
+    }
+  }, [client, notifications.inProgress]);
 
   // Handle notification taps (body tap → navigate to URL in data)
   useEffect(() => {
@@ -68,9 +166,11 @@ function ThemedApp() {
     }
 
     // Check if app was opened from a notification (only once on cold start).
-    // Only handle default body-tap actions — DONE/CANCEL action buttons have
-    // opensAppToForeground: false so they shouldn't cold-start the app, but
-    // getLastNotificationResponse() could return a stale action response.
+    // Only handle default body-tap actions here — action buttons (START/
+    // DONE/CANCEL) have opensAppToForeground: false so they don't cold-start
+    // the app, and getLastNotificationResponse() could return a stale action
+    // response from a previous session. Action buttons are handled by the
+    // live listener below, which queues them until `client` is ready (#353).
     if (!initialResponseHandled.current) {
       const lastResponse = Notifications.getLastNotificationResponse();
       if (
@@ -85,63 +185,13 @@ function ThemedApp() {
 
     const subscription = Notifications.addNotificationResponseReceivedListener(
       (response) => {
-        const actionId = response.actionIdentifier;
-
-        // Handle START action (task start reminder → mark in_progress)
-        if (actionId === ACTION_START) {
-          const taskId = response.notification.request.content.data?.taskId;
-          if (typeof taskId === 'string' && taskId && client) {
-            haptic.medium();
-            client
-              .updateTask(taskId, { status: 'in_progress' })
-              .then(() => {
-                // Dismiss the start reminder notification (#257)
-                dismissTaskNotifications(taskId).catch((err) =>
-                  console.warn('Notification action: dismiss failed', err),
-                );
-                // Post in-progress notification with DONE/CANCEL actions
-                if (notifications.inProgress) {
-                  client
-                    .getTask(taskId)
-                    .then((task) =>
-                      postInProgressNotification(task).catch((err) =>
-                        console.warn(
-                          'Notification action: post in-progress failed',
-                          err,
-                        ),
-                      ),
-                    )
-                    .catch((err) =>
-                      console.warn('Notification action: getTask failed', err),
-                    );
-                }
-              })
-              .catch((err) =>
-                console.warn('Notification action: updateTask failed', err),
-              );
-          }
-          return;
-        }
-
-        // Handle action button taps (DONE / CANCEL for in-progress tasks)
-        if (actionId === ACTION_DONE || actionId === ACTION_CANCEL) {
-          const taskId = response.notification.request.content.data?.taskId;
-          if (typeof taskId === 'string' && taskId && client) {
-            const newStatus =
-              actionId === ACTION_DONE ? 'completed' : 'skipped';
-            if (actionId === ACTION_DONE) haptic.success();
-            else haptic.warning();
-            client
-              .updateTask(taskId, { status: newStatus })
-              .catch((err) =>
-                console.warn('Notification action: updateTask failed', err),
-              );
-            dismissInProgressNotification(taskId).catch((err) =>
-              console.warn('Notification action: dismiss failed', err),
-            );
-          }
-          return;
-        }
+        const handled = handleActionResponse(
+          response,
+          client,
+          notifications.inProgress,
+          pendingActions,
+        );
+        if (handled) return;
 
         // Default action (tap on notification body) → navigate
         redirect(response.notification);
