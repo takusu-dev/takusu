@@ -2,6 +2,7 @@ use axum::Json;
 use axum::extract::State;
 use serde::Deserialize;
 use takusu_local_lib::app::GoogleCalSettingsOutput;
+use takusu_local_lib::error::AppError;
 use takusu_storage::{GoogleCalEventRow, UpdateGoogleCalSettings};
 
 use crate::error::HttpError;
@@ -55,9 +56,10 @@ pub async fn oauth_callback(
 pub async fn trigger_sync(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    if let Err(e) = state.app.do_sync().await {
+    state.app.do_sync().await.map_err(|e| {
         tracing::error!("google calendar sync failed: {e}");
-    }
+        HttpError::from(AppError::Internal(format!("sync failed: {e}")))
+    })?;
     Ok(Json(serde_json::json!({ "status": "sync_triggered" })))
 }
 
