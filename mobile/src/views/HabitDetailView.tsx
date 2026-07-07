@@ -207,7 +207,7 @@ export function HabitDetailView() {
         return (
           d.id !== r.id ||
           d.title !== r.title ||
-          d.description !== (r.description ?? undefined) ||
+          (d.description ?? undefined) !== (r.description ?? undefined) ||
           d.start_time !== r.start_time ||
           d.end_time !== r.end_time ||
           d.avg_minutes !== r.avg_minutes ||

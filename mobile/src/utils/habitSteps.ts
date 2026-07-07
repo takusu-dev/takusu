@@ -155,8 +155,11 @@ export async function saveHabitSteps(
   const phase1 = drafts.map((d) => draftToInput(d, idMapPhase1));
   const result = await client.replaceHabitSteps(habitId, phase1);
 
-  // Build tempId → real id map from the response (response order matches
-  // input order).
+  // Build tempId → real id map from the response. The server returns
+  // steps in the same order as the input array (this is an API contract
+  // of PUT /api/habits/:id/steps — the worker and local-lib handlers
+  // both preserve input order). If that ever changes, this mapping
+  // would need to match by position/title instead.
   const idMap = new Map<string, string>();
   result.forEach((row, i) => {
     idMap.set(drafts[i]!.tempId, row.id);
