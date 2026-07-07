@@ -750,6 +750,75 @@ async fn generate_excludes_in_progress() {
 }
 
 #[tokio::test]
+async fn generate_preserves_in_progress_schedule_entry() {
+    let (state, pool) = setup().await;
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('task1', 'pending-task', '2026-06-05T18:00:00+09:00', 60, 0, '[]', 0, 0, 0.5, 'pending')"
+    ).execute(&pool).await.unwrap();
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('task2', 'will-be-in-progress', '2026-06-05T18:00:00+09:00', 30, 0, '[]', 0, 0, 0.5, 'pending')"
+    ).execute(&pool).await.unwrap();
+
+    let app = build_router(state.clone());
+
+    // First generation: both pending tasks get scheduled.
+    let gen_req = auth_req_body(
+        Method::POST,
+        "/api/schedule/generate",
+        json!({ "sleep": "disabled" }),
+    );
+    let res = app.clone().oneshot(gen_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let schedule: Vec<serde_json::Value> =
+        serde_json::from_str(body["schedule"].as_str().unwrap()).unwrap();
+    let task2_entry: serde_json::Value = schedule
+        .iter()
+        .find(|e| e["task_id"] == "task2")
+        .expect("task2 should be scheduled initially")
+        .clone();
+
+    // Mark task2 as in_progress (user started working on it).
+    let upd_req = auth_req_body(
+        Method::PATCH,
+        "/api/tasks/task2",
+        json!({ "status": "in_progress" }),
+    );
+    let res = app.clone().oneshot(upd_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // Regenerate: task2 is in_progress so it's excluded from the planner,
+    // but its previous schedule entry must be preserved (#354).
+    let gen_req = auth_req_body(
+        Method::POST,
+        "/api/schedule/generate",
+        json!({ "sleep": "disabled" }),
+    );
+    let res = app.oneshot(gen_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let schedule: Vec<serde_json::Value> =
+        serde_json::from_str(body["schedule"].as_str().unwrap()).unwrap();
+    let task_ids: Vec<&str> = schedule
+        .iter()
+        .map(|e| e["task_id"].as_str().unwrap())
+        .collect();
+    assert!(
+        task_ids.contains(&"task1"),
+        "pending task should be scheduled"
+    );
+    assert!(
+        task_ids.contains(&"task2"),
+        "in_progress task entry should be preserved (#354)"
+    );
+    let preserved = schedule.iter().find(|e| e["task_id"] == "task2").unwrap();
+    assert_eq!(preserved["start_at"], task2_entry["start_at"]);
+    assert_eq!(preserved["end_at"], task2_entry["end_at"]);
+}
+
+#[tokio::test]
 async fn generate_excludes_completed_and_skipped() {
     let (state, pool) = setup().await;
 

@@ -698,15 +698,17 @@ impl TakusuApp {
         // ペナルティを課す（pinではなく軟制約）。SAは必要なら動かせるが、
         // 直近のタスクは前回位置を維持する方が高スコアになる。
         let existing_schedule = self.storage.get_schedule().await.map_err(storage_to_app)?;
-        if let Some(schedule_row) = existing_schedule {
-            // unwrap_or_default: if the schedule JSON is corrupt, fall back to
-            // an empty vec which disables the stability penalty rather than
-            // crashing. This is intentionally more forgiving than reschedule
-            // (which returns an error on parse failure) because generate is a
-            // full regenerate — the user just wants a new schedule.
-            let entries: Vec<ScheduleEntry> =
-                serde_json::from_str(&schedule_row.schedule).unwrap_or_default();
-            let prev: Vec<(Point, Point, usize)> = entries
+        // unwrap_or_default: if the schedule JSON is corrupt, fall back to
+        // an empty vec which disables the stability penalty rather than
+        // crashing. This is intentionally more forgiving than reschedule
+        // (which returns an error on parse failure) because generate is a
+        // full regenerate — the user just wants a new schedule.
+        let existing_entries: Vec<ScheduleEntry> = existing_schedule
+            .as_ref()
+            .and_then(|row| serde_json::from_str(&row.schedule).ok())
+            .unwrap_or_default();
+        if !existing_entries.is_empty() {
+            let prev: Vec<(Point, Point, usize)> = existing_entries
                 .iter()
                 .filter_map(|entry| {
                     let idx = id_to_idx.get(&entry.task_id)?;
@@ -719,7 +721,14 @@ impl TakusuApp {
         }
 
         let plan = planner.plan();
-        let entries = self.plan_to_entries(&plan, &id_map);
+        let mut entries = self.plan_to_entries(&plan, &id_map);
+        // #354: in_progress タスクは planner の対象外だが、save_schedule が
+        // スケジュール全体を上書きするため、進行中タスクのスケジュール情報が
+        // 消えてしまう。前回スケジュールから in_progress タスクのエントリを
+        // 引き継ぐ。
+        entries = self
+            .preserve_active_entries(entries, &existing_entries, &["in_progress"])
+            .await?;
         let mark_ids: Vec<String> = all_rows.iter().map(|t| t.id.clone()).collect();
 
         let result = self
@@ -830,7 +839,12 @@ impl TakusuApp {
             }
         };
 
-        let final_entries = self.plan_to_entries(&plan, &id_map);
+        let mut final_entries = self.plan_to_entries(&plan, &id_map);
+        // #354: in_progress タスクは planner の対象外なので、再スケジュール時も
+        // 進行中タスクのエントリが消えないよう前回スケジュールから引き継ぐ。
+        final_entries = self
+            .preserve_active_entries(final_entries, &entries, &["in_progress"])
+            .await?;
         let result = self
             .storage
             .save_schedule(&SaveScheduleRequest {
@@ -1510,6 +1524,50 @@ impl TakusuApp {
                 end_at: point_to_iso(e.0),
             })
             .collect()
+    }
+
+    /// Preserve schedule entries for tasks that are excluded from the planner
+    /// (e.g. `in_progress`) so that regenerating or rescheduling the schedule
+    /// does not wipe out their schedule info (#354).
+    ///
+    /// `new_entries` is the freshly computed schedule. `existing_entries` is
+    /// the previous schedule. For each task whose status is in `statuses` and
+    /// that is not already present in `new_entries`, its previous entry is
+    /// carried over verbatim.
+    async fn preserve_active_entries(
+        &self,
+        mut new_entries: Vec<ScheduleEntry>,
+        existing_entries: &[ScheduleEntry],
+        statuses: &[&str],
+    ) -> Result<Vec<ScheduleEntry>, AppError> {
+        if existing_entries.is_empty() {
+            return Ok(new_entries);
+        }
+        let mut preserve_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for status in statuses {
+            let rows = self
+                .storage
+                .list_tasks(&TaskQuery {
+                    status: Some((*status).to_string()),
+                    ..Default::default()
+                })
+                .await
+                .map_err(storage_to_app)?;
+            for row in rows {
+                preserve_ids.insert(row.id);
+            }
+        }
+        if preserve_ids.is_empty() {
+            return Ok(new_entries);
+        }
+        let new_ids: std::collections::HashSet<String> =
+            new_entries.iter().map(|e| e.task_id.clone()).collect();
+        for entry in existing_entries {
+            if preserve_ids.contains(&entry.task_id) && !new_ids.contains(&entry.task_id) {
+                new_entries.push(entry.clone());
+            }
+        }
+        Ok(new_entries)
     }
 }
 
