@@ -9,7 +9,6 @@ export const CHANNELS = {
   taskSummary: 'task-summary',
   taskInProgress: 'task-in-progress',
   taskIdle: 'task-idle',
-  habitReminder: 'habit-reminder',
 } as const;
 
 export async function setupNotificationChannels(): Promise<void> {
@@ -25,7 +24,7 @@ export async function setupNotificationChannels(): Promise<void> {
     }),
     Notifications.setNotificationChannelAsync(CHANNELS.taskSummary, {
       name: 'サマリー',
-      description: '朝のブリーフィング・夕方の完了サマリー',
+      description: '朝のブリーフィング',
       importance: Notifications.AndroidImportance.DEFAULT,
     }),
     Notifications.setNotificationChannelAsync(CHANNELS.taskInProgress, {
@@ -38,10 +37,9 @@ export async function setupNotificationChannels(): Promise<void> {
       description: '長時間放置された未スケジュールタスクの通知',
       importance: Notifications.AndroidImportance.DEFAULT,
     }),
-    Notifications.setNotificationChannelAsync(CHANNELS.habitReminder, {
-      name: 'Habitリマインダー',
-      description: 'Habit未完了のリマインダー',
-      importance: Notifications.AndroidImportance.DEFAULT,
-    }),
+    // Clean up the orphaned habit-reminder channel from previous versions
+    // (#360). deleteNotificationChannelAsync is a no-op if the channel
+    // doesn't exist.
+    Notifications.deleteNotificationChannelAsync('habit-reminder'),
   ]);
 }

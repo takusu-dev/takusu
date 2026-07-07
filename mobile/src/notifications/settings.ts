@@ -7,7 +7,7 @@ const KEY = 'takusu.notifications';
 export interface NotificationSettings {
   // Master toggle — when false, no notifications are scheduled
   enabled: boolean;
-  // 朝ブリーフィング: "今日はN個のタスク" / N=0 → "タスクを追加しましょう"
+  // 朝ブリーフィング: "今日はN個の未完了タスク" / N=0 → "タスクを追加しましょう"
   morningBriefing: boolean;
   morningBriefingTime: number; // minutes from midnight (480 = 08:00)
   // 開始直前リマインダー: start_at の N 分前に通知
@@ -20,12 +20,6 @@ export interface NotificationSettings {
   unscheduledIdleHours: number; // 24
   // 実行中通知: in_progress のタスク (done/cancel アクション付き)
   inProgress: boolean;
-  // 夕方サマリー: "今日はN個完了しました"
-  eveningSummary: boolean;
-  eveningSummaryTime: number; // minutes from midnight (1080 = 18:00)
-  // ハビット未完了リマインダー
-  habitReminder: boolean;
-  habitReminderTime: number; // minutes from midnight (1200 = 20:00)
 }
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
@@ -38,10 +32,6 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   unscheduledIdle: true,
   unscheduledIdleHours: 24,
   inProgress: true,
-  eveningSummary: true,
-  eveningSummaryTime: 18 * 60, // 18:00
-  habitReminder: true,
-  habitReminderTime: 20 * 60, // 20:00
 };
 
 export async function loadNotificationSettings(): Promise<NotificationSettings> {
