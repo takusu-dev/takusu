@@ -701,8 +701,7 @@ async fn run_task(
             let original = editor::format_task_for_editing(&task, &all_tasks);
             let edited = editor::open_editor(&original, &task.id)
                 .map_err(|e| AppError::BadRequest(e.to_string()))?;
-            let update = editor::parse_edited_task(&edited)
-                .ok_or_else(|| AppError::BadRequest("failed to parse edited task".to_string()))?;
+            let update = editor::parse_edited_task(&edited).map_err(AppError::BadRequest)?;
             let updated = app.update_task(&id, &update).await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_tasks(&[updated], tz, &habit_map),
@@ -927,8 +926,7 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
             let original = editor::format_habit_for_editing(habit);
             let edited = editor::open_editor(&original, &habit.id)
                 .map_err(|e| AppError::BadRequest(e.to_string()))?;
-            let update = editor::parse_edited_habit(&edited)
-                .ok_or_else(|| AppError::BadRequest("failed to parse edited habit".to_string()))?;
+            let update = editor::parse_edited_habit(&edited).map_err(AppError::BadRequest)?;
             let updated = app.update_habit(&id, &update).await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_habit_detail(&updated),
