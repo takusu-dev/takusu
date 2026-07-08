@@ -13,7 +13,7 @@ import org.json.JSONObject
  * snapshot in SharedPreferences.
  */
 data class WidgetSnapshot(
-    val doingTitle: String?,
+    val doingTitles: List<String>,
     val upcoming: List<UpcomingTask>,
     val unscheduledCount: Int,
 )
@@ -36,7 +36,7 @@ object WidgetFetcher {
             val schedule = fetchJsonObject("$BASE/api/schedule", token)
             val scheduleMap = parseScheduleMap(schedule)
 
-            var doing: String? = null
+            var doing = mutableListOf<String>()
             val upcoming = mutableListOf<UpcomingTask>()
             var unscheduled = 0
             val now = System.currentTimeMillis()
@@ -46,7 +46,7 @@ object WidgetFetcher {
                 val status = t.optString("status")
                 when (status) {
                     "in_progress" -> {
-                        if (doing == null) doing = t.optString("title")
+                        doing.add(t.optString("title"))
                     }
 
                     "pending" -> {
@@ -75,7 +75,7 @@ object WidgetFetcher {
             upcoming.sortBy { parseIso(it.startAt ?: it.endAt) ?: Long.MAX_VALUE }
 
             WidgetSnapshot(
-                doingTitle = doing,
+                doingTitles = doing,
                 upcoming = upcoming,
                 unscheduledCount = unscheduled,
             )

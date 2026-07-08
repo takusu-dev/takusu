@@ -116,11 +116,15 @@ class TakusuWidgetProvider : AppWidgetProvider() {
             snap: JSONObject,
             updatedAt: Long,
         ) {
-            // Doing task
-            val doingTitle = if (snap.isNull("doing_title")) null else snap.optString("doing_title", null)
-            if (doingTitle != null) {
+            // Doing tasks
+            val doingTitles = snap.optJSONArray("doing_titles")
+            if (doingTitles != null && doingTitles.length() > 0) {
                 views.setTextViewText(R.id.widget_doing_label, "進行中")
-                views.setTextViewText(R.id.widget_doing_title, doingTitle)
+                val titles = mutableListOf<String>()
+                for (i in 0 until doingTitles.length()) {
+                    titles.add(doingTitles.getString(i))
+                }
+                views.setTextViewText(R.id.widget_doing_title, titles.joinToString(" / "))
                 views.setViewVisibility(R.id.widget_doing_section, android.view.View.VISIBLE)
             } else {
                 views.setViewVisibility(R.id.widget_doing_section, android.view.View.GONE)
