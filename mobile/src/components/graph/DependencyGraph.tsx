@@ -12,6 +12,7 @@ import {
 import {
   Canvas,
   Circle,
+  DashPathEffect,
   Group,
   Paragraph,
   Path,
@@ -55,8 +56,11 @@ export interface DependencyGraphProps {
   highlightTaskId?: string;
   /** Enable edge addition/removal (GraphView only) */
   editMode?: boolean;
+  /** Font size for node labels (#379: GraphView uses larger text) */
+  fontSize?: number;
   onTapNode?: (taskId: string) => void;
-  onCutEdge?: (sourceId: string, targetId: string) => void;
+  /** Cut multiple edges at once — used by line-cut (#382) */
+  onCutEdges?: (edges: { source: string; target: string }[]) => void;
   onAddEdge?: (sourceId: string, targetId: string) => void;
   /** Fixed height for embedded use (TaskDetailView); flex:1 when omitted */
   height?: number;
@@ -65,34 +69,37 @@ export interface DependencyGraphProps {
 // ── Constants ──
 
 const NODE_RADIUS = 28;
-const FONT_SIZE = 15;
+const DEFAULT_FONT_SIZE = 15;
 const MAX_LABEL_CHARS = 12;
 const LABEL_WIDTH = 140;
 const LABEL_OFFSET = NODE_RADIUS + 6;
 const HIT_RADIUS = NODE_RADIUS + 4;
-const EDGE_HIT_WIDTH = 12;
 /** Redundant edges (direct dep already implied by a transitive path) — #387 */
 const REDUNDANT_EDGE_COLOR = '#e85d04';
 
 // ── Helpers ──
 
-/** Distance from point (px,py) to line segment (ax,ay)-(bx,by) */
-function distToSegment(
-  px: number,
-  py: number,
-  ax: number,
-  ay: number,
-  bx: number,
-  by: number,
-): number {
+/** Check if two line segments intersect (#382: cut line vs edges) */
+function segmentsIntersect(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  x3: number,
+  y3: number,
+  x4: number,
+  y4: number,
+): boolean {
   'worklet';
-  const dx = bx - ax;
-  const dy = by - ay;
-  const lenSq = dx * dx + dy * dy;
-  if (lenSq === 0) return Math.hypot(px - ax, py - ay);
-  let t = ((px - ax) * dx + (py - ay) * dy) / lenSq;
-  t = Math.max(0, Math.min(1, t));
-  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+  const d1x = x2 - x1,
+    d1y = y2 - y1;
+  const d2x = x4 - x3,
+    d2y = y4 - y3;
+  const denom = d1x * d2y - d1y * d2x;
+  if (Math.abs(denom) < 1e-10) return false; // parallel
+  const t = ((x3 - x1) * d2y - (y3 - y1) * d2x) / denom;
+  const u = ((x3 - x1) * d1y - (y3 - y1) * d1x) / denom;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1;
 }
 
 /** Compute arrowhead triangle points for edge from (ax,ay) to (bx,by) */
@@ -125,8 +132,9 @@ export function DependencyGraph({
   edges: inputEdges,
   highlightTaskId,
   editMode = false,
+  fontSize = DEFAULT_FONT_SIZE,
   onTapNode,
-  onCutEdge,
+  onCutEdges,
   onAddEdge,
   height,
 }: DependencyGraphProps) {
@@ -160,6 +168,19 @@ export function DependencyGraph({
   const dragSy = useSharedValue(0);
   const dragEx = useSharedValue(0);
   const dragEy = useSharedValue(0);
+
+  // Cut line state (#382): long-press on empty space → drag → cut crossing edges
+  const cutActive = useSharedValue(0);
+  const cutSx = useSharedValue(0);
+  const cutSy = useSharedValue(0);
+  const cutEx = useSharedValue(0);
+  const cutEy = useSharedValue(0);
+
+  // Node drag state (#383): pan on node → drag node
+  const draggingNodeId = useSharedValue<string | null>(null);
+
+  // Crossing edges during cut line drag — React state for rendering
+  const [crossingEdges, setCrossingEdges] = useState<Set<string>>(new Set());
 
   // Content-derived key: triggers simulation restart when node/edge identity
   // changes even if the counts stay the same (e.g., after editing deps).
@@ -235,13 +256,11 @@ export function DependencyGraph({
     const finalNodes = simNodesLocal.map((n) => ({ ...n, x: n.x, y: n.y }));
     setSimNodes(finalNodes);
 
-    // ── Auto-fit: zoom/translate so all nodes are visible (#218) ──
-    // Only apply when not in edit mode and no explicit height (full-screen
-    // GraphView). Embedded graphs (TaskDetailView) keep scale=1.
-    // In edit mode, skip auto-fit so the user's pan/zoom is preserved
-    // across edge additions/removals (which trigger refresh → graphKey
-    // change → this effect re-runs).
-    if (finalNodes.length > 0 && !height && !editMode) {
+    // ── Auto-fit: zoom/translate so all nodes are visible (#218, #384) ──
+    // Apply for both full-screen GraphView and embedded (TaskDetailView).
+    // Skip in edit mode so the user's pan/zoom is preserved across edge
+    // additions/removals (which trigger refresh → graphKey change → re-run).
+    if (finalNodes.length > 0 && !editMode) {
       const xs = finalNodes.map((n) => n.x);
       const ys = finalNodes.map((n) => n.y);
       // Account for label height below nodes in the bounding box
@@ -254,7 +273,7 @@ export function DependencyGraph({
       const cw = canvasSize.width;
       const ch = canvasSize.height;
       if (graphW > 0 && graphH > 0) {
-        const padding = 40;
+        const padding = height ? 16 : 40;
         const fitScale = Math.min(
           (cw - padding * 2) / graphW,
           (ch - padding * 2) / graphH,
@@ -288,17 +307,61 @@ export function DependencyGraph({
     [translateX, translateY, scale],
   );
 
-  // ── Gesture: Pan ──
-  // Disabled in edit mode to match old WebView behavior (prevents
-  // accidental canvas movement while interacting with nodes/edges).
-  // Also disabled when embedded (height prop set) so it doesn't block
-  // the parent ScrollView's vertical scrolling.
+  // ── Node position update (#383) ──
+  const commitNodePosition = useCallback((id: string, x: number, y: number) => {
+    setSimNodes((prev) => prev.map((n) => (n.id === id ? { ...n, x, y } : n)));
+  }, []);
+
+  const updateCrossingEdges = useCallback(
+    (sx: number, sy: number, ex: number, ey: number) => {
+      const nodeMap = new Map(simNodes.map((n) => [n.id, n]));
+      const crossing = new Set<string>();
+      for (const edge of inputEdges) {
+        const s = nodeMap.get(edge.source);
+        const t = nodeMap.get(edge.target);
+        if (!s || !t) continue;
+        if (segmentsIntersect(sx, sy, ex, ey, s.x, s.y, t.x, t.y)) {
+          crossing.add(`${edge.source}→${edge.target}`);
+        }
+      }
+      setCrossingEdges(crossing);
+    },
+    [simNodes, inputEdges],
+  );
+
+  // ── Gesture: Pan (node drag + canvas pan) (#383) ──
+  // When pan starts on a node, drag the node. Otherwise, pan the canvas
+  // (non-edit, non-embedded only).
 
   const panGesture = Gesture.Pan()
-    .enabled(!editMode && !height)
+    .enabled(!height)
+    .onStart((e) => {
+      const world = toWorld(e.x, e.y);
+      // Check if touching a node → start node drag (#383)
+      for (const node of simNodes) {
+        const dx = world.x - node.x;
+        const dy = world.y - node.y;
+        if (Math.hypot(dx, dy) < HIT_RADIUS) {
+          draggingNodeId.value = node.id;
+          return;
+        }
+      }
+      draggingNodeId.value = null;
+    })
     .onChange((e) => {
-      translateX.value = translateX.value + e.changeX;
-      translateY.value = translateY.value + e.changeY;
+      if (draggingNodeId.value) {
+        // Drag node — update position via runOnJS for rendering
+        const world = toWorld(e.x, e.y);
+        runOnJS(commitNodePosition)(draggingNodeId.value, world.x, world.y);
+      } else if (!editMode) {
+        translateX.value = translateX.value + e.changeX;
+        translateY.value = translateY.value + e.changeY;
+      }
+    })
+    .onEnd(() => {
+      if (draggingNodeId.value) {
+        draggingNodeId.value = null;
+      }
     });
 
   // ── Gesture: Pinch ──
@@ -309,7 +372,7 @@ export function DependencyGraph({
       scale.value = Math.max(0.3, Math.min(3, scale.value * e.scaleChange));
     });
 
-  // ── Gesture: Tap ──
+  // ── Gesture: Tap (node tap only — edge cutting moved to line-cut #382) ──
 
   const tapGesture = Gesture.Tap().onEnd((e) => {
     const world = toWorld(e.x, e.y);
@@ -323,68 +386,106 @@ export function DependencyGraph({
         return;
       }
     }
-
-    // Check edge hits (only in edit mode)
-    if (editMode && onCutEdge) {
-      const nodeMap = new Map(simNodes.map((n) => [n.id, n]));
-      for (const edge of inputEdges) {
-        const s = nodeMap.get(edge.source);
-        const t = nodeMap.get(edge.target);
-        if (!s || !t) continue;
-        const d = distToSegment(world.x, world.y, s.x, s.y, t.x, t.y);
-        if (d < EDGE_HIT_WIDTH) {
-          runOnJS(onCutEdge)(edge.source, edge.target);
-          return;
-        }
-      }
-    }
   });
 
-  // ── Gesture: Long-press → edge drag (edit mode) ──
+  // ── Gesture: Long-press → edge drag or cut line (edit mode) ──
+  // Long-press on a node → drag to another node → add edge (existing)
+  // Long-press on empty space → drag → draw cut line → cut crossing edges (#382)
 
   const longPressDrag = Gesture.Pan()
     .activateAfterLongPress(150)
     .onStart((e) => {
-      if (!editMode || !onAddEdge) return;
+      if (!editMode) return;
       const world = toWorld(e.x, e.y);
+      // Check if starting on a node → edge addition mode
       for (const node of simNodes) {
         const dx = world.x - node.x;
         const dy = world.y - node.y;
         if (Math.hypot(dx, dy) < HIT_RADIUS) {
-          dragSourceId.value = node.id;
-          dragSx.value = node.x;
-          dragSy.value = node.y;
-          dragEx.value = node.x;
-          dragEy.value = node.y;
-          dragActive.value = 1;
+          if (onAddEdge) {
+            dragSourceId.value = node.id;
+            dragSx.value = node.x;
+            dragSy.value = node.y;
+            dragEx.value = node.x;
+            dragEy.value = node.y;
+            dragActive.value = 1;
+          }
           return;
         }
       }
+      // Not on a node → cut line mode (#382)
+      if (onCutEdges) {
+        cutSx.value = world.x;
+        cutSy.value = world.y;
+        cutEx.value = world.x;
+        cutEy.value = world.y;
+        cutActive.value = 1;
+      }
     })
     .onUpdate((e) => {
-      if (!dragSourceId.value) return;
+      if (!editMode) return;
       const world = toWorld(e.x, e.y);
-      dragEx.value = world.x;
-      dragEy.value = world.y;
+      if (dragSourceId.value) {
+        // Edge addition drag
+        dragEx.value = world.x;
+        dragEy.value = world.y;
+      } else if (cutActive.value === 1) {
+        // Cut line drag (#382)
+        cutEx.value = world.x;
+        cutEy.value = world.y;
+        runOnJS(updateCrossingEdges)(
+          cutSx.value,
+          cutSy.value,
+          world.x,
+          world.y,
+        );
+      }
     })
     .onEnd((e) => {
-      if (!dragSourceId.value || !onAddEdge) {
+      if (!editMode) return;
+      if (dragSourceId.value && onAddEdge) {
+        // Edge addition — check if dropped on a node
+        const world = toWorld(e.x, e.y);
+        for (const node of simNodes) {
+          if (node.id === dragSourceId.value) continue;
+          const dx = world.x - node.x;
+          const dy = world.y - node.y;
+          if (Math.hypot(dx, dy) < HIT_RADIUS) {
+            runOnJS(onAddEdge)(dragSourceId.value, node.id);
+            break;
+          }
+        }
         dragSourceId.value = null;
         dragActive.value = 0;
-        return;
-      }
-      const world = toWorld(e.x, e.y);
-      for (const node of simNodes) {
-        if (node.id === dragSourceId.value) continue;
-        const dx = world.x - node.x;
-        const dy = world.y - node.y;
-        if (Math.hypot(dx, dy) < HIT_RADIUS) {
-          runOnJS(onAddEdge)(dragSourceId.value, node.id);
-          break;
+      } else if (cutActive.value === 1 && onCutEdges) {
+        // Cut line — collect all crossing edges and cut them (#382)
+        const nodeMap = new Map(simNodes.map((n) => [n.id, n]));
+        const toCut: { source: string; target: string }[] = [];
+        for (const edge of inputEdges) {
+          const s = nodeMap.get(edge.source);
+          const t = nodeMap.get(edge.target);
+          if (!s || !t) continue;
+          if (
+            segmentsIntersect(
+              cutSx.value,
+              cutSy.value,
+              cutEx.value,
+              cutEy.value,
+              s.x,
+              s.y,
+              t.x,
+              t.y,
+            )
+          ) {
+            toCut.push({ source: edge.source, target: edge.target });
+          }
         }
+        if (toCut.length > 0) {
+          runOnJS(onCutEdges)(toCut);
+        }
+        cutActive.value = 0;
+        runOnJS(setCrossingEdges)(new Set());
       }
-      dragSourceId.value = null;
-      dragActive.value = 0;
     });
 
   const composed = Gesture.Simultaneous(
@@ -420,29 +521,37 @@ export function DependencyGraph({
       target: string;
       d: string;
       redundant: boolean;
+      key: string;
     }[] = [];
     for (const edge of inputEdges) {
       const s = nodeMap.get(edge.source);
       const t = nodeMap.get(edge.target);
       if (!s || !t) continue;
+      const key = `${edge.source}→${edge.target}`;
       paths.push({
         source: edge.source,
         target: edge.target,
         d: `M ${s.x} ${s.y} L ${t.x} ${t.y}`,
         redundant: !!edge.redundant,
+        key,
       });
     }
     return paths;
   }, [inputEdges, nodeMap]);
 
   const arrowPaths = useMemo(() => {
-    const paths: { d: string; redundant: boolean }[] = [];
+    const paths: { d: string; redundant: boolean; key: string }[] = [];
     for (const edge of inputEdges) {
       const s = nodeMap.get(edge.source);
       const t = nodeMap.get(edge.target);
       if (!s || !t) continue;
       const ah = arrowHead(s.x, s.y, t.x, t.y, 10);
-      if (ah) paths.push({ d: ah, redundant: !!edge.redundant });
+      if (ah)
+        paths.push({
+          d: ah,
+          redundant: !!edge.redundant,
+          key: `${edge.source}→${edge.target}`,
+        });
     }
     return paths;
   }, [inputEdges, nodeMap]);
@@ -451,6 +560,12 @@ export function DependencyGraph({
   const dragPath = useDerivedValue(() => {
     if (dragActive.value === 0) return '';
     return `M ${dragSx.value} ${dragSy.value} L ${dragEx.value} ${dragEy.value}`;
+  });
+
+  // Cut line path (#382) — dashed line for edge cutting
+  const cutPath = useDerivedValue(() => {
+    if (cutActive.value === 0) return '';
+    return `M ${cutSx.value} ${cutSy.value} L ${cutEx.value} ${cutEy.value}`;
   });
 
   // ── Canvas size tracking ──
@@ -475,6 +590,14 @@ export function DependencyGraph({
     );
   }
 
+  // Edge color helper: crossing cut line (#382) → red, redundant (#387) → orange,
+  // normal → gray
+  function edgeColor(key: string, redundant: boolean): string {
+    if (crossingEdges.has(key)) return COLORS.red;
+    if (redundant) return REDUNDANT_EDGE_COLOR;
+    return colors.grayLight ?? '#aaa';
+  }
+
   return (
     <GestureDetector gesture={composed}>
       <Reanimated.View
@@ -491,28 +614,22 @@ export function DependencyGraph({
             {/* Edges — redundant edges drawn in a warning color (#387) */}
             {edgePaths.map((ep) => (
               <Path
-                key={`e-${ep.source}-${ep.target}`}
+                key={`e-${ep.key}`}
                 path={ep.d}
-                color={
-                  ep.redundant
-                    ? REDUNDANT_EDGE_COLOR
-                    : (colors.grayLight ?? '#aaa')
-                }
+                color={edgeColor(ep.key, ep.redundant)}
                 style="stroke"
-                strokeWidth={ep.redundant ? 3 : 2}
+                strokeWidth={
+                  crossingEdges.has(ep.key) ? 4 : ep.redundant ? 3 : 2
+                }
               />
             ))}
 
             {/* Arrowheads */}
-            {arrowPaths.map((ap, i) => (
+            {arrowPaths.map((ap) => (
               <Path
-                key={`a-${i}`}
+                key={`a-${ap.key}`}
                 path={ap.d}
-                color={
-                  ap.redundant
-                    ? REDUNDANT_EDGE_COLOR
-                    : (colors.grayLight ?? '#aaa')
-                }
+                color={edgeColor(ap.key, ap.redundant)}
                 style="fill"
               />
             ))}
@@ -525,6 +642,17 @@ export function DependencyGraph({
               strokeWidth={2}
               opacity={dragActive}
             />
+
+            {/* Cut line (#382) — dashed red line for edge cutting */}
+            <Path
+              path={cutPath}
+              color={COLORS.red}
+              style="stroke"
+              strokeWidth={2}
+              opacity={cutActive}
+            >
+              <DashPathEffect intervals={[8, 6]} />
+            </Path>
 
             {/* Nodes — positions from simNodes, visual props from inputNodes */}
             {simNodes.map((node) => {
@@ -556,6 +684,7 @@ export function DependencyGraph({
                     y={node.y + LABEL_OFFSET}
                     text={truncate(label, MAX_LABEL_CHARS)}
                     color={textColor}
+                    fontSize={fontSize}
                   />
                   {/* Highlight border */}
                   {isHighlight && (
@@ -605,11 +734,13 @@ function NodeLabel({
   y,
   text,
   color,
+  fontSize,
 }: {
   x: number;
   y: number;
   text: string;
   color: string;
+  fontSize: number;
 }) {
   const paragraph = useMemo(() => {
     const builder = Skia.ParagraphBuilder.Make({
@@ -617,7 +748,7 @@ function NodeLabel({
     });
     builder.pushStyle({
       fontFamilies: NODE_LABEL_FONTS,
-      fontSize: FONT_SIZE,
+      fontSize,
       fontStyle: { weight: 500 },
       color: Skia.Color(color),
     });
@@ -626,7 +757,7 @@ function NodeLabel({
     const p = builder.build();
     p.layout(LABEL_WIDTH);
     return p;
-  }, [text, color]);
+  }, [text, color, fontSize]);
 
   const h = paragraph.getHeight();
   const padX = 6;
