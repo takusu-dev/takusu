@@ -259,17 +259,26 @@ fn build_initial(planner: &Planner) -> Plan {
     let mut schedules: Vec<(Point, Point, usize)> = Vec::new();
     let mut last_end = planner.now;
 
-    for task_id in by_freeness {
+    // 固定タスクを先に配置して、通常タスクの try_place が重複を避けられるようにする
+    // (#391)。固定タスクは移動できないため、通常タスク側が重複を回避する必要がある。
+    for &task_id in &by_freeness {
         let task = &planner.tasks[task_id];
         let dur = (task.cost_estimate.avg as i64).max(1);
-
-        // 固定タスクは start に直接配置 (try_place を使わない)
         if task.fixed
             && let Some(start) = task.start
         {
             let end = Point(start.0 + dur);
             schedules.push((start, end, task_id));
             last_end = last_end.max(end);
+        }
+    }
+
+    for task_id in by_freeness {
+        let task = &planner.tasks[task_id];
+        let dur = (task.cost_estimate.avg as i64).max(1);
+
+        // 固定タスクは先に配置済み
+        if task.fixed && task.start.is_some() {
             continue;
         }
 
@@ -583,16 +592,25 @@ fn build_initial_partial(planner: &Planner, pinned: &[(Point, Point, usize)]) ->
 
     let mut schedules: Vec<(Point, Point, usize)> = pinned.to_vec();
 
-    for task_id in unpinned {
+    // 固定タスクを先に配置して、通常タスクの try_place が重複を避けられるようにする
+    // (#391)。pinned に含まれない固定タスクを先に処理する。
+    for &task_id in &unpinned {
         let task = &planner.tasks[task_id];
         let dur = (task.cost_estimate.avg as i64).max(1);
-
-        // 固定タスクは start に直接配置
         if task.fixed
             && let Some(start) = task.start
         {
             let end = Point(start.0 + dur);
             schedules.push((start, end, task_id));
+        }
+    }
+
+    for task_id in unpinned {
+        let task = &planner.tasks[task_id];
+        let dur = (task.cost_estimate.avg as i64).max(1);
+
+        // 固定タスクは先に配置済み
+        if task.fixed && task.start.is_some() {
             continue;
         }
 
@@ -1099,6 +1117,17 @@ fn greedy_rebuild(
     let destroyed: FxHashSet<usize> = task_ids.iter().copied().collect();
     let mut placed: FxHashSet<usize> = FxHashSet::default();
 
+    // 固定タスクを先に配置して、通常タスクの try_place が重複を避けられるようにする
+    // (#391)。start = None の固定タスクは依存解決ループに残して、依存順序を守る。
+    for &task_id in &pending {
+        let task = &planner.tasks[task_id];
+        if task.fixed && task.start.is_some() {
+            place_one(planner, &mut scheds, task_id);
+            placed.insert(task_id);
+        }
+    }
+    pending.retain(|id| !placed.contains(id));
+
     // 依存先が先に配置されるよう、配置可能なタスクから複数パスで配置する。
     while !pending.is_empty() {
         let mut progressed = false;
@@ -1368,6 +1397,147 @@ mod tests {
             "zero-avg task must not be dropped by greedy_rebuild: {rebuilt:?}"
         );
         assert!(rebuilt.iter().any(|(_, _, id)| *id == 0));
+    }
+
+    // Regression (#391): fixed-time tasks must not overlap with normal tasks.
+    // Fixed tasks are placed first so that normal tasks' try_place avoids
+    // the fixed task's time slot.
+    #[test]
+    fn build_initial_fixed_task_no_overlap() {
+        // Fixed task at slot 2..4, normal task with tight deadline that
+        // would naturally be placed at now=0..4 if overlap weren't checked.
+        let fixed = Task {
+            id: 0,
+            start: Some(Point(2)),
+            end: Point(100),
+            cost_estimate: NormalDist { avg: 2, sigma: 0 },
+            depends: vec![],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: true,
+            habit_group: None,
+        };
+        let normal = Task {
+            id: 1,
+            start: Some(Point(0)),
+            end: Point(100),
+            cost_estimate: NormalDist { avg: 2, sigma: 0 },
+            depends: vec![],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: false,
+            habit_group: None,
+        };
+        let p = test_planner(vec![fixed, normal]);
+        let plan = build_initial(&p);
+        assert_eq!(plan.schedules.len(), 2);
+
+        let f = plan.schedules.iter().find(|(_, _, id)| *id == 0).unwrap();
+        let n = plan.schedules.iter().find(|(_, _, id)| *id == 1).unwrap();
+
+        // Fixed task must be at its start time.
+        assert_eq!(f.0.0, 2, "fixed task must be at its start time");
+        assert_eq!(f.1.0, 4, "fixed task end");
+
+        // Normal task must not overlap with the fixed task.
+        assert!(
+            n.1.0 <= f.0.0 || n.0.0 >= f.1.0,
+            "normal task [{}, {}) must not overlap fixed task [{}, {})",
+            n.0.0,
+            n.1.0,
+            f.0.0,
+            f.1.0
+        );
+    }
+
+    // Regression (#391): same overlap check for build_initial_partial.
+    #[test]
+    fn build_initial_partial_fixed_task_no_overlap() {
+        let fixed = Task {
+            id: 0,
+            start: Some(Point(2)),
+            end: Point(100),
+            cost_estimate: NormalDist { avg: 2, sigma: 0 },
+            depends: vec![],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: true,
+            habit_group: None,
+        };
+        let normal = Task {
+            id: 1,
+            start: Some(Point(0)),
+            end: Point(100),
+            cost_estimate: NormalDist { avg: 2, sigma: 0 },
+            depends: vec![],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: false,
+            habit_group: None,
+        };
+        let p = test_planner(vec![fixed, normal]);
+        let plan = build_initial_partial(&p, &[]);
+
+        let f = plan.schedules.iter().find(|(_, _, id)| *id == 0).unwrap();
+        let n = plan.schedules.iter().find(|(_, _, id)| *id == 1).unwrap();
+
+        assert_eq!(f.0.0, 2, "fixed task must be at its start time");
+        assert!(
+            n.1.0 <= f.0.0 || n.0.0 >= f.1.0,
+            "normal task [{}, {}) must not overlap fixed task [{}, {})",
+            n.0.0,
+            n.1.0,
+            f.0.0,
+            f.1.0
+        );
+    }
+
+    // Regression (#391): greedy_rebuild must also place fixed tasks first.
+    #[test]
+    fn greedy_rebuild_fixed_task_no_overlap() {
+        let fixed = Task {
+            id: 0,
+            start: Some(Point(2)),
+            end: Point(100),
+            cost_estimate: NormalDist { avg: 2, sigma: 0 },
+            depends: vec![],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: true,
+            habit_group: None,
+        };
+        let normal = Task {
+            id: 1,
+            start: Some(Point(0)),
+            end: Point(100),
+            cost_estimate: NormalDist { avg: 2, sigma: 0 },
+            depends: vec![],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: false,
+            habit_group: None,
+        };
+        let p = test_planner(vec![fixed, normal]);
+        let rebuilt = greedy_rebuild(&p, &[], &[0, 1]);
+
+        let f = rebuilt.iter().find(|(_, _, id)| *id == 0).unwrap();
+        let n = rebuilt.iter().find(|(_, _, id)| *id == 1).unwrap();
+
+        assert_eq!(f.0.0, 2, "fixed task must be at its start time");
+        assert!(
+            n.1.0 <= f.0.0 || n.0.0 >= f.1.0,
+            "normal task [{}, {}) must not overlap fixed task [{}, {})",
+            n.0.0,
+            n.1.0,
+            f.0.0,
+            f.1.0
+        );
     }
 
     // Regression: repair_polish must not drop a zero-avg violator. Even when
