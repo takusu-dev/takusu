@@ -66,7 +66,6 @@ interface ParallelGroupItem {
   hostScheduleEnd?: string;
   guestScheduleStarts: (string | undefined)[];
   guestScheduleEnds: (string | undefined)[];
-  isDone: boolean; // true if all tasks in the group are done
   dateKey: string;
 }
 
@@ -548,10 +547,6 @@ export function HomeView() {
       // (but not when searching — see skipGrouping above).
       const groupGuests = !skipGrouping ? parallelGroups.get(t.id) : undefined;
       if (groupGuests && groupGuests.length > 0) {
-        const allTasks = [t, ...groupGuests];
-        const allDone = allTasks.every(
-          (gt) => gt.status === 'completed' || gt.status === 'skipped',
-        );
         result.push({
           type: 'parallelGroup',
           host: t,
@@ -564,7 +559,6 @@ export function HomeView() {
           guestScheduleEnds: groupGuests.map(
             (g) => scheduleMap.get(g.id)?.end_at,
           ),
-          isDone: allDone,
           dateKey: key,
         });
       } else {
@@ -787,36 +781,77 @@ export function HomeView() {
     await refresh();
   }
 
-  // Mark all tasks in a parallel group as done (or undone if all done).
-  // Used by the group card's slide-right gesture (#194).
+  // Cycle the host task of a parallel group through 3 states
+  // (scheduled → in_progress → completed → scheduled), matching the
+  // single-task card's swipe behavior (#312, #389).
+  // When the host transitions to in_progress, only the host is updated.
+  // When the host transitions to completed, non-done guests are also
+  // completed. When the host transitions back to scheduled, all tasks
+  // (host + guests) are reset to scheduled.
   async function markGroupDone(host: TaskRow, guests: TaskRow[]) {
     if (!client) return;
+    const hostDone = host.status === 'completed' || host.status === 'skipped';
+    const hostInProgress = host.status === 'in_progress';
+    const hostPending = host.status === 'pending';
+    let newHostStatus: TaskStatus;
+    let actionLabel: string;
+    let errorLabel: string;
+    if (hostPending) {
+      newHostStatus = 'completed';
+      actionLabel = 'mark done';
+      errorLabel = 'タスクの完了に失敗';
+    } else if (hostInProgress) {
+      newHostStatus = 'completed';
+      actionLabel = 'mark done';
+      errorLabel = 'タスクの完了に失敗';
+    } else if (hostDone) {
+      newHostStatus = 'scheduled';
+      actionLabel = 'undone';
+      errorLabel = 'タスクの未完了に失敗';
+    } else {
+      // scheduled → in_progress (only host changes)
+      newHostStatus = 'in_progress';
+      actionLabel = 'start';
+      errorLabel = 'タスクの開始に失敗';
+    }
+
+    // Determine which tasks to update.
+    // - in_progress: only the host
+    // - completed: host + non-done guests
+    // - scheduled (undone): host + all guests
     const allTasks = [host, ...guests];
-    const allDone = allTasks.every(
-      (t) => t.status === 'completed' || t.status === 'skipped',
-    );
-    const newStatus = allDone ? 'scheduled' : 'completed';
     const prevStatuses = new Map(allTasks.map((t) => [t.id, t.status]));
-    // Only modify tasks that are not already in the target state.
-    const toChange = allTasks.filter((t) => {
-      const isDone = t.status === 'completed' || t.status === 'skipped';
-      if (allDone && !isDone) return false; // don't touch non-done when undoing
-      if (!allDone && isDone) return false; // don't touch done ones when completing
-      return true;
-    });
+    const toChange: TaskRow[] = [];
+    if (newHostStatus === 'in_progress') {
+      toChange.push(host);
+    } else if (newHostStatus === 'completed') {
+      toChange.push(host);
+      for (const g of guests) {
+        const gDone = g.status === 'completed' || g.status === 'skipped';
+        if (!gDone) toChange.push(g);
+      }
+    } else {
+      // scheduled: reset all
+      toChange.push(...allTasks);
+    }
+
     const changed: TaskRow[] = [];
     for (const t of toChange) {
+      const targetStatus =
+        t === host
+          ? newHostStatus
+          : newHostStatus === 'scheduled'
+            ? 'scheduled'
+            : 'completed';
       try {
-        await client.updateTask(t.id, { status: newStatus });
+        await client.updateTask(t.id, { status: targetStatus });
         changed.push(t);
-        // Dismiss any delivered notifications for this task (#257).
         dismissTaskNotifications(t.id).catch((e) => logError('通知の消去', e));
       } catch (e) {
-        showError(e, 'タスクの完了に失敗');
-        // Push a partial undo for tasks that were already changed.
+        showError(e, errorLabel);
         if (changed.length > 0) {
           undoRedo.push({
-            description: `${allDone ? 'undone' : 'mark done'} group (partial): ${host.title}`,
+            description: `${actionLabel} group (partial): ${host.title}`,
             undo: async () => {
               for (const ct of changed) {
                 const prev = prevStatuses.get(ct.id)!;
@@ -826,7 +861,13 @@ export function HomeView() {
             },
             redo: async () => {
               for (const ct of changed) {
-                await client.updateTask(ct.id, { status: newStatus });
+                const target =
+                  ct === host
+                    ? newHostStatus
+                    : newHostStatus === 'scheduled'
+                      ? 'scheduled'
+                      : 'completed';
+                await client.updateTask(ct.id, { status: target });
               }
               await refresh();
             },
@@ -841,18 +882,52 @@ export function HomeView() {
         );
       }
     }
+    // Post in-progress notification when starting host via swipe (#312)
+    if (newHostStatus === 'in_progress' && notifications.inProgress) {
+      postInProgressNotification(host).catch((e) => logError('通知の投稿', e));
+    }
     undoRedo.push({
-      description: `${allDone ? 'undone' : 'mark done'} group: ${host.title}`,
+      description: `${actionLabel} group: ${host.title}`,
       undo: async () => {
         for (const t of toChange) {
           const prev = prevStatuses.get(t.id)!;
           await client.updateTask(t.id, { status: prev });
         }
+        if (newHostStatus === 'in_progress') {
+          dismissInProgressNotification(host.id).catch((e) =>
+            logError('通知の消去', e),
+          );
+        }
+        if (
+          host.status === 'in_progress' &&
+          newHostStatus === 'completed' &&
+          notifications.inProgress
+        ) {
+          postInProgressNotification(host).catch((e) =>
+            logError('通知の投稿', e),
+          );
+        }
         await refresh();
       },
       redo: async () => {
         for (const t of toChange) {
-          await client.updateTask(t.id, { status: newStatus });
+          const target =
+            t === host
+              ? newHostStatus
+              : newHostStatus === 'scheduled'
+                ? 'scheduled'
+                : 'completed';
+          await client.updateTask(t.id, { status: target });
+        }
+        if (newHostStatus === 'in_progress' && notifications.inProgress) {
+          postInProgressNotification(host).catch((e) =>
+            logError('通知の投稿', e),
+          );
+        }
+        if (host.status === 'in_progress' && newHostStatus === 'completed') {
+          dismissInProgressNotification(host.id).catch((e) =>
+            logError('通知の消去', e),
+          );
         }
         await refresh();
       },
@@ -1307,7 +1382,6 @@ export function HomeView() {
           hostScheduleEnd={item.hostScheduleEnd}
           guestScheduleStarts={item.guestScheduleStarts}
           guestScheduleEnds={item.guestScheduleEnds}
-          isDone={item.isDone}
           selected={isSelected}
           habitDisplayIdMap={habitDisplayIdMap}
           onHostPress={() => {

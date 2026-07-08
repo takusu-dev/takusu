@@ -450,7 +450,6 @@ interface ParallelGroupCardProps {
   hostScheduleEnd?: string;
   guestScheduleStarts: (string | undefined)[];
   guestScheduleEnds: (string | undefined)[];
-  isDone: boolean;
   selected?: boolean;
   onHostPress: () => void;
   onGuestPress: (index: number) => void;
@@ -468,7 +467,6 @@ function ParallelGroupCardImpl({
   hostScheduleEnd,
   guestScheduleStarts,
   guestScheduleEnds,
-  isDone,
   selected,
   onHostPress,
   onGuestPress,
@@ -571,6 +569,28 @@ function ParallelGroupCardImpl({
     dark,
   );
   const hostDone = host.status === 'completed' || host.status === 'skipped';
+  // Slide-right preview: icon and color depend on the host's next state
+  // in the 3-state cycle (#389), matching the single task card (#312).
+  // pending → completed (checkmark, green)
+  // scheduled → in_progress (play, blue)
+  // in_progress → completed (checkmark, green)
+  // completed → scheduled (refresh, red)
+  const hostPending = host.status === 'pending';
+  const hostInProgress = host.status === 'in_progress';
+  const doneIcon = hostDone
+    ? 'refresh'
+    : hostPending
+      ? 'checkmark'
+      : hostInProgress
+        ? 'checkmark'
+        : 'play';
+  const doneColor = hostDone
+    ? COLORS.red
+    : hostPending
+      ? COLORS.green
+      : hostInProgress
+        ? COLORS.green
+        : BRAND_COLOR;
 
   const handleHostPress = () => {
     if (deleteRevealed) {
@@ -599,18 +619,10 @@ function ParallelGroupCardImpl({
     <View style={groupStyles.container}>
       {/* Slide action preview backgrounds */}
       <Reanimated.View
-        style={[
-          styles.doneBg,
-          { backgroundColor: isDone ? COLORS.red : COLORS.green },
-          doneBgStyle,
-        ]}
+        style={[styles.doneBg, { backgroundColor: doneColor }, doneBgStyle]}
         pointerEvents="none"
       >
-        <Ionicons
-          name={isDone ? 'refresh' : 'checkmark'}
-          size={28}
-          color={COLORS.white}
-        />
+        <Ionicons name={doneIcon} size={28} color={COLORS.white} />
       </Reanimated.View>
       <Reanimated.View
         style={[
