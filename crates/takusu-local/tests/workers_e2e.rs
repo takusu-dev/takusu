@@ -32,17 +32,19 @@ async fn setup_mock_db() -> SqlitePool {
         .await
         .unwrap();
     let sqls: &[&str] = &[
-        include_str!("../migrations/001_init.sql"),
-        include_str!("../migrations/002_google_cal.sql"),
-        include_str!("../migrations/003_settings.sql"),
-        include_str!("../migrations/004_indexes.sql"),
-        include_str!("../migrations/005_task_display_id.sql"),
-        include_str!("../migrations/006_user_edited.sql"),
-        include_str!("../migrations/007_fixed.sql"),
+        include_str!("../../takusu-local-lib/migrations/001_init.sql"),
+        include_str!("../../takusu-local-lib/migrations/002_google_cal.sql"),
+        include_str!("../../takusu-local-lib/migrations/003_settings.sql"),
+        include_str!("../../takusu-local-lib/migrations/004_indexes.sql"),
+        include_str!("../../takusu-local-lib/migrations/005_task_display_id.sql"),
+        include_str!("../../takusu-local-lib/migrations/006_user_edited.sql"),
         include_str!("../../takusu-local-lib/migrations/007_task_display_id_seq.sql"),
-        include_str!("../migrations/009_habit_display_id.sql"),
+        include_str!("../../takusu-local-lib/migrations/008_fixed.sql"),
+        include_str!("../../takusu-local-lib/migrations/009_habit_display_id.sql"),
         include_str!("../../takusu-local-lib/migrations/010_habit_pauses.sql"),
         include_str!("../../takusu-local-lib/migrations/011_habit_steps.sql"),
+        include_str!("../../takusu-local-lib/migrations/012_window_mode.sql"),
+        include_str!("../../takusu-local-lib/migrations/013_habit_task_display_id.sql"),
     ];
     for s in sqls {
         sqlx::raw_sql(*s).execute(&pool).await.unwrap();

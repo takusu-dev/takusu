@@ -70,13 +70,31 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
 
     // Atomically reserve a monotonic display_id from the sequence table.
     // This prevents display_id reuse after task deletion (#186).
-    let seq_stmt = database.prepare(
-        "UPDATE task_display_id_seq SET next_id = next_id + 1 RETURNING next_id - 1 AS display_id",
-    );
-    let seq_row: Option<DisplayIdRow> = seq_stmt.first(None).await.map_err(WorkerError::Worker)?;
-    let display_id = seq_row
-        .ok_or_else(|| WorkerError::Internal("display_id sequence is empty".into()))?
-        .display_id;
+    // For habit tasks, use a habit-specific sequence (#380).
+    let display_id = if let Some(ref habit_id) = body.habit_id {
+        // Use habit-specific sequence. Ensure the sequence entry exists first.
+        let insert_stmt = database.prepare(
+            "INSERT OR IGNORE INTO habit_task_display_id_seq (habit_id, next_id) VALUES (?1, 1)",
+        );
+        insert_stmt.bind(&[JsValue::from_str(habit_id)])?.run().await.map_err(WorkerError::Worker)?;
+        let seq_stmt = database.prepare(
+            "UPDATE habit_task_display_id_seq SET next_id = next_id + 1 WHERE habit_id = ?1 RETURNING next_id - 1 AS display_id",
+        );
+        let bindings = vec![JsValue::from_str(habit_id)];
+        let seq_row: Option<DisplayIdRow> = seq_stmt.bind(&bindings)?.first(None).await.map_err(WorkerError::Worker)?;
+        seq_row
+            .ok_or_else(|| WorkerError::Internal("habit display_id sequence is empty".into()))?
+            .display_id
+    } else {
+        // Use global task sequence
+        let seq_stmt = database.prepare(
+            "UPDATE task_display_id_seq SET next_id = next_id + 1 RETURNING next_id - 1 AS display_id",
+        );
+        let seq_row: Option<DisplayIdRow> = seq_stmt.first(None).await.map_err(WorkerError::Worker)?;
+        seq_row
+            .ok_or_else(|| WorkerError::Internal("display_id sequence is empty".into()))?
+            .display_id
+    };
 
     let stmt = database.prepare(
         "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'pending', ?13, ?14, ?15, ?16)"
@@ -299,10 +317,28 @@ pub async fn select_one(database: &worker::D1Database, id: &str) -> Result<TaskR
 /// Resolve a single task reference (display_id number, full UUID, or UUID prefix)
 /// to a full UUID string.
 async fn resolve_task_id(database: &worker::D1Database, id: &str) -> Result<String, WorkerError> {
-    // Numeric → display_id lookup only (no UUID prefix fallthrough).
+    // `h{habit_display_id}#{task_display_id}` → habit task lookup (#380).
+    if let Some(rest) = id.strip_prefix(['h', 'H'])
+        && let Some((hdisp, tdisp)) = rest.split_once('#')
+        && let (Ok(hnum), Ok(tnum)) = (hdisp.parse::<i64>(), tdisp.parse::<i64>())
+    {
+        let stmt = database.prepare(
+            "SELECT t.id AS id FROM tasks t JOIN habits h ON t.habit_id = h.id \
+             WHERE h.display_id = ?1 AND t.display_id = ?2",
+        );
+        let row: Option<IdRow> = stmt
+            .bind(&[JsValue::from_f64(hnum as f64), JsValue::from_f64(tnum as f64)])?
+            .first(None)
+            .await
+            .map_err(WorkerError::Worker)?;
+        return row
+            .map(|r| r.id)
+            .ok_or_else(|| WorkerError::NotFound(format!("task {id} not found")));
+    }
+    // Numeric → display_id lookup for non-habit tasks only (#380).
     if let Ok(num) = id.parse::<i64>() {
         let stmt = database.prepare(format!(
-            "{select} WHERE display_id = ?1",
+            "{select} WHERE display_id = ?1 AND habit_id IS NULL",
             select = select_tasks()
         ));
         let row: Option<TaskRow> = stmt
@@ -353,4 +389,9 @@ async fn resolve_depends(
 #[derive(serde::Deserialize)]
 struct DisplayIdRow {
     display_id: i64,
+}
+
+#[derive(serde::Deserialize)]
+struct IdRow {
+    id: String,
 }
