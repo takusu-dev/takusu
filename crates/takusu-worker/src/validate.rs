@@ -237,7 +237,7 @@ fn detect_cycle(adj: &[Vec<usize>]) -> Result<(), WorkerError> {
     for v in 0..n {
         if color[v] == 0 && dfs(v, adj, &mut color) {
             return Err(WorkerError::BadRequest(
-                "circular dependency detected in habit steps".into(),
+                "habit steps に循環依存が検出されました".into(),
             ));
         }
     }

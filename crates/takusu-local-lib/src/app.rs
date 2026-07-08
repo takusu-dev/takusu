@@ -114,7 +114,7 @@ fn validate_steps(steps: &[HabitStepInput]) -> Result<(), AppError> {
     }
 
     crate::graph::detect_cycle(&adj)
-        .map_err(|_| AppError::BadRequest("circular dependency detected".into()))?;
+        .map_err(|_| AppError::BadRequest("循環依存が検出されました".into()))?;
     Ok(())
 }
 
@@ -137,7 +137,7 @@ fn topo_sort_steps(steps: &[HabitStepRow]) -> Result<Vec<usize>, AppError> {
         }
     }
     crate::graph::topo_sort(&adj)
-        .map_err(|_| AppError::BadRequest("circular dependency detected in habit steps".into()))
+        .map_err(|_| AppError::BadRequest("habit steps に循環依存が検出されました".into()))
 }
 
 /// Verify the timezone string resolves to a real `jiff::tz::TimeZone` so that
@@ -628,7 +628,7 @@ impl TakusuApp {
                 .filter_map(|did| id_to_idx.get(did).copied())
                 .collect();
             crate::graph::detect_cycle(&adj)
-                .map_err(|_| AppError::BadRequest("circular dependency detected".into()))?;
+                .map_err(|_| AppError::BadRequest("循環依存が検出されました".into()))?;
             body.depends = Some(resolved);
         }
 
@@ -692,7 +692,7 @@ impl TakusuApp {
                 .filter_map(|did| id_to_idx.get(did).copied())
                 .collect();
             crate::graph::detect_cycle(&adj)
-                .map_err(|_| AppError::BadRequest("circular dependency detected".into()))?;
+                .map_err(|_| AppError::BadRequest("循環依存が検出されました".into()))?;
             let mut body = body.clone();
             body.depends = Some(resolved);
             return self
@@ -913,7 +913,7 @@ impl TakusuApp {
             }
         }
         let redundant = crate::graph::find_redundant_edges(&adj)
-            .map_err(|_| AppError::BadRequest("circular dependency detected".into()))?;
+            .map_err(|_| AppError::BadRequest("循環依存が検出されました".into()))?;
         let node = |idx: usize| DependencyNode {
             id: active[idx].id.clone(),
             title: active[idx].title.clone(),
@@ -954,7 +954,7 @@ impl TakusuApp {
             }
         }
         let redundant = crate::graph::find_redundant_edges(&adj)
-            .map_err(|_| AppError::BadRequest("circular dependency detected".into()))?;
+            .map_err(|_| AppError::BadRequest("循環依存が検出されました".into()))?;
         let node = |idx: usize| DependencyNode {
             id: steps[idx].id.clone(),
             title: steps[idx].title.clone(),
@@ -2026,7 +2026,7 @@ impl TakusuApp {
         }
 
         crate::graph::detect_cycle(&all_depends)
-            .map_err(|_| AppError::BadRequest("circular dependency detected".into()))?;
+            .map_err(|_| AppError::BadRequest("循環依存が検出されました".into()))?;
 
         // #306: Build habit_id → group index map so that tasks from the same
         // habit share a habit_group index, enabling the consistency bonus.
