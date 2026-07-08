@@ -9,7 +9,7 @@ import { StyleSheet, View } from 'react-native';
 import { Button, IconButton } from 'react-native-paper';
 import type { TakusuClient } from '@/src/api/client';
 import { showError } from '@/src/api/errors';
-import type { TaskRow } from '@/src/api/types';
+import type { TaskRow, RedundantDependency } from '@/src/api/types';
 import { parseDepends } from '@/src/api/types';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -37,13 +37,25 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
   const refresh = useCallback(async () => {
     if (!client) return;
     let allTasks: TaskRow[];
+    let redundant: RedundantDependency[];
     try {
-      allTasks = await client.listTasks();
+      [allTasks, redundant] = await Promise.all([
+        client.listTasks(),
+        client
+          .analyzeTaskDependencies()
+          .then((r) => r.redundant)
+          .catch(() => []),
+      ]);
     } catch (e) {
       showError(e, 'タスク一覧の取得に失敗');
       return;
     }
     setTasks(allTasks);
+
+    // Build a set of redundant edge keys for quick lookup (#387).
+    // Rust API returns from=dependent, to=dependency, but GraphView edges
+    // use source=dependency, target=dependent, so we flip the key direction.
+    const redundantSet = new Set(redundant.map((r) => `${r.to}→${r.from}`));
 
     // Build transitive dependency graph from incomplete tasks
     const incomplete = allTasks.filter(
@@ -71,7 +83,12 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
       });
       const deps = parseDepends(task.depends);
       for (const depId of deps) {
-        edges.push({ source: depId, target: task.id });
+        const key = `${depId}→${task.id}`;
+        edges.push({
+          source: depId,
+          target: task.id,
+          redundant: redundantSet.has(key),
+        });
         visit(depId);
       }
     }

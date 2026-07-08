@@ -43,6 +43,8 @@ export interface GraphNode {
 export interface GraphEdge {
   source: string;
   target: string;
+  /** Redundant edge (direct dep already implied by a longer path) — #387 */
+  redundant?: boolean;
 }
 
 export interface DependencyGraphProps {
@@ -69,6 +71,8 @@ const LABEL_WIDTH = 140;
 const LABEL_OFFSET = NODE_RADIUS + 6;
 const HIT_RADIUS = NODE_RADIUS + 4;
 const EDGE_HIT_WIDTH = 12;
+/** Redundant edges (direct dep already implied by a transitive path) — #387 */
+const REDUNDANT_EDGE_COLOR = '#e85d04';
 
 // ── Helpers ──
 
@@ -411,7 +415,12 @@ export function DependencyGraph({
   );
 
   const edgePaths = useMemo(() => {
-    const paths: { source: string; target: string; d: string }[] = [];
+    const paths: {
+      source: string;
+      target: string;
+      d: string;
+      redundant: boolean;
+    }[] = [];
     for (const edge of inputEdges) {
       const s = nodeMap.get(edge.source);
       const t = nodeMap.get(edge.target);
@@ -420,19 +429,20 @@ export function DependencyGraph({
         source: edge.source,
         target: edge.target,
         d: `M ${s.x} ${s.y} L ${t.x} ${t.y}`,
+        redundant: !!edge.redundant,
       });
     }
     return paths;
   }, [inputEdges, nodeMap]);
 
   const arrowPaths = useMemo(() => {
-    const paths: string[] = [];
+    const paths: { d: string; redundant: boolean }[] = [];
     for (const edge of inputEdges) {
       const s = nodeMap.get(edge.source);
       const t = nodeMap.get(edge.target);
       if (!s || !t) continue;
       const ah = arrowHead(s.x, s.y, t.x, t.y, 10);
-      if (ah) paths.push(ah);
+      if (ah) paths.push({ d: ah, redundant: !!edge.redundant });
     }
     return paths;
   }, [inputEdges, nodeMap]);
@@ -478,23 +488,31 @@ export function DependencyGraph({
           {/* Pan/zoom applied to the Skia Group so the Canvas background
               stays fixed and the parent container doesn't clip. */}
           <Group transform={groupTransform}>
-            {/* Edges */}
+            {/* Edges — redundant edges drawn in a warning color (#387) */}
             {edgePaths.map((ep) => (
               <Path
                 key={`e-${ep.source}-${ep.target}`}
                 path={ep.d}
-                color={colors.grayLight ?? '#aaa'}
+                color={
+                  ep.redundant
+                    ? REDUNDANT_EDGE_COLOR
+                    : (colors.grayLight ?? '#aaa')
+                }
                 style="stroke"
-                strokeWidth={2}
+                strokeWidth={ep.redundant ? 3 : 2}
               />
             ))}
 
             {/* Arrowheads */}
-            {arrowPaths.map((d, i) => (
+            {arrowPaths.map((ap, i) => (
               <Path
                 key={`a-${i}`}
-                path={d}
-                color={colors.grayLight ?? '#aaa'}
+                path={ap.d}
+                color={
+                  ap.redundant
+                    ? REDUNDANT_EDGE_COLOR
+                    : (colors.grayLight ?? '#aaa')
+                }
                 style="fill"
               />
             ))}
