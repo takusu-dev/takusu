@@ -24,8 +24,16 @@ class WidgetUpdateWorker(
 ) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val prefs = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val token = prefs.getString(KEY_TOKEN, null) ?: return Result.success()
-        val workersUrl = prefs.getString(KEY_WORKERS_URL, null) ?: return Result.success()
+        val token = prefs.getString(KEY_TOKEN, null)
+        val workersUrl = prefs.getString(KEY_WORKERS_URL, null)
+
+        // If credentials are not configured, persist an empty snapshot so the
+        // widget shows the placeholder (#378).
+        if (token == null || workersUrl == null) {
+            persistEmptySnapshot(prefs)
+            TakusuWidgetProvider.updateWidget(applicationContext)
+            return Result.success()
+        }
 
         // Try fetching from the local server first (it may already be running
         // if the app is in the foreground).
@@ -104,6 +112,14 @@ class WidgetUpdateWorker(
                 .edit()
                 .putString(KEY_SNAPSHOT, snap.toString())
                 .putLong(KEY_UPDATED_AT, System.currentTimeMillis())
+                .apply()
+        }
+
+        private fun persistEmptySnapshot(prefs: android.content.SharedPreferences) {
+            prefs
+                .edit()
+                .remove(KEY_SNAPSHOT)
+                .remove(KEY_UPDATED_AT)
                 .apply()
         }
 
