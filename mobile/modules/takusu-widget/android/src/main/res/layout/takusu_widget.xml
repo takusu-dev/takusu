@@ -2,7 +2,7 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
   android:id="@+id/widget_root"
   android:layout_width="match_parent"
-  android:layout_height="match_parent"
+  android:layout_height="wrap_content"
   android:orientation="vertical"
   android:padding="12dp"
   android:background="@drawable/widget_background">
@@ -44,12 +44,11 @@
     android:textColor="#AAAAAA"
     android:layout_marginBottom="4dp" />
 
-  <!-- Scrollable upcoming tasks list (fills remaining space) -->
+  <!-- Scrollable upcoming tasks list -->
   <ListView
     android:id="@+id/widget_upcoming_list"
     android:layout_width="match_parent"
-    android:layout_height="0dp"
-    android:layout_weight="1"
+    android:layout_height="120dp"
     android:divider="@null"
     android:dividerHeight="0dp"
     android:overScrollMode="never" />
