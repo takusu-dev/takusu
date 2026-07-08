@@ -159,6 +159,18 @@ export function HabitStepEditor({ drafts, onChange }: HabitStepEditorProps) {
             ]}
           >
             <View style={styles.stepHeader}>
+              {/* Fold toggle — leftmost in the card (#390) */}
+              <Pressable
+                onPress={() => toggle(d.tempId)}
+                hitSlop={8}
+                style={styles.foldButton}
+              >
+                <Ionicons
+                  name={isOpen ? 'chevron-up' : 'chevron-down'}
+                  size={20}
+                  color={colors.gray}
+                />
+              </Pressable>
               <Pressable
                 style={styles.stepHeaderTap}
                 onPress={() => toggle(d.tempId)}
@@ -203,13 +215,6 @@ export function HabitStepEditor({ drafts, onChange }: HabitStepEditorProps) {
                 </Pressable>
                 <Pressable onPress={() => deleteStep(d.tempId)} hitSlop={8}>
                   <Ionicons name="trash-outline" size={20} color={COLORS.red} />
-                </Pressable>
-                <Pressable onPress={() => toggle(d.tempId)} hitSlop={8}>
-                  <Ionicons
-                    name={isOpen ? 'chevron-up' : 'chevron-down'}
-                    size={20}
-                    color={colors.gray}
-                  />
                 </Pressable>
               </View>
             </View>
@@ -501,6 +506,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  foldButton: {
+    padding: 2,
   },
   stepHeaderTap: {
     flex: 1,
