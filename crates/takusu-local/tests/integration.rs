@@ -2561,7 +2561,17 @@ async fn habit_period_clamps_today_start_to_midnight() {
 
     // The first occurrence's window start should be clamped to today's 00:00
     // (the occurrence's 23:59 start time is ignored for the window start).
-    let first = &tasks[0];
+    // Sort by start_at to find today's occurrence reliably — list_tasks
+    // returns ORDER BY created_at DESC, which is unstable when multiple
+    // tasks share the same created_at second (#374).
+    let mut sorted = tasks.clone();
+    sorted.sort_by(|a, b| {
+        a["start_at"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["start_at"].as_str().unwrap_or(""))
+    });
+    let first = &sorted[0];
     let start = iso_to_ts(first["start_at"].as_str().unwrap());
     let zdt = start.to_zoned(jiff::tz::TimeZone::UTC);
     assert_eq!(
