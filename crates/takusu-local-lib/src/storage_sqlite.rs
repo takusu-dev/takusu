@@ -19,6 +19,35 @@ const MIGRATION_006: &str = include_str!("../migrations/006_user_edited.sql");
 const MIGRATION_007: &str = include_str!("../migrations/007_task_display_id_seq.sql");
 const MIGRATION_010: &str = include_str!("../migrations/010_habit_pauses.sql");
 const MIGRATION_012: &str = include_str!("../migrations/012_window_mode.sql");
+const MIGRATION_013: &str = include_str!("../migrations/013_habit_task_display_id.sql");
+// Migration 013 one-time backfill: drops the old global unique index, renumbers
+// existing habit tasks to start from 1 per habit, and seeds the per-habit
+// sequences. Non-idempotent (DROP + UPDATE renumber) — guarded by a check
+// in `init` that only runs this when habit_task_display_id_seq is empty.
+const MIGRATION_013_BACKFILL: &str = "
+-- Drop the old global unique index so habit tasks can use per-habit sequences.
+DROP INDEX IF EXISTS idx_tasks_display_id;
+
+-- Renumber existing habit tasks so each habit starts from 1, ordered by
+-- creation time (then id as tiebreaker). This gives the clean h1#1, h1#2, ...
+-- numbering instead of retaining old global-sequence values (e.g. h1#47).
+UPDATE tasks SET display_id = (
+    SELECT COUNT(*) + 1 FROM tasks t2
+    WHERE t2.habit_id = tasks.habit_id
+      AND (t2.created_at < tasks.created_at
+           OR (t2.created_at = tasks.created_at AND t2.id < tasks.id))
+) WHERE habit_id IS NOT NULL;
+
+-- Initialize sequences for existing habits based on max display_id.
+-- Uses MAX (not COUNT) to avoid reusing display_ids after task deletion (#186).
+INSERT OR IGNORE INTO habit_task_display_id_seq (habit_id, next_id)
+SELECT
+    habit_id,
+    COALESCE(MAX(display_id), 0) + 1
+FROM tasks
+WHERE habit_id IS NOT NULL
+GROUP BY habit_id;
+";
 // Migration 011 creates the habit_steps table (idempotent — uses IF NOT EXISTS
 // for both the table and the index). The `ALTER TABLE tasks ADD COLUMN
 // habit_step_id` is not idempotent (SQLite has no IF NOT EXISTS for ADD
@@ -193,6 +222,19 @@ impl SqliteStorage {
             sqlx::raw_sql(MIGRATION_012).execute(&pool).await?;
         }
 
+        // Migration 013 creates habit_task_display_id_seq table and scoped
+        // indexes (idempotent). The one-time backfill (drop old index, renumber
+        // habit tasks, seed sequences) is non-idempotent and guarded by a
+        // check: only run when the seq table exists but has no rows.
+        sqlx::raw_sql(MIGRATION_013).execute(&pool).await?;
+        let seq_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM habit_task_display_id_seq")
+                .fetch_one(&pool)
+                .await?;
+        if seq_count == 0 {
+            sqlx::raw_sql(MIGRATION_013_BACKFILL).execute(&pool).await?;
+        }
+
         Ok(Self { pool, root_token })
     }
 
@@ -300,12 +342,32 @@ impl Storage for SqliteStorage {
         let fixed = body.fixed.unwrap_or(false);
         // Atomically reserve a monotonic display_id from the sequence table.
         // This prevents display_id reuse after task deletion (#186).
-        let display_id: i64 = sqlx::query_scalar(
-            "UPDATE task_display_id_seq SET next_id = next_id + 1 RETURNING next_id - 1",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_err)?;
+        // For habit tasks, use a habit-specific sequence (#380).
+        let display_id: i64 = if let Some(ref habit_id) = body.habit_id {
+            // Use habit-specific sequence. Ensure the sequence entry exists first.
+            sqlx::query(
+                "INSERT OR IGNORE INTO habit_task_display_id_seq (habit_id, next_id) VALUES (?1, 1)",
+            )
+            .bind(habit_id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+            sqlx::query_scalar(
+                "UPDATE habit_task_display_id_seq SET next_id = next_id + 1 WHERE habit_id = ?1 RETURNING next_id - 1",
+            )
+            .bind(habit_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_err)?
+        } else {
+            // Use global task sequence
+            sqlx::query_scalar(
+                "UPDATE task_display_id_seq SET next_id = next_id + 1 RETURNING next_id - 1",
+            )
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_err)?
+        };
         sqlx::query(
             "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)"
         )
@@ -605,6 +667,12 @@ impl Storage for SqliteStorage {
         // already deleted above, so the habit_step_id FK is no longer
         // referenced.
         sqlx::query("DELETE FROM habit_steps WHERE habit_id = ?")
+            .bind(&full)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        // habit_task_display_id_seq: clean up the per-habit sequence (#380).
+        sqlx::query("DELETE FROM habit_task_display_id_seq WHERE habit_id = ?")
             .bind(&full)
             .execute(&mut *tx)
             .await
@@ -1051,14 +1119,32 @@ impl Storage for SqliteStorage {
 }
 
 async fn resolve_task_id(pool: &SqlitePool, id: &str) -> StorageResult<String> {
-    // Numeric input → display_id lookup only (no UUID prefix fallthrough).
+    // `h{habit_display_id}#{task_display_id}` → habit task lookup (#380).
+    if let Some(rest) = id.strip_prefix(['h', 'H'])
+        && let Some((hdisp, tdisp)) = rest.split_once('#')
+        && let (Ok(hnum), Ok(tnum)) = (hdisp.parse::<i64>(), tdisp.parse::<i64>())
+    {
+        return sqlx::query_scalar::<_, String>(
+            "SELECT t.id FROM tasks t JOIN habits h ON t.habit_id = h.id \
+             WHERE h.display_id = ? AND t.display_id = ?",
+        )
+        .bind(hnum)
+        .bind(tnum)
+        .fetch_optional(pool)
+        .await
+        .map_err(map_err)?
+        .ok_or_else(|| StorageError::NotFound(format!("task {id} not found")));
+    }
+    // Numeric input → display_id lookup for non-habit tasks only (#380).
     if let Ok(num) = id.parse::<i64>() {
-        return sqlx::query_scalar::<_, String>("SELECT id FROM tasks WHERE display_id = ?")
-            .bind(num)
-            .fetch_optional(pool)
-            .await
-            .map_err(map_err)?
-            .ok_or_else(|| StorageError::NotFound(format!("task {id} not found")));
+        return sqlx::query_scalar::<_, String>(
+            "SELECT id FROM tasks WHERE display_id = ? AND habit_id IS NULL",
+        )
+        .bind(num)
+        .fetch_optional(pool)
+        .await
+        .map_err(map_err)?
+        .ok_or_else(|| StorageError::NotFound(format!("task {id} not found")));
     }
     if id.contains('-') {
         let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM tasks WHERE id = ?")

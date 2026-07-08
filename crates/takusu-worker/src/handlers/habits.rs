@@ -239,6 +239,10 @@ pub async fn delete(_req: worker::Request, env: Env, id: &str) -> Result<Respons
         database
             .prepare("DELETE FROM habit_steps WHERE habit_id = ?1")
             .bind(&[JsValue::from_str(&full)])?,
+        // habit_task_display_id_seq: clean up the per-habit sequence (#380).
+        database
+            .prepare("DELETE FROM habit_task_display_id_seq WHERE habit_id = ?1")
+            .bind(&[JsValue::from_str(&full)])?,
         database
             .prepare("DELETE FROM habits WHERE id = ?1")
             .bind(&[JsValue::from_str(&full)])?,

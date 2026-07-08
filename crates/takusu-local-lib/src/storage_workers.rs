@@ -513,12 +513,39 @@ impl Storage for WorkersStorage {
 
 impl WorkersStorage {
     async fn resolve_task_id(&self, id: &str) -> StorageResult<String> {
-        // Numeric input → resolve via display_id (short sequential ID).
+        // `h{habit_display_id}#{task_display_id}` → habit task lookup (#380).
+        if let Some(rest) = id.strip_prefix(['h', 'H'])
+            && let Some((hdisp, tdisp)) = rest.split_once('#')
+            && let (Ok(hnum), Ok(tnum)) = (hdisp.parse::<i64>(), tdisp.parse::<i64>())
+        {
+            let tasks: Vec<TaskRow> = self
+                .request::<Vec<TaskRow>>(reqwest::Method::GET, "/api/tasks")
+                .await?;
+            let habits: Vec<HabitRow> = self
+                .request::<Vec<HabitRow>>(reqwest::Method::GET, "/api/habits")
+                .await?;
+            let habit_id = habits
+                .iter()
+                .find(|h| h.display_id == hnum)
+                .map(|h| h.id.as_str());
+            if let Some(hid) = habit_id
+                && let Some(t) = tasks
+                    .iter()
+                    .find(|t| t.habit_id.as_deref() == Some(hid) && t.display_id == tnum)
+            {
+                return Ok(t.id.clone());
+            }
+            return Err(StorageError::NotFound(format!("task {id} not found")));
+        }
+        // Numeric input → resolve via display_id for non-habit tasks only (#380).
         if let Ok(num) = id.parse::<i64>() {
             let tasks: Vec<TaskRow> = self
                 .request::<Vec<TaskRow>>(reqwest::Method::GET, "/api/tasks")
                 .await?;
-            if let Some(t) = tasks.iter().find(|t| t.display_id == num) {
+            if let Some(t) = tasks
+                .iter()
+                .find(|t| t.display_id == num && t.habit_id.is_none())
+            {
                 return Ok(t.id.clone());
             }
             return Err(StorageError::NotFound(format!("task {id} not found")));
