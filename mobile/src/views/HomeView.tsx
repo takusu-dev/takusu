@@ -303,7 +303,7 @@ export function HomeView() {
         const schedEntries = sched ? parseSchedule(sched.schedule) : [];
         const schedMap = new Map(schedEntries.map((e) => [e.task_id, e]));
         const now = Date.now();
-        let doingTitle: string | null = null;
+        const doingTitles: string[] = [];
         let unscheduledCount = 0;
         const upcoming: {
           title: string;
@@ -312,7 +312,7 @@ export function HomeView() {
         }[] = [];
         for (const t of taskList) {
           if (t.status === 'in_progress') {
-            if (!doingTitle) doingTitle = t.title;
+            doingTitles.push(t.title);
           } else if (t.status === 'pending') {
             unscheduledCount++;
           } else if (t.status === 'scheduled') {
@@ -331,7 +331,7 @@ export function HomeView() {
           return ta - tb;
         });
         TakusuWidgetModule.saveSnapshot({
-          doingTitle,
+          doingTitles,
           upcoming: upcoming.slice(0, 5),
           unscheduledCount,
         });

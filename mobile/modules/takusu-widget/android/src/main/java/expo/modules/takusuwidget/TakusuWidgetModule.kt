@@ -23,7 +23,7 @@ class WidgetUpcomingTask : Record {
 }
 
 class WidgetSnapshotInput : Record {
-    @Field val doingTitle: String? = null
+    @Field val doingTitles: List<String> = emptyList()
 
     @Field val upcoming: List<WidgetUpcomingTask> = emptyList()
 
@@ -84,13 +84,11 @@ class TakusuWidgetModule : Module() {
                         arr.put(o)
                     }
                     val snap = JSONObject()
-                    if (input.doingTitle !=
-                        null
-                    ) {
-                        snap.put("doing_title", input.doingTitle)
-                    } else {
-                        snap.put("doing_title", JSONObject.NULL)
+                    val doingArr = JSONArray()
+                    for (title in input.doingTitles) {
+                        doingArr.put(title)
                     }
+                    snap.put("doing_titles", doingArr)
                     snap.put("upcoming", arr)
                     snap.put("unscheduled_count", input.unscheduledCount)
 

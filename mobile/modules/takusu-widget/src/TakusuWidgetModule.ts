@@ -6,7 +6,7 @@ export interface WidgetConfig {
 }
 
 export interface WidgetSnapshotData {
-  doingTitle: string | null;
+  doingTitles: string[];
   upcoming: { title: string; startAt: string | null; endAt: string }[];
   unscheduledCount: number;
 }

@@ -93,7 +93,11 @@ class WidgetUpdateWorker(
                 arr.put(o)
             }
             val snap = org.json.JSONObject()
-            snap.put("doing_title", s.doingTitle ?: org.json.JSONObject.NULL)
+            val doingArr = org.json.JSONArray()
+            for (title in s.doingTitles) {
+                doingArr.put(title)
+            }
+            snap.put("doing_titles", doingArr)
             snap.put("upcoming", arr)
             snap.put("unscheduled_count", s.unscheduledCount)
             prefs
