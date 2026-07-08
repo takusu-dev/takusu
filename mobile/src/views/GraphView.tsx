@@ -1,12 +1,14 @@
 // GraphView — task dependency DAG visualization
 // Uses @shopify/react-native-skia + d3-force via DependencyGraph component
 // Shows transitive dependencies of incomplete tasks (completed nodes are gray)
-// Edit mode: tap edge to cut, long-press-drag node-to-node to add dependency
-// Non-edit mode: pan/zoom enabled
+// Edit mode: long-press-drag node-to-node to add dependency,
+//            long-press-drag on empty space to cut crossing edges (#382)
+// Non-edit mode: pan/zoom enabled, node drag enabled (#383)
 
 import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Button, IconButton } from 'react-native-paper';
+import { useFocusEffect } from 'expo-router';
 import type { TakusuClient } from '@/src/api/client';
 import { showError } from '@/src/api/errors';
 import type { TaskRow, RedundantDependency } from '@/src/api/types';
@@ -19,6 +21,9 @@ import {
   type GraphNode,
   type GraphEdge,
 } from '@/src/components/graph/DependencyGraph';
+
+// GraphView uses a larger font size than the embedded TaskDetailView graph (#379)
+const GRAPHVIEW_FONT_SIZE = 21;
 
 interface GraphViewProps {
   client: TakusuClient | null;
@@ -103,6 +108,14 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
     refresh();
   }, [refresh]);
 
+  // Refresh on focus (#386): when returning from TaskDetailView after
+  // editing edges, GraphView needs to re-fetch to show the latest state.
+  useFocusEffect(
+    useCallback(() => {
+      refresh();
+    }, [refresh]),
+  );
+
   function handleTapNode(taskId: string) {
     haptic.light();
     if (onTaskPress) {
@@ -112,17 +125,29 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
     }
   }
 
-  function handleCutEdge(source: string, target: string) {
-    if (!client) return;
+  function handleCutEdges(edges: { source: string; target: string }[]) {
+    if (!client || edges.length === 0) return;
     haptic.medium();
-    const targetTask = tasks.find((t) => t.id === target);
-    if (targetTask) {
-      const deps = parseDepends(targetTask.depends).filter((d) => d !== source);
-      client
-        .updateTask(target, { depends: deps })
-        .then(refresh)
-        .catch((e) => showError(e, '依存関係の削除に失敗'));
+    // Group by target task to batch updates
+    const byTarget = new Map<string, string[]>();
+    for (const { source, target } of edges) {
+      const arr = byTarget.get(target) ?? [];
+      arr.push(source);
+      byTarget.set(target, arr);
     }
+    const updates: Promise<unknown>[] = [];
+    for (const [target, sources] of byTarget) {
+      const targetTask = tasks.find((t) => t.id === target);
+      if (targetTask) {
+        const deps = parseDepends(targetTask.depends).filter(
+          (d) => !sources.includes(d),
+        );
+        updates.push(client.updateTask(target, { depends: deps }));
+      }
+    }
+    Promise.all(updates)
+      .then(refresh)
+      .catch((e) => showError(e, '依存関係の削除に失敗'));
   }
 
   function handleAddEdge(source: string, target: string) {
@@ -180,8 +205,9 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
         nodes={graphNodes}
         edges={graphEdges}
         editMode={editMode}
+        fontSize={GRAPHVIEW_FONT_SIZE}
         onTapNode={handleTapNode}
-        onCutEdge={handleCutEdge}
+        onCutEdges={handleCutEdges}
         onAddEdge={handleAddEdge}
       />
     </View>
