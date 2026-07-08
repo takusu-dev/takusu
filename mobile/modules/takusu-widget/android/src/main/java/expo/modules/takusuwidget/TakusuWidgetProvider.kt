@@ -71,7 +71,10 @@ class TakusuWidgetProvider : AppWidgetProvider() {
             // first install before any data is fetched. The factory handles
             // the empty-snapshot case correctly.
             val remoteAdapter =
-                android.content.Intent(context, TakusuWidgetService::class.java)
+                android.content.Intent(context, TakusuWidgetService::class.java).apply {
+                    // Explicitly set the package to ensure the intent is resolved correctly
+                    setPackage(context.packageName)
+                }
             views.setRemoteAdapter(R.id.widget_upcoming_list, remoteAdapter)
 
             // Template PendingIntent for per-item clicks. The factory fills
