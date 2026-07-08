@@ -193,6 +193,10 @@ export async function rescheduleNotifications(
 
   for (const { task, entry } of upcomingTasks) {
     const startDate = new Date(entry.start_at);
+    const startTime = `${startDate.getHours().toString().padStart(2, '0')}:${startDate
+      .getMinutes()
+      .toString()
+      .padStart(2, '0')}`;
 
     // Pre-start reminder (#256: attach CATEGORY_TASK_START so the user can
     // start the task early from the reminder notification, not just from the
@@ -206,7 +210,7 @@ export async function rescheduleNotifications(
           CHANNELS.taskReminders,
           reminderDate,
           'タスク開始直前',
-          `「${task.title}」が${settings.preStartReminderMinutes}分後に開始します`,
+          `「${task.title}」が${settings.preStartReminderMinutes}分後の${startTime}に開始します`,
           { url: `/task/${task.id}`, taskId: task.id },
           CATEGORY_TASK_START,
         );
@@ -219,7 +223,7 @@ export async function rescheduleNotifications(
         CHANNELS.taskReminders,
         startDate,
         'タスク開始時間',
-        `「${task.title}」の開始時間です`,
+        `「${task.title}」の開始時間です (${startTime})`,
         { url: `/task/${task.id}`, taskId: task.id },
         CATEGORY_TASK_START,
       );
