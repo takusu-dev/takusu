@@ -1082,7 +1082,7 @@ export function HomeView() {
     const until = new Date();
     until.setDate(until.getDate() + 7);
     try {
-      await withStatus('reschedule中', () =>
+      await withStatus('タスクを再スケジュール中', () =>
         client.reschedule({
           mode: 'range',
           from: new Date().toISOString(),
@@ -1104,7 +1104,7 @@ export function HomeView() {
     const until = new Date();
     until.setDate(until.getDate() + 7);
     try {
-      await withStatus('reschedule中', () =>
+      await withStatus('タスクを再スケジュール中', () =>
         client.reschedule({
           mode: 'range',
           from: new Date().toISOString(),
@@ -1511,18 +1511,8 @@ export function HomeView() {
           />
         )}
         {/* Flex spacer — keeps the refresh button right-aligned when search
-            is closed. The status label is absolutely positioned inside so
-            it stays centered regardless of left/right button widths (#304). */}
-        <View style={styles.topBarCenter}>
-          {statusLabel && (
-            <View style={styles.statusLabelAbsolute} pointerEvents="none">
-              <View style={styles.statusPill}>
-                <ActivityIndicator size="small" color={BRAND_COLOR} />
-                <Text style={styles.statusText}>{statusLabel}</Text>
-              </View>
-            </View>
-          )}
-        </View>
+            is closed. */}
+        <View style={styles.topBarCenter} />
         <Pressable
           style={({ pressed }) => [
             styles.topButton,
@@ -1532,7 +1522,7 @@ export function HomeView() {
             if (!client) return;
             haptic.medium();
             try {
-              await withStatus('スケジュール生成中', () =>
+              await withStatus('タスクをスケジュール中', () =>
                 client.generateSchedule({}),
               );
               // Trigger Google Calendar sync (no-op if not configured)
@@ -1549,6 +1539,20 @@ export function HomeView() {
         >
           <Ionicons name="refresh" size={22} color={BRAND_COLOR} />
         </Pressable>
+        {statusLabel && (
+          <View style={styles.statusLabelAbsolute} pointerEvents="none">
+            <View style={styles.statusPill}>
+              <ActivityIndicator size="small" color={BRAND_COLOR} />
+              <Text
+                style={styles.statusText}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {statusLabel}
+              </Text>
+            </View>
+          </View>
+        )}
       </View>
 
       {/* Task list */}
@@ -1822,11 +1826,13 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 14,
     backgroundColor: 'rgba(114,97,163,0.1)',
+    maxWidth: '90%',
   },
   statusText: {
     fontSize: 12,
     color: BRAND_COLOR,
     fontWeight: '500',
+    flex: 1,
   },
   topButtonPressed: {
     backgroundColor: 'rgba(114,97,163,0.1)',
