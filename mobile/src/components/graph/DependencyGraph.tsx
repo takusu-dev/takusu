@@ -70,7 +70,7 @@ export interface DependencyGraphProps {
 
 const NODE_RADIUS = 28;
 const DEFAULT_FONT_SIZE = 15;
-const MAX_LABEL_CHARS = 12;
+const MAX_LABEL_CHARS = 40;
 const LABEL_WIDTH = 140;
 const LABEL_OFFSET = NODE_RADIUS + 6;
 const HIT_RADIUS = NODE_RADIUS + 4;
