@@ -21,6 +21,7 @@ import {
   dismissInProgressNotification,
   dismissTaskNotifications,
   postInProgressNotification,
+  postResultNotification,
 } from '@/src/notifications';
 
 // Foreground notification handler — show notifications while app is open
@@ -108,14 +109,21 @@ function handleActionResponse(
     const newStatus = actionId === ACTION_DONE ? 'completed' : 'skipped';
     if (actionId === ACTION_DONE) haptic.success();
     else haptic.warning();
+    const title = response.notification.request.content.title ?? '';
+    const taskTitle = title.replace(/^実行中: /, '') || 'タスク';
     client
       .updateTask(taskId, { status: newStatus })
+      .then(() => {
+        postResultNotification(taskId, taskTitle, newStatus).catch((err) =>
+          console.warn('Notification action: post result failed', err),
+        );
+        dismissInProgressNotification(taskId).catch((err) =>
+          console.warn('Notification action: dismiss failed', err),
+        );
+      })
       .catch((err) =>
         console.warn('Notification action: updateTask failed', err),
       );
-    dismissInProgressNotification(taskId).catch((err) =>
-      console.warn('Notification action: dismiss failed', err),
-    );
     return true;
   }
 

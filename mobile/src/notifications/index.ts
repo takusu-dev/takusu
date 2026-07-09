@@ -26,6 +26,7 @@ export {
   rescheduleNotifications,
   rescheduleFromRaw,
   postInProgressNotification,
+  postResultNotification,
   dismissInProgressNotification,
   dismissTaskNotifications,
 } from './scheduler';
