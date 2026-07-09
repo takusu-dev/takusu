@@ -279,6 +279,23 @@ export async function dismissInProgressNotification(
   }
 }
 
+// ── Task result notification (#418) — posted after a notification action completes a task.
+export async function postResultNotification(
+  taskId: string,
+  taskTitle: string,
+  status: 'completed' | 'skipped',
+): Promise<void> {
+  const label = status === 'completed' ? '完了' : 'スキップ';
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: `タスクを${label}しました`,
+      body: `「${taskTitle}」を${label}しました`,
+      data: { url: `/task/${taskId}`, taskId },
+    },
+    trigger: { channelId: CHANNELS.taskInProgress },
+  });
+}
+
 // Dismiss all delivered notifications for a task (#257).
 // When a task is completed, skipped, or started, any already-delivered
 // reminder notifications (pre-start, start-overdue) sitting in the
