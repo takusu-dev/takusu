@@ -20,6 +20,8 @@ export interface NotificationSettings {
   unscheduledIdleHours: number; // 24
   // 実行中通知: in_progress のタスク (done/cancel アクション付き)
   inProgress: boolean;
+  // 終了時間通知: タスクの end_at に到着したとき (#417)
+  endTime: boolean;
 }
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
@@ -32,6 +34,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   unscheduledIdle: true,
   unscheduledIdleHours: 24,
   inProgress: true,
+  endTime: true,
 };
 
 export async function loadNotificationSettings(): Promise<NotificationSettings> {

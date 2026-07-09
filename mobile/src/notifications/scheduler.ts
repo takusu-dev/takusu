@@ -13,8 +13,9 @@ import { CHANNELS } from './channels';
 import { CATEGORY_TASK_IN_PROGRESS, CATEGORY_TASK_START } from './categories';
 
 // Android has a ~64 notification limit for scheduled notifications.
-// We limit pre-start and start-overdue to today + tomorrow only.
-const MAX_SCHEDULED_PER_TYPE = 25;
+// We limit per-task notification batches (pre-start, start-overdue, end-time)
+// so the total stays under the platform limit.
+const MAX_SCHEDULED_PER_TYPE = 15;
 
 interface ScheduleData {
   tasks: TaskRow[];
@@ -226,6 +227,42 @@ export async function rescheduleNotifications(
         `「${task.title}」の開始時間です (${startTime})`,
         { url: `/task/${task.id}`, taskId: task.id },
         CATEGORY_TASK_START,
+      );
+    }
+  }
+
+  // ── 3.5 End time notification (#417) — independent of start time ──
+  if (settings.endTime) {
+    const endingTasks = tasks
+      .filter(
+        (t) =>
+          t.status !== 'completed' &&
+          t.status !== 'skipped' &&
+          scheduleMap.has(t.id),
+      )
+      .map((t) => ({
+        task: t,
+        entry: scheduleMap.get(t.id)!,
+      }))
+      .filter(({ entry }) => {
+        const end = new Date(entry.end_at);
+        return isTodayOrTomorrow(end) && isFuture(end);
+      })
+      .sort((a, b) => a.entry.end_at.localeCompare(b.entry.end_at))
+      .slice(0, MAX_SCHEDULED_PER_TYPE);
+
+    for (const { task, entry } of endingTasks) {
+      const endDate = new Date(entry.end_at);
+      const endTime = `${endDate.getHours().toString().padStart(2, '0')}:${endDate
+        .getMinutes()
+        .toString()
+        .padStart(2, '0')}`;
+      await scheduleAt(
+        CHANNELS.taskReminders,
+        endDate,
+        'タスク終了時間',
+        `「${task.title}」の終了時間です (${endTime})`,
+        { url: `/task/${task.id}`, taskId: task.id },
       );
     }
   }
