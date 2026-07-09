@@ -58,6 +58,8 @@ export interface DependencyGraphProps {
   editMode?: boolean;
   /** Font size for node labels (#379: GraphView uses larger text) */
   fontSize?: number;
+  /** Node radius (#421: GraphView uses larger nodes) */
+  nodeRadius?: number;
   onTapNode?: (taskId: string) => void;
   /** Cut multiple edges at once — used by line-cut (#382) */
   onCutEdges?: (edges: { source: string; target: string }[]) => void;
@@ -72,8 +74,6 @@ const NODE_RADIUS = 28;
 const DEFAULT_FONT_SIZE = 15;
 const MAX_LABEL_CHARS = 40;
 const LABEL_WIDTH = 140;
-const LABEL_OFFSET = NODE_RADIUS + 6;
-const HIT_RADIUS = NODE_RADIUS + 4;
 const LABEL_PAD_X = 6;
 const LABEL_PAD_Y = 3;
 /** Redundant edges (direct dep already implied by a transitive path) — #387 */
@@ -106,6 +106,7 @@ function segmentsIntersect(
 
 /** Compute arrowhead triangle points for edge from (ax,ay) to (bx,by) */
 function arrowHead(
+  nodeRadius: number,
   ax: number,
   ay: number,
   bx: number,
@@ -118,8 +119,8 @@ function arrowHead(
   if (len === 0) return '';
   const ux = dx / len;
   const uy = dy / len;
-  const tipX = bx - ux * NODE_RADIUS;
-  const tipY = by - uy * NODE_RADIUS;
+  const tipX = bx - ux * nodeRadius;
+  const tipY = by - uy * nodeRadius;
   const leftX = tipX - ux * size + uy * (size * 0.5);
   const leftY = tipY - uy * size - ux * (size * 0.5);
   const rightX = tipX - ux * size - uy * (size * 0.5);
@@ -134,12 +135,14 @@ function hitTestNode(
   y: number,
   fontSize: number,
   labelHeights: Map<string, number>,
+  hitRadius: number,
+  labelOffset: number,
 ): boolean {
   const dx = x - node.x;
   const dy = y - node.y;
-  if (Math.hypot(dx, dy) < HIT_RADIUS) return true;
+  if (Math.hypot(dx, dy) < hitRadius) return true;
   const halfW = LABEL_WIDTH / 2 + LABEL_PAD_X;
-  const top = node.y + LABEL_OFFSET - LABEL_PAD_Y;
+  const top = node.y + labelOffset - LABEL_PAD_Y;
   const labelHeight = labelHeights.get(node.id) ?? fontSize + LABEL_PAD_Y * 2;
   const bottom = top + labelHeight;
   return x >= node.x - halfW && x <= node.x + halfW && y >= top && y <= bottom;
@@ -153,11 +156,14 @@ export function DependencyGraph({
   highlightTaskId,
   editMode = false,
   fontSize = DEFAULT_FONT_SIZE,
+  nodeRadius = NODE_RADIUS,
   onTapNode,
   onCutEdges,
   onAddEdge,
   height,
 }: DependencyGraphProps) {
+  const hitRadius = nodeRadius + 4;
+  const labelOffset = nodeRadius + 6;
   const colors = useColors();
   const canvasRef = useCanvasRef();
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
@@ -258,7 +264,7 @@ export function DependencyGraph({
         'center',
         d3.forceCenter(canvasSize.width / 2, canvasSize.height / 2),
       )
-      .force('collide', d3.forceCollide(NODE_RADIUS + 8))
+      .force('collide', d3.forceCollide(nodeRadius + 8))
       .stop(); // Stop d3's internal timer — we drive ticks manually below
 
     // Run all ticks synchronously in a single batch.
@@ -284,10 +290,10 @@ export function DependencyGraph({
       const xs = finalNodes.map((n) => n.x);
       const ys = finalNodes.map((n) => n.y);
       // Account for label height below nodes in the bounding box
-      const minX = Math.min(...xs) - NODE_RADIUS - 4;
-      const maxX = Math.max(...xs) + NODE_RADIUS + 4;
-      const minY = Math.min(...ys) - NODE_RADIUS - 4;
-      const maxY = Math.max(...ys) + NODE_RADIUS + LABEL_OFFSET + 24;
+      const minX = Math.min(...xs) - nodeRadius - 4;
+      const maxX = Math.max(...xs) + nodeRadius + 4;
+      const minY = Math.min(...ys) - nodeRadius - 4;
+      const maxY = Math.max(...ys) + nodeRadius + labelOffset + 24;
       const graphW = maxX - minX;
       const graphH = maxY - minY;
       const cw = canvasSize.width;
@@ -308,7 +314,7 @@ export function DependencyGraph({
     }
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graphKey, canvasSize.width, canvasSize.height]);
+  }, [graphKey, canvasSize.width, canvasSize.height, nodeRadius, labelOffset]);
 
   // ── Coordinate transform (screen → world) ──
   // The Canvas fills the parent at its natural size.  The Group inside the
@@ -386,7 +392,17 @@ export function DependencyGraph({
       const world = toWorld(e.x, e.y);
       // Check if touching a node (or its label) → start node drag (#383, #422)
       for (const node of simNodes) {
-        if (hitTestNode(node, world.x, world.y, fontSize, labelHeights)) {
+        if (
+          hitTestNode(
+            node,
+            world.x,
+            world.y,
+            fontSize,
+            labelHeights,
+            hitRadius,
+            labelOffset,
+          )
+        ) {
           draggingNodeId.value = node.id;
           return;
         }
@@ -424,7 +440,17 @@ export function DependencyGraph({
 
     // Check node hits (including the label area) (#422)
     for (const node of simNodes) {
-      if (hitTestNode(node, world.x, world.y, fontSize, labelHeights)) {
+      if (
+        hitTestNode(
+          node,
+          world.x,
+          world.y,
+          fontSize,
+          labelHeights,
+          hitRadius,
+          labelOffset,
+        )
+      ) {
         if (onTapNode) runOnJS(onTapNode)(node.id);
         return;
       }
@@ -442,7 +468,17 @@ export function DependencyGraph({
       const world = toWorld(e.x, e.y);
       // Check if starting on a node (or its label) → edge addition mode
       for (const node of simNodes) {
-        if (hitTestNode(node, world.x, world.y, fontSize, labelHeights)) {
+        if (
+          hitTestNode(
+            node,
+            world.x,
+            world.y,
+            fontSize,
+            labelHeights,
+            hitRadius,
+            labelOffset,
+          )
+        ) {
           if (onAddEdge) {
             dragSourceId.value = node.id;
             dragSx.value = node.x;
@@ -489,7 +525,17 @@ export function DependencyGraph({
         const world = toWorld(e.x, e.y);
         for (const node of simNodes) {
           if (node.id === dragSourceId.value) continue;
-          if (hitTestNode(node, world.x, world.y, fontSize, labelHeights)) {
+          if (
+            hitTestNode(
+              node,
+              world.x,
+              world.y,
+              fontSize,
+              labelHeights,
+              hitRadius,
+              labelOffset,
+            )
+          ) {
             runOnJS(onAddEdge)(dragSourceId.value, node.id);
             break;
           }
@@ -579,7 +625,7 @@ export function DependencyGraph({
       const s = nodeMap.get(edge.source);
       const t = nodeMap.get(edge.target);
       if (!s || !t) continue;
-      const ah = arrowHead(s.x, s.y, t.x, t.y, 10);
+      const ah = arrowHead(nodeRadius, s.x, s.y, t.x, t.y, 10);
       if (ah)
         paths.push({
           d: ah,
@@ -588,7 +634,7 @@ export function DependencyGraph({
         });
     }
     return paths;
-  }, [inputEdges, nodeMap]);
+  }, [inputEdges, nodeMap, nodeRadius]);
 
   // Drag line path — derived from shared values for smooth UI-thread updates (#219)
   const dragPath = useDerivedValue(() => {
@@ -710,12 +756,12 @@ export function DependencyGraph({
                   <Circle
                     cx={node.x}
                     cy={node.y}
-                    r={NODE_RADIUS}
+                    r={nodeRadius}
                     color={bgColor}
                   />
                   <NodeLabel
                     x={node.x}
-                    y={node.y + LABEL_OFFSET}
+                    y={node.y + labelOffset}
                     text={truncate(label, MAX_LABEL_CHARS)}
                     color={textColor}
                     fontSize={fontSize}
@@ -725,7 +771,7 @@ export function DependencyGraph({
                     <Circle
                       cx={node.x}
                       cy={node.y}
-                      r={NODE_RADIUS + 2}
+                      r={nodeRadius + 2}
                       color={COLORS.red}
                       style="stroke"
                       strokeWidth={2}
