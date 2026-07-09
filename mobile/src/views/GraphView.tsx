@@ -22,8 +22,9 @@ import {
   type GraphEdge,
 } from '@/src/components/graph/DependencyGraph';
 
-// GraphView uses a larger font size than the embedded TaskDetailView graph (#379)
+// GraphView uses a larger font size and node radius than the embedded TaskDetailView graph (#379, #421)
 const GRAPHVIEW_FONT_SIZE = 21;
+const GRAPHVIEW_NODE_RADIUS = 36;
 
 interface GraphViewProps {
   client: TakusuClient | null;
@@ -221,6 +222,7 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
         edges={graphEdges}
         editMode={editMode}
         fontSize={GRAPHVIEW_FONT_SIZE}
+        nodeRadius={GRAPHVIEW_NODE_RADIUS}
         onTapNode={handleTapNode}
         onCutEdges={handleCutEdges}
         onAddEdge={handleAddEdge}
