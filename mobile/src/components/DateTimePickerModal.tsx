@@ -77,17 +77,23 @@ export function DateTimePickerModal({
     }
   }
 
+  function formatDate(d: Date): string {
+    return `${d.getFullYear()}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}`;
+  }
+
+  function formatTime(d: Date): string {
+    return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+  }
+
   function formatDisplay(d: Date | null): string {
     if (!d) return '未設定';
-    const dateStr = `${d.getFullYear()}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}`;
     if (mode === 'datetime') {
-      const timeStr = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-      return `${dateStr} ${timeStr}`;
+      return `${formatDate(d)} ${formatTime(d)}`;
     }
     if (mode === 'time') {
-      return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+      return formatTime(d);
     }
-    return dateStr;
+    return formatDate(d);
   }
 
   return (
@@ -206,7 +212,7 @@ export function DateTimePickerModal({
                   日付
                 </Text>
                 <Text style={[styles.fieldValue, { color: colors.black }]}>
-                  {formatDisplay(tempDate)}
+                  {formatDate(tempDate)}
                 </Text>
                 <Ionicons
                   name="chevron-forward"
@@ -239,9 +245,7 @@ export function DateTimePickerModal({
                     時間
                   </Text>
                   <Text style={[styles.fieldValue, { color: colors.black }]}>
-                    {tempDate
-                      ? `${tempDate.getHours().toString().padStart(2, '0')}:${tempDate.getMinutes().toString().padStart(2, '0')}`
-                      : '—'}
+                    {tempDate ? formatTime(tempDate) : '—'}
                   </Text>
                   <Ionicons
                     name="chevron-forward"
