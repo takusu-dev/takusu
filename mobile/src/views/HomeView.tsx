@@ -435,7 +435,14 @@ export function HomeView() {
           guestIds.add(guest.id);
         }
       }
-      if (overlapping.length > 0) groups.set(host.id, overlapping);
+      if (overlapping.length > 0) {
+        overlapping.sort(
+          (a, b) =>
+            new Date(scheduleMap.get(a.id)!.start_at).getTime() -
+            new Date(scheduleMap.get(b.id)!.start_at).getTime(),
+        );
+        groups.set(host.id, overlapping);
+      }
     }
     return { parallelGroups: groups, groupedGuestIds: guestIds };
   }, [tasks, scheduleMap]);
