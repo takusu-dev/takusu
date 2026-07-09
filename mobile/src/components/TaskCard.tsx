@@ -675,6 +675,15 @@ function ParallelGroupCardImpl({
               {formatTime(hostScheduleEnd)}
             </Text>
             <Text
+              style={[groupStyles.hostTaskId, { color: colors.gray }]}
+              numberOfLines={1}
+            >
+              {host.habit_id &&
+              habitDisplayIdMap?.get(host.habit_id) !== undefined
+                ? `h${habitDisplayIdMap.get(host.habit_id)}#${host.display_id}`
+                : `#${host.display_id}`}
+            </Text>
+            <Text
               style={[
                 groupStyles.hostTitle,
                 { color: colors.black },
@@ -816,6 +825,10 @@ const groupStyles = StyleSheet.create({
   },
   hostTime: {
     fontSize: 10,
+    fontVariant: ['tabular-nums'],
+  },
+  hostTaskId: {
+    fontSize: 9,
     fontVariant: ['tabular-nums'],
   },
   hostTitle: {
