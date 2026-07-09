@@ -909,6 +909,23 @@ export function SettingsDetailView({
                     />
                   </View>
 
+                  {/* End time */}
+                  <View style={styles.settingRow}>
+                    <Text
+                      style={[styles.settingLabel, { color: colors.black }]}
+                    >
+                      タスク終了時間通知
+                    </Text>
+                    <Switch
+                      value={notifications.endTime}
+                      onValueChange={(v) => {
+                        haptic.select();
+                        setNotifications({ ...notifications, endTime: v });
+                      }}
+                      trackColor={{ true: BRAND_COLOR }}
+                    />
+                  </View>
+
                   {/* Unscheduled idle */}
                   <View style={styles.notifGroup}>
                     <View style={styles.settingRow}>
