@@ -100,11 +100,13 @@ takusu/
 ├── .envrc                    # direnv config
 ├── .devin/skills/            # Devin CLI skills (thin wrappers around scripts/)
 │   ├── issue-view/SKILL.md
+│   ├── issue-assign/SKILL.md
 │   ├── pr-watch/SKILL.md
 │   ├── jj-resolve/SKILL.md
 │   └── discord-notify/SKILL.md
 └── scripts/                  # Agent + user helper scripts
     ├── issue-view.sh         # GitHub issue list/show (label/assignee/state filters)
+    ├── issue-assign.sh       # Assign an unassigned issue to the current user
     ├── pr-watch.sh           # PR CI/review/comment snapshot + polling watch loop
     ├── jj-resolve.sh         # Jujutsu conflict list/show/edit/mark/merge/abort
     └── discord-notify.sh     # Discord webhook sender (DISCORD_WEBHOOK_URL env)
@@ -141,6 +143,7 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `nix run .#irodori-tts-server` | Same as above, via Nix |
 | `./scripts/issue-view.sh list [--label L] [--assignee A] [--state S]` | List GitHub issues (TSV: number, title, labels, assignees, state) |
 | `./scripts/issue-view.sh show <N>` | Show issue title, body, labels, assignees, and full comment thread |
+| `./scripts/issue-assign.sh <N> [<N>...] [--assignee <user>]` | Assign an unassigned issue to the current user (or another user) |
 | `./scripts/pr-watch.sh show <PR>` | One-shot snapshot of PR CI checks, reviews, and comments |
 | `./scripts/pr-watch.sh watch <PR> [--interval N] [--max N]` | Poll a PR and print diffs to stdout (no notification); default 60s |
 | `./scripts/jj-resolve.sh list\|status\|show\|edit\|mark\|merge\|abort` | Inspect and resolve Jujutsu merge conflicts |
@@ -193,10 +196,10 @@ The default loop for any task is:
 
 ## Agent Helpers
 
-Four shell scripts in `scripts/` wrap common agent workflows. Each has a
+Five shell scripts in `scripts/` wrap common agent workflows. Each has a
 matching thin Devin skill in `.devin/skills/<name>/SKILL.md` so the agent
-can invoke them via `/issue-view`, `/pr-watch`, `/jj-resolve`, or
-`/discord-notify`. **Prefer the scripts over raw `gh`/`jj`/`curl`** — they
+can invoke them via `/issue-view`, `/issue-assign`, `/pr-watch`, `/jj-resolve`,
+or `/discord-notify`. **Prefer the scripts over raw `gh`/`jj`/`curl`** — they
 produce stable, agent-friendly output and centralize the flag spelling.
 
 ### `issue-view.sh` — GitHub issue viewer
@@ -214,6 +217,18 @@ codes.
 - `list` output: `number\ttitle\tlabels\tassignees\tstate` (one issue per line).
 - `show` output: title, labels, assignees, body, then the full comment thread.
 - Use `--assignee unassigned` to find untriaged issues.
+
+### `issue-assign.sh` — GitHub issue self-assignment
+
+Assigns an issue to the current user (or another user) only if it has zero
+assignees. Safe for agents to call before starting work.
+
+```sh
+./scripts/issue-assign.sh <number> [<number>...] [--assignee <user>]
+```
+
+- Output (non-TTY): `number\tassignee(s)\tstatus`, where status is `assigned` or `already-assigned`.
+- No-op when the issue already has an assignee.
 
 ### `pr-watch.sh` — PR CI/review/comment watcher
 
