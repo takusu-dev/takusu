@@ -11,9 +11,9 @@ import { Button, IconButton } from 'react-native-paper';
 import { useFocusEffect } from 'expo-router';
 import type { TakusuClient } from '@/src/api/client';
 import { showError } from '@/src/api/errors';
-import type { TaskRow, RedundantDependency } from '@/src/api/types';
+import type { TaskRow, HabitRow, RedundantDependency } from '@/src/api/types';
 import { parseDepends } from '@/src/api/types';
-import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
+import { COLORS, BRAND_COLOR, useTheme, habitColorFor } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { haptic } from '@/src/components/haptics';
 import {
@@ -32,7 +32,7 @@ interface GraphViewProps {
 }
 
 export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
-  const colors = useColors();
+  const { dark, colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [editMode, setEditMode] = useState(false);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
@@ -43,13 +43,15 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
     if (!client) return;
     let allTasks: TaskRow[];
     let redundant: RedundantDependency[];
+    let habitList: HabitRow[];
     try {
-      [allTasks, redundant] = await Promise.all([
+      [allTasks, redundant, habitList] = await Promise.all([
         client.listTasks(),
         client
           .analyzeTaskDependencies()
           .then((r) => r.redundant)
           .catch(() => []),
+        client.listHabits().catch(() => [] as HabitRow[]),
       ]);
     } catch (e) {
       showError(e, 'タスク一覧の取得に失敗');
@@ -61,6 +63,11 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
     // Rust API returns from=dependent, to=dependency, but GraphView edges
     // use source=dependency, target=dependent, so we flip the key direction.
     const redundantSet = new Set(redundant.map((r) => `${r.to}→${r.from}`));
+
+    // habit_id (UUID) → display_id map for habit-based node coloring (#423).
+    const habitDisplayIdMap = new Map(
+      habitList.map((h) => [h.id, h.display_id]),
+    );
 
     // Build transitive dependency graph from incomplete tasks
     const incomplete = allTasks.filter(
@@ -77,10 +84,18 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
       const task = taskMap.get(id);
       if (!task) return;
       const isDone = task.status === 'completed' || task.status === 'skipped';
+      const habitDisplayId = task.habit_id
+        ? habitDisplayIdMap.get(task.habit_id)
+        : undefined;
+      const color = isDone
+        ? '#aaa'
+        : habitDisplayId !== undefined
+          ? habitColorFor(habitDisplayId, dark)
+          : BRAND_COLOR;
       nodes.push({
         id: task.id,
         label: task.title,
-        color: isDone ? '#aaa' : BRAND_COLOR,
+        color,
         x: 0,
         y: 0,
         vx: 0,
@@ -102,7 +117,7 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
 
     setGraphNodes(nodes);
     setGraphEdges(edges);
-  }, [client]);
+  }, [client, dark]);
 
   useEffect(() => {
     refresh();

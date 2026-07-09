@@ -677,7 +677,7 @@ export function DependencyGraph({
                 ? '#ccc'
                 : isHighlight
                   ? COLORS.red
-                  : BRAND_COLOR;
+                  : (inputNode?.color ?? BRAND_COLOR);
               // Label is outside the node on a white background, so use
               // dark text for readability (#294)
               const textColor = isDone ? '#999' : '#333';
