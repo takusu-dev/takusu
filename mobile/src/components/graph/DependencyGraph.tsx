@@ -74,6 +74,8 @@ const MAX_LABEL_CHARS = 12;
 const LABEL_WIDTH = 140;
 const LABEL_OFFSET = NODE_RADIUS + 6;
 const HIT_RADIUS = NODE_RADIUS + 4;
+const LABEL_PAD_X = 6;
+const LABEL_PAD_Y = 3;
 /** Redundant edges (direct dep already implied by a transitive path) — #387 */
 const REDUNDANT_EDGE_COLOR = '#e85d04';
 
@@ -123,6 +125,24 @@ function arrowHead(
   const rightX = tipX - ux * size - uy * (size * 0.5);
   const rightY = tipY - uy * size + ux * (size * 0.5);
   return `M ${tipX} ${tipY} L ${leftX} ${leftY} L ${rightX} ${rightY} Z`;
+}
+
+/** Hit test that treats the node circle and its label as a single target (#422). */
+function hitTestNode(
+  node: GraphNode,
+  x: number,
+  y: number,
+  fontSize: number,
+  labelHeights: Map<string, number>,
+): boolean {
+  const dx = x - node.x;
+  const dy = y - node.y;
+  if (Math.hypot(dx, dy) < HIT_RADIUS) return true;
+  const halfW = LABEL_WIDTH / 2 + LABEL_PAD_X;
+  const top = node.y + LABEL_OFFSET - LABEL_PAD_Y;
+  const labelHeight = labelHeights.get(node.id) ?? fontSize + LABEL_PAD_Y * 2;
+  const bottom = top + labelHeight;
+  return x >= node.x - halfW && x <= node.x + halfW && y >= top && y <= bottom;
 }
 
 // ── Component ──
@@ -364,11 +384,9 @@ export function DependencyGraph({
     .enabled(!height)
     .onStart((e) => {
       const world = toWorld(e.x, e.y);
-      // Check if touching a node → start node drag (#383)
+      // Check if touching a node (or its label) → start node drag (#383, #422)
       for (const node of simNodes) {
-        const dx = world.x - node.x;
-        const dy = world.y - node.y;
-        if (Math.hypot(dx, dy) < HIT_RADIUS) {
+        if (hitTestNode(node, world.x, world.y, fontSize, labelHeights)) {
           draggingNodeId.value = node.id;
           return;
         }
@@ -404,11 +422,9 @@ export function DependencyGraph({
   const tapGesture = Gesture.Tap().onEnd((e) => {
     const world = toWorld(e.x, e.y);
 
-    // Check node hits
+    // Check node hits (including the label area) (#422)
     for (const node of simNodes) {
-      const dx = world.x - node.x;
-      const dy = world.y - node.y;
-      if (Math.hypot(dx, dy) < HIT_RADIUS) {
+      if (hitTestNode(node, world.x, world.y, fontSize, labelHeights)) {
         if (onTapNode) runOnJS(onTapNode)(node.id);
         return;
       }
@@ -424,11 +440,9 @@ export function DependencyGraph({
     .onStart((e) => {
       if (!editMode) return;
       const world = toWorld(e.x, e.y);
-      // Check if starting on a node → edge addition mode
+      // Check if starting on a node (or its label) → edge addition mode
       for (const node of simNodes) {
-        const dx = world.x - node.x;
-        const dy = world.y - node.y;
-        if (Math.hypot(dx, dy) < HIT_RADIUS) {
+        if (hitTestNode(node, world.x, world.y, fontSize, labelHeights)) {
           if (onAddEdge) {
             dragSourceId.value = node.id;
             dragSx.value = node.x;
@@ -471,13 +485,11 @@ export function DependencyGraph({
     .onEnd((e) => {
       if (!editMode) return;
       if (dragSourceId.value && onAddEdge) {
-        // Edge addition — check if dropped on a node
+        // Edge addition — check if dropped on a node (including its label)
         const world = toWorld(e.x, e.y);
         for (const node of simNodes) {
           if (node.id === dragSourceId.value) continue;
-          const dx = world.x - node.x;
-          const dy = world.y - node.y;
-          if (Math.hypot(dx, dy) < HIT_RADIUS) {
+          if (hitTestNode(node, world.x, world.y, fontSize, labelHeights)) {
             runOnJS(onAddEdge)(dragSourceId.value, node.id);
             break;
           }
@@ -526,6 +538,16 @@ export function DependencyGraph({
     () => new Map(inputNodes.map((n) => [n.id, n])),
     [inputNodes],
   );
+
+  // Exact label hit heights for the node's label pill (#422).
+  const labelHeights = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const node of inputNodes) {
+      const text = truncate(node.label, MAX_LABEL_CHARS);
+      map.set(node.id, getLabelHeight(text, fontSize) + LABEL_PAD_Y * 2);
+    }
+    return map;
+  }, [inputNodes, fontSize]);
 
   const edgePaths = useMemo(() => {
     const paths: {
@@ -723,6 +745,24 @@ function truncate(s: string, maxLen: number): string {
   return s.length > maxLen ? s.slice(0, maxLen - 1) + '…' : s;
 }
 
+// ── Label height measurement ──
+
+/** Measure the rendered height of a node label pill for hit testing (#422). */
+function getLabelHeight(text: string, fontSize: number): number {
+  const builder = Skia.ParagraphBuilder.Make({ textAlign: TextAlign.Center });
+  builder.pushStyle({
+    fontFamilies: NODE_LABEL_FONTS,
+    fontSize,
+    fontStyle: { weight: 500 },
+    color: Skia.Color('#000000'),
+  });
+  builder.addText(text);
+  builder.pop();
+  const p = builder.build();
+  p.layout(LABEL_WIDTH);
+  return p.getHeight();
+}
+
 // ── NodeLabel — uses Skia Paragraph for CJK font fallback (#251) ──
 // matchFont returns a single font with no fallback, so Japanese glyphs
 // don't render on Android (Roboto lacks CJK). Paragraph's fontFamilies
@@ -772,13 +812,11 @@ function NodeLabel({
   }, [text, color, fontSize]);
 
   const h = paragraph.getHeight();
-  const padX = 6;
-  const padY = 3;
   const bgRect = Skia.XYWHRect(
-    x - LABEL_WIDTH / 2 - padX,
-    y - padY,
-    LABEL_WIDTH + padX * 2,
-    h + padY * 2,
+    x - LABEL_WIDTH / 2 - LABEL_PAD_X,
+    y - LABEL_PAD_Y,
+    LABEL_WIDTH + LABEL_PAD_X * 2,
+    h + LABEL_PAD_Y * 2,
   );
   const bgPath = Skia.Path.Make();
   bgPath.addRRect(Skia.RRectXY(bgRect, 6, 6));
