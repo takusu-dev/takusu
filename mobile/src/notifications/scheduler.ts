@@ -295,6 +295,10 @@ export async function postInProgressNotification(task: TaskRow): Promise<void> {
       body: 'タップして詳細を表示',
       data: { url: `/task/${task.id}`, taskId: task.id },
       categoryIdentifier: CATEGORY_TASK_IN_PROGRESS,
+      // Keep the in-progress notification visible on tap and prevent swipe dismissal
+      // so the user can use the DONE/CANCEL actions while the task is running (#416).
+      autoDismiss: false,
+      sticky: true,
     },
     // Use channel-aware trigger for immediate delivery on the in-progress channel
     trigger: { channelId: CHANNELS.taskInProgress },
