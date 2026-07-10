@@ -61,6 +61,14 @@ def _extract_text(result: list) -> str:
     return str(item)
 
 
+def _transcribe(audio, hotwords, language):
+    return _model.generate(
+        input=audio,
+        language=language,
+        hotwords=hotwords,
+    )
+
+
 _model: AutoModel | None = None  # noqa: F821
 # Serializes access to _model.generate(). AutoModel is not documented as
 # thread-safe, so concurrent run_in_executor calls could crash or corrupt
@@ -128,11 +136,10 @@ async def _handle(websocket: websockets.ServerConnection) -> None:
                     async with _model_lock:
                         result = await loop.run_in_executor(
                             None,
-                            lambda audio=audio, hotwords=hotwords, language=language: _model.generate(
-                                input=audio,
-                                language=language,
-                                hotwords=hotwords,
-                            ),
+                            _transcribe,
+                            audio,
+                            hotwords,
+                            language,
                         )
 
                     text = ""

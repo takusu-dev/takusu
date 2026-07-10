@@ -227,10 +227,9 @@ impl SqliteStorage {
         // habit tasks, seed sequences) is non-idempotent and guarded by a
         // check: only run when the seq table exists but has no rows.
         sqlx::raw_sql(MIGRATION_013).execute(&pool).await?;
-        let seq_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM habit_task_display_id_seq")
-                .fetch_one(&pool)
-                .await?;
+        let seq_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM habit_task_display_id_seq")
+            .fetch_one(&pool)
+            .await?;
         if seq_count == 0 {
             sqlx::raw_sql(MIGRATION_013_BACKFILL).execute(&pool).await?;
         }

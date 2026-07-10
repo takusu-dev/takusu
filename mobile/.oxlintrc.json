@@ -15,6 +15,9 @@
     "react-perf/jsx-no-new-array-as-prop": "off",
     "react-perf/jsx-no-new-function-as-prop": "off",
     "react-perf/jsx-no-new-object-as-prop": "off",
+    "react-perf/jsx-no-jsx-as-prop": "off",
+    "react/style-prop-object": "off",
+    "react/no-unstable-nested-components": "off",
     "import/no-named-as-default-member": "off"
   },
   "ignorePatterns": [

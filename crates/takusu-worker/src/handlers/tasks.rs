@@ -76,12 +76,20 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
         let insert_stmt = database.prepare(
             "INSERT OR IGNORE INTO habit_task_display_id_seq (habit_id, next_id) VALUES (?1, 1)",
         );
-        insert_stmt.bind(&[JsValue::from_str(habit_id)])?.run().await.map_err(WorkerError::Worker)?;
+        insert_stmt
+            .bind(&[JsValue::from_str(habit_id)])?
+            .run()
+            .await
+            .map_err(WorkerError::Worker)?;
         let seq_stmt = database.prepare(
             "UPDATE habit_task_display_id_seq SET next_id = next_id + 1 WHERE habit_id = ?1 RETURNING next_id - 1 AS display_id",
         );
         let bindings = vec![JsValue::from_str(habit_id)];
-        let seq_row: Option<DisplayIdRow> = seq_stmt.bind(&bindings)?.first(None).await.map_err(WorkerError::Worker)?;
+        let seq_row: Option<DisplayIdRow> = seq_stmt
+            .bind(&bindings)?
+            .first(None)
+            .await
+            .map_err(WorkerError::Worker)?;
         seq_row
             .ok_or_else(|| WorkerError::Internal("habit display_id sequence is empty".into()))?
             .display_id
@@ -90,7 +98,8 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
         let seq_stmt = database.prepare(
             "UPDATE task_display_id_seq SET next_id = next_id + 1 RETURNING next_id - 1 AS display_id",
         );
-        let seq_row: Option<DisplayIdRow> = seq_stmt.first(None).await.map_err(WorkerError::Worker)?;
+        let seq_row: Option<DisplayIdRow> =
+            seq_stmt.first(None).await.map_err(WorkerError::Worker)?;
         seq_row
             .ok_or_else(|| WorkerError::Internal("display_id sequence is empty".into()))?
             .display_id
@@ -327,7 +336,10 @@ async fn resolve_task_id(database: &worker::D1Database, id: &str) -> Result<Stri
              WHERE h.display_id = ?1 AND t.display_id = ?2",
         );
         let row: Option<IdRow> = stmt
-            .bind(&[JsValue::from_f64(hnum as f64), JsValue::from_f64(tnum as f64)])?
+            .bind(&[
+                JsValue::from_f64(hnum as f64),
+                JsValue::from_f64(tnum as f64),
+            ])?
             .first(None)
             .await
             .map_err(WorkerError::Worker)?;
