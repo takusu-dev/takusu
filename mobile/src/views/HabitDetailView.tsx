@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Pressable,
-  Alert,
   Modal,
   ScrollView,
   StyleSheet,
@@ -42,6 +41,8 @@ import { RedundantDepWarning } from '@/src/components/RedundantDepWarning';
 import { parseRule, summarizeRule } from '@/src/api/rrule';
 import { haptic } from '@/src/components/haptics';
 import { CancelConfirmButton } from '@/src/components/CancelConfirmButton';
+import { DeleteConfirmButton } from '@/src/components/DeleteConfirmButton';
+import { DeleteConfirmMenuItem } from '@/src/components/DeleteConfirmMenuItem';
 import { parseDuration } from '@/src/utils/duration';
 import {
   type StepDraft,
@@ -325,9 +326,8 @@ export function HabitDetailView() {
   async function deleteHabit() {
     setMenuVisible(false);
     if (!client || !habit) return;
-    // #240: confirm before deleting, showing how many associated
-    // tasks will also be cascade-deleted. Fetch the task list first
-    // so the confirmation is accurate and undo can restore them.
+    // Fetch associated tasks and pauses first so undo can restore them
+    // after the habit is deleted.
     let deletedTasks: TaskRow[];
     let deletedPauses: HabitPauseRow[];
     try {
@@ -340,30 +340,6 @@ export function HabitDetailView() {
       return;
     }
     const taskCount = deletedTasks.length;
-    const message =
-      taskCount > 0
-        ? `このハビットと関連する${taskCount}件のタスクも削除されます。よろしいですか？`
-        : 'このハビットを削除しますか？';
-    const confirmed = await new Promise<boolean>((resolve) => {
-      Alert.alert(
-        'ハビットを削除',
-        message,
-        [
-          {
-            text: 'キャンセル',
-            style: 'cancel',
-            onPress: () => resolve(false),
-          },
-          {
-            text: '削除',
-            style: 'destructive',
-            onPress: () => resolve(true),
-          },
-        ],
-        { cancelable: true, onDismiss: () => resolve(false) },
-      );
-    });
-    if (!confirmed) return;
     const prev = { ...habit };
     // Track the current habit id: undo recreates the habit with a new id,
     // and redo must delete that new id (not the stale original).
@@ -756,10 +732,9 @@ export function HabitDetailView() {
                 title="休止期間を追加..."
                 leadingIcon="calendar-remove-outline"
               />
-              <Menu.Item
-                onPress={deleteHabit}
-                title="削除"
-                leadingIcon="trash-can-outline"
+              <DeleteConfirmMenuItem
+                onConfirm={deleteHabit}
+                visible={menuVisible}
               />
             </>
           )}
@@ -842,9 +817,12 @@ export function HabitDetailView() {
                   {formatPauseDate(p.end_date)}
                   {p.reason ? `  ${p.reason}` : ''}
                 </Text>
-                <Pressable onPress={() => deletePause(p.id)} hitSlop={8}>
-                  <Ionicons name="close" size={18} color={COLORS.red} />
-                </Pressable>
+                <DeleteConfirmButton
+                  onConfirm={() => deletePause(p.id)}
+                  size={34}
+                  iconSize={18}
+                  hitSlop={8}
+                />
               </View>
             ))
           )}
