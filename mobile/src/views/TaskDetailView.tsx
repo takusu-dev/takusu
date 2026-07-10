@@ -683,7 +683,13 @@ export function TaskDetailView() {
                     changeStatus(s);
                   }}
                   title={STATUS_LABELS[s]}
-                  leadingIcon={STATUS_ICONS[s] as string}
+                  leadingIcon={({ color, size }) => (
+                    <Ionicons
+                      name={STATUS_ICONS[s]}
+                      color={color}
+                      size={size}
+                    />
+                  )}
                 />
               ))}
           </Menu>
