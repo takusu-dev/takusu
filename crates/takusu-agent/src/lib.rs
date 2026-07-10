@@ -1,10 +1,14 @@
 pub mod tool;
 pub mod tools;
 
-pub use tool::ToolRegistry;
+pub use tool::{Tool, ToolError, ToolRegistry};
 
 use serde::Deserialize;
+use serde_json::{Value, json};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use jiff::Unit;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -51,6 +55,8 @@ pub struct LlmConfig {
     pub model: String,
     #[serde(default = "default_llm_api_key_env")]
     pub api_key_env: String,
+    #[serde(default = "default_max_history")]
+    pub max_history: usize,
 }
 
 impl Default for LlmConfig {
@@ -59,6 +65,7 @@ impl Default for LlmConfig {
             base_url: default_llm_base_url(),
             model: default_llm_model(),
             api_key_env: default_llm_api_key_env(),
+            max_history: default_max_history(),
         }
     }
 }
@@ -141,6 +148,10 @@ fn data_dir() -> Option<PathBuf> {
         })
 }
 
+fn default_max_history() -> usize {
+    64
+}
+
 fn default_llm_base_url() -> String {
     "https://api.openai.com/v1".into()
 }
@@ -173,4 +184,372 @@ fn default_skills_dir() -> String {
     data_dir()
         .map(|d| d.join("takusu/skills").to_string_lossy().into_owned())
         .unwrap_or_else(|| "~/.local/share/takusu/skills".into())
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum LlmError {
+    #[error("http error: {0}")]
+    Http(String),
+    #[error("response parse error: {0}")]
+    Parse(String),
+    #[error("rate limited")]
+    RateLimited,
+    #[error(transparent)]
+    Other(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: Value,
+}
+
+impl ToolCall {
+    pub fn to_openai(&self) -> Value {
+        json!({
+            "id": self.id,
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "arguments": self.arguments.to_string(),
+            }
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum LlmResponse {
+    Text(String),
+    ToolCalls(Vec<ToolCall>),
+}
+
+#[derive(Debug, Clone)]
+pub enum AssistantContent {
+    Text(String),
+    ToolCalls(Vec<ToolCall>),
+}
+
+#[derive(Debug, Clone)]
+pub enum Message {
+    System(String),
+    User(String),
+    Assistant(AssistantContent),
+    ToolResult { call_id: String, content: String },
+}
+
+impl Message {
+    pub fn to_openai(&self) -> Value {
+        match self {
+            Message::System(c) => json!({"role": "system", "content": c}),
+            Message::User(c) => json!({"role": "user", "content": c}),
+            Message::Assistant(AssistantContent::Text(c)) => {
+                json!({"role": "assistant", "content": c})
+            }
+            Message::Assistant(AssistantContent::ToolCalls(calls)) => json!({
+                "role": "assistant",
+                "content": Value::Null,
+                "tool_calls": calls.iter().map(ToolCall::to_openai).collect::<Vec<_>>(),
+            }),
+            Message::ToolResult { call_id, content } => json!({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": content,
+            }),
+        }
+    }
+
+    pub fn role(&self) -> &'static str {
+        match self {
+            Message::System(_) => "system",
+            Message::User(_) => "user",
+            Message::Assistant(_) => "assistant",
+            Message::ToolResult { .. } => "tool",
+        }
+    }
+}
+
+#[async_trait::async_trait]
+pub trait LlmClient: Send + Sync {
+    async fn chat(&self, messages: &[Message], tools: &[Value]) -> Result<LlmResponse, LlmError>;
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AgentError {
+    #[error("llm error: {0}")]
+    Llm(#[from] LlmError),
+    #[error("tool error: {0}")]
+    Tool(#[from] ToolError),
+    #[error("too many tool calls")]
+    TooManyToolCalls,
+}
+
+const MAX_TOOL_CALLS_PER_TURN: usize = 16;
+
+pub struct Agent {
+    config: AgentConfig,
+    registry: ToolRegistry,
+    llm: Arc<dyn LlmClient + Send + Sync>,
+    history: Mutex<Vec<Message>>,
+}
+
+impl Agent {
+    pub fn new(config: AgentConfig, registry: ToolRegistry, llm: impl LlmClient + 'static) -> Self {
+        Self {
+            config,
+            registry,
+            llm: Arc::new(llm),
+            history: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub async fn run_turn(&self, user_text: &str) -> Result<String, AgentError> {
+        let tools = self.registry.definitions();
+        let system = Message::System(self.build_system_prompt(""));
+
+        let mut local = self.history.lock().unwrap().clone();
+        local.push(Message::User(user_text.to_string()));
+
+        for _ in 0..MAX_TOOL_CALLS_PER_TURN {
+            let mut messages = vec![system.clone()];
+            messages.extend(local.clone());
+
+            match self
+                .llm
+                .chat(&messages, &tools)
+                .await
+                .map_err(AgentError::Llm)?
+            {
+                LlmResponse::Text(text) => {
+                    local.push(Message::Assistant(AssistantContent::Text(text.clone())));
+                    self.replace_history(local);
+                    return Ok(text);
+                }
+                LlmResponse::ToolCalls(calls) => {
+                    local.push(Message::Assistant(AssistantContent::ToolCalls(
+                        calls.clone(),
+                    )));
+                    for call in &calls {
+                        let output = self
+                            .registry
+                            .call(&call.name, call.arguments.clone())
+                            .await
+                            .map_err(AgentError::Tool)?;
+                        local.push(Message::ToolResult {
+                            call_id: call.id.clone(),
+                            content: output,
+                        });
+                    }
+                }
+            }
+        }
+
+        Err(AgentError::TooManyToolCalls)
+    }
+
+    fn build_system_prompt(&self, skills_index: &str) -> String {
+        let now = jiff::Zoned::now()
+            .round(Unit::Second)
+            .unwrap_or_else(|_| jiff::Zoned::now());
+        let tz = now.time_zone().iana_name().unwrap_or("unknown");
+        let skills = if skills_index.is_empty() {
+            "（スキルはまだ登録されていません）"
+        } else {
+            skills_index
+        };
+        format!(
+            "あなたは「takusu（タスク）」の音声アシスタントです。ユーザーのスケジュールとタスクを管理し、日本語で応答してください。\n\
+            タスクや習慣を参照・作成・更新する際は、必ず `display_id` を使用してください。\n\n\
+            現在日時: {now}\n\
+            タイムゾーン: {tz}\n\n\
+            ## 使用可能なスキル\n\
+            {skills}\n\n\
+            【指示】\n\
+            - 推定値が明示されていない場合は `create_task` を呼ぶ前に `similar_tasks` を呼んで見積もりを調整してください。\n\
+            - ユーザーの入力に含まれる不明な固有名詞は `memory_save` で保存してください。\n\
+            - タスク参照には `display_id` を使い、UUID は使わないでください。"
+        )
+    }
+
+    fn replace_history(&self, mut local: Vec<Message>) {
+        let max = self.config.llm.max_history;
+        if local.len() > max {
+            let target = local.len() - max;
+            // Trim from the front, but never split a tool-call/tool-result group.
+            // Safe boundaries are messages that start a new turn (user/system).
+            let start = local
+                .iter()
+                .enumerate()
+                .skip(target)
+                .find(|(_, m)| matches!(m, Message::User(_) | Message::System(_)))
+                .map(|(i, _)| i)
+                .or_else(|| {
+                    local
+                        .iter()
+                        .enumerate()
+                        .take(target)
+                        .rfind(|(_, m)| matches!(m, Message::User(_) | Message::System(_)))
+                        .map(|(i, _)| i)
+                })
+                .unwrap_or_default();
+            local.drain(0..start);
+        }
+        let mut guard = self.history.lock().unwrap();
+        *guard = local;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct EchoTool {
+        calls: Arc<Mutex<usize>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for EchoTool {
+        fn name(&self) -> &'static str {
+            "echo"
+        }
+
+        fn description(&self) -> &'static str {
+            "echoes back the input message"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            json!({
+                "type": "object",
+                "properties": {
+                    "message": {"type": "string"}
+                },
+                "required": ["message"]
+            })
+        }
+
+        async fn call(&self, args: Value) -> Result<String, ToolError> {
+            let msg = args
+                .get("message")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| ToolError::InvalidArgs("missing message".to_string()))?;
+            *self.calls.lock().unwrap() += 1;
+            Ok(msg.to_string())
+        }
+    }
+
+    struct MockLlm {
+        calls: Mutex<Vec<(Vec<Message>, Vec<Value>)>>,
+        responses: Mutex<Vec<LlmResponse>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmClient for MockLlm {
+        async fn chat(
+            &self,
+            messages: &[Message],
+            tools: &[Value],
+        ) -> Result<LlmResponse, LlmError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((messages.to_vec(), tools.to_vec()));
+            let resp = self.responses.lock().unwrap().remove(0).clone();
+            Ok(resp)
+        }
+    }
+
+    #[tokio::test]
+    async fn run_turn_calls_tool_and_returns_final_text() {
+        let calls = Arc::new(Mutex::new(0));
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(EchoTool {
+            calls: calls.clone(),
+        }));
+
+        let mock = MockLlm {
+            calls: Mutex::new(Vec::new()),
+            responses: Mutex::new(vec![
+                LlmResponse::ToolCalls(vec![ToolCall {
+                    id: "call_1".to_string(),
+                    name: "echo".to_string(),
+                    arguments: json!({"message": "hello"}),
+                }]),
+                LlmResponse::Text("done".to_string()),
+            ]),
+        };
+
+        let agent = Agent::new(AgentConfig::default(), registry, mock);
+        let answer = agent.run_turn("call echo").await.unwrap();
+
+        assert_eq!(answer, "done");
+        assert_eq!(*calls.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn history_is_trimmed_to_max_history() {
+        let registry = ToolRegistry::new();
+        let mut mock_responses = Vec::new();
+        for i in 0..100 {
+            mock_responses.push(LlmResponse::Text(format!("reply {i}")));
+        }
+        let mock = MockLlm {
+            calls: Mutex::new(Vec::new()),
+            responses: Mutex::new(mock_responses),
+        };
+        let mut cfg = AgentConfig::default();
+        cfg.llm.max_history = 4;
+        let agent = Agent::new(cfg, registry, mock);
+        for i in 0..100 {
+            let _ = agent.run_turn(&format!("turn {i}")).await.unwrap();
+        }
+        let history = agent.history.lock().unwrap();
+        assert_eq!(history.len(), 4);
+        assert!(matches!(
+            history.last(),
+            Some(Message::Assistant(AssistantContent::Text(t))) if t == "reply 99"
+        ));
+    }
+
+    #[tokio::test]
+    async fn history_trim_keeps_tool_call_pairs_together() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(EchoTool {
+            calls: Arc::new(Mutex::new(0)),
+        }));
+
+        let mut responses = Vec::new();
+        for i in 0..5 {
+            responses.push(LlmResponse::ToolCalls(vec![ToolCall {
+                id: format!("call_{i}"),
+                name: "echo".to_string(),
+                arguments: json!({"message": "hello"}),
+            }]));
+            responses.push(LlmResponse::Text(format!("done {i}")));
+        }
+
+        let mock = MockLlm {
+            calls: Mutex::new(Vec::new()),
+            responses: Mutex::new(responses),
+        };
+        let mut cfg = AgentConfig::default();
+        cfg.llm.max_history = 5;
+        let agent = Agent::new(cfg, registry, mock);
+
+        for i in 0..5 {
+            let _ = agent.run_turn(&format!("turn {i}")).await.unwrap();
+        }
+
+        let history = agent.history.lock().unwrap();
+        assert!(history.len() <= 5);
+        assert!(matches!(&history[0], Message::User(_)));
+        if let Message::Assistant(AssistantContent::ToolCalls(calls)) = &history[1] {
+            assert_eq!(calls.len(), 1);
+            assert!(matches!(
+                &history[2],
+                Message::ToolResult { call_id, .. } if call_id == &calls[0].id
+            ));
+        } else {
+            panic!("expected assistant tool-calls message at index 1");
+        }
+    }
 }

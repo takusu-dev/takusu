@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
@@ -35,6 +35,23 @@ impl ToolRegistry {
 
     pub fn schemas(&self) -> Vec<Value> {
         self.tools.values().map(|t| t.parameters_schema()).collect()
+    }
+
+    /// Tool definitions in OpenAI function-calling format.
+    pub fn definitions(&self) -> Vec<Value> {
+        self.tools
+            .values()
+            .map(|t| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name(),
+                        "description": t.description(),
+                        "parameters": t.parameters_schema(),
+                    }
+                })
+            })
+            .collect()
     }
 
     pub async fn call(&self, name: &str, args: Value) -> Result<String, ToolError> {
