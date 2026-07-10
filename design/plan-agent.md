@@ -405,6 +405,39 @@ Phase 0 (1 agent, small, land first)
   types only) and `takusu-local` router (additive routes). Keep additions in separate
   blocks; rebase with `jj rebase -r @ -d main` before pushing.
 
+## Future: embedding-based memory search (design memo)
+
+Not a work item yet — this records the agreed direction for when LIKE-based recall (WI-6)
+proves insufficient.
+
+**Decision: no dedicated vector DB.** Memory holds hundreds to low thousands of rows
+(proper nouns / facts / task notes), where brute-force cosine similarity is sub-millisecond;
+an ANN index buys nothing at this scale.
+
+- **Storage**: add an `embedding BLOB` column to `memories` (little-endian f32 array).
+  Works identically on SQLite and D1, so both storage backends stay symmetric and the
+  memory replicates with the same local ↔ Worker sync story as everything else — no
+  separate vector-store replication, no extra cloud node.
+- **Search**: new storage-trait method `search_memory_semantic(query_vec, limit)`.
+  Both backends fetch candidate embeddings and rank by cosine in Rust (WASM on Workers).
+- **Embeddings**: generated **locally via ONNX** (`ort` crate) with a small multilingual
+  model (candidate: `multilingual-e5-small`, 384 dims — must handle Japanese). Runs
+  offline and free, same philosophy as the FunASR/Irodori-TTS local servers. Embedding
+  happens agent-side (or in takusu-local) on save/search; the server only stores/compares
+  vectors and never depends on an embedding API.
+- **Optional local optimization**: if the table grows large, `sqlite-vec` (`vec0` virtual
+  table) can accelerate the SQLite backend. It cannot run on D1, so it stays a
+  local-only fast path behind the same trait method.
+
+**Rejected candidates**:
+
+- *Cloudflare Vectorize* — proprietary, Workers-only; would break SqliteStorage/
+  WorkersStorage symmetry.
+- *RuVector* — embeddable Rust crate, but young (2025-11) with quality concerns; heavy
+  dependency for no benefit at this scale.
+- *HelixDB* — requires a server process (and thus a paid/free-tier cloud node plus its
+  own replication and auth); overkill for personal-scale memory.
+
 ## Conventions for all work items
 
 - One WI = one jj change: `jj describe` (present tense, lowercase), `jj git push --change`,
@@ -416,6 +449,6 @@ Phase 0 (1 agent, small, land first)
 ## Out of scope (future plans)
 
 - Android VoiceInteractionService / hotword activation (separate plan after CLI E2E works).
-- Embedding-based memory search (LIKE first; revisit if recall is poor).
+- Embedding-based memory search (LIKE first; revisit if recall is poor — design memo above).
 - External tools (Google Maps), gamification.
 - Streaming STT / streaming LLM responses (one-shot everywhere first).
