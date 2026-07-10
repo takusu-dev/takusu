@@ -138,6 +138,7 @@ function hitTestNode(
   hitRadius: number,
   labelOffset: number,
 ): boolean {
+  'worklet';
   const dx = x - node.x;
   const dy = y - node.y;
   if (Math.hypot(dx, dy) < hitRadius) return true;
