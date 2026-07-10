@@ -83,6 +83,9 @@ class TakusuWidgetProvider : AppWidgetProvider() {
             // field, otherwise Intent.fillIn() will not override it.
             val templateIntent = Intent(Intent.ACTION_VIEW)
             templateIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            // Set the package to make the intent explicit; Android 14+ rejects
+            // mutable PendingIntents with implicit intents.
+            templateIntent.setPackage(context.packageName)
             val templatePi =
                 PendingIntent.getActivity(
                     context,
