@@ -403,7 +403,8 @@ export function HomeView() {
         t.status !== 'pending' &&
         t.status !== 'completed' &&
         t.status !== 'skipped' &&
-        new Date(scheduleMap.get(t.id)?.end_at ?? t.end_at).getTime() >= now,
+        (t.status === 'in_progress' ||
+          new Date(scheduleMap.get(t.id)?.end_at ?? t.end_at).getTime() >= now),
     );
     const guests = tasks.filter(
       (t) =>
@@ -476,6 +477,7 @@ export function HomeView() {
     // fixed タスクは完了後も schedule の end_at が未来になりうるため、
     // status ベースで過去判定しないと upcoming に残り続ける。
     const isPast = (t: TaskRow): boolean => {
+      if (t.status === 'in_progress') return false;
       if (t.status === 'completed' || t.status === 'skipped') return true;
       const entry = scheduleMap.get(t.id);
       const end = entry?.end_at ?? t.end_at;
@@ -598,6 +600,7 @@ export function HomeView() {
     const now = Date.now();
     return tasks.filter((t) => {
       if (t.status === 'pending') return false;
+      if (t.status === 'in_progress') return false;
       if (t.status === 'completed' || t.status === 'skipped') return true;
       const entry = scheduleMap.get(t.id);
       const end = entry?.end_at ?? t.end_at;
