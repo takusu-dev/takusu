@@ -1,0 +1,19 @@
+[package]
+name = "takusu-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+config = { workspace = true }
+jiff = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+takusu-audio = { workspace = true }
+takusu-client = { workspace = true }
+takusu-util = { workspace = true }
