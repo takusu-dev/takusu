@@ -10,12 +10,13 @@
 // steps can be referenced before the server assigns real ids.
 
 import { useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Checkbox, TextInput as PaperTextInput } from 'react-native-paper';
 import { Slider } from '@expo/ui/community/slider';
-import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
+import { BRAND_COLOR, useColors } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
+import { DeleteConfirmButton } from '@/src/components/DeleteConfirmButton';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { parseDuration, formatDuration } from '@/src/utils/duration';
 import { type StepDraft, newStepDraft, hasCycle } from '@/src/utils/habitSteps';
@@ -75,34 +76,21 @@ export function HabitStepEditor({ drafts, onChange }: HabitStepEditorProps) {
   function deleteStep(tempId: string) {
     const draft = drafts.find((d) => d.tempId === tempId);
     if (!draft) return;
-    const hadGenerated = Boolean(draft.id);
-    const message = hadGenerated
-      ? 'このステップを削除すると、既に生成済みの関連タスクも削除されます。よろしいですか？'
-      : 'このステップを削除しますか？';
-    Alert.alert('ステップを削除', message, [
-      { text: 'キャンセル', style: 'cancel' },
-      {
-        text: '削除',
-        style: 'destructive',
-        onPress: () => {
-          haptic.medium();
-          const filtered = drafts
-            .filter((d) => d.tempId !== tempId)
-            .map((d, i) => ({ ...d, position: i }));
-          // Remove deleted tempId from any depends_on.
-          const cleaned = filtered.map((d) => ({
-            ...d,
-            depends_on: d.depends_on.filter((t) => t !== tempId),
-          }));
-          onChange(cleaned);
-          setExpanded((prev) => {
-            const next = new Set(prev);
-            next.delete(tempId);
-            return next;
-          });
-        },
-      },
-    ]);
+    haptic.medium();
+    const filtered = drafts
+      .filter((d) => d.tempId !== tempId)
+      .map((d, i) => ({ ...d, position: i }));
+    // Remove deleted tempId from any depends_on.
+    const cleaned = filtered.map((d) => ({
+      ...d,
+      depends_on: d.depends_on.filter((t) => t !== tempId),
+    }));
+    onChange(cleaned);
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.delete(tempId);
+      return next;
+    });
   }
 
   function toggleDep(tempId: string, depTempId: string) {
@@ -213,9 +201,12 @@ export function HabitStepEditor({ drafts, onChange }: HabitStepEditorProps) {
                     }
                   />
                 </Pressable>
-                <Pressable onPress={() => deleteStep(d.tempId)} hitSlop={8}>
-                  <Ionicons name="trash-outline" size={20} color={COLORS.red} />
-                </Pressable>
+                <DeleteConfirmButton
+                  onConfirm={() => deleteStep(d.tempId)}
+                  size={34}
+                  iconSize={20}
+                  hitSlop={8}
+                />
               </View>
             </View>
 

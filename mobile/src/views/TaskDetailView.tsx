@@ -36,6 +36,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { haptic } from '@/src/components/haptics';
 import { CancelConfirmButton } from '@/src/components/CancelConfirmButton';
+import { DeleteConfirmMenuItem } from '@/src/components/DeleteConfirmMenuItem';
 import { RedundantDepWarning } from '@/src/components/RedundantDepWarning';
 import { formatDate } from '@/src/formatDate';
 import { parseDuration } from '@/src/utils/duration';
@@ -606,11 +607,7 @@ export function TaskDetailView() {
               leadingIcon="restore"
             />
           )}
-          <Menu.Item
-            onPress={deleteTask}
-            title="削除"
-            leadingIcon="trash-can-outline"
-          />
+          <DeleteConfirmMenuItem onConfirm={deleteTask} visible={menuVisible} />
         </Menu>
       </View>
 
