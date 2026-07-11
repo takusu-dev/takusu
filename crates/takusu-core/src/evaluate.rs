@@ -9,6 +9,7 @@
 //!             + Σ buffer_score(i)        // 不確実性バッファ報酬
 //!             + Σ duration_score(i)     // 所要時間マッチ
 //!             + Σ sleep_score(d)         // 日ごと睡眠評価
+//!             + Σ daily_load_score(d)    // #459 日ごと作業負荷
 //!             + Σ parallel_violation     // 並列違反
 //!             + inclusion_bonus          // スケジュール存在ボーナス
 //!             + stability_score          // #211 前回配置からの安定性
@@ -50,6 +51,12 @@
 //! ### parallel_violation (重複スロット数比例)
 //! - 時間的重複があり、かつ並列条件を満たさないペア:
 //!   `-(重複スロット数) * W_PARALLEL_VIOL`
+//!
+//! ### daily_load_score (#459)
+//! - 1日あたりの占有時間 (スロット数) のunionに対して二次ペナルティを与える。
+//! - 負荷は件数ではなく区間unionで測り、合法的な並列タスクは二重加算しない。
+//! - `load^2` の項で同じ総作業時間でも分散配置を選好。
+//! - `comfortable` 超過と `maximum` 超過に段階的に強いペナルティを追加。
 //!
 //! ### inclusion_bonus
 //! - スケジュールされているタスクごとに `+W_INCLUSION`
@@ -100,6 +107,13 @@ const W_HABIT_CONSISTENCY: f64 = 2.0;
 /// 一貫性ボーナスの計算対象となる最大分散 (スロット²)。
 /// この分散を超えるとボーナス0になる。
 const HABIT_CONSISTENCY_MAX_VAR: f64 = (6.0 * 12.0) * (6.0 * 12.0); // 6時間の分散で0
+/// #459: 快適容量以下の負荷に対する二次ペナルティ重み。
+/// 同じ総作業時間なら複数日に分散する配置を選好させる。
+const W_DAILY_NORMAL: f64 = 0.01;
+/// #459: 快適容量超過部分の二次ペナルティ重み。
+const W_DAILY_OVERLOAD: f64 = 0.5;
+/// #459: 最大容量超過部分の二次ペナルティ重み。
+const W_DAILY_MAXIMUM: f64 = 2.0;
 
 pub fn evaluate(planner: &Planner, plan: &Plan, temperature: f64, t0: f64) -> f64 {
     let mut score = 0.0;
@@ -112,6 +126,7 @@ pub fn evaluate(planner: &Planner, plan: &Plan, temperature: f64, t0: f64) -> f6
     score += buffer_score(planner, &index);
     score += duration_score(planner, &index);
     score += sleep_score(planner, schedules);
+    score += daily_load_score(planner, schedules);
     score += parallel_violation_score(planner, schedules);
     score += inclusion_bonus(planner, schedules);
     score += stability_score(planner, &index);
@@ -271,6 +286,87 @@ fn sleep_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
     score
 }
 
+/// #459: 日ごとの作業負荷に基づくペナルティ。
+///
+/// 1 日の占有時間（スロット数）を、スケジュール区間の union として計算する。
+/// 合法的に重複する並列タスクも単純に二重加算しない。
+///
+/// 負荷に対しては以下の項を与える。
+/// - `-W_DAILY_NORMAL * load(day)^2`  
+///   同じ総作業時間でも複数日に分散した plan を選好。
+/// - `-W_DAILY_OVERLOAD * max(0, load(day) - comfortable)^2`  
+///   快適容量超過に対する緩やかなペナルティ。
+/// - `-W_DAILY_MAXIMUM * max(0, load(day) - maximum)^2`  
+///   最大容量超過に対する強いペナルティ。
+fn daily_load_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
+    if planner.workload.comfortable_slots_per_day == 0
+        && planner.workload.maximum_slots_per_day == 0
+    {
+        return 0.0;
+    }
+
+    let slots_per_day = (24 * 60) / planner.per as i64;
+    let day_start_epoch = planner.sleep.day_start;
+
+    let (plan_start, plan_end) = plan_range(schedules);
+    if plan_start >= plan_end {
+        return 0.0;
+    }
+
+    let first_day = day_start_epoch
+        + (plan_start.0 - day_start_epoch).div_euclid(slots_per_day) * slots_per_day;
+    let mut day_start = Point(first_day);
+
+    let mut score = 0.0;
+    while day_start.0 < plan_end.0 {
+        let day_end = Point(day_start.0 + slots_per_day);
+        let mut intervals: Vec<(Point, Point)> = Vec::new();
+        for (s, e, _) in schedules {
+            if e.0 <= day_start.0 || s.0 >= day_end.0 {
+                continue;
+            }
+            let clip_start = Point(s.0.max(day_start.0));
+            let clip_end = Point(e.0.min(day_end.0));
+            if clip_start < clip_end {
+                intervals.push((clip_start, clip_end));
+            }
+        }
+
+        let load = union_length(&mut intervals);
+        let normal_penalty = (load * load) as f64 * W_DAILY_NORMAL;
+        let comfortable_excess = (load - planner.workload.comfortable_slots_per_day).max(0);
+        let overload_penalty = (comfortable_excess * comfortable_excess) as f64 * W_DAILY_OVERLOAD;
+        let maximum_excess = (load - planner.workload.maximum_slots_per_day).max(0);
+        let maximum_penalty = (maximum_excess * maximum_excess) as f64 * W_DAILY_MAXIMUM;
+        score -= normal_penalty + overload_penalty + maximum_penalty;
+
+        day_start = Point(day_start.0 + slots_per_day);
+    }
+
+    score
+}
+
+/// 区間列の union の長さを返す。区間は `(start, end)` で `start < end` 前提。
+fn union_length(intervals: &mut [(Point, Point)]) -> i64 {
+    if intervals.is_empty() {
+        return 0;
+    }
+    intervals.sort_unstable_by_key(|(s, _)| s.0);
+    let mut total = 0i64;
+    let (mut cur_start, mut cur_end) = intervals[0];
+    for (s, e) in intervals.iter().skip(1) {
+        if s.0 > cur_end.0 {
+            total += cur_end.0 - cur_start.0;
+            cur_start = *s;
+            cur_end = *e;
+        } else if e.0 > cur_end.0 {
+            cur_end = *e;
+        }
+    }
+    total += cur_end.0 - cur_start.0;
+    total
+}
+
 fn parallel_violation_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
     let mut sorted: Vec<(Point, Point, usize)> = schedules.to_vec();
     sorted.sort_unstable_by_key(|(s, _, _)| s.0);
@@ -408,7 +504,9 @@ mod tests {
     use super::*;
 
     fn make_planner() -> Planner {
-        Planner::new(Point(0), SleepConfig::disabled())
+        let mut p = Planner::new(Point(0), SleepConfig::disabled());
+        p.set_workload(WorkloadConfig::disabled());
+        p
     }
 
     fn add_simple_task(p: &mut Planner, avg: u64, sigma: u64, end: i64) -> usize {
@@ -964,5 +1062,170 @@ mod tests {
         let plan = plan_with(vec![(Point(10), Point(12), t0)]);
         let score = habit_consistency_score(&p, &build_index(&p, &plan.schedules));
         assert_eq!(score, 0.0, "single-task habit group should get no bonus");
+    }
+
+    // #459: daily workload penalty
+    #[test]
+    fn daily_load_prefers_spread_over_one_day() {
+        let mut p = make_planner();
+        p.set_workload(WorkloadConfig::new(48, 96)); // comfortable=4h, max=8h
+        let slots_per_day = 24 * 12;
+        let a = add_simple_task(&mut p, 48, 0, slots_per_day * 3);
+        let b = add_simple_task(&mut p, 48, 0, slots_per_day * 3);
+
+        let one_day = plan_with(vec![(Point(0), Point(48), a), (Point(48), Point(96), b)]);
+        let two_days = plan_with(vec![
+            (Point(0), Point(48), a),
+            (Point(slots_per_day), Point(slots_per_day + 48), b),
+        ]);
+
+        let score_one = evaluate(&p, &one_day, 0.0, 1.0);
+        let score_two = evaluate(&p, &two_days, 0.0, 1.0);
+        assert!(
+            score_two > score_one,
+            "spread over two days should score higher: one={score_one} two={score_two}"
+        );
+    }
+
+    #[test]
+    fn daily_load_allows_concentration_when_deadline_tight() {
+        let mut p = make_planner();
+        p.set_workload(WorkloadConfig::new(48, 96)); // comfortable=4h, max=8h
+        let a = add_simple_task(&mut p, 24, 0, 30);
+        let b = add_simple_task(&mut p, 24, 0, 30);
+
+        let one_day = plan_with(vec![(Point(0), Point(24), a), (Point(24), Point(48), b)]);
+        let two_days = plan_with(vec![(Point(0), Point(24), a), (Point(288), Point(312), b)]);
+
+        let score_one = evaluate(&p, &one_day, 0.0, 1.0);
+        let score_two = evaluate(&p, &two_days, 0.0, 1.0);
+        assert!(
+            score_one > score_two,
+            "tight deadline should prefer concentration: one={score_one} two={score_two}"
+        );
+    }
+
+    #[test]
+    fn daily_load_includes_fixed_tasks() {
+        let mut p = make_planner();
+        p.set_workload(WorkloadConfig::new(36, 72)); // comfortable=3h, max=6h
+        let slots_per_day = 24 * 12;
+        let fixed = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(slots_per_day * 2),
+                cost_estimate: NormalDist::new(24, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: true,
+                habit_group: None,
+            })
+            .unwrap();
+        let free = add_simple_task(&mut p, 24, 0, slots_per_day * 2);
+
+        let busy_day = plan_with(vec![
+            (Point(0), Point(24), fixed),
+            (Point(0), Point(24), free),
+        ]);
+        let free_day = plan_with(vec![
+            (Point(0), Point(24), fixed),
+            (Point(slots_per_day), Point(slots_per_day + 24), free),
+        ]);
+
+        let score_busy = evaluate(&p, &busy_day, 0.0, 1.0);
+        let score_free = evaluate(&p, &free_day, 0.0, 1.0);
+        assert!(
+            score_free > score_busy,
+            "free day should score higher when fixed load is heavy: busy={score_busy} free={score_free}"
+        );
+    }
+
+    #[test]
+    fn daily_load_no_double_count_for_parallel_tasks() {
+        let mut p = make_planner();
+        p.set_workload(WorkloadConfig::new(48, 96)); // comfortable=4h, max=8h
+        let host = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(100),
+                cost_estimate: NormalDist::new(24, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: true,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+        let guest = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(100),
+                cost_estimate: NormalDist::new(24, 0),
+                depends: vec![],
+                parallelizable: true,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+
+        let overlapping = plan_with(vec![(Point(0), Point(24), host), (Point(0), Point(24), guest)]);
+        let no_overlap = plan_with(vec![(Point(0), Point(24), host), (Point(24), Point(48), guest)]);
+
+        let score_overlap = evaluate(&p, &overlapping, 0.0, 1.0);
+        let score_no = evaluate(&p, &no_overlap, 0.0, 1.0);
+        assert!(
+            score_overlap > score_no,
+            "parallel overlap should not double-count load (union load should be smaller): overlap={score_overlap} no={score_no}"
+        );
+    }
+
+    #[test]
+    fn daily_load_light_day_not_over_penalized() {
+        let mut p = make_planner();
+        p.set_workload(WorkloadConfig::new(48, 96));
+        let slots_per_day = 24 * 12;
+        let a = add_simple_task(&mut p, 12, 0, slots_per_day * 3);
+        let b = add_simple_task(&mut p, 12, 0, slots_per_day * 3);
+
+        let one_day = plan_with(vec![(Point(0), Point(12), a), (Point(12), Point(24), b)]);
+        let two_days = plan_with(vec![
+            (Point(0), Point(12), a),
+            (Point(slots_per_day), Point(slots_per_day + 12), b),
+        ]);
+
+        let score_one = evaluate(&p, &one_day, 0.0, 1.0);
+        let score_two = evaluate(&p, &two_days, 0.0, 1.0);
+        let gap = score_two - score_one;
+        assert!(
+            gap > 0.0 && gap < 5.0,
+            "light load spread should be preferred but not dominate: gap={gap}"
+        );
+    }
+
+    #[test]
+    fn daily_load_respects_maximum_capacity() {
+        let mut p = make_planner();
+        // comfortable=4h, max=8h. 10h work exceeds maximum.
+        p.set_workload(WorkloadConfig::new(48, 96));
+        let a = add_simple_task(&mut p, 72, 0, 144);
+        let b = add_simple_task(&mut p, 48, 0, 144);
+
+        let over_max = plan_with(vec![(Point(0), Point(72), a), (Point(72), Point(120), b)]);
+        let under_max = plan_with(vec![(Point(0), Point(72), a), (Point(288), Point(336), b)]);
+
+        let score_over = evaluate(&p, &over_max, 0.0, 1.0);
+        let score_under = evaluate(&p, &under_max, 0.0, 1.0);
+        assert!(
+            score_under > score_over,
+            "over maximum capacity should be strongly penalized: over={score_over} under={score_under}"
+        );
     }
 }

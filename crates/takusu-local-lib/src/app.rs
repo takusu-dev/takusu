@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
-use takusu_core::{NormalDist, Planner, Point, RescheduleRange, SleepConfig, Task as CoreTask};
+use takusu_core::{NormalDist, Planner, Point, RescheduleRange, SleepConfig, Task as CoreTask, WorkloadConfig};
 use takusu_storage::{
     CreateHabit, CreateHabitPause, CreateTask, GoogleCalEventRow, HabitDetail, HabitPauseRow,
     HabitRow, HabitStepInput, HabitStepRow, SaveScheduleRequest, ScheduleEntry, ScheduleRow,
@@ -303,6 +303,44 @@ fn parse_sleep(s: &str, settings: &SettingsRow) -> SleepConfig {
     }
 }
 
+/// #459: 設定から WorkloadConfig を構築する。`None` または `0` の場合はデフォルトを使う。
+/// 1 スロット = 5 分なので、分を 5 で割ってスロット数に変換する。
+fn parse_workload(settings: &SettingsRow) -> WorkloadConfig {
+    let comfortable = settings.comfortable_minutes.filter(|&m| m > 0);
+    let maximum = settings.maximum_minutes.filter(|&m| m > 0);
+    match (comfortable, maximum) {
+        (Some(c), Some(m)) => {
+            let c_slots = c / 5;
+            let m_slots = m / 5;
+            if c_slots <= 0 || m_slots <= 0 {
+                return WorkloadConfig::default();
+            }
+            if c_slots > m_slots {
+                WorkloadConfig::new(m_slots, c_slots)
+            } else {
+                WorkloadConfig::new(c_slots, m_slots)
+            }
+        }
+        (Some(c), None) => {
+            let c_slots = c / 5;
+            if c_slots <= 0 {
+                return WorkloadConfig::default();
+            }
+            let m_slots = (c_slots * 3 / 2).max(c_slots + 48);
+            WorkloadConfig::new(c_slots, m_slots)
+        }
+        (None, Some(m)) => {
+            let m_slots = m / 5;
+            if m_slots <= 0 {
+                return WorkloadConfig::default();
+            }
+            let c_slots = (m_slots * 2 / 3).min(m_slots - 24).max(1);
+            WorkloadConfig::new(c_slots, m_slots)
+        }
+        (None, None) => WorkloadConfig::default(),
+    }
+}
+
 /// ISO文字列 → Point スロット値。`now` は現在時刻。
 /// ハードコードされた 5 (分/スロット) は Planner の per と揃っている必要がある。
 /// AGENTS.md の「point_to_iso hardcoded 5-minute slots」参照。
@@ -493,6 +531,8 @@ fn default_settings_row() -> SettingsRow {
         tz: "UTC".to_string(),
         sleep_start: "22:00".to_string(),
         sleep_end: "06:00".to_string(),
+        comfortable_minutes: None,
+        maximum_minutes: None,
         created_at: String::new(),
         updated_at: String::new(),
     }
@@ -1003,8 +1043,9 @@ impl TakusuApp {
             // 既に scheduled 状態になっているため、再生成でそれらも対象にする。
             .filter(|t| t.status == "pending" || t.status == "scheduled")
             .collect();
+        let workload = parse_workload(&settings);
         let (mut planner, id_map, id_to_idx) = self
-            .build_planner(from_point, sleep, &all_rows, &tz)
+            .build_planner(from_point, sleep, workload, &all_rows, &tz)
             .await?;
 
         // #211: 前回スケジュールを参照として渡し、直近タスクの移動に
@@ -1091,8 +1132,9 @@ impl TakusuApp {
                 .filter(|t| t.status == "pending" || t.status == "scheduled"),
         );
 
+        let workload = parse_workload(&settings);
         let (planner, id_map, id_to_idx) =
-            self.build_planner(now_point, sleep, &active, &tz).await?;
+            self.build_planner(now_point, sleep, workload, &active, &tz).await?;
 
         // Note: stability penalty (#211) is intentionally NOT applied here.
         // reschedule is a user-initiated partial reconfiguration — the user
@@ -2000,6 +2042,7 @@ impl TakusuApp {
         &self,
         start: Point,
         sleep: SleepConfig,
+        workload: WorkloadConfig,
         task_rows: &[TaskRow],
         tz: &jiff::tz::TimeZone,
     ) -> Result<(Planner, Vec<String>, HashMap<String, usize>), AppError> {
@@ -2077,6 +2120,7 @@ impl TakusuApp {
         }
 
         let mut planner = Planner::new(start, sleep);
+        planner.set_workload(workload);
         let mut id_map: Vec<String> = Vec::with_capacity(task_rows.len());
 
         for (i, row) in task_rows.iter().enumerate() {

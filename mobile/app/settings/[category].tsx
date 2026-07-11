@@ -5,6 +5,7 @@ import type { SettingsCategory } from '@/src/views/SettingsView';
 const VALID: SettingsCategory[] = [
   'general',
   'sleep',
+  'workload',
   'notifications',
   'worker',
   'google',

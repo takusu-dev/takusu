@@ -203,6 +203,51 @@ impl Default for SleepConfig {
     }
 }
 
+// ── WorkloadConfig ────────────────────────────────────────────────────
+
+/// 1 日あたりの作業負荷設定。
+///
+/// ユーザーの「1 日にどれくらいのタスクを入れたいか」を表す。
+/// デフォルトでは内部で決定された値を使い、詳細を指定したい場合だけ
+/// `Planner::set_workload` で上書きする。
+#[derive(Debug, Clone, Copy)]
+pub struct WorkloadConfig {
+    /// 快適な 1 日あたりの作業スロット数（5 分単位）。
+    /// この値を超えると緩やかなペナルティがかかる。
+    pub comfortable_slots_per_day: i64,
+    /// 1 日あたりの作業スロット数の上限（5 分単位）。
+    /// この値を超えると強いペナルティがかかる。
+    pub maximum_slots_per_day: i64,
+}
+
+impl WorkloadConfig {
+    /// 負荷評価を無効化する。
+    pub fn disabled() -> Self {
+        Self {
+            comfortable_slots_per_day: 0,
+            maximum_slots_per_day: 0,
+        }
+    }
+
+    /// 任意の閾値を指定する。
+    pub fn new(comfortable_slots_per_day: i64, maximum_slots_per_day: i64) -> Self {
+        Self {
+            comfortable_slots_per_day,
+            maximum_slots_per_day,
+        }
+    }
+}
+
+impl Default for WorkloadConfig {
+    /// デフォルト設定: 快適 8 時間（96 スロット）、上限 12 時間（144 スロット）。
+    fn default() -> Self {
+        Self {
+            comfortable_slots_per_day: 96,
+            maximum_slots_per_day: 144,
+        }
+    }
+}
+
 // ── Task ──────────────────────────────────────────────────────────────
 
 /// プランナーに渡すタスク。
@@ -338,6 +383,10 @@ pub struct Planner {
     now: Point,
     per: u16,
     sleep: SleepConfig,
+    /// #459: 1 日あたりの作業負荷設定。
+    /// デフォルトは `WorkloadConfig::default()` で、詳細を指定したい場合は
+    /// `set_workload` で上書きする。
+    workload: WorkloadConfig,
     /// #211: 前回スケジュールの参照（安定性ペナルティ用）。
     /// 各タスクの (start, end) で、SAが移動を嫌うようにする。
     /// 直近のタスクほど強いペナルティ。
@@ -355,6 +404,7 @@ impl Planner {
             now,
             per: 5,
             sleep,
+            workload: WorkloadConfig::default(),
             previous_schedule: vec![],
         }
     }
@@ -405,6 +455,13 @@ impl Planner {
     /// 前回スケジュールの参照（評価関数から使用）。
     pub fn previous_schedule(&self) -> &[Option<(Point, Point)>] {
         &self.previous_schedule
+    }
+
+    /// #459: 1 日あたりの作業負荷設定を上書きする。
+    ///
+    /// 指定しない場合は `WorkloadConfig::default()` が使われる。
+    pub fn set_workload(&mut self, workload: WorkloadConfig) {
+        self.workload = workload;
     }
 
     /// 固定タスクを保持したまま未固定タスクをスケジュール。

@@ -221,12 +221,20 @@ export interface SettingsRow {
   tz: string;
   sleep_start: string;
   sleep_end: string;
+  /// #459: 1 日の快適な作業時間（分）。`null` または未設定の場合はデフォルト（8 時間）を使う。
+  comfortable_minutes: number | null;
+  /// #459: 1 日の最大作業時間（分）。`null` または未設定の場合はデフォルト（12 時間）を使う。
+  maximum_minutes: number | null;
 }
 
 export interface UpdateSettings {
   tz?: string;
   sleep_start?: string;
   sleep_end?: string;
+  /// #459: 1 日の快適な作業時間（分）。`null` または未設定の場合はデフォルトを使う。
+  comfortable_minutes?: number | null;
+  /// #459: 1 日の最大作業時間（分）。`null` または未設定の場合はデフォルトを使う。
+  maximum_minutes?: number | null;
 }
 
 export interface TokenRow {
