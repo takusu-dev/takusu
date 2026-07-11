@@ -2,89 +2,137 @@
 
 ## Summary
 
-Implement the voice-assistant half of the takusu vision (main.typ §voice assistant): an LLM
-agent that talks to the user (STT/TTS) and operates the planner via tool calling, plus the
-server-side **memory** and **progress management** features the agent depends on.
+Implement the voice-assistant half of the takusu vision (`main.typ` §音声アシスタント):
+an LLM agent that operates the planner through tool calling, plus the memory, safe change
+management, schedule orchestration, and progress features it depends on.
 
-Target tool set for the agent: `speak`, `listen`, `skills` (list/read/add/edit),
-`memory` (save/search), and `takusu` (task/habit/schedule CRUD + progress reporting).
+The implementation proceeds sequentially with one agent. Each work item (WI) should leave the
+repository working and tested before the next begins. Contracts in this document may be refined
+when implementation reveals a problem, but the document and all affected clients must be updated
+in the same change.
 
-This plan is split into **independent work items (WI)** so that multiple agents can work in
-parallel without touching the same files. All shared contracts (traits, schemas, endpoint
-shapes, migration numbers) are fixed in this document; a work item may rely on another item's
-*contract* without waiting for its *implementation*.
+The LLM-facing tool set is:
+
+- planner reads: task, habit, schedule, and settings lookup;
+- planner mutations: task/habit CRUD through auditable change sets;
+- schedule preview and commit;
+- memory search/save/update/delete and similar-task lookup;
+- progress start/pause/report/complete/split;
+- skills list/read and confirmed add/edit.
+
+Audio capture and playback are application I/O, not LLM tools. The CLI or future Android/server
+adapter records audio, transcribes it, calls the agent for one turn, and speaks the returned text.
+The LLM must never activate the microphone by itself.
+
+## Product invariants from `main.typ`
+
+The implementation must preserve these behaviors across all work items:
+
+1. **Explain inference**: when the LLM fills a missing deadline, estimate, sigma, dependency, or
+   abandonability, the response and change record say what was inferred and why.
+2. **Visible and reversible planner changes**: task/habit changes made by the agent are queryable
+   by the app and can be reverted when the target has not subsequently changed.
+3. **Confirm risky effects**: deletion, persistent skill edits, and schedule changes that displace
+   tasks, leave tasks unscheduled, or reduce sleep require user confirmation before commit.
+4. **Batch scheduling work**: consecutive task edits mark the schedule dirty; they do not run the
+   planner independently. Recompute after an explicit schedule request, an explicit user request,
+   or at the end of a configurable quiet period.
+5. **Search before guessing**: for an unknown proper noun, search memory first, ask the user if it
+   is still unknown, then save the answer. For a missing estimate, inspect similar completed tasks
+   before using model knowledge.
+6. **Use active work time**: progress estimates and actual duration use explicit active work
+   sessions, not wall-clock time between first start and completion.
+7. **Stable references**: user-facing task references use `display_id`. Habit-generated task IDs
+   are scoped by habit and must use an unambiguous form such as `h<habit_display_id>#<task_display_id>`.
 
 ## Architecture
 
-```
-takusu-agent (new crate, lib + bin)
-├── src/lib.rs        # Agent loop, ToolRegistry, AgentConfig
-├── src/tool.rs       # Tool trait + ToolError (contract, Phase 0)
-├── src/llm.rs        # OpenAI-compatible chat client with tool calling (WI-2)
+```text
+takusu-agent (library + CLI binary)
+├── src/lib.rs        # AgentSession, tool loop, history, system context
+├── src/tool.rs       # Tool trait, ToolRegistry, structured tool results
+├── src/llm.rs        # OpenAI chat-completions adapter
 ├── src/tools/
-│   ├── audio.rs      # speak / listen (WI-3)
-│   ├── takusu.rs     # planner API tools (WI-4)
-│   ├── skills.rs     # skills_list / skills_read / skills_add / skills_edit (WI-5)
-│   ├── memory.rs     # memory_save / memory_search / similar_tasks (WI-7)
-│   └── progress.rs   # task_start / task_progress / task_complete (WI-9)
-└── src/bin/agent.rs  # CLI: push-to-talk loop + `--text` mode (WI-10)
+│   ├── takusu.rs     # planner reads, change sets, schedule preview/commit
+│   ├── skills.rs     # skills list/read/add/edit with confirmation
+│   ├── memory.rs     # memory CRUD and similar tasks
+│   └── progress.rs   # work sessions, progress, completion, splitting
+├── src/audio.rs      # application-level STT/TTS adapter; not registered as tools
+└── src/bin/agent.rs  # text mode and push-to-talk CLI
 
-takusu-local-lib / takusu-local / takusu-storage / takusu-client (extended)
-├── migrations/005_memory.sql    # memories table + tasks FTS (WI-6)
-├── migrations/006_progress.sql  # progress columns + progress_events (WI-8)
-├── /api/memory/*, /api/tasks/similar          (WI-6)
-└── /api/tasks/:id/progress, estimate correction (WI-8)
+takusu server/storage/client extensions
+├── migrations/014_agent_changes.sql
+├── migrations/015_memory.sql
+├── migrations/016_progress.sql
+├── /api/agent/change-sets/*
+├── /api/schedule/preview
+├── /api/memory/* and /api/tasks/similar
+└── /api/tasks/:id/work/*, /progress, and /split
 ```
 
-Data flow: mic → `takusu-audio::record` → FunASR STT → LLM (tool loop) → takusu REST API
-→ response text → Irodori-TTS → playback.
+The current latest local migration is `013_habit_task_display_id.sql`; therefore this plan starts
+at 014. Both SQLite/local and D1/Worker implementations must expose the same behavior.
 
-## Phase 0 — Shared contracts (must land first, single small change)
+### Runtime data flow
 
-One agent lands this scaffold; everything else is parallel afterwards.
+```text
+CLI/Android input
+  → record/VAD
+  → STT
+  → AgentSession::run_turn(text)
+  → LLM/tool loop
+  → structured TurnResult { text, changes, schedule_state }
+  → UI renders text and change receipts
+  → optional TTS/playback
+```
 
-### 0.1 Crate scaffold
+`AgentSession` is independent of the transport. The first executable is the CLI, but a later
+HTTP/WebSocket adapter must be able to own sessions without moving planner or audio logic into the
+binary. Only one turn may mutate a session at a time; concurrent calls are serialized per session.
 
-- Add `crates/takusu-agent` to the workspace: `lib.rs` with `AgentConfig`, empty
-  `ToolRegistry`, `mod tool;`, `mod tools { pub mod audio; pub mod takusu; pub mod skills;
-  pub mod memory; pub mod progress; }` (all modules created as empty stubs so parallel
-  branches don't conflict on `mod` declarations).
-- Dependencies: `tokio`, `serde`, `serde_json`, `reqwest`, `async-trait`, `thiserror`,
-  `takusu-audio`, `takusu-client`, `takusu-util`, `jiff` (all already in workspace).
+## Shared contracts
 
-### 0.2 Tool trait (frozen contract)
+### Tool contract
 
 ```rust
-// crates/takusu-agent/src/tool.rs
 #[async_trait::async_trait]
 pub trait Tool: Send + Sync {
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
-    /// JSON Schema for the arguments object (OpenAI function-calling format).
     fn parameters_schema(&self) -> serde_json::Value;
-    async fn call(&self, args: serde_json::Value) -> Result<String, ToolError>;
+    async fn call(&self, args: serde_json::Value) -> Result<ToolOutput, ToolError>;
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum ToolError {
-    #[error("invalid arguments: {0}")] InvalidArgs(String),
-    #[error(transparent)] Other(#[from] anyhow-like boxed error), // Box<dyn Error + Send + Sync>
+pub struct ToolOutput {
+    /// JSON or text returned to the LLM.
+    pub content: String,
+    /// Change receipts collected for the application UI.
+    pub changes: Vec<ChangeReceipt>,
+    pub schedule_dirty: bool,
 }
 ```
 
-- Tool output is a plain `String` fed back to the LLM (JSON-encode structured data).
-- `ToolRegistry`: `register(Box<dyn Tool>)`, `schemas() -> Vec<serde_json::Value>`,
-  `call(name, args)`.
+Recoverable errors such as invalid arguments, not found, and optimistic-conflict errors are added
+as tool-result messages so the LLM can correct its request. Authentication failures, transport
+failures after retry, malformed provider responses, and session cancellation fail the turn.
 
-### 0.3 AgentConfig
+The per-turn limit counts actual tool calls, including multiple calls returned in one LLM response.
+Mutating calls are sequential even when the provider returns them together. Read-only calls may be
+parallelized later.
 
-Read from `$XDG_CONFIG_HOME/takusu/agent.toml` + env overrides (`TAKUSU_AGENT_*`):
+### Agent configuration
+
+Read `$XDG_CONFIG_HOME/takusu/agent.toml`, then apply
+`TAKUSU_AGENT__<SECTION>__<KEY>` overrides.
 
 ```toml
 [llm]
-base_url = "https://api.openai.com/v1"   # any OpenAI-compatible endpoint
+base_url = "https://api.openai.com/v1"
 model = "gpt-4.1-mini"
 api_key_env = "TAKUSU_LLM_API_KEY"
+max_context_tokens = 32000
+max_tool_calls = 16
+request_timeout_seconds = 60
 
 [server]
 url = "http://127.0.0.1:3000"
@@ -96,359 +144,509 @@ tts_url = "http://127.0.0.1:8088"
 refs_dir = "./refs"
 
 [skills]
-dir = "~/.local/share/takusu/skills"     # default: $XDG_DATA_HOME/takusu/skills
+dir = "~/.local/share/takusu/skills"
+
+[schedule]
+quiet_period_seconds = 30
 ```
 
-### 0.4 Server-side contracts (frozen; implemented by WI-6 / WI-8)
+The system context is rebuilt for each turn from server settings and contains the user's timezone,
+current zoned time, dirty-schedule state, available skills index, and task-reference rules. It must
+not use the host timezone as a substitute after settings have loaded.
 
-Migration numbers are pre-assigned to avoid collisions: **005 = memory**, **006 = progress**.
-Endpoint shapes and schemas are specified inside WI-6 / WI-8 below and must not be changed
-without updating this document.
+### Change-set contract
 
----
+All agent task/habit mutations use an atomic server-side change set rather than directly chaining
+CRUD endpoints. Migration 014 adds monotonic `revision` columns to tasks/habits and the following
+logical tables (exact SQL may follow existing backend conventions):
 
-## Work items
+```sql
+CREATE TABLE agent_change_sets (
+    id               TEXT PRIMARY KEY,
+    idempotency_key  TEXT NOT NULL UNIQUE,
+    summary          TEXT NOT NULL,
+    inferred_fields  TEXT NOT NULL DEFAULT '[]',
+    status           TEXT NOT NULL CHECK(status IN ('applied','reverted')),
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    reverted_at      TEXT
+);
 
-Each WI is one jj change / PR, independently assignable. "Depends on" refers to *merged code*;
-"contract" dependencies only require Phase 0 (this doc + scaffold).
+CREATE TABLE agent_change_operations (
+    id               TEXT PRIMARY KEY,
+    change_set_id    TEXT NOT NULL REFERENCES agent_change_sets(id),
+    sequence         INTEGER NOT NULL,
+    operation        TEXT NOT NULL,
+    target_type      TEXT NOT NULL,
+    target_id        TEXT NOT NULL,
+    before_json      TEXT,
+    after_json       TEXT,
+    target_revision  INTEGER
+);
 
-### WI-1: Agent core loop
+CREATE TABLE planner_state (
+    id               TEXT PRIMARY KEY DEFAULT 'active',
+    revision         INTEGER NOT NULL DEFAULT 0,
+    schedule_dirty   BOOLEAN NOT NULL DEFAULT 0,
+    dirty_since      TEXT,
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
-**Files**: `crates/takusu-agent/src/lib.rs`
-**Depends on**: Phase 0. Uses `llm.rs` contract (WI-2) — develop against the trait below.
+CREATE TABLE schedule_previews (
+    id               TEXT PRIMARY KEY,
+    base_revision    INTEGER NOT NULL,
+    request_json     TEXT NOT NULL,
+    result_json      TEXT NOT NULL,
+    impact_json      TEXT NOT NULL,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    committed_at     TEXT
+);
+```
 
-- `Agent::new(config, registry, llm)` and `Agent::run_turn(user_text) -> Result<String>`:
-  standard tool-calling loop (send messages + tool schemas → execute tool calls → append
-  results → repeat until plain-text answer; cap at e.g. 16 tool calls per turn).
-- Conversation history kept in memory for the session (Vec of messages), trimmed to a
-  configurable max length.
-- System prompt template: current date/time (jiff, user tz from settings), role description
-  in Japanese (assistant speaks Japanese), skills index injection point (see WI-5), and
-  the rule that task references use `display_id`.
-- Define the LLM abstraction so WI-2 can be swapped in:
+Every task/habit mutation, including existing non-agent endpoints, increments the target revision
+and the global planner revision and marks the schedule dirty. This makes dirty state survive CLI
+exit/server restart and lets preview/undo detect intervening edits.
 
-```rust
-#[async_trait::async_trait]
-pub trait LlmClient: Send + Sync {
-    async fn chat(&self, messages: &[Message], tools: &[serde_json::Value])
-        -> Result<LlmResponse, LlmError>;
+```json
+POST /api/agent/change-sets
+{
+  "idempotency_key": "session-id:turn-id:mutation-index",
+  "summary": "演習を30題追加",
+  "inferred_fields": [
+    {"field":"avg_minutes","value":90,"reason":"類似タスク #42 の実績"}
+  ],
+  "operations": [
+    {"type":"create_task","body":{}}
+  ]
 }
-pub enum LlmResponse { Text(String), ToolCalls(Vec<ToolCall>) }
-pub struct ToolCall { pub id: String, pub name: String, pub arguments: serde_json::Value }
-pub enum Message { System(String), User(String), Assistant(...), ToolResult { call_id: String, content: String } }
 ```
 
-**Verify**: unit tests with a mock `LlmClient` (scripted responses) asserting the loop
-executes tools and terminates. `cargo nextest run -p takusu-agent`.
+Supported operation types initially are `create_task`, `update_task`, `delete_task`,
+`create_habit`, `update_habit`, and `delete_habit`. The server validates all operations first and
+applies the change set atomically on both supported backends; partial application is an error. It
+returns:
 
-### WI-2: OpenAI-compatible LLM client
+```json
+{
+  "id": "change-set-id",
+  "summary": "演習を30題追加",
+  "status": "applied",
+  "receipts": [
+    {"operation":"create_task","target_type":"task","target_id":"...",
+     "before":null,"after":{},"target_revision":"updated_at value"}
+  ],
+  "schedule_dirty": true
+}
+```
 
-**Files**: `crates/takusu-agent/src/llm.rs`
-**Depends on**: Phase 0 + `LlmClient` trait (WI-1 contract above).
+Endpoints:
 
-- Hand-rolled `reqwest` client (matches repo style: google-cal, takusu-client are
-  hand-rolled; do not add heavyweight SDK deps). `POST {base_url}/chat/completions` with
-  `tools`, parse `tool_calls` / `content`.
-- Retries with backoff on 429/5xx (max 3). Map errors to `LlmError`.
-- Works with OpenAI, OpenRouter, and local servers (llama.cpp / vLLM) since all speak the
-  same schema — no provider-specific code.
+- `POST /api/agent/change-sets` — apply once by idempotency key;
+- `GET /api/agent/change-sets?limit=...` — app-visible recent changes;
+- `GET /api/agent/change-sets/:id` — full before/after and inference details;
+- `POST /api/agent/change-sets/:id/revert` — apply the recorded inverse operation.
 
-**Verify**: unit tests deserializing captured response fixtures; optional `--ignored`
-integration test hitting a real endpoint when `TAKUSU_LLM_API_KEY` is set.
+Revert uses optimistic concurrency: updates succeed only if affected records still match the
+receipt revisions, deleted records are restored only if their IDs remain unused, and created
+records are removed only if they remain at the recorded revision. A conflict is reported rather
+than overwriting later user edits. Delete receipts retain enough data to restore the deleted object
+and its relationships. Secrets are never stored in change payloads.
 
-### WI-3: Audio tools (`speak`, `listen`) + playback
+Low-risk creates and updates may apply immediately and be reported with an undo option. Deletes
+must be proposed in dialogue and applied only after explicit confirmation. Every mutating request
+has an idempotency key so a timeout or repeated voice transcript cannot create duplicates.
 
-**Files**: `crates/takusu-agent/src/tools/audio.rs`; small addition to
-`crates/takusu-audio/src/` (playback module).
-**Depends on**: Phase 0.
+### Schedule orchestration contract
 
-- **Gap**: takusu-audio has no playback. Add `takusu-audio/src/play.rs` with
-  `pub fn play_wav(bytes: &[u8]) -> Result<(), PlayError>` using `cpal` output stream
-  (already a dep; avoids adding `rodio`). WAV parsing: minimal reader (16-bit PCM) in the
-  same module — Irodori-TTS is asked for `response_format = "wav"`.
-- `speak` tool: args `{ "text": string }` → `TtsClient::synthesize` (reference voice via
-  `pick_reference_voice(refs_dir)`) → `play_wav`. Returns `"ok"`.
-- `listen` tool: args `{ "max_seconds"?: number }` → `takusu_audio::record` →
-  `FunASRClient::transcribe` → returns transcript string. (Used when the agent asks a
-  follow-up question and waits for the answer.)
-- Both tools degrade gracefully: if FunASR/TTS unreachable, return a ToolError message the
-  LLM can relay ("音声サーバーに接続できません").
+A successful task/habit change sets `schedule_dirty = true`; it does not automatically call the
+planner. Before answering schedule questions, or after the configured quiet period, the agent calls:
 
-**Verify**: `cargo check -p takusu-audio -p takusu-agent`; manual test via
-`cargo run -p takusu-audio-cli -- speak` equivalent; unit test for the WAV parser.
+```json
+POST /api/schedule/preview
+{
+  "mode":"full|partial",
+  "from":null,
+  "until":null,
+  "task_ids":null,
+  "pinned":[],
+  "sleep":"recommended"
+}
+```
 
-### WI-4: takusu planner tools
+The endpoint runs the planner without replacing the active schedule, stores the exact candidate,
+and returns:
 
-**Files**: `crates/takusu-agent/src/tools/takusu.rs`
-**Depends on**: Phase 0; uses `takusu-client` as-is.
+```json
+{
+  "preview_id": "preview-id",
+  "base_revision": 42,
+  "entries": [],
+  "unscheduled_task_ids": [],
+  "displaced_task_ids": [],
+  "sleep_minutes_before": 480,
+  "sleep_minutes_after": 420,
+  "warnings": []
+}
+```
 
-Thin wrappers over `takusu_client::Client`, exposed as separate tools (better for tool
-calling than one mega-tool):
+A preview is high impact when it creates unscheduled tasks, displaces an existing fixed/user-edited
+commitment, or reduces sleep. Threshold details may be refined, but the response must provide the
+facts rather than asking the LLM to infer impact from raw entries. High-impact previews require
+confirmation. Commit the exact candidate with `POST /api/schedule/previews/:id/commit`; the server
+rejects the commit if `planner_state.revision != base_revision`, if the preview is expired/already
+committed, or if another schedule commit won the race. A successful commit atomically replaces the
+active schedule, marks the preview committed, clears `schedule_dirty`, and returns the schedule plus
+the same impact summary. Expired uncommitted previews are deleted by bounded retention cleanup.
 
-| Tool | Maps to | Notes |
-|------|---------|-------|
-| `list_tasks` | `list_tasks(TaskQuery)` | filters: status, due range |
-| `get_task` | `get_task` | accepts `display_id` or UUID; resolve display_id via list |
-| `create_task` | `create_task` | title, end_at, avg/sigma minutes, depends, abandonability |
-| `update_task` | `update_task` | partial update incl. status |
-| `delete_task` | `delete_task` | |
-| `list_habits` / `create_habit` / `update_habit` / `delete_habit` | habit endpoints | |
-| `get_schedule` | `get_schedule` | agent formats "today's plan" answers from this |
-| `generate_schedule` / `reschedule` | schedule endpoints | |
-| `get_settings` | `get_settings` | tz/sleep for date interpretation |
+## Sequential work items
 
-- Datetime arguments accepted as natural ISO strings; use `takusu-util` parsing helpers.
-- Tool descriptions written in English, but mention Japanese utterance examples from
-  main.typ (e.g. 「演習30題追加」→ create_task) to steer the model.
+### WI-0: Existing scaffold and core loop
 
-**Verify**: unit tests for arg-schema parsing + display_id resolution against a mocked
-server (or `#[ignore]`d integration test against `cargo run -p takusu-local`).
+**Status**: implemented by the existing takusu-agent scaffold and core-loop changes.
 
-### WI-5: Skills system (`skills_list` / `skills_read` / `skills_add` / `skills_edit`)
+Keep the current `AgentConfig`, `ToolRegistry`, `LlmClient` abstraction, message types, and scripted
+mock tests. Before later WIs rely on the loop, align it with the shared contracts above:
 
-**Files**: `crates/takusu-agent/src/tools/skills.rs`
-**Depends on**: Phase 0. Fully local, no server changes.
+- count actual tool calls;
+- feed recoverable tool errors back to the model;
+- serialize turns per `AgentSession`;
+- return a `TurnResult` containing response text and collected change receipts;
+- trim by estimated/provider token count and preserve complete tool-call groups;
+- inject server timezone and the real skills index rather than empty placeholders.
 
-- A **skill** is a markdown file in `config.skills.dir` (`$XDG_DATA_HOME/takusu/skills/`),
-  named `<slug>.md`, with a TOML front-matter block:
+**Verify**: scripted tests for correction after invalid arguments, multiple calls respecting the
+limit, concurrent-turn serialization, history trimming, and receipt collection.
+
+### WI-1: OpenAI chat-completions adapter
+
+**Files**: `crates/takusu-agent/src/llm.rs`.
+
+Implement a hand-written `reqwest` adapter for `POST {base_url}/chat/completions`, including tool
+schemas, multiple tool calls, nullable content, and provider error bodies. Retry 429 and retryable
+5xx responses with bounded exponential backoff and jitter, but retry mutating tool execution only
+through its idempotency key. Apply request timeouts and support cancellation.
+
+“OpenAI-compatible” is a tested baseline, not a guarantee that every OpenRouter, llama.cpp, or
+vLLM version has identical behavior. Keep provider capabilities behind `LlmClient`; document and
+test each supported endpoint using captured fixtures.
+
+**Verify**: fixture-based serialization/deserialization tests, retry classification tests, and an
+ignored real-endpoint smoke test when the configured API key exists.
+
+### WI-2: Text CLI and application-level audio
+
+**Files**: `crates/takusu-agent/src/audio.rs`, `src/bin/agent.rs`, and a playback module in
+`takusu-audio`. Remove the obsolete `src/tools/audio.rs` stub and its module registration when the
+application-level adapter replaces it.
+
+Implement `takusu-agent --text "今日の予定は?"` first. Then add push-to-talk:
+
+1. the CLI records and transcribes one utterance;
+2. it calls one agent turn;
+3. it prints the response and change receipts;
+4. unless `--no-tts` is set, it synthesizes and plays the response;
+5. it waits for the next user-initiated recording.
+
+Playback accepts the actual Irodori response formats and validates WAV headers, sample format,
+channel count, and sample rate before opening a `cpal` output stream. Audio/STT/TTS failures do not
+corrupt the conversation or retry planner mutations. Add timeouts and cancellation around all
+network and device operations.
+
+Do not register `listen` or `speak` as LLM tools. VAD/noise suppression and streaming can be added
+behind the same audio adapter later.
+
+**Verify**: text-mode E2E with a mock LLM, WAV parser tests, and manual STT/TTS smoke tests.
+
+### WI-3: Planner read tools and task references
+
+**Files**: `crates/takusu-agent/src/tools/takusu.rs` plus focused client additions if needed.
+
+Implement read-only tools first:
+
+- `list_tasks`, `get_task`;
+- `list_habits`, `get_habit`;
+- `get_schedule`;
+- `get_settings`.
+
+Resolve global task `display_id` directly and habit task references only with their habit scope.
+Do not resolve by fetching an arbitrary filtered page. Add a dedicated server/client lookup if the
+existing API cannot resolve an identifier uniquely. Datetime interpretation uses server timezone
+and `takusu-util`; tool responses include normalized absolute timestamps so the LLM can explain its
+interpretation.
+
+**Verify**: argument-schema, timezone boundary, global ID, habit-scoped ID, missing ID, and
+ambiguous-reference tests.
+
+### WI-4: Safe mutations and schedule orchestration
+
+**Files**: `014_agent_changes.sql`, storage trait/models and both backends, local/Worker routes,
+`takusu-client`, and `tools/takusu.rs`.
+
+Implement the change-set and schedule-preview contracts above. Add mutation tools for task/habit
+create/update/delete, `preview_schedule`, `commit_schedule`, `list_changes`, and `revert_change`.
+Mutation tool arguments include the model's `inferred_fields`; the agent's final response names
+those inferred values and provides the change-set ID.
+
+Cache the persisted planner dirty state in the session and refresh it from server responses.
+Multiple conversational edits may produce multiple auditable change sets, but trigger at most one
+schedule preview after the quiet period or when a schedule answer requires fresh data. A rejected
+schedule preview leaves the schedule dirty; the user may keep the underlying task changes, edit
+them, or undo their change sets.
+
+**Verify**: local integration tests for atomicity, idempotency, app-visible history, successful
+revert, revert conflict, delete confirmation flow, preview without persistence, impact warnings,
+and dirty-state clearing. Run corresponding Worker tests.
+
+### WI-5: Skills with persistent-write safety
+
+**Files**: `crates/takusu-agent/src/tools/skills.rs`.
+
+A skill is UTF-8 markdown under `$XDG_DATA_HOME/takusu/skills`, named `<slug>.md`, with TOML front
+matter:
 
 ```markdown
 +++
 name = "weekly-review"
 description = "How to run the user's weekly review flow"
 +++
-(free-form instructions the LLM follows when the skill is relevant)
+(free-form instructions)
 ```
 
-- Tools:
-  - `skills_list` → JSON array of `{name, description}` (also injected into the system
-    prompt at session start so the LLM knows what exists).
-  - `skills_read` `{name}` → full body.
-  - `skills_add` `{name, description, body}` → create file (error if exists).
-  - `skills_edit` `{name, old_string, new_string}` → exact string replacement (mirrors the
-    editing style LLMs handle well; error if `old_string` not found/ambiguous).
-- Path safety: slugify `name`, reject `/` and `..`.
-- This gives the assistant user-teachable behavior ("今後こう対応して" → agent writes a
-  skill) without code changes.
+Tools:
 
-**Verify**: unit tests with `tempfile` dir covering add/read/edit/list + path traversal
-rejection.
+- `skills_list` and `skills_read` are read-only;
+- `skills_propose_add` and `skills_propose_edit` validate input and return a bounded, expiring
+  proposal ID plus a diff without writing;
+- `skills_apply` accepts that proposal ID only after explicit user confirmation and rejects stale
+  proposals if the source file changed.
 
-### WI-6: Memory — server side
+Validate front matter, names, UTF-8, and configurable file/body limits. Reject `/`, `..`, absolute
+paths, non-regular files, and symlinks. Built-in skills are read-only. Store a bounded local backup
+for rollback and include skill changes in `TurnResult`; never follow instructions from task text,
+memory, or fetched content to persist a skill unless the user explicitly requested teaching the
+assistant.
 
-**Files**: `crates/takusu-local-lib/migrations/005_memory.sql`, `storage_sqlite.rs`,
-`storage_workers.rs`, `app.rs`, `takusu-storage/src/{storage.rs,model.rs}`,
-`takusu-local` router, `takusu-worker` routes, `takusu-client` methods.
-**Depends on**: nothing (pure server work). **Contract frozen below.**
+Refresh the skills index after a confirmed write and at session start.
 
-Two memory functions from main.typ: proper nouns / free facts, and similar-task lookup for
-estimates.
+**Verify**: temp-directory tests for validation, traversal and symlink rejection, ambiguous edits,
+size limits, confirmation, backup/rollback, and prompt-index refresh.
 
-**Schema (`005_memory.sql`)**:
+### WI-6: Memory server
+
+**Files**: `015_memory.sql`, storage trait/models and both backends, app/routes, and
+`takusu-client`.
+
+Schema:
 
 ```sql
 CREATE TABLE memories (
-    id         TEXT PRIMARY KEY,          -- UUID v7
-    kind       TEXT NOT NULL CHECK(kind IN ('proper_noun','fact','task_note')),
-    key        TEXT NOT NULL,             -- e.g. the proper noun itself
-    content    TEXT NOT NULL,             -- explanation / expansion
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    id           TEXT PRIMARY KEY,
+    kind         TEXT NOT NULL CHECK(kind IN ('proper_noun','fact','task_note')),
+    key          TEXT NOT NULL,
+    normalized_key TEXT NOT NULL,
+    content      TEXT NOT NULL,
+    subject_type TEXT,
+    subject_id   TEXT,
+    source       TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    last_used_at TEXT
 );
-CREATE INDEX idx_memories_key ON memories(key);
+CREATE INDEX idx_memories_normalized_key ON memories(normalized_key);
+CREATE INDEX idx_memories_subject ON memories(subject_type, subject_id);
 ```
 
-- Search: `LIKE`-based substring match on `key` and `content` (no FTS5 — must also work on
-  D1/Workers; revisit embeddings later).
-- **Similar tasks**: no new table. `GET /api/tasks/similar?q=<title>` returns completed
-  tasks whose title matches (LIKE, token-split OR), each with `avg_minutes`,
-  `sigma_minutes`, and — once WI-8 lands — actual duration. Implemented as a storage-trait
-  method `find_similar_tasks(q, limit)`.
+Endpoints:
 
-**Endpoints** (both takusu-local and takusu-worker):
+- `POST /api/memory` — create or explicitly upsert by normalized key/kind/subject;
+- `PATCH /api/memory/:id`;
+- `GET /api/memory/search?q=...&kind=...&limit=...`;
+- `DELETE /api/memory/:id`;
+- `GET /api/tasks/similar?q=...&limit=...`.
 
-- `POST /api/memory` `{kind, key, content}` → memory row
-- `GET /api/memory/search?q=...&kind=...` → `[MemoryRow]`
-- `DELETE /api/memory/:id`
-- `GET /api/tasks/similar?q=...&limit=...` → `[TaskRow]`
+Normalize Japanese/Latin width and case consistently in Rust for both backends. Search `key` and
+`content` with OR semantics and deterministic ranking: exact normalized key, key prefix, key
+substring, then content substring, with recency as a tie-breaker. Do not depend only on whitespace
+tokenization because Japanese text often has none. Similar tasks are completed tasks ranked by
+normalized title overlap and return estimate fields plus active `actual_minutes` once WI-8 exists.
 
-**Client**: add `create_memory`, `search_memory`, `delete_memory`, `similar_tasks` to
+The current repository is a single-workspace data model. If multi-user ownership is introduced,
+all memory, task, progress, schedule, and change-set queries must be scoped together; adding only a
+`user_id` to memory would not be sufficient.
+
+**Verify**: create/upsert/update/search/delete, Japanese normalization/ranking, subject lookup,
+similar completed tasks, limits, and local/Worker parity.
+
+### WI-7: Memory tools and inference flow
+
+**Files**: `crates/takusu-agent/src/tools/memory.rs` and system-context rules.
+
+Implement `memory_save`, `memory_update`, `memory_search`, `memory_delete`, and `similar_tasks`.
+The system flow is:
+
+1. search a proper noun before treating it as unknown;
+2. if no adequate result exists, ask the user rather than inventing its meaning;
+3. save only after the user supplies or confirms the meaning;
+4. before creating a task without an estimate, inspect similar completed tasks;
+5. state whether the estimate came from history, the user, or model knowledge.
+
+Memory deletion is destructive and requires confirmation. Do not automatically persist arbitrary
+conversation content as memory.
+
+**Verify**: scripted turns for memory hit, miss→question→save, estimate from similar task, fallback
+estimate disclosure, and confirmed deletion.
+
+### WI-8: Active-session progress management
+
+**Files**: `016_progress.sql`, storage trait/models and both backends, app/routes, and
 `takusu-client`.
 
-**Verify**: `cargo nextest run -p takusu-local` integration tests (create → search →
-delete; similar-task lookup); `cargo test -p takusu-worker`.
-
-### WI-7: Memory tools (agent side)
-
-**Files**: `crates/takusu-agent/src/tools/memory.rs`
-**Depends on**: Phase 0 + WI-6 *contract* (client method signatures above). Can be written
-in parallel with WI-6 against the frozen endpoint shapes; merge after WI-6.
-
-- `memory_save` `{kind, key, content}`, `memory_search` `{q, kind?}`,
-  `memory_delete` `{id}` → wrap client.
-- `similar_tasks` `{title}` → used by the LLM to fill in missing estimates when creating a
-  task ("[固有名詞] p80まで 月曜提出" → search memory for the noun + similar tasks for the
-  estimate).
-- System prompt (WI-1) instructs: before `create_task` without an explicit estimate, call
-  `similar_tasks`; when the user defines/uses an unknown proper noun, `memory_save` it.
-
-**Verify**: unit tests with mocked client; `cargo nextest run -p takusu-agent`.
-
-### WI-8: Progress management — server side
-
-**Files**: `crates/takusu-local-lib/migrations/006_progress.sql`, storage impls, `app.rs`,
-routers, `takusu-storage` model, `takusu-client`.
-**Depends on**: nothing (parallel with WI-6; different migration number and mostly
-different code paths — coordinate only on `takusu-storage/src/model.rs`, where each WI
-adds its own new types; merge conflicts there are trivial). **Contract frozen below.**
-
-**Schema (`006_progress.sql`)**:
+Add quantitative fields and split lineage to tasks:
 
 ```sql
-ALTER TABLE tasks ADD COLUMN quantity_total INTEGER;             -- e.g. 20 (演習20題); NULL = non-quantitative
+ALTER TABLE tasks ADD COLUMN quantity_total INTEGER;
 ALTER TABLE tasks ADD COLUMN quantity_done  INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE tasks ADD COLUMN quantity_unit  TEXT;                -- e.g. "題", "page"
-ALTER TABLE tasks ADD COLUMN started_at     TEXT;                -- set when status → in_progress
-ALTER TABLE tasks ADD COLUMN completed_at   TEXT;                -- set when status → completed
+ALTER TABLE tasks ADD COLUMN quantity_unit  TEXT;
+ALTER TABLE tasks ADD COLUMN completed_at   TEXT;
+ALTER TABLE tasks ADD COLUMN split_from_task_id TEXT REFERENCES tasks(id);
+ALTER TABLE tasks ADD COLUMN original_quantity_total INTEGER;
+
+CREATE TABLE task_work_sessions (
+    id         TEXT PRIMARY KEY,
+    task_id    TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    started_at TEXT NOT NULL,
+    ended_at   TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 CREATE TABLE progress_events (
-    id            TEXT PRIMARY KEY,       -- UUID v7
-    task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    at            TEXT NOT NULL DEFAULT (datetime('now')),
-    quantity_done INTEGER,                -- cumulative count at this point (NULL for plain check-ins)
-    note          TEXT
+    id                TEXT PRIMARY KEY,
+    task_id           TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    at                TEXT NOT NULL DEFAULT (datetime('now')),
+    quantity_done     INTEGER,
+    delta_quantity    INTEGER,
+    active_minutes    INTEGER NOT NULL,
+    note              TEXT
 );
-CREATE INDEX idx_progress_task ON progress_events(task_id, at);
 ```
 
-**Endpoints**:
+Only one open work session is allowed per task. Operations are idempotent and validated:
 
-- `POST /api/tasks/:id/progress` `{quantity_done?, note?}` →
-  records event; sets `started_at`/status=`in_progress` on first event; if
-  `quantity_done >= quantity_total`, sets status=`completed` + `completed_at`.
-  Response: `{task: TaskRow, estimate_updated: bool, new_avg_minutes?: i64}`.
-- `GET /api/tasks/:id/progress` → `[ProgressEvent]`.
-- `create_task`/`update_task` accept the new `quantity_*` fields.
+- `POST /api/tasks/:id/work/start`;
+- `POST /api/tasks/:id/work/pause`;
+- `POST /api/tasks/:id/progress` with cumulative `quantity_done`;
+- `POST /api/tasks/:id/work/complete`;
+- `GET /api/tasks/:id/progress`;
+- `POST /api/tasks/:id/split` with the retained and remainder quantities.
 
-**Estimate correction** (pure function in `takusu-local-lib`, unit-tested):
+A lower cumulative quantity is treated as an explicit correction, not a new speed observation.
+Reject negative quantities and require confirmation when a correction would materially change an
+estimate. `quantity_done >= quantity_total` may propose completion, but should not silently close
+an open session due only to a transcription error.
 
-```
-rate = (now - started_at) / quantity_done            // minutes per unit
-projected_total = rate * quantity_total
-new_avg = clamp(projected_total, 5, 24h); blend: 0.5*old + 0.5*projected
-```
+For each interval with `delta_quantity > 0` and positive new active time:
 
-Applied on each progress event for quantitative in-progress tasks; also update
-`sigma_minutes` from the spread of observed rates when ≥2 events exist. After updating the
-estimate the server does **not** auto-reschedule (the agent decides whether to call
-`reschedule`).
-
-Additionally, on completion of any task record the **actual duration**
-(`completed_at - started_at`, when both exist) — this feeds WI-6's `similar_tasks`
-estimates (expose `actual_minutes` on TaskRow, computed on read).
-
-**Client**: `report_progress(id, body)`, `list_progress(id)`.
-
-**Verify**: unit tests for the correction function; takusu-local integration tests for the
-event flow (start → progress → auto-complete); `cargo test -p takusu-worker`.
-
-### WI-9: Progress tools + flows (agent side)
-
-**Files**: `crates/takusu-agent/src/tools/progress.rs`
-**Depends on**: Phase 0 + WI-8 contract. Parallel-safe like WI-7.
-
-- `task_start` `{task}` → status update / first progress event (「着手した」).
-- `task_progress` `{task, quantity_done?, note?}` → `report_progress`
-  (「現在10題完了した」). Relays `estimate_updated` to the user ("見積もりを更新しました。
-  再スケジュールしますか?") and calls `reschedule` on confirmation.
-- `task_complete` `{task}` (「タスク完了」).
-- **Task splitting**: no server support needed — when the user asks to split (or the LLM
-  proposes it because remaining work exceeds the slot), the LLM composes existing tools:
-  `update_task` (shrink quantity_total) + `create_task` (remainder with `depends` on the
-  original). Document this recipe in the system prompt / a built-in skill.
-
-**Verify**: unit tests with mocked client; end-to-end scenario test with mock LLM script
-(start → progress → estimate update → reschedule confirmation).
-
-### WI-10: Agent CLI
-
-**Files**: `crates/takusu-agent/src/bin/agent.rs`
-**Depends on**: WI-1 merged (needs the real loop); other tools can be missing (registry is
-additive) so this can start early with `--text` mode only.
-
-- `takusu-agent --text "今日の予定は?"` — one-shot text mode (no audio; fastest E2E test).
-- `takusu-agent` — interactive voice loop: Enter to talk (push-to-talk via existing
-  `record`'s Enter-to-stop) → STT → agent turn → TTS playback → repeat. `Ctrl-C` exits.
-- `--no-tts` flag for text output; prints tool calls at `-v`.
-- Hotword / VoiceInteractionService is **out of scope** (Android phase, later plan).
-
-**Verify**: `cargo run -p takusu-agent -- --text "..."` against a running takusu-local +
-LLM endpoint; document the manual smoke-test in the PR.
-
----
-
-## Dependency graph / suggested assignment
-
-```
-Phase 0 (1 agent, small, land first)
-├── WI-1 core loop ──┬── WI-10 CLI (after WI-1 merges)
-├── WI-2 LLM client ─┘         (WI-1 & WI-2 parallel via LlmClient trait)
-├── WI-3 audio tools           (independent)
-├── WI-4 takusu tools          (independent)
-├── WI-5 skills                (independent)
-├── WI-6 memory server ──── WI-7 memory tools   (WI-7 parallel vs WI-6, merge after)
-└── WI-8 progress server ── WI-9 progress tools (same)
+```text
+minutes_per_unit = delta_active_minutes / delta_quantity
+projected_total = minutes_per_unit * quantity_total
+bounded_projection = clamp(projected_total, 5 minutes, 24 hours)
+new_avg = round(0.5 * old_avg + 0.5 * bounded_projection)
 ```
 
-- Up to **7 agents in parallel** after Phase 0 (WI-1..WI-6, WI-8); WI-7/9/10 follow.
-- Only known file-collision point: `takusu-storage/src/model.rs` (WI-6 vs WI-8, additive
-  types only) and `takusu-local` router (additive routes). Keep additions in separate
-  blocks; rebase with `jj rebase -r @ -d main` before pushing.
+With at least two valid interval observations, derive sigma from the sample standard deviation of
+projected totals, cap it to the same bounds, and document the exact rounding. With fewer than two,
+leave sigma unchanged. Completion `actual_minutes` is the sum of closed active work sessions, not
+`completed_at - first_started_at`.
 
-## Future: embedding-based memory search (design memo)
+The split endpoint atomically preserves the original task history, records lineage, creates the
+remainder, and establishes dependency if requested; the LLM must not emulate splitting by shrinking
+historical totals through unrelated CRUD calls.
 
-Not a work item yet — this records the agreed direction for when LIKE-based recall (WI-6)
-proves insufficient.
+**Verify**: start/pause/resume, duplicate requests, cumulative progress, zero/decreasing/corrected
+values, estimate and sigma math, completion active time, split lineage, and local/Worker parity.
 
-**Decision: no dedicated vector DB.** Memory holds hundreds to low thousands of rows
-(proper nouns / facts / task notes), where brute-force cosine similarity is sub-millisecond;
-an ANN index buys nothing at this scale.
+### WI-9: Progress tools and schedule flow
 
-- **Storage**: add an `embedding BLOB` column to `memories` (little-endian f32 array).
-  Works identically on SQLite and D1, so both storage backends stay symmetric and the
-  memory replicates with the same local ↔ Worker sync story as everything else — no
-  separate vector-store replication, no extra cloud node.
-- **Search**: new storage-trait method `search_memory_semantic(query_vec, limit)`.
-  Both backends fetch candidate embeddings and rank by cosine in Rust (WASM on Workers).
-- **Embeddings**: generated **locally via ONNX** (`ort` crate) with a small multilingual
-  model (candidate: `multilingual-e5-small`, 384 dims — must handle Japanese). Runs
-  offline and free, same philosophy as the FunASR/Irodori-TTS local servers. Embedding
-  happens agent-side (or in takusu-local) on save/search; the server only stores/compares
-  vectors and never depends on an embedding API.
-- **Optional local optimization**: if the table grows large, `sqlite-vec` (`vec0` virtual
-  table) can accelerate the SQLite backend. It cannot run on D1, so it stays a
-  local-only fast path behind the same trait method.
+**Files**: `crates/takusu-agent/src/tools/progress.rs`.
 
-**Rejected candidates**:
+Implement `task_start`, `task_pause`, `task_progress`, `task_complete`, and `task_split`. Resolve
+task references through WI-3. Report estimate changes and their evidence in the response. Progress
+changes mark the schedule dirty; follow the same preview/impact/confirmation flow as WI-4 rather
+than rescheduling directly inside the progress tool.
 
-- *Cloudflare Vectorize* — proprietary, Workers-only; would break SqliteStorage/
-  WorkersStorage symmetry.
-- *RuVector* — embeddable Rust crate, but young (2025-11) with quality concerns; heavy
-  dependency for no benefit at this scale.
-- *HelixDB* — requires a server process (and thus a paid/free-tier cloud node plus its
-  own replication and auth); overkill for personal-scale memory.
+If the user says only “着手した” or “完了した” and multiple tasks are plausible, ask a focused
+question. Quantity updates that imply completion, corrections, and splits are summarized before
+commit when ambiguity exists.
 
-## Conventions for all work items
+**Verify**: scripted E2E scenarios for start→pause→resume→progress, estimate update, dirty schedule,
+impact confirmation, completion, ambiguous references, correction, and split.
 
-- One WI = one jj change: `jj describe` (present tense, lowercase), `jj git push --change`,
-  `gh pr create`. Rebase onto `main` before push.
-- Run `cargo fmt`, `cargo clippy`, `cargo nextest run -p <crate>` before pushing.
-- Do not renumber migrations or alter frozen contracts; if a contract must change, update
-  `design/plan-agent.md` in the same change and call it out in the PR description.
+### WI-10: End-to-end hardening
 
-## Out of scope (future plans)
+Run complete text and voice scenarios against `takusu-local`, a mock LLM, and optionally a real LLM:
 
-- Android VoiceInteractionService / hotword activation (separate plan after CLI E2E works).
-- Embedding-based memory search (LIKE first; revisit if recall is poor — design memo above).
-- External tools (Google Maps), gamification.
-- Streaming STT / streaming LLM responses (one-shot everywhere first).
+- “演習30題追加” with inferred estimate and visible receipt;
+- unknown proper noun → memory miss → question → save → create;
+- consecutive edits → one schedule preview;
+- urgent task → sleep/ displacement warning → confirm or reject;
+- undo a change and handle an optimistic conflict;
+- start/pause/progress/complete using active time;
+- split a task while preserving history;
+- STT/TTS unavailable while text mode and planner state remain usable;
+- repeated provider/transport request without duplicate mutation.
+
+Add structured tracing with secret redaction, per-provider timeouts, graceful Ctrl-C cancellation,
+and clear CLI rendering of tool activity at `-v`. Do not log tokens, raw audio, private memory
+content, or complete LLM prompts by default.
+
+**Verify**: `cargo fmt`, `cargo clippy --workspace`, `cargo nextest run --workspace`, Worker tests,
+and documented manual audio smoke tests.
+
+## Implementation order
+
+```text
+WI-0 harden existing core
+  → WI-1 LLM adapter
+  → WI-2 text CLI + audio adapter
+  → WI-3 planner reads and references
+  → WI-4 safe mutations + schedule preview
+  → WI-5 safe skills
+  → WI-6 memory server
+  → WI-7 memory tools
+  → WI-8 active-session progress server
+  → WI-9 progress tools
+  → WI-10 E2E hardening
+```
+
+Use one focused jj change per WI when practical. Because one agent implements the sequence, prefer
+updating shared model/storage/router/client contracts once in the server WI and consuming them in
+the immediately following agent WI. Do not develop against speculative parallel branches.
+
+Before each push, rebase the current change onto `main`, run focused tests during development, then
+run formatting, clippy, and the relevant crate/integration tests. If a contract changes, update this
+document and all affected tests in the same change.
+
+## Future: embedding-based memory search
+
+Start with deterministic lexical search and measure failures before adding embeddings. If semantic
+recall is justified:
+
+- store a versioned multilingual embedding and model identifier with each memory;
+- keep a common storage-trait method for SQLite and D1;
+- generate embeddings locally when deployment constraints allow it;
+- avoid a dedicated vector database at personal scale;
+- account for D1 network transfer and WASM compute rather than assuming a remote full-table scan is
+  sub-millisecond;
+- rebuild embeddings when the model/version changes;
+- retain lexical search as fallback.
+
+`sqlite-vec` may be a local-only optimization behind the same trait. Cloudflare Vectorize or a
+separate vector server should be considered only if measured scale or latency requires it.
+
+## Out of scope
+
+- Android `VoiceInteractionService`, hotword activation, and the production session transport;
+- streaming audio/VAD/noise suppression beyond the adapter boundary;
+- external tools such as Google Maps;
+- gamification;
+- semantic embeddings before lexical-search measurements;
+- multi-user tenancy until ownership is defined consistently for all planner data.
