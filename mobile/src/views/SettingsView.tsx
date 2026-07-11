@@ -48,6 +48,7 @@ import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModu
 export type SettingsCategory =
   | 'general'
   | 'sleep'
+  | 'workload'
   | 'notifications'
   | 'worker'
   | 'google'
@@ -56,6 +57,7 @@ export type SettingsCategory =
 const CATEGORY_LABELS: Record<SettingsCategory, string> = {
   general: '一般',
   sleep: '睡眠',
+  workload: '作業負荷',
   notifications: '通知',
   worker: 'Worker',
   google: 'Google Calendar',
@@ -65,6 +67,7 @@ const CATEGORY_LABELS: Record<SettingsCategory, string> = {
 const CATEGORY_ORDER: SettingsCategory[] = [
   'general',
   'sleep',
+  'workload',
   'notifications',
   'worker',
   'google',
@@ -172,6 +175,17 @@ export function SettingsDetailView({
   const [sleepPickerField, setSleepPickerField] = useState<
     'start' | 'end' | null
   >(null);
+
+  // Workload tab state (#459)
+  const [workloadSettings, setWorkloadSettings] = useState<SettingsRow | null>(
+    null,
+  );
+  const [workloadComfortable, setWorkloadComfortable] = useState('');
+  const [workloadMaximum, setWorkloadMaximum] = useState('');
+  const [workloadLoading, setWorkloadLoading] = useState(false);
+  const [workloadSaving, setWorkloadSaving] = useState(false);
+  const DEFAULT_COMFORTABLE_HOURS = 8;
+  const DEFAULT_MAXIMUM_HOURS = 12;
 
   // Worker tab state
   const [workerUrl, setWorkerUrl] = useState(savedUrl);
@@ -302,6 +316,36 @@ export function SettingsDetailView({
       loadSleepSettings();
     }
   }, [category, loadSleepSettings]);
+
+  // Load workload settings when entering workload tab
+  const loadWorkloadSettings = useCallback(async () => {
+    if (!client) return;
+    setWorkloadLoading(true);
+    try {
+      const s = await client.getSettings();
+      setWorkloadSettings(s);
+      setWorkloadComfortable(
+        s.comfortable_minutes != null
+          ? String(Math.floor(s.comfortable_minutes / 60))
+          : '',
+      );
+      setWorkloadMaximum(
+        s.maximum_minutes != null
+          ? String(Math.floor(s.maximum_minutes / 60))
+          : '',
+      );
+    } catch {
+      setWorkloadSettings(null);
+    } finally {
+      setWorkloadLoading(false);
+    }
+  }, [client]);
+
+  useEffect(() => {
+    if (category === 'workload') {
+      loadWorkloadSettings();
+    }
+  }, [category, loadWorkloadSettings]);
   async function saveWorkerSettings() {
     await saveWorkersUrl(workerUrl);
     await saveWorkersToken(workerKey);
@@ -370,6 +414,50 @@ export function SettingsDetailView({
       );
     } finally {
       setSleepSaving(false);
+    }
+  }
+
+  async function saveWorkloadSettings() {
+    if (!client) return;
+    if (!workloadSettings) {
+      Alert.alert(
+        'エラー',
+        '設定の読み込みに失敗しています。タブを開き直してください',
+      );
+      return;
+    }
+    setWorkloadSaving(true);
+    try {
+      const parseHours = (s: string): number | null => {
+        const n = parseInt(s.trim(), 10);
+        return isNaN(n) || n <= 0 ? null : n * 60;
+      };
+      const comfortable = parseHours(workloadComfortable);
+      const maximum = parseHours(workloadMaximum);
+      const s = await client.updateSettings({
+        comfortable_minutes: comfortable,
+        maximum_minutes: maximum,
+      });
+      setWorkloadSettings(s);
+      setWorkloadComfortable(
+        s.comfortable_minutes != null
+          ? String(Math.floor(s.comfortable_minutes / 60))
+          : '',
+      );
+      setWorkloadMaximum(
+        s.maximum_minutes != null
+          ? String(Math.floor(s.maximum_minutes / 60))
+          : '',
+      );
+      haptic.success();
+      Alert.alert('保存しました', '作業負荷設定を保存しました');
+    } catch (e) {
+      Alert.alert(
+        'エラー',
+        `保存に失敗: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setWorkloadSaving(false);
     }
   }
 
@@ -778,6 +866,83 @@ export function SettingsDetailView({
                     disabled={sleepSaving || !client}
                   >
                     {sleepSaving ? (
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.actionButtonText}>設定を保存</Text>
+                    )}
+                  </Pressable>
+                </>
+              )}
+            </>
+          )}
+
+          {category === 'workload' && (
+            <>
+              {workloadLoading ? (
+                <ActivityIndicator color={BRAND_COLOR} style={styles.loader} />
+              ) : (
+                <>
+                  <View
+                    style={[
+                      styles.statusBox,
+                      { backgroundColor: colors.grayLight + '20' },
+                    ]}
+                  >
+                    <Text style={[styles.label, { color: colors.gray }]}>
+                      デフォルト
+                    </Text>
+                    <Text style={[styles.value, { color: colors.black }]}>
+                      快適: {DEFAULT_COMFORTABLE_HOURS}時間 / 最大:{' '}
+                      {DEFAULT_MAXIMUM_HOURS}時間
+                    </Text>
+                  </View>
+
+                  <View style={styles.field}>
+                    <Text style={[styles.label, { color: colors.gray }]}>
+                      快適な1日の作業時間（時間）
+                    </Text>
+                    <TextInput
+                      style={[
+                        styles.input,
+                        { borderColor: colors.separator, color: colors.black },
+                      ]}
+                      value={workloadComfortable}
+                      onChangeText={setWorkloadComfortable}
+                      keyboardType="numeric"
+                      placeholder={String(DEFAULT_COMFORTABLE_HOURS)}
+                      placeholderTextColor={colors.gray}
+                    />
+                  </View>
+
+                  <View style={styles.field}>
+                    <Text style={[styles.label, { color: colors.gray }]}>
+                      最大の1日の作業時間（時間）
+                    </Text>
+                    <TextInput
+                      style={[
+                        styles.input,
+                        { borderColor: colors.separator, color: colors.black },
+                      ]}
+                      value={workloadMaximum}
+                      onChangeText={setWorkloadMaximum}
+                      keyboardType="numeric"
+                      placeholder={String(DEFAULT_MAXIMUM_HOURS)}
+                      placeholderTextColor={colors.gray}
+                    />
+                  </View>
+
+                  <Pressable
+                    style={[
+                      styles.actionButton,
+                      { backgroundColor: BRAND_COLOR },
+                    ]}
+                    onPress={() => {
+                      haptic.medium();
+                      saveWorkloadSettings();
+                    }}
+                    disabled={workloadSaving || !client}
+                  >
+                    {workloadSaving ? (
                       <ActivityIndicator color="#FFFFFF" />
                     ) : (
                       <Text style={styles.actionButtonText}>設定を保存</Text>

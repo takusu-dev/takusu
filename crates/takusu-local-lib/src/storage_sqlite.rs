@@ -20,6 +20,7 @@ const MIGRATION_007: &str = include_str!("../migrations/007_task_display_id_seq.
 const MIGRATION_010: &str = include_str!("../migrations/010_habit_pauses.sql");
 const MIGRATION_012: &str = include_str!("../migrations/012_window_mode.sql");
 const MIGRATION_013: &str = include_str!("../migrations/013_habit_task_display_id.sql");
+const MIGRATION_014: &str = include_str!("../migrations/014_workload.sql");
 // Migration 013 one-time backfill: drops the old global unique index, renumbers
 // existing habit tasks to start from 1 per habit, and seeds the per-habit
 // sequences. Non-idempotent (DROP + UPDATE renumber) — guarded by a check
@@ -232,6 +233,16 @@ impl SqliteStorage {
             .await?;
         if seq_count == 0 {
             sqlx::raw_sql(MIGRATION_013_BACKFILL).execute(&pool).await?;
+        }
+
+        // Migration 014 adds workload columns to settings (idempotent).
+        let has_workload: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('settings') WHERE name = 'comfortable_minutes'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        if !has_workload {
+            sqlx::raw_sql(MIGRATION_014).execute(&pool).await?;
         }
 
         Ok(Self { pool, root_token })
@@ -988,12 +999,16 @@ impl Storage for SqliteStorage {
         let tz = body.tz.clone().unwrap_or(existing.tz);
         let sleep_start = body.sleep_start.clone().unwrap_or(existing.sleep_start);
         let sleep_end = body.sleep_end.clone().unwrap_or(existing.sleep_end);
+        let comfortable_minutes = body.comfortable_minutes.or(existing.comfortable_minutes);
+        let maximum_minutes = body.maximum_minutes.or(existing.maximum_minutes);
         sqlx::query(
-            "UPDATE settings SET tz = ?, sleep_start = ?, sleep_end = ?, updated_at = datetime('now') WHERE id = 'active'",
+            "UPDATE settings SET tz = ?, sleep_start = ?, sleep_end = ?, comfortable_minutes = ?, maximum_minutes = ?, updated_at = datetime('now') WHERE id = 'active'",
         )
         .bind(&tz)
         .bind(&sleep_start)
         .bind(&sleep_end)
+        .bind(comfortable_minutes)
+        .bind(maximum_minutes)
         .execute(&self.pool)
         .await
         .map_err(map_err)?;

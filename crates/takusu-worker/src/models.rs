@@ -359,6 +359,10 @@ pub struct SettingsRow {
     pub tz: String,
     pub sleep_start: String,
     pub sleep_end: String,
+    /// #459: 1 日の快適な作業時間（分）。`None` または未設定の場合はデフォルトを使う。
+    pub comfortable_minutes: Option<i64>,
+    /// #459: 1 日の最大作業時間（分）。`None` または未設定の場合はデフォルトを使う。
+    pub maximum_minutes: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -371,4 +375,10 @@ pub struct UpdateSettings {
     pub sleep_start: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sleep_end: Option<String>,
+    /// #459: 1 日の快適な作業時間（分）。`None` または未設定の場合はデフォルトを使う。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comfortable_minutes: Option<i64>,
+    /// #459: 1 日の最大作業時間（分）。`None` または未設定の場合はデフォルトを使う。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maximum_minutes: Option<i64>,
 }

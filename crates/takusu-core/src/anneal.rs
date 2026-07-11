@@ -1201,6 +1201,7 @@ mod tests {
             now: Point(0),
             per: 5,
             sleep: SleepConfig::disabled(),
+            workload: WorkloadConfig::default(),
             previous_schedule: vec![],
         }
     }

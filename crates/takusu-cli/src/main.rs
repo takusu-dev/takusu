@@ -1300,6 +1300,7 @@ async fn run_config(cmd: ConfigCommands, app: &TakusuApp) -> Result<(), AppError
                 tz,
                 sleep_start,
                 sleep_end,
+                ..Default::default()
             };
             let cfg = config::load();
             if update.tz.is_none() && cfg.tz.is_some() {
