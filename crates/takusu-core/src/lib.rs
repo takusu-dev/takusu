@@ -46,10 +46,7 @@ mod anneal;
 pub mod evaluate;
 mod solver;
 
-use std::collections::HashMap;
-
 use jiff::Timestamp;
-use rustc_hash::FxHashSet;
 use thiserror::Error;
 
 // ── Point ────────────────────────────────────────────────────────────
@@ -421,14 +418,11 @@ impl Planner {
     /// 指定期間内のタスクのみ再スケジュール。
     ///
     /// `current_schedule` に含まれるタスクのうち、期間外のものを固定とみなす。
-    /// `pinned` に追加で固定したいタスクも指定できる。
+    /// `extra_pinned` に追加で固定したいタスクも指定できる。
     /// 期間内 (`range.from <= start` かつ `end <= range.until`) のタスクのみがSAで再配置される。
     ///
-    /// # Known limitation
-    /// 依存関係が固定→再配置タスクの方向 (pinned が sub-planner 内のタスクに依存) の場合、
-    /// その依存はチェックされない。sub-planner は pinned タスクを一切持たないため。
-    /// 現実的には pinned タスクは期間外で既に完了していることが多く、この問題は顕在化しにくい。
-    /// 逆方向 (再配置→固定) は remap 時に depend から filtered out されるため安全。
+    /// 元の `Planner` に対して `solve_partial` を実行するため、固定タスクと再配置タスクの
+    /// 時間重複・並列条件・依存関係を同じ評価関数で扱う。 (#454)
     pub fn plan_in_range(
         &self,
         range: &RescheduleRange,
@@ -436,46 +430,15 @@ impl Planner {
         extra_pinned: &[usize],
     ) -> Plan {
         let mut pinned: Vec<(Point, Point, usize)> = Vec::new();
-        let mut pinned_ids: FxHashSet<usize> = extra_pinned.iter().copied().collect();
 
         for (s, e, id) in current_schedule {
             let out_of_range = e.0 <= range.from.0 || s.0 >= range.until.0;
             if out_of_range || extra_pinned.contains(id) {
                 pinned.push((*s, *e, *id));
-                pinned_ids.insert(*id);
             }
         }
 
-        let mut sub_planner = Planner::new(self.now, self.sleep);
-        let mut sub_to_orig: Vec<usize> = Vec::new();
-        for task in &self.tasks {
-            if !pinned_ids.contains(&task.id) {
-                sub_to_orig.push(task.id);
-                sub_planner.add(task.clone()).ok();
-            }
-        }
-
-        let mut orig_to_sub: HashMap<usize, usize> = HashMap::new();
-        for (sub_idx, &orig_id) in sub_to_orig.iter().enumerate() {
-            orig_to_sub.insert(orig_id, sub_idx);
-        }
-
-        for task in sub_planner.tasks_mut() {
-            task.depends = task
-                .depends
-                .iter()
-                .filter_map(|orig_dep| orig_to_sub.get(orig_dep).copied())
-                .collect();
-        }
-
-        let sub_plan = solver::solve_partial(&sub_planner, &[]);
-
-        let mut schedules = pinned;
-        for (s, e, sub_id) in &sub_plan.schedules {
-            let orig_id = sub_to_orig[*sub_id];
-            schedules.push((*s, *e, orig_id));
-        }
-        Plan { schedules }
+        solver::solve_partial(self, &pinned)
     }
 
     /// 登録された全タスクを返す。
@@ -1144,6 +1107,204 @@ mod tests {
         let full_plan = planner.plan();
         let full_score = evaluate::evaluate(&planner, &full_plan, 0.0, 1.0);
         assert!(full_score > score);
+    }
+
+    #[test]
+    fn plan_in_range_avoids_pinned_overlap() {
+        let mut p = Planner::new(Point(0), SleepConfig::disabled());
+        let a = p
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(50),
+                cost_estimate: NormalDist::new(3, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+        let b = p
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(50),
+                cost_estimate: NormalDist::new(3, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+
+        let current_schedule = vec![(Point(0), Point(3), a), (Point(0), Point(3), b)];
+        let range = RescheduleRange {
+            from: Point(0),
+            until: Point(50),
+        };
+        let replanned = p.plan_in_range(&range, &current_schedule, &[a]);
+        let (b_start, _, _) = replanned
+            .schedules
+            .iter()
+            .find(|(_, _, id)| *id == b)
+            .unwrap();
+        assert!(
+            b_start.0 >= 3,
+            "rescheduled task should not overlap pinned task"
+        );
+    }
+
+    #[test]
+    fn plan_in_range_respects_pinned_dependency() {
+        let mut p = Planner::new(Point(0), SleepConfig::disabled());
+        let a = p
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(50),
+                cost_estimate: NormalDist::new(3, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+        let b = p
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(50),
+                cost_estimate: NormalDist::new(3, 0),
+                depends: vec![a],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+
+        let current_schedule = vec![(Point(0), Point(3), a), (Point(3), Point(6), b)];
+        let range = RescheduleRange {
+            from: Point(0),
+            until: Point(50),
+        };
+        let replanned = p.plan_in_range(&range, &current_schedule, &[a]);
+        let (b_start, _, _) = replanned
+            .schedules
+            .iter()
+            .find(|(_, _, id)| *id == b)
+            .unwrap();
+        assert!(
+            b_start.0 >= 3,
+            "rescheduled task should start after pinned dependency"
+        );
+    }
+
+    #[test]
+    fn plan_in_range_keeps_extra_pinned_position() {
+        let mut p = Planner::new(Point(0), SleepConfig::disabled());
+        let a = p
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(50),
+                cost_estimate: NormalDist::new(3, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+        let b = p
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(50),
+                cost_estimate: NormalDist::new(3, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+
+        let current_schedule = vec![(Point(5), Point(8), a), (Point(0), Point(3), b)];
+        let range = RescheduleRange {
+            from: Point(0),
+            until: Point(50),
+        };
+        let replanned = p.plan_in_range(&range, &current_schedule, &[a]);
+        let (a_start, a_end, _) = replanned
+            .schedules
+            .iter()
+            .find(|(_, _, id)| *id == a)
+            .unwrap();
+        assert_eq!(a_start.0, 5, "extra_pinned start should be unchanged");
+        assert_eq!(a_end.0, 8, "extra_pinned end should be unchanged");
+    }
+
+    #[test]
+    fn plan_in_range_pinned_depends_on_rescheduled() {
+        let mut p = Planner::new(Point(0), SleepConfig::disabled());
+        let a = p
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(50),
+                cost_estimate: NormalDist::new(3, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+        let b = p
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(50),
+                cost_estimate: NormalDist::new(3, 0),
+                depends: vec![a],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+
+        let current_schedule = vec![(Point(0), Point(3), a), (Point(5), Point(8), b)];
+        let range = RescheduleRange {
+            from: Point(0),
+            until: Point(5),
+        };
+        let replanned = p.plan_in_range(&range, &current_schedule, &[]);
+        let (a_start, a_end, _) = replanned
+            .schedules
+            .iter()
+            .find(|(_, _, id)| *id == a)
+            .unwrap();
+        assert!(
+            a_end.0 <= 5,
+            "rescheduled task should finish before pinned dependent"
+        );
+        assert!(
+            a_start.0 >= 0,
+            "rescheduled task should not start before now"
+        );
     }
 
     fn simple_two_task_planner() -> Planner {
