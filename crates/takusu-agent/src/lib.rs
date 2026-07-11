@@ -1,9 +1,11 @@
+pub mod llm;
 pub mod tool;
 pub mod tools;
 
 pub use tool::{Tool, ToolError, ToolRegistry};
 
 use serde::Deserialize;
+#[cfg(test)]
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -13,7 +15,7 @@ use jiff::Unit;
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct AgentConfig {
-    pub llm: LlmConfig,
+    pub llm: llm::LlmConfig,
     pub server: ServerConfig,
     pub audio: AudioConfig,
     pub skills: SkillsConfig,
@@ -43,30 +45,6 @@ impl AgentConfig {
             .try_deserialize()?;
 
         Ok(cfg)
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct LlmConfig {
-    #[serde(default = "default_llm_base_url")]
-    pub base_url: String,
-    #[serde(default = "default_llm_model")]
-    pub model: String,
-    #[serde(default = "default_llm_api_key_env")]
-    pub api_key_env: String,
-    #[serde(default = "default_max_history")]
-    pub max_history: usize,
-}
-
-impl Default for LlmConfig {
-    fn default() -> Self {
-        Self {
-            base_url: default_llm_base_url(),
-            model: default_llm_model(),
-            api_key_env: default_llm_api_key_env(),
-            max_history: default_max_history(),
-        }
     }
 }
 
@@ -148,22 +126,6 @@ fn data_dir() -> Option<PathBuf> {
         })
 }
 
-fn default_max_history() -> usize {
-    64
-}
-
-fn default_llm_base_url() -> String {
-    "https://api.openai.com/v1".into()
-}
-
-fn default_llm_model() -> String {
-    "gpt-4.1-mini".into()
-}
-
-fn default_llm_api_key_env() -> String {
-    "TAKUSU_LLM_API_KEY".into()
-}
-
 fn default_server_url() -> String {
     "http://127.0.0.1:3000".into()
 }
@@ -187,114 +149,28 @@ fn default_skills_dir() -> String {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum LlmError {
-    #[error("http error: {0}")]
-    Http(String),
-    #[error("response parse error: {0}")]
-    Parse(String),
-    #[error("rate limited")]
-    RateLimited,
-    #[error(transparent)]
-    Other(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
-}
-
-#[derive(Debug, Clone)]
-pub struct ToolCall {
-    pub id: String,
-    pub name: String,
-    pub arguments: Value,
-}
-
-impl ToolCall {
-    pub fn to_openai(&self) -> Value {
-        json!({
-            "id": self.id,
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "arguments": self.arguments.to_string(),
-            }
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum LlmResponse {
-    Text(String),
-    ToolCalls(Vec<ToolCall>),
-}
-
-#[derive(Debug, Clone)]
-pub enum AssistantContent {
-    Text(String),
-    ToolCalls(Vec<ToolCall>),
-}
-
-#[derive(Debug, Clone)]
-pub enum Message {
-    System(String),
-    User(String),
-    Assistant(AssistantContent),
-    ToolResult { call_id: String, content: String },
-}
-
-impl Message {
-    pub fn to_openai(&self) -> Value {
-        match self {
-            Message::System(c) => json!({"role": "system", "content": c}),
-            Message::User(c) => json!({"role": "user", "content": c}),
-            Message::Assistant(AssistantContent::Text(c)) => {
-                json!({"role": "assistant", "content": c})
-            }
-            Message::Assistant(AssistantContent::ToolCalls(calls)) => json!({
-                "role": "assistant",
-                "content": Value::Null,
-                "tool_calls": calls.iter().map(ToolCall::to_openai).collect::<Vec<_>>(),
-            }),
-            Message::ToolResult { call_id, content } => json!({
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": content,
-            }),
-        }
-    }
-
-    pub fn role(&self) -> &'static str {
-        match self {
-            Message::System(_) => "system",
-            Message::User(_) => "user",
-            Message::Assistant(_) => "assistant",
-            Message::ToolResult { .. } => "tool",
-        }
-    }
-}
-
-#[async_trait::async_trait]
-pub trait LlmClient: Send + Sync {
-    async fn chat(&self, messages: &[Message], tools: &[Value]) -> Result<LlmResponse, LlmError>;
-}
-
-#[derive(Debug, thiserror::Error)]
 pub enum AgentError {
     #[error("llm error: {0}")]
-    Llm(#[from] LlmError),
+    Llm(#[from] llm::LlmError),
     #[error("tool error: {0}")]
     Tool(#[from] ToolError),
     #[error("too many tool calls")]
     TooManyToolCalls,
 }
 
-const MAX_TOOL_CALLS_PER_TURN: usize = 16;
-
 pub struct Agent {
     config: AgentConfig,
     registry: ToolRegistry,
-    llm: Arc<dyn LlmClient + Send + Sync>,
-    history: Mutex<Vec<Message>>,
+    llm: Arc<dyn llm::LlmClient + Send + Sync>,
+    history: Mutex<Vec<llm::Message>>,
 }
 
 impl Agent {
-    pub fn new(config: AgentConfig, registry: ToolRegistry, llm: impl LlmClient + 'static) -> Self {
+    pub fn new(
+        config: AgentConfig,
+        registry: ToolRegistry,
+        llm: impl llm::LlmClient + 'static,
+    ) -> Self {
         Self {
             config,
             registry,
@@ -305,12 +181,12 @@ impl Agent {
 
     pub async fn run_turn(&self, user_text: &str) -> Result<String, AgentError> {
         let tools = self.registry.definitions();
-        let system = Message::System(self.build_system_prompt(""));
+        let system = llm::Message::System(self.build_system_prompt(""));
 
         let mut local = self.history.lock().unwrap().clone();
-        local.push(Message::User(user_text.to_string()));
+        local.push(llm::Message::User(user_text.to_string()));
 
-        for _ in 0..MAX_TOOL_CALLS_PER_TURN {
+        for _ in 0..self.config.llm.max_tool_calls {
             let mut messages = vec![system.clone()];
             messages.extend(local.clone());
 
@@ -320,13 +196,15 @@ impl Agent {
                 .await
                 .map_err(AgentError::Llm)?
             {
-                LlmResponse::Text(text) => {
-                    local.push(Message::Assistant(AssistantContent::Text(text.clone())));
+                llm::LlmResponse::Text(text) => {
+                    local.push(llm::Message::Assistant(llm::AssistantContent::Text(
+                        text.clone(),
+                    )));
                     self.replace_history(local);
                     return Ok(text);
                 }
-                LlmResponse::ToolCalls(calls) => {
-                    local.push(Message::Assistant(AssistantContent::ToolCalls(
+                llm::LlmResponse::ToolCalls(calls) => {
+                    local.push(llm::Message::Assistant(llm::AssistantContent::ToolCalls(
                         calls.clone(),
                     )));
                     for call in &calls {
@@ -335,7 +213,7 @@ impl Agent {
                             .call(&call.name, call.arguments.clone())
                             .await
                             .map_err(AgentError::Tool)?;
-                        local.push(Message::ToolResult {
+                        local.push(llm::Message::ToolResult {
                             call_id: call.id.clone(),
                             content: output,
                         });
@@ -371,7 +249,7 @@ impl Agent {
         )
     }
 
-    fn replace_history(&self, mut local: Vec<Message>) {
+    fn replace_history(&self, mut local: Vec<llm::Message>) {
         let max = self.config.llm.max_history;
         if local.len() > max {
             let target = local.len() - max;
@@ -381,14 +259,16 @@ impl Agent {
                 .iter()
                 .enumerate()
                 .skip(target)
-                .find(|(_, m)| matches!(m, Message::User(_) | Message::System(_)))
+                .find(|(_, m)| matches!(m, llm::Message::User(_) | llm::Message::System(_)))
                 .map(|(i, _)| i)
                 .or_else(|| {
                     local
                         .iter()
                         .enumerate()
                         .take(target)
-                        .rfind(|(_, m)| matches!(m, Message::User(_) | Message::System(_)))
+                        .rfind(|(_, m)| {
+                            matches!(m, llm::Message::User(_) | llm::Message::System(_))
+                        })
                         .map(|(i, _)| i)
                 })
                 .unwrap_or_default();
@@ -438,17 +318,17 @@ mod tests {
     }
 
     struct MockLlm {
-        calls: Mutex<Vec<(Vec<Message>, Vec<Value>)>>,
-        responses: Mutex<Vec<LlmResponse>>,
+        calls: Mutex<Vec<(Vec<llm::Message>, Vec<Value>)>>,
+        responses: Mutex<Vec<llm::LlmResponse>>,
     }
 
     #[async_trait::async_trait]
-    impl LlmClient for MockLlm {
+    impl llm::LlmClient for MockLlm {
         async fn chat(
             &self,
-            messages: &[Message],
+            messages: &[llm::Message],
             tools: &[Value],
-        ) -> Result<LlmResponse, LlmError> {
+        ) -> Result<llm::LlmResponse, llm::LlmError> {
             self.calls
                 .lock()
                 .unwrap()
@@ -469,12 +349,12 @@ mod tests {
         let mock = MockLlm {
             calls: Mutex::new(Vec::new()),
             responses: Mutex::new(vec![
-                LlmResponse::ToolCalls(vec![ToolCall {
+                llm::LlmResponse::ToolCalls(vec![llm::ToolCall {
                     id: "call_1".to_string(),
                     name: "echo".to_string(),
                     arguments: json!({"message": "hello"}),
                 }]),
-                LlmResponse::Text("done".to_string()),
+                llm::LlmResponse::Text("done".to_string()),
             ]),
         };
 
@@ -490,7 +370,7 @@ mod tests {
         let registry = ToolRegistry::new();
         let mut mock_responses = Vec::new();
         for i in 0..100 {
-            mock_responses.push(LlmResponse::Text(format!("reply {i}")));
+            mock_responses.push(llm::LlmResponse::Text(format!("reply {i}")));
         }
         let mock = MockLlm {
             calls: Mutex::new(Vec::new()),
@@ -506,7 +386,7 @@ mod tests {
         assert_eq!(history.len(), 4);
         assert!(matches!(
             history.last(),
-            Some(Message::Assistant(AssistantContent::Text(t))) if t == "reply 99"
+            Some(llm::Message::Assistant(llm::AssistantContent::Text(t))) if t == "reply 99"
         ));
     }
 
@@ -519,12 +399,12 @@ mod tests {
 
         let mut responses = Vec::new();
         for i in 0..5 {
-            responses.push(LlmResponse::ToolCalls(vec![ToolCall {
+            responses.push(llm::LlmResponse::ToolCalls(vec![llm::ToolCall {
                 id: format!("call_{i}"),
                 name: "echo".to_string(),
                 arguments: json!({"message": "hello"}),
             }]));
-            responses.push(LlmResponse::Text(format!("done {i}")));
+            responses.push(llm::LlmResponse::Text(format!("done {i}")));
         }
 
         let mock = MockLlm {
@@ -541,12 +421,12 @@ mod tests {
 
         let history = agent.history.lock().unwrap();
         assert!(history.len() <= 5);
-        assert!(matches!(&history[0], Message::User(_)));
-        if let Message::Assistant(AssistantContent::ToolCalls(calls)) = &history[1] {
+        assert!(matches!(&history[0], llm::Message::User(_)));
+        if let llm::Message::Assistant(llm::AssistantContent::ToolCalls(calls)) = &history[1] {
             assert_eq!(calls.len(), 1);
             assert!(matches!(
                 &history[2],
-                Message::ToolResult { call_id, .. } if call_id == &calls[0].id
+                llm::Message::ToolResult { call_id, .. } if call_id == &calls[0].id
             ));
         } else {
             panic!("expected assistant tool-calls message at index 1");
