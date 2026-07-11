@@ -49,6 +49,7 @@ import {
   postInProgressNotification,
   dismissInProgressNotification,
   dismissTaskNotifications,
+  cancelScheduledTaskNotifications,
 } from '@/src/notifications';
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -354,9 +355,13 @@ export function TaskDetailView() {
       );
     }
     // Dismiss any delivered reminder notifications when the task is
-    // completed or skipped (#257).
+    // completed or skipped (#257), and cancel pending scheduled reminders
+    // including end-time notifications (#455).
     if (newStatus === 'completed' || newStatus === 'skipped') {
       dismissTaskNotifications(task.id).catch((e) => logError('通知の消去', e));
+      cancelScheduledTaskNotifications(task.id).catch((e) =>
+        logError('通知のキャンセル', e),
+      );
     }
 
     undoRedo.push({

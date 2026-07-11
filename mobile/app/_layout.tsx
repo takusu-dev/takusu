@@ -20,6 +20,7 @@ import {
   ACTION_START,
   dismissInProgressNotification,
   dismissTaskNotifications,
+  cancelScheduledTaskNotifications,
   postInProgressNotification,
   postResultNotification,
 } from '@/src/notifications';
@@ -119,6 +120,15 @@ function handleActionResponse(
         );
         dismissInProgressNotification(taskId).catch((err) =>
           console.warn('Notification action: dismiss failed', err),
+        );
+        dismissTaskNotifications(taskId).catch((err) =>
+          console.warn('Notification action: dismiss task failed', err),
+        );
+        cancelScheduledTaskNotifications(taskId).catch((err) =>
+          console.warn(
+            'Notification action: cancel scheduled task failed',
+            err,
+          ),
         );
       })
       .catch((err) =>

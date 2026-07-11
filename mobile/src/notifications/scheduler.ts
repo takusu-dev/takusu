@@ -351,6 +351,20 @@ export async function dismissTaskNotifications(taskId: string): Promise<void> {
   }
 }
 
+// Cancel all pending scheduled notifications for a task.
+// When a task is completed or skipped, any scheduled reminders
+// (pre-start, start-overdue, end-time) should not fire.
+export async function cancelScheduledTaskNotifications(
+  taskId: string,
+): Promise<void> {
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  for (const n of scheduled) {
+    if (n.content.data?.taskId === taskId) {
+      await Notifications.cancelScheduledNotificationAsync(n.identifier);
+    }
+  }
+}
+
 // Wrapper that accepts raw schedule JSON (convenience for HomeView)
 export async function rescheduleFromRaw(
   tasks: TaskRow[],
