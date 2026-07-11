@@ -119,8 +119,36 @@ impl ToolCall {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FinishReason {
+    Stop,
+    Length,
+    ContentFilter,
+    ToolCalls,
+    Other(String),
+}
+
+impl From<&str> for FinishReason {
+    fn from(s: &str) -> Self {
+        match s {
+            "stop" => FinishReason::Stop,
+            "length" => FinishReason::Length,
+            "content_filter" => FinishReason::ContentFilter,
+            "tool_calls" | "function_call" => FinishReason::ToolCalls,
+            other => FinishReason::Other(other.to_string()),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
-pub enum LlmResponse {
+pub struct LlmResponse {
+    pub content: LlmResponseContent,
+    pub prompt_tokens: Option<usize>,
+    pub finish_reason: Option<FinishReason>,
+}
+
+#[derive(Debug, Clone)]
+pub enum LlmResponseContent {
     Text(String),
     ToolCalls(Vec<ToolCall>),
 }
@@ -136,7 +164,11 @@ pub enum Message {
     System(String),
     User(String),
     Assistant(AssistantContent),
-    ToolResult { call_id: String, content: String },
+    ToolResult {
+        call_id: String,
+        content: String,
+        is_error: bool,
+    },
 }
 
 impl Message {
@@ -152,11 +184,21 @@ impl Message {
                 "content": Value::Null,
                 "tool_calls": calls.iter().map(ToolCall::to_openai).collect::<Vec<_>>(),
             }),
-            Message::ToolResult { call_id, content } => json!({
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": content,
-            }),
+            Message::ToolResult {
+                call_id,
+                content,
+                is_error,
+            } => {
+                let mut obj = json!({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": content,
+                });
+                if *is_error {
+                    obj["is_error"] = json!(true);
+                }
+                obj
+            }
         }
     }
 
@@ -167,6 +209,29 @@ impl Message {
             Message::Assistant(_) => "assistant",
             Message::ToolResult { .. } => "tool",
         }
+    }
+
+    /// Very rough token estimate for history trimming. Treats ~4 characters as one token
+    /// plus a small per-message overhead, which is enough to preserve context limits.
+    pub fn estimate_tokens(&self) -> usize {
+        const OVERHEAD: usize = 4;
+        const CHARS_PER_TOKEN: usize = 4;
+        let content_len = match self {
+            Message::System(c) | Message::User(c) => c.chars().count(),
+            Message::Assistant(AssistantContent::Text(c)) => c.chars().count(),
+            Message::Assistant(AssistantContent::ToolCalls(calls)) => calls
+                .iter()
+                .map(|c| {
+                    c.name.chars().count()
+                        + c.arguments.to_string().chars().count()
+                        + c.id.chars().count()
+                })
+                .sum(),
+            Message::ToolResult {
+                call_id, content, ..
+            } => call_id.chars().count() + content.chars().count(),
+        };
+        content_len.div_ceil(CHARS_PER_TOKEN) + OVERHEAD
     }
 }
 
@@ -271,7 +336,10 @@ impl OpenAIClient {
             .next()
             .ok_or_else(|| LlmError::Parse("no choices in response".into()))?;
 
-        if let Some(tool_calls) = choice.message.tool_calls {
+        let prompt_tokens = body.usage.as_ref().map(|u| u.prompt_tokens as usize);
+        let finish_reason = choice.finish_reason.as_deref().map(FinishReason::from);
+
+        let content = if let Some(tool_calls) = choice.message.tool_calls {
             let calls = tool_calls
                 .into_iter()
                 .map(|tc| ToolCall {
@@ -280,12 +348,16 @@ impl OpenAIClient {
                     arguments: serde_json::from_str(&tc.function.arguments).unwrap_or(Value::Null),
                 })
                 .collect();
-            return Ok(LlmResponse::ToolCalls(calls));
-        }
+            LlmResponseContent::ToolCalls(calls)
+        } else {
+            LlmResponseContent::Text(choice.message.content.unwrap_or_default())
+        };
 
-        Ok(LlmResponse::Text(
-            choice.message.content.unwrap_or_default(),
-        ))
+        Ok(LlmResponse {
+            content,
+            prompt_tokens,
+            finish_reason,
+        })
     }
 
     fn backoff(&self, attempt: usize) -> Duration {
@@ -324,8 +396,17 @@ struct ChatCompletionRequest {
 #[derive(Deserialize, Debug)]
 struct ChatCompletionResponse {
     choices: Vec<Choice>,
+    usage: Option<Usage>,
+}
+
+#[derive(Deserialize, Debug)]
+struct Usage {
     #[allow(dead_code)]
-    usage: Option<Value>,
+    prompt_tokens: u32,
+    #[allow(dead_code)]
+    completion_tokens: u32,
+    #[allow(dead_code)]
+    total_tokens: u32,
 }
 
 #[derive(Deserialize, Debug)]
@@ -513,7 +594,9 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(matches!(response, LlmResponse::Text(text) if text == "今日は会議が2つあります"));
+        assert!(
+            matches!(response.content, LlmResponseContent::Text(text) if text == "今日は会議が2つあります")
+        );
     }
 
     #[tokio::test]
@@ -548,7 +631,7 @@ mod tests {
             .await
             .unwrap();
 
-        if let LlmResponse::ToolCalls(calls) = response {
+        if let LlmResponseContent::ToolCalls(calls) = response.content {
             assert_eq!(calls.len(), 2);
             assert_eq!(calls[0].name, "list_tasks");
             assert_eq!(calls[1].name, "get_schedule");
@@ -607,7 +690,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(matches!(response, LlmResponse::Text(_)));
+        assert!(matches!(response.content, LlmResponseContent::Text(_)));
         assert_eq!(state.count.load(Ordering::SeqCst), 3);
     }
 

@@ -92,6 +92,12 @@ TAKUSU_ROOT_TOKEN=tsk_... cargo run -p takusu-local
 [`ARCHITECTURE.md`](ARCHITECTURE.md) — クレート構成・データフロー・アルゴリズム詳細
 [`AGENTS.md`](AGENTS.md) — 開発者向けガイド・コマンドリファレンス
 
+## References
+
+The agent loop and tool-calling abstractions are informed by the reference implementation in [pi](https://github.com/earendil-works/pi) (`packages/agent`), by Mario Zechner, used under the MIT License.
+
 ## License
 
 MIT
+
+Portions of the agent implementation are informed by [pi](https://github.com/earendil-works/pi) (Copyright (c) 2025 Mario Zechner), used under the MIT License.
