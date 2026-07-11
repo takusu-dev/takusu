@@ -30,8 +30,12 @@ pub async fn update(mut req: worker::Request, env: Env) -> Result<Response, Work
         JsValue::from_str(&tz),
         JsValue::from_str(&sleep_start),
         JsValue::from_str(&sleep_end),
-        JsValue::from_f64(comfortable_minutes.map_or(0.0, |v| v as f64)),
-        JsValue::from_f64(maximum_minutes.map_or(0.0, |v| v as f64)),
+        comfortable_minutes
+            .map(|v| JsValue::from_f64(v as f64))
+            .unwrap_or(JsValue::NULL),
+        maximum_minutes
+            .map(|v| JsValue::from_f64(v as f64))
+            .unwrap_or(JsValue::NULL),
     ])?
     .run()
     .await
