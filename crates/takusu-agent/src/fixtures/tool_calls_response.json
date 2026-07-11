@@ -1,0 +1,39 @@
+{
+  "id": "chatcmpl-456",
+  "object": "chat.completion",
+  "created": 1677652289,
+  "model": "gpt-4.1-mini",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_list_1",
+            "type": "function",
+            "function": {
+              "name": "list_tasks",
+              "arguments": "{}"
+            }
+          },
+          {
+            "id": "call_sched_2",
+            "type": "function",
+            "function": {
+              "name": "get_schedule",
+              "arguments": "{\"from\": \"today\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 20,
+    "completion_tokens": 30,
+    "total_tokens": 50
+  }
+}

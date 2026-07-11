@@ -3215,8 +3215,10 @@ name = "takusu-agent"
 version = "0.20260709.2"
 dependencies = [
  "async-trait",
+ "axum",
  "config",
  "jiff",
+ "rand 0.10.1",
  "reqwest",
  "serde",
  "serde_json",
