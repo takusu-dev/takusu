@@ -29,4 +29,5 @@ export {
   postResultNotification,
   dismissInProgressNotification,
   dismissTaskNotifications,
+  cancelScheduledTaskNotifications,
 } from './scheduler';

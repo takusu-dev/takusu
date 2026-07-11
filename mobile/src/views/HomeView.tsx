@@ -46,6 +46,7 @@ import {
   postInProgressNotification,
   dismissInProgressNotification,
   dismissTaskNotifications,
+  cancelScheduledTaskNotifications,
 } from '@/src/notifications';
 import type { HabitRow } from '@/src/api/types';
 
@@ -753,6 +754,12 @@ export function HomeView() {
         logError('通知の消去', e),
       );
     }
+    // Cancel pending scheduled reminders (end-time etc.) when done (#455).
+    if (newStatus === 'completed') {
+      cancelScheduledTaskNotifications(task.id).catch((e) =>
+        logError('通知のキャンセル', e),
+      );
+    }
     // Post in-progress notification when starting via swipe (#312)
     if (newStatus === 'in_progress' && notifications.inProgress) {
       postInProgressNotification(task).catch((e) => logError('通知の投稿', e));
@@ -889,6 +896,11 @@ export function HomeView() {
       if (t.status === 'in_progress') {
         dismissInProgressNotification(t.id).catch((e) =>
           logError('通知の消去', e),
+        );
+      }
+      if (targetStatus === 'completed') {
+        cancelScheduledTaskNotifications(t.id).catch((e) =>
+          logError('通知のキャンセル', e),
         );
       }
     }
