@@ -270,6 +270,10 @@ function TaskCardImpl({
               styles.cardInner,
               pressed && styles.pressed,
               selected && styles.cardSelected,
+              isInProgress && {
+                borderLeftColor: BRAND_COLOR,
+                borderLeftWidth: 4,
+              },
             ]}
             onPress={handlePress}
             onLongPress={handleLongPress}
@@ -655,6 +659,10 @@ function ParallelGroupCardImpl({
           style={[
             groupStyles.groupContainer,
             selected && styles.cardSelected,
+            hostInProgress && {
+              borderLeftColor: BRAND_COLOR,
+              borderLeftWidth: 4,
+            },
             animatedStyle,
           ]}
         >
