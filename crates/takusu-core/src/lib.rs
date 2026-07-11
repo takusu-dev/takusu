@@ -546,7 +546,7 @@ mod tests {
     #[test]
     fn planner_simple_two_tasks() {
         let mut p = Planner::default();
-        let _a = p
+        let a = p
             .add(Task {
                 id: 0,
                 start: Some(Point(0)),
@@ -578,6 +578,11 @@ mod tests {
         let plan = p.plan();
         assert_eq!(plan.schedules.len(), 2);
         assert!(plan.task_end(b).unwrap().0 <= 5);
+        assert!(
+            plan.task_start(a).unwrap().0 < plan.task_start(b).unwrap().0,
+            "low-sigma A should be scheduled before high-sigma B: {:?}",
+            plan.schedules
+        );
     }
 
     #[test]
