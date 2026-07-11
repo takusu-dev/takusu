@@ -262,17 +262,19 @@ fn sleep_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
         let sleep_window_start = Point(day_start_point.0 + sleep_start_rel);
         let sleep_window_end = Point(day_start_point.0 + sleep_end_rel);
 
-        let mut occupied = 0i64;
+        let mut intervals: Vec<(Point, Point)> = Vec::new();
         for (s_start, s_end, _) in schedules {
-            let overlap_start = s_start.0.max(sleep_window_start.0);
-            let overlap_end = s_end.0.min(sleep_window_end.0);
+            let overlap_start = Point(s_start.0.max(sleep_window_start.0));
+            let overlap_end = Point(s_end.0.min(sleep_window_end.0));
             if overlap_start < overlap_end {
-                occupied += overlap_end - overlap_start;
+                intervals.push((overlap_start, overlap_end));
             }
         }
 
+        let occupied = union_length(&mut intervals);
+
         if occupied > 0 {
-            let sleep_got = sleep_len - occupied;
+            let sleep_got = (sleep_len - occupied).max(0);
             score += -(occupied as f64) * W_SLEEP_NORMAL;
             if sleep_got < MIN_SLEEP {
                 let deficit = MIN_SLEEP - sleep_got;
@@ -827,6 +829,182 @@ mod tests {
         );
     }
 
+    // #462: parallel sleep-occupying tasks should not double-count sleep loss.
+    #[test]
+    fn sleep_parallel_tasks_not_double_counted() {
+        let mut p = make_planner();
+        p.sleep = SleepConfig {
+            day_start: 0,
+            start: 0,
+            end: 96,
+            enabled: true,
+        };
+
+        let host = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(200),
+                cost_estimate: NormalDist::new(48, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: true,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+        let guest = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(200),
+                cost_estimate: NormalDist::new(48, 0),
+                depends: vec![],
+                parallelizable: true,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+
+        let one = plan_with(vec![(Point(0), Point(48), host)]);
+        let two = plan_with(vec![
+            (Point(0), Point(48), host),
+            (Point(0), Point(48), guest),
+        ]);
+
+        let score_one = evaluate(&p, &one, 0.0, 1.0);
+        let score_two = evaluate(&p, &two, 0.0, 1.0);
+        assert!(
+            (score_two - score_one - 60.0).abs() < 1e-9,
+            "two parallel tasks should occupy the same sleep time as one: one={score_one} two={score_two}"
+        );
+    }
+
+    // #462: the union of overlapping sleep intervals is computed correctly.
+    #[test]
+    fn sleep_overlapping_intervals_union() {
+        let mut p = make_planner();
+        p.sleep = SleepConfig {
+            day_start: 0,
+            start: 0,
+            end: 96,
+            enabled: true,
+        };
+
+        let host = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(200),
+                cost_estimate: NormalDist::new(30, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: true,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+        let guest = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(200),
+                cost_estimate: NormalDist::new(30, 0),
+                depends: vec![],
+                parallelizable: true,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+        let single = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(200),
+                cost_estimate: NormalDist::new(50, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+
+        let overlapping = plan_with(vec![
+            (Point(0), Point(30), host),
+            (Point(20), Point(50), guest),
+        ]);
+        let union = plan_with(vec![(Point(0), Point(50), single)]);
+
+        let score_overlapping = evaluate(&p, &overlapping, 0.0, 1.0);
+        let score_union = evaluate(&p, &union, 0.0, 1.0);
+        assert!(
+            (score_overlapping - score_union - 60.0).abs() < 1e-9,
+            "overlapping intervals should occupy the union length: overlapping={score_overlapping} union={score_union}"
+        );
+    }
+
+    // #462: sleep_got must not be negative even when the entire window is occupied.
+    #[test]
+    fn sleep_got_is_not_negative() {
+        let mut p = make_planner();
+        p.sleep = SleepConfig {
+            day_start: 0,
+            start: 0,
+            end: 96,
+            enabled: true,
+        };
+
+        let host = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(200),
+                cost_estimate: NormalDist::new(96, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: true,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+        let guest = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(200),
+                cost_estimate: NormalDist::new(96, 0),
+                depends: vec![],
+                parallelizable: true,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+
+        let one = plan_with(vec![(Point(0), Point(96), host)]);
+        let two = plan_with(vec![
+            (Point(0), Point(96), host),
+            (Point(0), Point(96), guest),
+        ]);
+
+        let score_one = evaluate(&p, &one, 0.0, 1.0);
+        let score_two = evaluate(&p, &two, 0.0, 1.0);
+        assert!(
+            (score_two - score_one - 60.0).abs() < 1e-9,
+            "full-window overlap should not make sleep_got negative: one={score_one} two={score_two}"
+        );
+    }
+
     // abandonability=1.0 → deadline-late penalty is fully suppressed.
     #[test]
     fn deadline_late_penalty_zero_when_abandonability_one() {
@@ -1064,6 +1242,29 @@ mod tests {
         assert_eq!(score, 0.0, "single-task habit group should get no bonus");
     }
 
+    // #462: union_length is the shared utility for interval union.
+    #[test]
+    fn union_length_combines_intervals_correctly() {
+        let mut empty: Vec<(Point, Point)> = Vec::new();
+        assert_eq!(union_length(&mut empty), 0);
+
+        // disjoint intervals are summed
+        let mut intervals = vec![(Point(0), Point(10)), (Point(20), Point(30))];
+        assert_eq!(union_length(&mut intervals), 20);
+
+        // partial overlap merges into the full span
+        let mut intervals = vec![(Point(0), Point(20)), (Point(15), Point(35))];
+        assert_eq!(union_length(&mut intervals), 35);
+
+        // one interval contained inside another
+        let mut intervals = vec![(Point(5), Point(15)), (Point(0), Point(20))];
+        assert_eq!(union_length(&mut intervals), 20);
+
+        // touching intervals are merged
+        let mut intervals = vec![(Point(0), Point(10)), (Point(10), Point(20))];
+        assert_eq!(union_length(&mut intervals), 20);
+    }
+
     // #459: daily workload penalty
     #[test]
     fn daily_load_prefers_spread_over_one_day() {
@@ -1176,8 +1377,14 @@ mod tests {
             })
             .unwrap();
 
-        let overlapping = plan_with(vec![(Point(0), Point(24), host), (Point(0), Point(24), guest)]);
-        let no_overlap = plan_with(vec![(Point(0), Point(24), host), (Point(24), Point(48), guest)]);
+        let overlapping = plan_with(vec![
+            (Point(0), Point(24), host),
+            (Point(0), Point(24), guest),
+        ]);
+        let no_overlap = plan_with(vec![
+            (Point(0), Point(24), host),
+            (Point(24), Point(48), guest),
+        ]);
 
         let score_overlap = evaluate(&p, &overlapping, 0.0, 1.0);
         let score_no = evaluate(&p, &no_overlap, 0.0, 1.0);
