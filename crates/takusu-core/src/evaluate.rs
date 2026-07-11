@@ -34,9 +34,9 @@
 //! - 違反の大きさに比例するため、大きな依存違反ほど強く罰せられる
 //!
 //! ### buffer_score
-//! - `task.sigma * 締切までの空きslot数 * W_BUFFER`
+//! - `task.sigma * 連続空き時間 * W_BUFFER`
 //! - sigma=0 の確定タスクはバッファ報酬なし
-//! - sigmaが大きいタスクの後ろに空きがあるほど高スコア
+//! - sigmaが大きいタスクの後ろに、締切まで競合なく連続する空きがあるほど高スコア
 //!
 //! ### duration_score
 //! - `deficit = avg - scheduled_duration`
@@ -210,10 +210,32 @@ fn buffer_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
         let Some((_start, sched_end)) = index[task.id] else {
             continue;
         };
-        let remaining = Point::delta(task.end, sched_end);
-        if remaining > 0 {
-            score += task.cost_estimate.sigma as f64 * remaining as f64 * W_BUFFER;
+        if task.cost_estimate.sigma == 0 {
+            continue;
         }
+        let mut buffer_end = task.end;
+        for other in &planner.tasks {
+            if other.id == task.id {
+                continue;
+            }
+            let Some((other_start, other_end)) = index[other.id] else {
+                continue;
+            };
+            if other_end <= sched_end || other_start >= task.end {
+                continue;
+            }
+            // 延長しても合法的に並行できるタスクはバッファを遮らない
+            if (task.allows_parallel && other.parallelizable)
+                || (other.allows_parallel && task.parallelizable)
+            {
+                continue;
+            }
+            if other_start < buffer_end {
+                buffer_end = other_start;
+            }
+        }
+        let actual = (buffer_end.0 - sched_end.0).max(0);
+        score += task.cost_estimate.sigma as f64 * actual as f64 * W_BUFFER;
     }
     score
 }
@@ -605,7 +627,7 @@ mod tests {
     }
 
     #[test]
-    fn buffer_prefers_high_sigma_earlier() {
+    fn buffer_prefers_high_sigma_later() {
         let mut p = make_planner();
         let a = add_simple_task(&mut p, 1, 0, 5);
         let b = add_simple_task(&mut p, 1, 2, 5);
@@ -616,8 +638,88 @@ mod tests {
         let score_ab = evaluate(&p, &ab, 0.0, 1.0);
         let score_ba = evaluate(&p, &ba, 0.0, 1.0);
         assert!(
-            score_ba > score_ab,
-            "B→A should be better (B gets more buffer): ab={score_ab} ba={score_ba}"
+            score_ab > score_ba,
+            "A→B should be better (B gets buffer after A): ab={score_ab} ba={score_ba}"
+        );
+    }
+
+    #[test]
+    fn buffer_prefers_longer_actual_buffer() {
+        let mut p = make_planner();
+        let high = add_simple_task(&mut p, 1, 2, 10);
+        let low = add_simple_task(&mut p, 1, 0, 100);
+
+        let short = plan_with(vec![(Point(0), Point(1), high), (Point(1), Point(2), low)]);
+        let long = plan_with(vec![(Point(0), Point(1), high), (Point(4), Point(5), low)]);
+
+        let score_short = evaluate(&p, &short, 0.0, 1.0);
+        let score_long = evaluate(&p, &long, 0.0, 1.0);
+        assert!(
+            score_long > score_short,
+            "longer contiguous buffer should score higher: long={score_long} short={score_short}"
+        );
+    }
+
+    #[test]
+    fn buffer_parallel_task_does_not_block() {
+        let mut p = make_planner();
+        let host = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(10),
+                cost_estimate: NormalDist::new(1, 2),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: true,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+        let guest = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(10),
+                cost_estimate: NormalDist::new(1, 0),
+                depends: vec![],
+                parallelizable: true,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+        let plain = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(10),
+                cost_estimate: NormalDist::new(1, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+
+        let host_guest = plan_with(vec![
+            (Point(0), Point(1), host),
+            (Point(1), Point(2), guest),
+        ]);
+        let host_plain = plan_with(vec![
+            (Point(0), Point(1), host),
+            (Point(1), Point(2), plain),
+        ]);
+
+        let score_guest = evaluate(&p, &host_guest, 0.0, 1.0);
+        let score_plain = evaluate(&p, &host_plain, 0.0, 1.0);
+        assert!(
+            score_guest > score_plain,
+            "parallelizable guest should not block host's buffer: guest={score_guest} plain={score_plain}"
         );
     }
 

@@ -1320,7 +1320,7 @@ mod tests {
 
         assert!(
             b_score >= swapped_score,
-            "B→A should score at least as well as A→B: b_score={b_score} swapped={swapped_score}"
+            "A→B should score at least as well as B→A: b_score={b_score} swapped={swapped_score}"
         );
     }
 
