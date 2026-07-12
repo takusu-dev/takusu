@@ -25,29 +25,6 @@
 
     treefmt-nix.url = "github:numtide/treefmt-nix";
     systems.url = "github:nix-systems/default";
-
-    irodori-tts-server = {
-      url = "github:Aratako/Irodori-TTS-Server";
-      flake = false;
-    };
-
-    pyproject-nix = {
-      url = "github:pyproject-nix/pyproject.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-
-    uv2nix = {
-      url = "github:pyproject-nix/uv2nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.pyproject-nix.follows = "pyproject-nix";
-    };
-
-    pyproject-build-systems = {
-      url = "github:pyproject-nix/build-system-pkgs";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.pyproject-nix.follows = "pyproject-nix";
-      inputs.uv2nix.follows = "uv2nix";
-    };
   };
 
   outputs =
@@ -98,15 +75,6 @@
           androidNdkHome = "${androidComposition.ndk-bundle}/libexec/android-sdk/ndk-bundle";
 
           src = lib.cleanSource ./.;
-          funasrSrc = lib.cleanSourceWith {
-            src = ./funasr_server;
-            filter =
-              name: type:
-              let
-                bname = baseNameOf name;
-              in
-              bname != ".venv" && bname != "__pycache__";
-          };
 
           inherit (craneLib.crateNameFromCargoToml { inherit src; }) version;
           cargoArtifacts = craneLib.buildDepsOnly {
@@ -339,8 +307,6 @@
                 package = rust-bin;
               };
               actionlint.enable = true;
-              ruff-format.enable = true;
-              ruff-check.enable = true;
             };
           };
 
@@ -467,31 +433,6 @@
                 text = ''
                   export TAKUSU_BUILD_VARIANT=dev
                   ${androidApkBuildText}
-                '';
-              };
-
-              funasr-server = pkgs.writeShellApplication {
-                name = "funasr-server";
-                runtimeInputs = with pkgs; [
-                  uv
-                  python3
-                ];
-                text = ''
-                  export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.zlib}/lib:${pkgs.openblas}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-                  export UV_PROJECT_ENVIRONMENT="''${XDG_CACHE_HOME:-$HOME/.cache}/funasr-server/venv"
-                  exec uv run --frozen --directory "${funasrSrc}" --python "${pkgs.python3}/bin/python3" python -m funasr_server "$@"
-                '';
-              };
-
-              irodori-tts-server = pkgs.writeShellApplication {
-                name = "irodori-tts-server";
-                runtimeInputs = with pkgs; [
-                  git
-                  uv
-                  ffmpeg
-                ];
-                text = ''
-                  exec ${./scripts/irodori-tts-server.sh} "$@"
                 '';
               };
 
@@ -639,7 +580,7 @@
             };
 
             # Full shell for local development — keeps everything (Android SDK,
-            # Node, JVM, uv, audio servers, MCP config symlink, etc.).
+            # Node, JVM, MCP config symlink, etc.).
             default = pkgs.mkShell {
               nativeBuildInputs =
                 with pkgs;
@@ -652,17 +593,10 @@
                   cmake
                   stdenv.cc
                   mold
-                  uv
-                  ruff
-                  python3
                   nodejs
                   wrangler
                   openjdk_headless
                   ktlint
-                ]
-                ++ [
-                  config.packages.funasr-server
-                  config.packages.irodori-tts-server
                 ];
 
               buildInputs = with pkgs; [

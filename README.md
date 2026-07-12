@@ -9,7 +9,7 @@
 - REST API サーバー (axum + SQLite) と Cloudflare Worker バックエンド
 - CLI クライアント（エディタ編集・リッチテーブル表示）
 - モバイルアプリ（Expo + React Native、UniFFI ネイティブモジュール）
-- 音声アシスタント: FunASR (SenseVoice-Small) で STT、Irodori-TTS で TTS
+- 音声アシスタント: 録音 + STT（sherpa-onnx / FunASR WebSocket クライアント）
 - iCalendar インポート・Google Calendar 同期・習慣の RRULE 展開
 
 ## 構成
@@ -23,7 +23,7 @@ takusu/
 │   ├── takusu-storage/     # プラガブル Storage trait + 共有型
 │   ├── takusu-ical/        # iCalendar パーサー
 │   ├── takusu-habit/       # RRULE 展開エンジン
-│   ├── takusu-audio/       # 録音 + STT/TTS バックエンド
+│   ├── takusu-audio/       # 録音 + STT バックエンド + TTS トレイト
 │   ├── takusu-audio-cli/   # 音声 CLI
 │   ├── takusu-client/      # REST API クライアントライブラリ
 │   ├── takusu-cli/         # CLI クライアント (clap)
@@ -31,7 +31,6 @@ takusu/
 │   ├── takusu-android/     # Android ネイティブ (UniFFI Kotlin バインディング)
 │   ├── takusu-util/        # 共有ユーティリティ
 │   └── google-cal/         # Google Calendar API クライアント (OAuth2)
-├── funasr_server/          # FunASR STT WebSocket サーバー (Python)
 ├── mobile/                 # Expo / React Native アプリ
 ├── scripts/                # ビルド・サーバー起動スクリプト
 └── main.typ                # 設計ドキュメント (Typst・日本語)
@@ -53,14 +52,13 @@ cargo bench -p takusu-core               # ベンチマーク
 cargo run --example daily                # サンプル実行
 cargo run -p takusu-cli -- --help        # CLI クライアント
 cargo run -p takusu-local                # ローカルサーバー起動
-cargo run -p takusu-audio-cli -- speak --text "こんにちは"  # TTS
 ```
 
-### 音声サーバー
+### 音声 CLI
 
 ```sh
-cd funasr_server && uv run python -m funasr_server   # FunASR STT
-./scripts/irodori-tts-server.sh                       # Irodori-TTS
+cargo run -p takusu-audio-cli -- record   # マイク録音
+cargo run -p takusu-audio-cli -- transcribe --backend sherpa --features sherpa audio.wav
 ```
 
 ### モバイルアプリ

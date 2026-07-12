@@ -5,8 +5,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "hush")]
 use takusu_audio::hush::Hush;
 use takusu_audio::{
-    FunASRClient, FunASRConfig, FunASRMode, RecordConfig, TtsBackend, TtsClient, TtsConfig,
-    TtsOptions, TtsRequest, default_hotwords, pick_reference_voice, record,
+    FunASRClient, FunASRConfig, FunASRMode, RecordConfig, default_hotwords, record,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -163,42 +162,6 @@ enum Commands {
         /// Do not restore the original loudness after denoising
         #[arg(long, default_value_t = false)]
         no_restore: bool,
-    },
-
-    /// Synthesize speech from text (Irodori-TTS)
-    Speak {
-        /// Text to synthesize
-        #[arg(short, long)]
-        text: String,
-
-        /// Irodori-TTS server URL
-        #[arg(short, long)]
-        url: Option<String>,
-
-        /// Output audio file
-        #[arg(short, long, default_value = "speech.wav")]
-        output: PathBuf,
-
-        /// Directory containing reference audio files
-        #[arg(long, default_value = "./refs")]
-        refs_dir: PathBuf,
-
-        /// Reference audio file (overrides refs_dir auto-pick)
-        #[arg(long)]
-        reference: Option<PathBuf>,
-
-        /// Voice ID (default: first refs file stem)
-        #[arg(long)]
-        voice: Option<String>,
-
-        /// Response audio format: wav, mp3, flac, pcm, opus.
-        /// If omitted, inferred from the --output extension.
-        #[arg(long)]
-        format: Option<String>,
-
-        /// Speaking speed
-        #[arg(long)]
-        speed: Option<f32>,
     },
 }
 
@@ -357,7 +320,8 @@ async fn main() {
                 None => {
                     eprintln!("Downloading Hush model on first run...");
                     let path = tokio::task::spawn_blocking(|| {
-                        let cache = takusu_audio::ModelCache::default_dir().map_err(|e| e.to_string())?;
+                        let cache =
+                            takusu_audio::ModelCache::default_dir().map_err(|e| e.to_string())?;
                         cache.ensure("hush").map_err(|e| e.to_string())
                     })
                     .await
@@ -378,7 +342,11 @@ async fn main() {
                 eprintln!("Hush model error: {e}");
                 std::process::exit(1);
             });
-            let target = if target_rms > 0.0 { Some(target_rms) } else { None };
+            let target = if target_rms > 0.0 {
+                Some(target_rms)
+            } else {
+                None
+            };
             hush.set_target_rms(target);
             hush.set_restore_loudness(!no_restore);
 
@@ -391,105 +359,6 @@ async fn main() {
             write_wav(&output, &enhanced, 16000);
             eprintln!("Saved to {}", output.display());
         }
-
-        Commands::Speak {
-            text,
-            url,
-            output,
-            refs_dir,
-            reference,
-            voice,
-            format,
-            speed,
-        } => {
-            let url = url.unwrap_or_else(|| "http://127.0.0.1:8088".to_string());
-
-            // Resolve the response format, ensuring it matches the --output
-            // extension so the file isn't silently corrupted (e.g. MP3 bytes
-            // written to a .wav file). If --format is omitted, infer it from
-            // the extension; if both are given and conflict, error out.
-            let format = resolve_audio_format(format.as_deref(), &output);
-
-            let reference_path = reference.or_else(|| {
-                pick_reference_voice(&refs_dir)
-                    .ok()
-                    .flatten()
-                    .map(|(path, _)| path)
-            });
-
-            if let Some(path) = &reference_path {
-                eprintln!("Using reference audio: {}", path.display());
-            }
-
-            let resolved_voice = voice.or_else(|| {
-                reference_path
-                    .as_ref()
-                    .and_then(|path| path.file_stem().map(|s| s.to_string_lossy().to_string()))
-            });
-
-            let config = TtsConfig {
-                backend: TtsBackend::Irodori,
-                url,
-                api_key: None,
-            };
-            let client = TtsClient::new(config);
-
-            let request = TtsRequest {
-                text,
-                voice: resolved_voice,
-                reference_audio_path: reference_path,
-                options: TtsOptions {
-                    response_format: Some(format),
-                    speed,
-                },
-            };
-
-            eprintln!("Synthesizing with Irodori-TTS...");
-            let start = std::time::Instant::now();
-            let audio = client.synthesize(&request).await.unwrap_or_else(|e| {
-                eprintln!("TTS error: {e}");
-                std::process::exit(1);
-            });
-            eprintln!("Done in {:.1}s.", start.elapsed().as_secs_f64());
-
-            std::fs::write(&output, &audio).unwrap_or_else(|e| {
-                eprintln!("Failed to write {output}: {e}", output = output.display());
-                std::process::exit(1);
-            });
-            eprintln!("Saved to {}", output.display());
-        }
-    }
-}
-
-/// Resolve the TTS response format from `--format` and the `--output` path.
-///
-/// If `--format` is given, it is used as-is when the output file has no
-/// extension. When the output file *does* have an extension, `--format` must
-/// match it (case-insensitive); a mismatch is an error to prevent writing
-/// e.g. MP3 bytes into a `.wav` file. If `--format` is omitted, the format is
-/// inferred from the `--output` extension, defaulting to `wav` when the file
-/// has no extension.
-fn resolve_audio_format(format: Option<&str>, output: &std::path::Path) -> String {
-    let ext = output
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase());
-    match format {
-        Some(f) => {
-            let f = f.to_ascii_lowercase();
-            if let Some(ref e) = ext
-                && f != *e
-            {
-                eprintln!(
-                    "Error: --format {f} does not match --output extension '{e}' ({}). \
-                     Use a matching extension or omit --format so it is inferred.",
-                    output.display()
-                );
-                std::process::exit(1);
-            }
-            f
-        }
-        None => ext.unwrap_or_else(|| "wav".to_string()),
     }
 }
 
@@ -519,7 +388,9 @@ async fn transcribe_sherpa(
 
     #[cfg(feature = "sherpa")]
     {
-        use takusu_audio::{ModelCache, SherpaOnnxAsr, SherpaOnnxAsrConfig, SherpaOnnxModel, SpeechToText};
+        use takusu_audio::{
+            ModelCache, SherpaOnnxAsr, SherpaOnnxAsrConfig, SherpaOnnxModel, SpeechToText,
+        };
 
         let model = match sherpa_model {
             SherpaModel::SenseVoice => SherpaOnnxModel::SenseVoice,
@@ -565,7 +436,10 @@ async fn transcribe_sherpa(
             use_itn: sherpa_use_itn,
         };
 
-        eprintln!("Loading Sherpa-ONNX model from {}...", config.model_dir.display());
+        eprintln!(
+            "Loading Sherpa-ONNX model from {}...",
+            config.model_dir.display()
+        );
         let start = std::time::Instant::now();
         let asr = SherpaOnnxAsr::from_config(&config).unwrap_or_else(|e| {
             eprintln!("Sherpa-ONNX model error: {e}");
@@ -573,7 +447,11 @@ async fn transcribe_sherpa(
         });
         eprintln!("Model loaded in {:.1}s.", start.elapsed().as_secs_f64());
 
-        eprintln!("Transcribing ({} samples, {:.1}s) with Sherpa-ONNX...", samples.len(), samples.len() as f64 / 16000.0);
+        eprintln!(
+            "Transcribing ({} samples, {:.1}s) with Sherpa-ONNX...",
+            samples.len(),
+            samples.len() as f64 / 16000.0
+        );
         let start = std::time::Instant::now();
         let text = asr.transcribe(samples).await.unwrap_or_else(|e| {
             eprintln!("Sherpa-ONNX transcription error: {e}");
@@ -792,58 +670,5 @@ mod tests {
         assert!((out[2] + 0.25).abs() < 1e-4);
         assert!((out[3] - 0.9).abs() < 1e-4);
         std::fs::remove_file(&path).ok();
-    }
-
-    #[test]
-    fn resolve_format_infers_from_extension() {
-        assert_eq!(
-            resolve_audio_format(None, std::path::Path::new("a.wav")),
-            "wav"
-        );
-        assert_eq!(
-            resolve_audio_format(None, std::path::Path::new("a.MP3")),
-            "mp3"
-        );
-        assert_eq!(
-            resolve_audio_format(None, std::path::Path::new("a.flac")),
-            "flac"
-        );
-        assert_eq!(
-            resolve_audio_format(None, std::path::Path::new("a.opus")),
-            "opus"
-        );
-    }
-
-    #[test]
-    fn resolve_format_accepts_matching_explicit() {
-        assert_eq!(
-            resolve_audio_format(Some("wav"), std::path::Path::new("a.wav")),
-            "wav"
-        );
-        assert_eq!(
-            resolve_audio_format(Some("MP3"), std::path::Path::new("a.mp3")),
-            "mp3"
-        );
-    }
-
-    #[test]
-    fn resolve_format_defaults_to_wav_for_no_extension() {
-        assert_eq!(
-            resolve_audio_format(None, std::path::Path::new("speech")),
-            "wav"
-        );
-    }
-
-    #[test]
-    fn resolve_format_explicit_with_no_extension() {
-        // --format mp3 --output myfile  →  "mp3" (no mismatch error)
-        assert_eq!(
-            resolve_audio_format(Some("mp3"), std::path::Path::new("myfile")),
-            "mp3"
-        );
-        assert_eq!(
-            resolve_audio_format(Some("flac"), std::path::Path::new("myfile")),
-            "flac"
-        );
     }
 }

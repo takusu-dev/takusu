@@ -14,7 +14,6 @@ The agent loop and tool-calling abstractions are informed by the reference imple
 ## Tech Stack
 
 - **Language**: Rust (edition 2024, stable toolchain)
-- **Python**: FunASR server for STT (SenseVoice-Small model, managed via `uv`)
 - **Kotlin**: Planned for Android app
 - **Version Control**: Jujutsu (`jj`) + Git (GitHub) — **Jujutsu is the preferred VCS in this workspace.** See [Version Control Workflow](#version-control-workflow) below.
 - **Nix**: `flake.nix` provides the dev shell (direnv with `use flake`)
@@ -70,21 +69,17 @@ takusu/
 │   │   └── src/lib.rs        #   parse_ical() → Vec<IcalTask>
 │   ├── takusu-habit/         # Recurrence rule engine (RRULE expansion)
 │   │   └── src/lib.rs
-│   ├── takusu-audio/         # Audio processing (recording + STT/TTS backends)
+│   ├── takusu-audio/         # Audio processing (recording + STT backends + TTS trait)
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── record.rs     #   Microphone recording (cpal)
+│   │       ├── stt.rs       #   SpeechToText trait
 │   │       ├── funasr.rs    #   FunASR WebSocket client (SenseVoice backend)
-│   │       └── tts.rs       #   TTS client (Irodori-TTS)
-│   ├── takusu-audio-cli/     # CLI for audio recording, transcription, and TTS
-│   │   └── src/main.rs      #   STT via FunASR, TTS via Irodori-TTS
-│   ├── funasr_server/        # Python WebSocket server for FunASR STT
-│   │   ├── pyproject.toml
-│   │   └── src/funasr_server/
-│   │       ├── __init__.py
-│   │       ├── __main__.py
-│   │       ├── config.py     #   Server configuration
-│   │       └── server.py     #   WebSocket server (SenseVoice-Small model)
+│   │       ├── sherpa.rs    #   Sherpa-ONNX local ASR
+│   │       ├── hush.rs      #   Hush ONNX denoiser
+│   │       └── tts.rs       #   TextToSpeech trait and shared TTS types
+│   ├── takusu-audio-cli/     # CLI for audio recording, transcription, and denoising
+│   │   └── src/main.rs      #   STT via FunASR or Sherpa-ONNX
 │   ├── takusu-client/         # HTTP client library for takusu REST API
 │   │   └── src/lib.rs         #   Client, all request/response types
 │   ├── takusu-cli/            # CLI client (clap derive, editor-based task editing)
@@ -139,12 +134,8 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `cargo run --example daily` | Run daily schedule example |
 | `cargo run -p takusu-cli -- --help` | Run CLI client |
 | `cargo run -p takusu-local` | Start local server |
-| `cd funasr_server && uv run python -m funasr_server` | Start FunASR STT server |
-| `cd funasr_server && ruff check src/` | Lint Python code |
-| `cd funasr_server && ruff format --check src/` | Check Python formatting |
-| `cargo run -p takusu-audio-cli -- speak --text "..."` | Synthesize speech with Irodori-TTS |
-| `./scripts/irodori-tts-server.sh` | Start Irodori-TTS inference server (clones to `$XDG_CACHE_HOME`) |
-| `nix run .#irodori-tts-server` | Same as above, via Nix |
+| `cargo run -p takusu-audio-cli -- record` | Record microphone audio |
+| `cargo run -p takusu-audio-cli --features sherpa -- transcribe --backend sherpa audio.wav` | Transcribe with Sherpa-ONNX |
 | `./scripts/issue-view.sh list [--label L] [--assignee A] [--state S]` | List GitHub issues (TSV: number, title, labels, assignees, state) |
 | `./scripts/issue-view.sh show <N>` | Show issue title, body, labels, assignees, and full comment thread |
 | `./scripts/issue-assign.sh <N> [<N>...] [--assignee <user>]` | Assign an unassigned issue to the current user (or another user) |
@@ -387,30 +378,11 @@ This ensures SA gradients guide towards feasibility rather than oscillating.
 
 ## Text-to-Speech (takusu-audio)
 
-### Backend
+### Trait API
 
-- **Irodori-TTS**: OpenAI-compatible `POST /v1/audio/speech`. Reference voices are loaded from `IRODORI_VOICES_DIR` (default `./refs`). Uses the base `Aratako/Irodori-TTS-500M-v3` model; VoiceDesign/caption control is not exposed.
-
-### Client API
-
-- `TtsBackend::Irodori`
-- `TtsClient::new(config)` + `synthesize(request)` returns `Vec<u8>` audio bytes
-- `pick_reference_voice(refs_dir)` selects the first audio file under `./refs/`
-
-### CLI
-
-```sh
-cargo run -p takusu-audio-cli -- speak --text "こんにちは"
-```
-
-Default reference audio directory is `./refs/`. Place a WAV/MP3/FLAC/etc. file there and the CLI auto-picks it; use `--reference` to override.
-
-### TTS server
-
-- `scripts/irodori-tts-server.sh` — clones `Aratako/Irodori-TTS-Server` to `$XDG_CACHE_HOME/takusu/irodori-tts-server` and runs it via `uv run --extra cpu --python 3.11`.
-- Requires `git` and `uv` on `PATH`.
-- `nix run .#irodori-tts-server` provides the same script with `git`, `uv`, and `ffmpeg` bundled.
-- `IRODORI_VOICES_DIR` defaults to `./refs` for Irodori-TTS.
+- `TextToSpeech` trait: `synthesize(request) -> Result<Vec<u8>, TtsError>`
+- `TtsRequest`, `TtsOptions`, `TtsConfig`, and `TtsError` are shared types
+- A new concrete backend will be added alongside `takusu-audio` STT backends
 
 ## takusu-local API
 
@@ -467,9 +439,8 @@ No external HTTP server needed. Run with `cargo nextest run -p takusu-local`.
 
 - **Planner**: Uses heuristic algorithms (simulated annealing) with an evaluation
   function, not exact SAT solving. Tasks are discretized into 5-minute slots.
-- **Voice Assistant**: Android `VoiceInteractionService` + server for FunASR/LLM
-  processing. FunASR (SenseVoice-Small) provides fast, accurate Japanese STT via
-  WebSocket (~0.35s for 6s audio on CPU).
+- **Voice Assistant**: Android `VoiceInteractionService` + server for LLM processing.
+  STT uses the FunASR WebSocket client (optional external server) or Sherpa-ONNX local inference.
   LLM fills in missing information (estimates, etc.) using memory of past similar tasks.
 - **Task model**: Includes start time, deadline, cost estimate (normal distribution),
   dependencies, parallelizability, and `abandonability` (deadline flexibility).
