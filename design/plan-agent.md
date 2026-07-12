@@ -139,9 +139,7 @@ url = "http://127.0.0.1:3000"
 token = "tsk_..."
 
 [audio]
-funasr_url = "ws://127.0.0.1:10095"
-tts_url = "http://127.0.0.1:8088"
-refs_dir = "./refs"
+# future audio settings will live here once TTS/STT integration is wired into takusu-agent
 
 [skills]
 dir = "~/.local/share/takusu/skills"
@@ -346,10 +344,7 @@ Implement `takusu-agent --text "今日の予定は?"` first. Then add push-to-ta
 4. unless `--no-tts` is set, it synthesizes and plays the response;
 5. it waits for the next user-initiated recording.
 
-Playback accepts the actual Irodori response formats and validates WAV headers, sample format,
-channel count, and sample rate before opening a `cpal` output stream. Audio/STT/TTS failures do not
-corrupt the conversation or retry planner mutations. Add timeouts and cancellation around all
-network and device operations.
+Playback validates WAV headers, sample format, channel count, and sample rate before opening a `cpal` output stream. Audio/STT/TTS failures do not corrupt the conversation or retry planner mutations. Add timeouts and cancellation around all network and device operations.
 
 Do not register `listen` or `speak` as LLM tools. VAD/noise suppression and streaming can be added
 behind the same audio adapter later.

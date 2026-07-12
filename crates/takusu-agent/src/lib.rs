@@ -15,7 +15,6 @@ use jiff::Unit;
 pub struct AgentConfig {
     pub llm: llm::LlmConfig,
     pub server: ServerConfig,
-    pub audio: AudioConfig,
     pub skills: SkillsConfig,
 }
 
@@ -66,27 +65,6 @@ impl Default for ServerConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
-pub struct AudioConfig {
-    #[serde(default = "default_funasr_url")]
-    pub funasr_url: String,
-    #[serde(default = "default_tts_url")]
-    pub tts_url: String,
-    #[serde(default = "default_refs_dir")]
-    pub refs_dir: String,
-}
-
-impl Default for AudioConfig {
-    fn default() -> Self {
-        Self {
-            funasr_url: default_funasr_url(),
-            tts_url: default_tts_url(),
-            refs_dir: default_refs_dir(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
 pub struct SkillsConfig {
     #[serde(default = "default_skills_dir")]
     pub dir: String,
@@ -126,18 +104,6 @@ fn data_dir() -> Option<PathBuf> {
 
 fn default_server_url() -> String {
     "http://127.0.0.1:3000".into()
-}
-
-fn default_funasr_url() -> String {
-    "ws://127.0.0.1:10095".into()
-}
-
-fn default_tts_url() -> String {
-    "http://127.0.0.1:8088".into()
-}
-
-fn default_refs_dir() -> String {
-    "./refs".into()
 }
 
 fn default_skills_dir() -> String {
