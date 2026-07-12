@@ -22,4 +22,4 @@ pub use funasr::{FunASRClient, FunASRConfig, FunASRError, FunASRMode, default_ho
 pub use models::{ModelCache, ModelError, ModelRegistry, ModelSpec};
 pub use record::{RecordConfig, RecorderError, record};
 pub use stt::{SpeechToText, SttError};
-pub use tts::{TextToSpeech, TtsBackend, TtsConfig, TtsError, TtsOptions, TtsRequest};
+pub use tts::{TextToSpeech, TtsBackend, TtsConfig, TtsError, TtsOptions, TtsRequest, TtsStream};
