@@ -59,6 +59,14 @@ pub fn router(state: AppState) -> Router {
             "/schedule/generate",
             post(handlers::schedule::generate_schedule),
         )
+        .route(
+            "/schedule/preview",
+            post(handlers::schedule::preview_schedule),
+        )
+        .route(
+            "/schedule/replace",
+            post(handlers::schedule::replace_schedule),
+        )
         .route("/schedule/reschedule", post(handlers::schedule::reschedule))
         .route(
             "/schedule/entries/{task_id}",

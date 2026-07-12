@@ -2,7 +2,7 @@ use clap::Parser;
 use std::process;
 use takusu_agent::audio::AudioAdapter;
 use takusu_agent::llm::OpenAIClient;
-use takusu_agent::tools::takusu::register_read_tools;
+use takusu_agent::tools::takusu::register_tools;
 use takusu_agent::{AgentConfig, AgentSession, ToolRegistry};
 use takusu_client::Client;
 
@@ -32,7 +32,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>
     let llm = OpenAIClient::new(config.llm.clone())?;
     let mut registry = ToolRegistry::new();
     let client = Client::new(&config.server.url, &config.server.token);
-    register_read_tools(&mut registry, client);
+    register_tools(&mut registry, client);
     let session = AgentSession::new(config, registry, llm);
 
     if let Some(text) = cli.text {

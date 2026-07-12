@@ -1,10 +1,17 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use takusu_client::{Client, HabitDetail, TaskQuery};
+use takusu_client::{Client, HabitDetail, SchedulePreviewRequest, TaskQuery};
 use takusu_util::parse_datetime_tz;
 
 use crate::{Tool, ToolError, ToolOutput, ToolRegistry};
+
+/// Registers planner read tools and approval-only mutation proposals.
+pub fn register_tools(registry: &mut ToolRegistry, client: Client) {
+    register_read_tools(registry, client.clone());
+    register_mutation_tools(registry, client.clone());
+    registry.register(Box::new(PreviewScheduleTool { client }));
+}
 
 /// Registers the read-only planner tools used by the agent.
 pub fn register_read_tools(registry: &mut ToolRegistry, client: Client) {
@@ -39,6 +46,12 @@ fn required_string(args: &serde_json::Map<String, Value>, name: &str) -> Result<
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .ok_or_else(|| ToolError::InvalidArgs(format!("missing or empty {name}")))
+}
+
+fn required_i64(args: &serde_json::Map<String, Value>, name: &str) -> Result<i64, ToolError> {
+    args.get(name)
+        .and_then(Value::as_i64)
+        .ok_or_else(|| ToolError::InvalidArgs(format!("missing or invalid {name}")))
 }
 
 fn optional_string(
@@ -350,6 +363,322 @@ impl Tool for GetSettings {
             ..Default::default()
         })
     }
+}
+
+struct PreviewScheduleTool {
+    client: Client,
+}
+
+#[async_trait]
+impl Tool for PreviewScheduleTool {
+    fn name(&self) -> &'static str {
+        "preview_schedule"
+    }
+    fn description(&self) -> &'static str {
+        "Preview a schedule without replacing the active schedule; reports moved, unscheduled, and sleep impact."
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({"type":"object","properties":{"mode":{"type":"string"},"from":{"type":"string"},"until":{"type":"string"},"task_ids":{"type":"array","items":{"type":"string"}},"pinned":{"type":"array","items":{"type":"string"}},"sleep":{"type":"string"}},"additionalProperties":false})
+    }
+    async fn call(&self, args: Value) -> Result<ToolOutput, ToolError> {
+        let mut args = object(args)?;
+        args.entry("mode")
+            .or_insert_with(|| Value::String("full".into()));
+        let request: SchedulePreviewRequest = serde_json::from_value(Value::Object(args))
+            .map_err(|error| ToolError::InvalidArgs(error.to_string()))?;
+        let preview = self
+            .client
+            .preview_schedule(&request)
+            .await
+            .map_err(client_error)?;
+        Ok(ToolOutput {
+            content: preview.to_string(),
+            ..Default::default()
+        })
+    }
+}
+
+/// Registers planner mutation tools. Calls only produce approval proposals; they never write.
+pub fn register_mutation_tools(registry: &mut ToolRegistry, client: Client) {
+    for kind in [
+        MutationKind::CreateTask,
+        MutationKind::UpdateTask,
+        MutationKind::DeleteTask,
+        MutationKind::CreateHabit,
+        MutationKind::UpdateHabit,
+        MutationKind::DeleteHabit,
+        MutationKind::GenerateSchedule,
+        MutationKind::Reschedule,
+    ] {
+        registry.register(Box::new(MutationTool {
+            client: client.clone(),
+            kind,
+        }));
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MutationKind {
+    CreateTask,
+    UpdateTask,
+    DeleteTask,
+    CreateHabit,
+    UpdateHabit,
+    DeleteHabit,
+    GenerateSchedule,
+    Reschedule,
+}
+
+impl MutationKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::CreateTask => "create_task",
+            Self::UpdateTask => "update_task",
+            Self::DeleteTask => "delete_task",
+            Self::CreateHabit => "create_habit",
+            Self::UpdateHabit => "update_habit",
+            Self::DeleteHabit => "delete_habit",
+            Self::GenerateSchedule => "generate_schedule",
+            Self::Reschedule => "reschedule",
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::CreateTask => "Propose creating a task. For example, 「演習30題追加」.",
+            Self::UpdateTask => "Propose updating a task; changes require user approval.",
+            Self::DeleteTask => "Propose deleting a task; changes require user approval.",
+            Self::CreateHabit => {
+                "Propose creating a recurring habit; changes require user approval."
+            }
+            Self::UpdateHabit => {
+                "Propose updating a recurring habit; changes require user approval."
+            }
+            Self::DeleteHabit => {
+                "Propose deleting a recurring habit; changes require user approval."
+            }
+            Self::GenerateSchedule => {
+                "Propose generating a schedule; it is not applied before approval."
+            }
+            Self::Reschedule => {
+                "Propose rescheduling part of the plan; it is not applied before approval."
+            }
+        }
+    }
+
+    fn target_type(self) -> &'static str {
+        match self {
+            Self::CreateTask | Self::UpdateTask | Self::DeleteTask => "task",
+            Self::CreateHabit | Self::UpdateHabit | Self::DeleteHabit => "habit",
+            Self::GenerateSchedule | Self::Reschedule => "schedule",
+        }
+    }
+
+    fn operation(self) -> &'static str {
+        match self {
+            Self::CreateTask | Self::CreateHabit => "create",
+            Self::UpdateTask | Self::UpdateHabit => "update",
+            Self::DeleteTask | Self::DeleteHabit => "delete",
+            Self::GenerateSchedule => "generate",
+            Self::Reschedule => "reschedule",
+        }
+    }
+
+    fn schema(self) -> Value {
+        let (required, properties) = match self {
+            Self::CreateTask => (
+                json!(["title", "end_at", "avg_minutes"]),
+                json!({
+                    "title":{"type":"string"},"description":{"type":"string"},"start_at":{"type":"string"},"end_at":{"type":"string"},"avg_minutes":{"type":"integer"},"sigma_minutes":{"type":"integer"},"depends":{"type":"array","items":{"type":"string"}},"parallelizable":{"type":"boolean"},"allows_parallel":{"type":"boolean"},"abandonability":{"type":"number"},"inferred_fields":{"type":"array"}
+                }),
+            ),
+            Self::UpdateTask => (
+                json!(["task_ref"]),
+                json!({"task_ref":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},"start_at":{"type":"string"},"end_at":{"type":"string"},"avg_minutes":{"type":"integer"},"sigma_minutes":{"type":"integer"},"depends":{"type":"array","items":{"type":"string"}},"parallelizable":{"type":"boolean"},"allows_parallel":{"type":"boolean"},"abandonability":{"type":"number"},"status":{"type":"string"},"inferred_fields":{"type":"array"}}),
+            ),
+            Self::DeleteTask => (json!(["task_ref"]), json!({"task_ref":{"type":"string"}})),
+            Self::CreateHabit => (
+                json!([
+                    "title",
+                    "recurrence",
+                    "start_time",
+                    "end_time",
+                    "avg_minutes"
+                ]),
+                json!({"title":{"type":"string"},"description":{"type":"string"},"recurrence":{"type":"string"},"start_time":{"type":"string"},"end_time":{"type":"string"},"avg_minutes":{"type":"integer"},"sigma_minutes":{"type":"integer"},"parallelizable":{"type":"boolean"},"allows_parallel":{"type":"boolean"},"abandonability":{"type":"number"},"inferred_fields":{"type":"array"}}),
+            ),
+            Self::UpdateHabit => (
+                json!(["habit_ref"]),
+                json!({"habit_ref":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},"recurrence":{"type":"string"},"start_time":{"type":"string"},"end_time":{"type":"string"},"avg_minutes":{"type":"integer"},"sigma_minutes":{"type":"integer"},"parallelizable":{"type":"boolean"},"allows_parallel":{"type":"boolean"},"abandonability":{"type":"number"},"active":{"type":"boolean"},"inferred_fields":{"type":"array"}}),
+            ),
+            Self::DeleteHabit => (json!(["habit_ref"]), json!({"habit_ref":{"type":"string"}})),
+            Self::GenerateSchedule => (
+                json!([]),
+                json!({"task_ids":{"type":"array","items":{"type":"string"}},"sleep":{"type":"string"}}),
+            ),
+            Self::Reschedule => (
+                json!(["mode"]),
+                json!({"mode":{"type":"string"},"from":{"type":"string"},"until":{"type":"string"},"task_ids":{"type":"array","items":{"type":"string"}},"pinned":{"type":"array","items":{"type":"string"}},"sleep":{"type":"string"}}),
+            ),
+        };
+        let properties = properties.as_object().cloned().unwrap_or_default();
+        let mut properties = serde_json::Map::from_iter(properties);
+        properties.insert("why".into(), json!({"type":"string","description":"Short user-facing reason for the proposed change."}));
+        properties.insert(
+            "warnings".into(),
+            json!({"type":"array","items":{"type":"string"}}),
+        );
+        json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})
+    }
+}
+
+struct MutationTool {
+    client: Client,
+    kind: MutationKind,
+}
+
+#[async_trait]
+impl Tool for MutationTool {
+    fn name(&self) -> &'static str {
+        self.kind.name()
+    }
+    fn description(&self) -> &'static str {
+        self.kind.description()
+    }
+    fn parameters_schema(&self) -> Value {
+        self.kind.schema()
+    }
+
+    async fn call(&self, args: Value) -> Result<ToolOutput, ToolError> {
+        let mut args = object(args)?;
+        validate_mutation(&self.client, self.kind, &args).await?;
+        let (before, observed_updated_at) = match self.kind {
+            MutationKind::UpdateTask | MutationKind::DeleteTask => {
+                let reference = required_string(&args, "task_ref")?;
+                let task = self
+                    .client
+                    .get_task(&reference)
+                    .await
+                    .map_err(client_error)?;
+                (
+                    Some(task_json(&task, &HashMap::new())),
+                    Some(task.updated_at),
+                )
+            }
+            MutationKind::UpdateHabit | MutationKind::DeleteHabit => {
+                let reference = required_string(&args, "habit_ref")?;
+                let habit = self
+                    .client
+                    .get_habit(&reference)
+                    .await
+                    .map_err(client_error)?;
+                (Some(habit_json(&habit)), Some(habit.habit.updated_at))
+            }
+            _ => (None, None),
+        };
+        let target = args
+            .get("task_ref")
+            .or_else(|| args.get("habit_ref"))
+            .and_then(Value::as_str)
+            .unwrap_or("schedule")
+            .to_owned();
+        let inferred_fields = args
+            .get("inferred_fields")
+            .cloned()
+            .unwrap_or_else(|| json!([]));
+        let inferred_fields = serde_json::from_value::<Vec<crate::InferredField>>(inferred_fields)
+            .map_err(|error| ToolError::InvalidArgs(format!("invalid inferred_fields: {error}")))?;
+        if matches!(
+            self.kind,
+            MutationKind::GenerateSchedule | MutationKind::Reschedule
+        ) {
+            let mut preview_args = args.clone();
+            if matches!(self.kind, MutationKind::GenerateSchedule) {
+                preview_args.insert("mode".into(), Value::String("full".into()));
+            }
+            let request: SchedulePreviewRequest =
+                serde_json::from_value(Value::Object(preview_args))
+                    .map_err(|error| ToolError::InvalidArgs(error.to_string()))?;
+            let preview = self
+                .client
+                .preview_schedule(&request)
+                .await
+                .map_err(client_error)?;
+            let entries = preview.get("entries").cloned().ok_or_else(|| {
+                ToolError::InvalidArgs("schedule preview did not return entries".into())
+            })?;
+            args.insert("_preview_entries".into(), entries);
+            args.insert("_preview".into(), preview);
+        }
+        let why = optional_string(&args, "why")?;
+        let warnings = args
+            .get("warnings")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let proposal = crate::ProposedChange {
+            operation: self.kind.operation().to_owned(),
+            target_label: format!("{} {target}", self.kind.target_type()),
+            description: format!("{} ({target})", self.kind.description()),
+            before,
+            after: Some(Value::Object(args.clone())),
+            arguments: Some(Value::Object(args)),
+            observed_updated_at,
+        };
+        Ok(ToolOutput {
+            content: serde_json::to_string(&json!({"approval_required":true,"operation":proposal.operation,"target":proposal.target_label,"inferred_fields":inferred_fields,"why":why,"warnings":warnings})).unwrap(),
+            why,
+            warnings,
+            proposed_changes: vec![proposal],
+            inferred_fields,
+            schedule_dirty: false,
+            ..Default::default()
+        })
+    }
+}
+
+async fn validate_mutation(
+    client: &Client,
+    kind: MutationKind,
+    args: &serde_json::Map<String, Value>,
+) -> Result<(), ToolError> {
+    match kind {
+        MutationKind::CreateTask => {
+            required_string(args, "title")?;
+            required_string(args, "end_at")?;
+            required_i64(args, "avg_minutes")?;
+        }
+        MutationKind::UpdateTask | MutationKind::DeleteTask => {
+            let reference = required_string(args, "task_ref")?;
+            if reference.starts_with('#')
+                || reference.starts_with('h')
+                || reference.starts_with('H')
+            {
+                client.get_task(&reference).await.map_err(client_error)?;
+            }
+        }
+        MutationKind::CreateHabit => {
+            required_string(args, "title")?;
+            required_string(args, "recurrence")?;
+            required_string(args, "start_time")?;
+            required_string(args, "end_time")?;
+            required_i64(args, "avg_minutes")?;
+        }
+        MutationKind::UpdateHabit | MutationKind::DeleteHabit => {
+            required_string(args, "habit_ref")?;
+        }
+        MutationKind::GenerateSchedule => {}
+        MutationKind::Reschedule => {
+            required_string(args, "mode")?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

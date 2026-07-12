@@ -3,11 +3,17 @@ pub mod llm;
 pub mod tool;
 pub mod tools;
 
-pub use tool::{ChangeReceipt, Tool, ToolError, ToolOutput, ToolRegistry};
+pub use tool::{
+    ChangeReceipt, InferredField, ProposedChange, Tool, ToolError, ToolOutput, ToolRegistry,
+};
 
 use serde::Deserialize;
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use takusu_client::{
+    CreateHabit, CreateTask, SaveScheduleRequest, ScheduleEntry, UpdateHabit, UpdateTask,
+};
 
 use jiff::Unit;
 
@@ -125,10 +131,29 @@ pub enum AgentError {
 }
 
 #[derive(Debug, Clone)]
+pub struct ApprovalRequest {
+    pub id: String,
+    pub why: String,
+    pub changes: Vec<ProposedChange>,
+    pub inferred_fields: Vec<InferredField>,
+    pub warnings: Vec<String>,
+    pub expires_at: jiff::Timestamp,
+}
+
+#[derive(Debug, Clone)]
+pub struct ApprovalResult {
+    pub id: String,
+    pub approved: bool,
+    pub changes: Vec<ChangeReceipt>,
+    pub schedule_dirty: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct TurnResult {
     pub text: String,
     pub changes: Vec<ChangeReceipt>,
     pub schedule_dirty: bool,
+    pub approval_request: Option<ApprovalRequest>,
 }
 
 /// Serialized work turn result. Holds the assistant response text, any change receipts produced
@@ -144,6 +169,9 @@ pub struct AgentSession {
     turn_lock: tokio::sync::Mutex<()>,
     /// Last provider-reported prompt token count, used to guide history trimming.
     last_prompt_tokens: Mutex<Option<usize>>,
+    pending_approval: Mutex<Option<ApprovalRequest>>,
+    approval_sequence: Mutex<u64>,
+    schedule_dirty: Mutex<bool>,
 }
 
 impl AgentSession {
@@ -163,6 +191,9 @@ impl AgentSession {
             skills_index,
             turn_lock: tokio::sync::Mutex::new(()),
             last_prompt_tokens: Mutex::new(None),
+            pending_approval: Mutex::new(None),
+            approval_sequence: Mutex::new(0),
+            schedule_dirty: Mutex::new(false),
         }
     }
 
@@ -176,7 +207,11 @@ impl AgentSession {
         local.push(llm::Message::User(user_text.to_string()));
 
         let mut changes = Vec::new();
-        let mut schedule_dirty = false;
+        let mut proposed_changes: Vec<ProposedChange> = Vec::new();
+        let mut inferred_fields: Vec<InferredField> = Vec::new();
+        let mut approval_why = None;
+        let mut approval_warnings = Vec::new();
+        let mut schedule_dirty = *self.schedule_dirty.lock().unwrap();
         let mut tool_call_count = 0;
 
         loop {
@@ -203,10 +238,18 @@ impl AgentSession {
                         text.clone(),
                     )));
                     self.replace_history(local, response.prompt_tokens, system.estimate_tokens());
+                    let approval_request = self.make_approval_request(
+                        proposed_changes,
+                        inferred_fields,
+                        approval_why,
+                        approval_warnings,
+                    );
+                    *self.schedule_dirty.lock().unwrap() = schedule_dirty;
                     return Ok(TurnResult {
                         text,
                         changes,
                         schedule_dirty,
+                        approval_request,
                     });
                 }
                 llm::LlmResponseContent::ToolCalls(calls) => {
@@ -238,6 +281,12 @@ impl AgentSession {
                         } else {
                             match self.registry.call(&call.name, call.arguments.clone()).await {
                                 Ok(output) => {
+                                    if output.why.is_some() {
+                                        approval_why = output.why;
+                                    }
+                                    approval_warnings.extend(output.warnings);
+                                    proposed_changes.extend(output.proposed_changes);
+                                    inferred_fields.extend(output.inferred_fields);
                                     changes.extend(output.changes);
                                     schedule_dirty |= output.schedule_dirty;
                                     llm::Message::ToolResult {
@@ -259,6 +308,243 @@ impl AgentSession {
                 }
             }
         }
+    }
+
+    fn make_approval_request(
+        &self,
+        changes: Vec<ProposedChange>,
+        inferred_fields: Vec<InferredField>,
+        why: Option<String>,
+        warnings: Vec<String>,
+    ) -> Option<ApprovalRequest> {
+        if changes.is_empty() {
+            return None;
+        }
+        let mut sequence = self.approval_sequence.lock().unwrap();
+        *sequence += 1;
+        let request = ApprovalRequest {
+            id: format!("approval-{}", *sequence),
+            why: why.unwrap_or_else(|| "ユーザーの承認が必要な変更です".to_owned()),
+            changes,
+            inferred_fields,
+            warnings,
+            expires_at: jiff::Timestamp::now()
+                .checked_add(jiff::Span::new().minutes(5))
+                .expect("valid approval expiry"),
+        };
+        *self.pending_approval.lock().unwrap() = Some(request.clone());
+        Some(request)
+    }
+
+    pub async fn resolve_approval(
+        &self,
+        id: &str,
+        approve: bool,
+    ) -> Result<ApprovalResult, AgentError> {
+        let _guard = self.turn_lock.lock().await;
+        let request = {
+            let mut pending = self.pending_approval.lock().unwrap();
+            let current = pending.as_ref().ok_or_else(|| {
+                AgentError::Tool(ToolError::InvalidArgs("approval not found".into()))
+            })?;
+            if current.id != id {
+                return Err(AgentError::Tool(ToolError::InvalidArgs(
+                    "approval id mismatch".into(),
+                )));
+            }
+            pending.take().expect("approval was present")
+        };
+        if jiff::Timestamp::now() >= request.expires_at {
+            return Err(AgentError::Tool(ToolError::Cancelled));
+        }
+        if !approve {
+            return Ok(ApprovalResult {
+                id: id.to_owned(),
+                approved: false,
+                changes: Vec::new(),
+                schedule_dirty: *self.schedule_dirty.lock().unwrap(),
+            });
+        }
+        let schedule_commit = request.changes.iter().any(|change| {
+            change.target_label.starts_with("schedule ")
+                && matches!(change.operation.as_str(), "generate" | "reschedule")
+        });
+        let mut receipts = Vec::new();
+        let mut schedule_dirty = *self.schedule_dirty.lock().unwrap();
+        for change in request.changes {
+            let args = change.arguments.clone().unwrap_or_default();
+            let receipt = self.execute_proposed_change(&change, args).await?;
+            schedule_dirty |= matches!(
+                change.target_label.split_whitespace().next(),
+                Some("task" | "habit")
+            );
+            receipts.push(receipt);
+        }
+        if schedule_commit {
+            schedule_dirty = false;
+        }
+        *self.schedule_dirty.lock().unwrap() = schedule_dirty;
+        Ok(ApprovalResult {
+            id: id.to_owned(),
+            approved: true,
+            changes: receipts,
+            schedule_dirty,
+        })
+    }
+
+    async fn execute_proposed_change(
+        &self,
+        change: &ProposedChange,
+        args: Value,
+    ) -> Result<ChangeReceipt, AgentError> {
+        let args = args.as_object().cloned().unwrap_or_default();
+        let target = args
+            .get("task_ref")
+            .or_else(|| args.get("habit_ref"))
+            .and_then(Value::as_str)
+            .unwrap_or("schedule")
+            .to_owned();
+        let target_id =
+            if change.operation == "create" || change.target_label.starts_with("schedule") {
+                String::new()
+            } else if change.target_label.starts_with("task") {
+                self.client
+                    .get_task(&target)
+                    .await
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
+                    .id
+            } else if change.target_label.starts_with("habit") {
+                self.client
+                    .get_habit(&target)
+                    .await
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
+                    .habit
+                    .id
+            } else {
+                target.clone()
+            };
+        if let Some(observed) = &change.observed_updated_at {
+            let current = if change.target_label.starts_with("task") {
+                self.client
+                    .get_task(&target)
+                    .await
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
+                    .updated_at
+            } else {
+                self.client
+                    .get_habit(&target)
+                    .await
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
+                    .habit
+                    .updated_at
+            };
+            if &current != observed {
+                return Err(AgentError::Tool(ToolError::Conflict(
+                    "target changed after proposal".into(),
+                )));
+            }
+        }
+        let result = match (
+            change.target_label.split_whitespace().next(),
+            change.operation.as_str(),
+        ) {
+            (Some("task"), "create") => {
+                self.client
+                    .create_task(
+                        &serde_json::from_value::<CreateTask>(Value::Object(args))
+                            .map_err(|e| AgentError::Tool(ToolError::InvalidArgs(e.to_string())))?,
+                    )
+                    .await
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
+                    .id
+            }
+            (Some("task"), "update") => {
+                self.client
+                    .update_task(
+                        &target_id,
+                        &serde_json::from_value::<UpdateTask>(Value::Object(args))
+                            .map_err(|e| AgentError::Tool(ToolError::InvalidArgs(e.to_string())))?,
+                    )
+                    .await
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
+                    .id
+            }
+            (Some("task"), "delete") => {
+                self.client
+                    .delete_task(&target_id)
+                    .await
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?;
+                target_id.clone()
+            }
+            (Some("habit"), "create") => {
+                self.client
+                    .create_habit(
+                        &serde_json::from_value::<CreateHabit>(Value::Object(args))
+                            .map_err(|e| AgentError::Tool(ToolError::InvalidArgs(e.to_string())))?,
+                    )
+                    .await
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
+                    .id
+            }
+            (Some("habit"), "update") => {
+                self.client
+                    .update_habit(
+                        &target_id,
+                        &serde_json::from_value::<UpdateHabit>(Value::Object(args))
+                            .map_err(|e| AgentError::Tool(ToolError::InvalidArgs(e.to_string())))?,
+                    )
+                    .await
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
+                    .id
+            }
+            (Some("habit"), "delete") => {
+                self.client
+                    .delete_habit(&target_id)
+                    .await
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?;
+                target_id.clone()
+            }
+            (_, "generate") | (_, "reschedule") => {
+                let entries = args.get("_preview_entries").cloned().ok_or_else(|| {
+                    AgentError::Tool(ToolError::InvalidArgs("schedule preview is missing".into()))
+                })?;
+                let request = SaveScheduleRequest {
+                    entries: serde_json::from_value::<Vec<ScheduleEntry>>(entries.clone())
+                        .map_err(|e| AgentError::Tool(ToolError::InvalidArgs(e.to_string())))?,
+                    mark_scheduled_task_ids: entries
+                        .as_array()
+                        .map(|entries| {
+                            entries
+                                .iter()
+                                .filter_map(|entry| entry.get("task_id").and_then(Value::as_str))
+                                .map(ToOwned::to_owned)
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                };
+                self.client
+                    .replace_schedule(&request)
+                    .await
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
+                    .id
+            }
+            _ => {
+                return Err(AgentError::Tool(ToolError::InvalidArgs(
+                    "unsupported proposal".into(),
+                )));
+            }
+        };
+        Ok(ChangeReceipt {
+            operation: change.operation.clone(),
+            target_type: change
+                .target_label
+                .split_whitespace()
+                .next()
+                .unwrap_or("schedule")
+                .to_owned(),
+            target_id: result,
+            ..Default::default()
+        })
     }
 
     async fn build_system_prompt(&self) -> String {

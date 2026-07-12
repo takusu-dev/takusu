@@ -1141,6 +1141,42 @@ async fn reschedule_range_mode() {
 }
 
 #[tokio::test]
+async fn preview_range_mode() {
+    let (state, pool) = setup().await;
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('t1', 'Task1', '2026-06-10T14:00:00Z', 60, 0, '[]', 0, 0, 0.5, 'scheduled')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO schedules (id, schedule, created_at, updated_at) VALUES ('active', '[{\"task_id\":\"t1\",\"start_at\":\"2026-06-10T10:00:00Z\",\"end_at\":\"2026-06-10T11:00:00Z\"}]', datetime('now'), datetime('now'))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let app = build_router(state);
+
+    let req = auth_req_body(
+        Method::POST,
+        "/api/schedule/preview",
+        json!({
+            "mode": "range",
+            "from": "2026-06-10T08:00:00Z",
+            "until": "2026-06-10T18:00:00Z",
+            "sleep": "disabled"
+        }),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(body["entries"].is_array());
+}
+
+#[tokio::test]
 async fn sync_settings_flow() {
     let (state, _) = setup().await;
     let app = build_router(state);

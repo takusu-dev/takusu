@@ -30,6 +30,28 @@ impl ToolError {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProposedChange {
+    pub operation: String,
+    pub target_label: String,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InferredField {
+    pub field: String,
+    pub value: Value,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChangeReceipt {
     pub operation: String,
@@ -49,6 +71,12 @@ pub struct ChangeReceipt {
 pub struct ToolOutput {
     /// JSON or text returned to the LLM.
     pub content: String,
+    /// Short user-facing explanation supplied by the model for an approval request.
+    pub why: Option<String>,
+    pub warnings: Vec<String>,
+    /// Planner writes proposed for application-level approval.
+    pub proposed_changes: Vec<ProposedChange>,
+    pub inferred_fields: Vec<InferredField>,
     /// Change receipts collected for the application UI.
     pub changes: Vec<ChangeReceipt>,
     pub schedule_dirty: bool,
