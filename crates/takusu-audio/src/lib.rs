@@ -1,3 +1,4 @@
+pub mod cartesia;
 pub mod models;
 pub mod record;
 pub mod stt;
@@ -17,6 +18,9 @@ pub use hush::Hush;
 #[cfg(feature = "sherpa")]
 pub use sherpa::{SherpaOnnxAsr, SherpaOnnxAsrConfig, SherpaOnnxModel};
 
+pub use cartesia::{
+    CartesiaGenerationConfig, CartesiaOutputFormat, CartesiaSonic, CartesiaSonicConfig,
+};
 #[cfg(feature = "funasr")]
 pub use funasr::{FunASRClient, FunASRConfig, FunASRError, FunASRMode, default_hotwords};
 pub use models::{ModelCache, ModelError, ModelRegistry, ModelSpec};
