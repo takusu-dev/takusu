@@ -9,6 +9,11 @@ repository.workspace = true
 name = "takusu-audio"
 path = "src/main.rs"
 
+[features]
+default = []
+hush = ["takusu-audio/hush"]
+sherpa = ["takusu-audio/sherpa"]
+
 [dependencies]
 tokio = { workspace = true }
 takusu-audio = { workspace = true }

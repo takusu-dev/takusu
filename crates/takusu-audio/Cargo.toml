@@ -8,6 +8,8 @@ repository.workspace = true
 [features]
 default = ["funasr"]
 funasr = ["tokio-tungstenite", "futures-util"]
+hush = ["dep:ort", "dep:realfft", "dep:num-complex", "dep:ndarray"]
+sherpa = ["dep:sherpa-onnx"]
 
 [dependencies]
 thiserror = { workspace = true }
@@ -18,12 +20,24 @@ serde_json = { workspace = true }
 reqwest = { version = "0.13", features = [
   "json",
   "rustls",
+  "blocking",
 ], default-features = false }
 
 cpal = "0.18.1"
 
+tar = "0.4"
+flate2 = "1"
+bzip2 = "0.4"
+
 tokio-tungstenite = { version = "0.29", optional = true }
 futures-util = { version = "0.3", optional = true }
+
+# ONNX pipeline for hush + funasr (Android-ready)
+ort = { version = "=2.0.0-rc.11", default-features = false, features = ["std", "ndarray", "load-dynamic"], optional = true }
+realfft = { version = "3.5", optional = true }
+num-complex = { version = "0.4", optional = true }
+ndarray = { version = "0.17", optional = true }
+sherpa-onnx = { version = "1.13.4", default-features = false, features = ["shared"], optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }

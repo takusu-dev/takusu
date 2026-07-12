@@ -1,0 +1,308 @@
+//! First-run model download and cache.
+//!
+//! `ModelCache` downloads ONNX model bundles from known URLs and extracts them
+//! to a local directory. It is designed to work on both desktop Linux
+//! (`~/.cache/takusu/models` by default) and Android (when given the app's
+//! cache directory from the Kotlin layer).
+
+use std::fs;
+use std::io::{self, BufReader, Write};
+use std::path::{Path, PathBuf};
+
+use bzip2::read::BzDecoder;
+use flate2::read::GzDecoder;
+use tar::Archive;
+use thiserror::Error;
+
+const HUSH_URL: &str =
+    "https://huggingface.co/weya-ai/hush/resolve/main/onnx/advanced_dfnet16k_model_best_onnx.tar.gz";
+const SHERPA_SENSE_VOICE_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2";
+
+/// Archive compression used by a model bundle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArchiveFormat {
+    /// `.tar.gz`
+    TarGz,
+    /// `.tar.bz2`
+    TarBz2,
+}
+
+/// Description of a downloadable model bundle.
+#[derive(Debug, Clone, Copy)]
+pub struct ModelSpec {
+    pub id: &'static str,
+    pub url: &'static str,
+    pub format: ArchiveFormat,
+    pub expected_files: &'static [&'static str],
+}
+
+const ALL_MODELS: [ModelSpec; 2] = [
+    ModelSpec {
+        id: "hush",
+        url: HUSH_URL,
+        format: ArchiveFormat::TarGz,
+        expected_files: &["config.ini", "enc.onnx", "erb_dec.onnx", "df_dec.onnx"],
+    },
+    ModelSpec {
+        id: "sherpa-sense-voice-int8",
+        url: SHERPA_SENSE_VOICE_URL,
+        format: ArchiveFormat::TarBz2,
+        expected_files: &["tokens.txt", "model.int8.onnx"],
+    },
+];
+
+/// Known downloadable models.
+pub struct ModelRegistry;
+
+impl ModelRegistry {
+    /// Hush denoiser (DeepFilterNet3 ONNX, ~8 MB).
+    pub const fn hush() -> ModelSpec {
+        ALL_MODELS[0]
+    }
+
+    /// Sherpa-ONNX SenseVoice int8 ASR (~160 MB).
+    pub const fn sherpa_sense_voice() -> ModelSpec {
+        ALL_MODELS[1]
+    }
+
+    /// All known models.
+    pub fn all() -> &'static [ModelSpec] {
+        &ALL_MODELS
+    }
+
+    /// Find a model by ID.
+    pub fn find(id: &str) -> Option<ModelSpec> {
+        ALL_MODELS.iter().find(|s| s.id == id).copied()
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum ModelError {
+    #[error("unknown model id: {0}")]
+    UnknownModel(String),
+    #[error("model already present at {0} and `use_cache` is true")]
+    AlreadyCached(PathBuf),
+    #[error("cache directory could not be determined")]
+    CacheDirNotFound,
+    #[error("download failed: {0}")]
+    Download(#[from] reqwest::Error),
+    #[error("io error: {0}")]
+    Io(#[from] io::Error),
+    #[error("archive extraction failed: {0}")]
+    Extract(String),
+    #[error("missing expected files after extraction: {0}")]
+    MissingFiles(String),
+}
+
+/// Cache for downloaded model bundles.
+#[derive(Debug, Clone)]
+pub struct ModelCache {
+    cache_dir: PathBuf,
+}
+
+impl ModelCache {
+    /// Create a cache at an explicit directory.
+    pub fn new(cache_dir: impl AsRef<Path>) -> Self {
+        Self {
+            cache_dir: cache_dir.as_ref().to_path_buf(),
+        }
+    }
+
+    /// Create a cache at the default desktop location.
+    ///
+    /// On Android, the cache directory should be supplied explicitly via
+    /// [`ModelCache::new`] (e.g. from `Context.getCacheDir()`).
+    pub fn default_dir() -> Result<Self, ModelError> {
+        let dir = default_cache_dir().ok_or(ModelError::CacheDirNotFound)?;
+        let dir = dir.join("takusu").join("models");
+        Ok(Self::new(dir))
+    }
+
+    /// Ensure a model is available, downloading it if necessary.
+    ///
+    /// Returns the path to the extracted model directory.
+    pub fn ensure(&self, id: &str) -> Result<PathBuf, ModelError> {
+        let spec = ModelRegistry::find(id).ok_or(ModelError::UnknownModel(id.to_string()))?;
+        let model_dir = self.cache_dir.join(spec.id);
+        if model_dir.is_dir() && has_expected_files(&model_dir, spec.expected_files) {
+            return Ok(model_dir);
+        }
+        self.download_and_extract(&spec)?;
+        if !has_expected_files(&model_dir, spec.expected_files) {
+            return Err(ModelError::MissingFiles(model_dir.display().to_string()));
+        }
+        Ok(model_dir)
+    }
+
+    /// Force a re-download of a model.
+    pub fn download(&self, id: &str) -> Result<PathBuf, ModelError> {
+        let spec = ModelRegistry::find(id).ok_or(ModelError::UnknownModel(id.to_string()))?;
+        let model_dir = self.cache_dir.join(spec.id);
+        if model_dir.is_dir() {
+            fs::remove_dir_all(&model_dir)?;
+        }
+        self.download_and_extract(&spec)?;
+        Ok(model_dir)
+    }
+
+    fn download_and_extract(&self, spec: &ModelSpec) -> Result<(), ModelError> {
+        let model_dir = self.cache_dir.join(spec.id);
+        fs::create_dir_all(&model_dir)?;
+
+        let archive_name = archive_name_from_url(spec.url);
+        let archive_path = self.cache_dir.join(format!("{}.{}", spec.id, archive_name));
+
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(600))
+            .build()?;
+        let request = client.get(spec.url);
+        let mut response = request.send()?;
+        if !response.status().is_success() {
+            return Err(ModelError::Download(
+                response.error_for_status().unwrap_err(),
+            ));
+        }
+
+        let mut file = fs::File::create(&archive_path)?;
+        response.copy_to(&mut file)?;
+        file.flush()?;
+        drop(file);
+
+        extract_archive(&archive_path, &model_dir, spec.format)?;
+
+        // Some archives have a single top-level directory. If the model dir
+        // contains only one directory and no expected files, move the contents
+        // up one level.
+        if let Some(top) = single_child_directory(&model_dir)
+            && !has_expected_files_direct(&model_dir, spec.expected_files)
+        {
+            let temp = self.cache_dir.join(format!("{}.tmp", spec.id));
+            if temp.exists() {
+                fs::remove_dir_all(&temp)?;
+            }
+            fs::rename(&model_dir, &temp)?;
+            fs::create_dir(&model_dir)?;
+            for entry in fs::read_dir(temp.join(top.file_name().unwrap_or_default()))? {
+                let entry = entry?;
+                let from = entry.path();
+                let to = model_dir.join(entry.file_name());
+                fs::rename(from, to)?;
+            }
+            fs::remove_dir_all(&temp)?;
+        }
+
+        fs::remove_file(&archive_path)?;
+        Ok(())
+    }
+}
+
+fn default_cache_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("TAKUSU_MODEL_CACHE_DIR") {
+        return Some(PathBuf::from(dir));
+    }
+    if let Ok(dir) = std::env::var("XDG_CACHE_HOME") {
+        return Some(PathBuf::from(dir));
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return Some(PathBuf::from(home).join(".cache"));
+    }
+    if let Ok(user) = std::env::var("USERPROFILE") {
+        return Some(PathBuf::from(user).join("AppData").join("Local"));
+    }
+    None
+}
+
+fn archive_name_from_url(url: &str) -> String {
+    url.rsplit('/')
+        .next()
+        .and_then(|s| s.split('?').next())
+        .unwrap_or("archive")
+        .to_string()
+}
+
+fn extract_archive(
+    archive_path: &Path,
+    dest_dir: &Path,
+    format: ArchiveFormat,
+) -> Result<(), ModelError> {
+    let file = fs::File::open(archive_path)?;
+    let reader = BufReader::new(file);
+    fs::create_dir_all(dest_dir)?;
+
+    match format {
+        ArchiveFormat::TarGz => {
+            let mut archive = Archive::new(GzDecoder::new(reader));
+            unpack_entries(&mut archive, dest_dir)?;
+        }
+        ArchiveFormat::TarBz2 => {
+            let mut archive = Archive::new(BzDecoder::new(reader));
+            unpack_entries(&mut archive, dest_dir)?;
+        }
+    }
+    Ok(())
+}
+
+fn unpack_entries<R: std::io::Read>(
+    archive: &mut Archive<R>,
+    dest_dir: &Path,
+) -> Result<(), ModelError> {
+    for entry in archive.entries()? {
+        let mut entry = entry.map_err(|e| ModelError::Extract(e.to_string()))?;
+        let path = entry.path().map_err(|e| ModelError::Extract(e.to_string()))?;
+        if !is_safe_archive_path(&path) {
+            continue;
+        }
+        entry
+            .unpack_in(dest_dir)
+            .map_err(|e| ModelError::Extract(e.to_string()))?;
+    }
+    Ok(())
+}
+
+fn is_safe_archive_path(path: &Path) -> bool {
+    if path.is_absolute() {
+        return false;
+    }
+    for comp in path.components() {
+        if !matches!(comp, std::path::Component::Normal(_)) {
+            return false;
+        }
+    }
+    true
+}
+
+fn has_expected_files(dir: &Path, expected: &[&str]) -> bool {
+    expected.iter().all(|name| find_file_recursive(dir, name).is_some())
+}
+
+fn has_expected_files_direct(dir: &Path, expected: &[&str]) -> bool {
+    expected.iter().all(|name| dir.join(name).exists())
+}
+
+fn find_file_recursive(dir: &Path, name: &str) -> Option<PathBuf> {
+    let path = dir.join(name);
+    if path.exists() {
+        return Some(path);
+    }
+    for entry in fs::read_dir(dir).ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        if path.is_dir() && let Some(found) = find_file_recursive(&path, name) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn single_child_directory(dir: &Path) -> Option<PathBuf> {
+    let entries: Vec<_> = fs::read_dir(dir).ok()?.flatten().collect();
+    if entries.len() != 1 {
+        return None;
+    }
+    let entry = entries.into_iter().next()?;
+    if entry.path().is_dir() {
+        Some(entry.path())
+    } else {
+        None
+    }
+}
