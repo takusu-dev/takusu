@@ -3252,6 +3252,7 @@ dependencies = [
 name = "takusu-audio"
 version = "0.20260709.2"
 dependencies = [
+ "async-trait",
  "cpal",
  "futures-util",
  "reqwest",

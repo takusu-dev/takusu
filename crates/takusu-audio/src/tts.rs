@@ -129,6 +129,18 @@ impl TtsClient {
     }
 }
 
+#[async_trait::async_trait]
+pub trait TextToSpeech: Send + Sync {
+    async fn synthesize(&self, request: &TtsRequest) -> Result<Vec<u8>, TtsError>;
+}
+
+#[async_trait::async_trait]
+impl TextToSpeech for TtsClient {
+    async fn synthesize(&self, request: &TtsRequest) -> Result<Vec<u8>, TtsError> {
+        self.synthesize(request).await
+    }
+}
+
 /// Pick the first audio file in `refs_dir` and return its path and stem.
 pub fn pick_reference_voice(refs_dir: &Path) -> std::io::Result<Option<(PathBuf, String)>> {
     if !refs_dir.is_dir() {

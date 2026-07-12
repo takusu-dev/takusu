@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio_tungstenite::tungstenite::Message;
 
+use crate::stt::{SpeechToText, SttError};
+
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const RESULT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
@@ -165,6 +167,26 @@ impl FunASRClient {
             .await,
             Ok(Ok(_))
         )
+    }
+}
+
+impl From<FunASRError> for SttError {
+    fn from(e: FunASRError) -> Self {
+        match e {
+            FunASRError::WebSocket(e) => Self::Connection(e.to_string()),
+            FunASRError::Connection(msg) => Self::Connection(msg),
+            FunASRError::Server(msg) => Self::Server(msg),
+            FunASRError::NoResult => Self::NoResult,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl SpeechToText for FunASRClient {
+    async fn transcribe(&self, audio: &[f32]) -> Result<String, SttError> {
+        FunASRClient::transcribe(self, audio)
+            .await
+            .map_err(Into::into)
     }
 }
 
