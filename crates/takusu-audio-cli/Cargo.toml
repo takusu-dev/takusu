@@ -13,6 +13,7 @@ path = "src/main.rs"
 default = []
 hush = ["takusu-audio/hush"]
 sherpa = ["takusu-audio/sherpa"]
+kokoro = ["takusu-audio/kokoro"]
 
 [dependencies]
 tokio = { workspace = true }

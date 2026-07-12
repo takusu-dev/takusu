@@ -24,7 +24,7 @@ enum SherpaModel {
 #[command(
     name = "takusu-audio",
     version,
-    about = "Audio recording and speech-to-text CLI"
+    about = "Audio recording, speech-to-text, and text-to-speech CLI"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -162,6 +162,33 @@ enum Commands {
         /// Do not restore the original loudness after denoising
         #[arg(long, default_value_t = false)]
         no_restore: bool,
+    },
+
+    #[cfg(feature = "kokoro")]
+    /// Synthesize text to speech with Kokoro
+    Speak {
+        /// Text to synthesize
+        text: String,
+
+        /// Output WAV file
+        #[arg(short, long, default_value = "out.wav")]
+        output: PathBuf,
+
+        /// Path to Kokoro model directory (omit to download on first run)
+        #[arg(long)]
+        model_dir: Option<PathBuf>,
+
+        /// TTS backend (kokoro)
+        #[arg(long, default_value = "kokoro")]
+        backend: String,
+
+        /// Speaker ID (sid) for Kokoro
+        #[arg(long, default_value_t = 0)]
+        voice: i32,
+
+        /// Speech speed
+        #[arg(long, default_value_t = 1.0)]
+        speed: f32,
     },
 }
 
@@ -357,6 +384,90 @@ async fn main() {
             });
             eprintln!("Done in {:.1}s.", start.elapsed().as_secs_f64());
             write_wav(&output, &enhanced, 16000);
+            eprintln!("Saved to {}", output.display());
+        }
+
+        #[cfg(feature = "kokoro")]
+        Commands::Speak {
+            text,
+            output,
+            model_dir,
+            backend,
+            voice,
+            speed,
+        } => {
+            use std::str::FromStr;
+
+            use takusu_audio::{TextToSpeech, TtsBackend, TtsOptions, TtsRequest};
+
+            TtsBackend::from_str(&backend)
+                .map(|b| {
+                    if b != TtsBackend::Kokoro {
+                        eprintln!("Only the Kokoro TTS backend is supported");
+                        std::process::exit(1);
+                    }
+                })
+                .unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                });
+
+            let model_dir = match model_dir {
+                Some(path) => path,
+                None => {
+                    eprintln!("Downloading Kokoro model on first run...");
+                    let path = tokio::task::spawn_blocking(|| {
+                        let cache =
+                            takusu_audio::ModelCache::default_dir().map_err(|e| e.to_string())?;
+                        cache.ensure("kokoro-en-v0_19").map_err(|e| e.to_string())
+                    })
+                    .await
+                    .unwrap_or_else(|e| {
+                        eprintln!("Model download error: {e}");
+                        std::process::exit(1);
+                    })
+                    .unwrap_or_else(|e| {
+                        eprintln!("Model cache error: {e}");
+                        std::process::exit(1);
+                    });
+                    eprintln!("Kokoro model cached at {}", path.display());
+                    path
+                }
+            };
+
+            let kokoro = takusu_audio::Kokoro::from_model_dir(&model_dir).unwrap_or_else(|e| {
+                eprintln!("Kokoro model error: {e}");
+                std::process::exit(1);
+            });
+
+            let request = TtsRequest {
+                text,
+                voice: Some(voice.to_string()),
+                reference_audio_path: None,
+                options: TtsOptions {
+                    response_format: Some("wav".to_string()),
+                    speed: Some(speed),
+                },
+            };
+
+            eprintln!("Synthesizing with Kokoro...");
+            let start = std::time::Instant::now();
+            let wav = tokio::time::timeout(Duration::from_secs(180), kokoro.synthesize(&request))
+                .await
+                .unwrap_or_else(|e| {
+                    eprintln!("Kokoro synthesis timed out: {e}");
+                    std::process::exit(1);
+                })
+                .unwrap_or_else(|e| {
+                    eprintln!("Kokoro synthesis error: {e}");
+                    std::process::exit(1);
+                });
+            eprintln!("Done in {:.1}s.", start.elapsed().as_secs_f64());
+
+            std::fs::write(&output, &wav).unwrap_or_else(|e| {
+                eprintln!("Failed to write output WAV: {e}");
+                std::process::exit(1);
+            });
             eprintln!("Saved to {}", output.display());
         }
     }

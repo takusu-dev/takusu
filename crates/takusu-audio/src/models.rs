@@ -14,9 +14,10 @@ use flate2::read::GzDecoder;
 use tar::Archive;
 use thiserror::Error;
 
-const HUSH_URL: &str =
-    "https://huggingface.co/weya-ai/hush/resolve/main/onnx/advanced_dfnet16k_model_best_onnx.tar.gz";
+const HUSH_URL: &str = "https://huggingface.co/weya-ai/hush/resolve/main/onnx/advanced_dfnet16k_model_best_onnx.tar.gz";
 const SHERPA_SENSE_VOICE_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2";
+const KOKORO_EN_V0_19_URL: &str =
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2";
 
 /// Archive compression used by a model bundle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +37,7 @@ pub struct ModelSpec {
     pub expected_files: &'static [&'static str],
 }
 
-const ALL_MODELS: [ModelSpec; 2] = [
+const ALL_MODELS: [ModelSpec; 3] = [
     ModelSpec {
         id: "hush",
         url: HUSH_URL,
@@ -48,6 +49,12 @@ const ALL_MODELS: [ModelSpec; 2] = [
         url: SHERPA_SENSE_VOICE_URL,
         format: ArchiveFormat::TarBz2,
         expected_files: &["tokens.txt", "model.int8.onnx"],
+    },
+    ModelSpec {
+        id: "kokoro-en-v0_19",
+        url: KOKORO_EN_V0_19_URL,
+        format: ArchiveFormat::TarBz2,
+        expected_files: &["model.onnx", "voices.bin", "tokens.txt", "phontab"],
     },
 ];
 
@@ -63,6 +70,11 @@ impl ModelRegistry {
     /// Sherpa-ONNX SenseVoice int8 ASR (~160 MB).
     pub const fn sherpa_sense_voice() -> ModelSpec {
         ALL_MODELS[1]
+    }
+
+    /// Kokoro English TTS (sherpa-onnx, ~345 MB).
+    pub const fn kokoro_en_v0_19() -> ModelSpec {
+        ALL_MODELS[2]
     }
 
     /// All known models.
@@ -248,7 +260,9 @@ fn unpack_entries<R: std::io::Read>(
 ) -> Result<(), ModelError> {
     for entry in archive.entries()? {
         let mut entry = entry.map_err(|e| ModelError::Extract(e.to_string()))?;
-        let path = entry.path().map_err(|e| ModelError::Extract(e.to_string()))?;
+        let path = entry
+            .path()
+            .map_err(|e| ModelError::Extract(e.to_string()))?;
         if !is_safe_archive_path(&path) {
             continue;
         }
@@ -272,14 +286,16 @@ fn is_safe_archive_path(path: &Path) -> bool {
 }
 
 fn has_expected_files(dir: &Path, expected: &[&str]) -> bool {
-    expected.iter().all(|name| find_file_recursive(dir, name).is_some())
+    expected
+        .iter()
+        .all(|name| find_file_recursive(dir, name).is_some())
 }
 
 fn has_expected_files_direct(dir: &Path, expected: &[&str]) -> bool {
     expected.iter().all(|name| dir.join(name).exists())
 }
 
-fn find_file_recursive(dir: &Path, name: &str) -> Option<PathBuf> {
+pub(crate) fn find_file_recursive(dir: &Path, name: &str) -> Option<PathBuf> {
     let path = dir.join(name);
     if path.exists() {
         return Some(path);
@@ -287,7 +303,9 @@ fn find_file_recursive(dir: &Path, name: &str) -> Option<PathBuf> {
     for entry in fs::read_dir(dir).ok()? {
         let entry = entry.ok()?;
         let path = entry.path();
-        if path.is_dir() && let Some(found) = find_file_recursive(&path, name) {
+        if path.is_dir()
+            && let Some(found) = find_file_recursive(&path, name)
+        {
             return Some(found);
         }
     }

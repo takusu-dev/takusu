@@ -10,6 +10,7 @@ default = ["funasr"]
 funasr = ["tokio-tungstenite", "futures-util"]
 hush = ["dep:ort", "dep:realfft", "dep:num-complex", "dep:ndarray"]
 sherpa = ["dep:sherpa-onnx"]
+kokoro = ["dep:sherpa-onnx", "dep:hound"]
 
 [dependencies]
 thiserror = { workspace = true }
@@ -37,6 +38,7 @@ realfft = { version = "3.5", optional = true }
 num-complex = { version = "0.4", optional = true }
 ndarray = { version = "0.17", optional = true }
 sherpa-onnx = { version = "1.13.4", default-features = false, features = ["shared"], optional = true }
+hound = { version = "3.5", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }

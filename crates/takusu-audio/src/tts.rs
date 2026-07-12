@@ -8,22 +8,26 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 /// TTS backend identifier.
-///
-/// Currently empty while the legacy Irodori-TTS backend is being removed.
-/// New backends will add variants here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TtsBackend {}
+pub enum TtsBackend {
+    Kokoro,
+}
 
 impl std::fmt::Display for TtsBackend {
-    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match *self {}
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TtsBackend::Kokoro => write!(f, "kokoro"),
+        }
     }
 }
 
 impl std::str::FromStr for TtsBackend {
     type Err = String;
-    fn from_str(_s: &str) -> Result<Self, Self::Err> {
-        Err("no TTS backends are currently available".to_string())
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "kokoro" | "kokoro-onnx" => Ok(TtsBackend::Kokoro),
+            _ => Err(format!("unknown TTS backend: {s}")),
+        }
     }
 }
 
@@ -32,6 +36,7 @@ pub struct TtsConfig {
     pub backend: TtsBackend,
     pub url: String,
     pub api_key: Option<String>,
+    pub model_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -56,6 +61,8 @@ pub enum TtsError {
     Api { status: u16, message: String },
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("other error: {0}")]
+    Other(String),
 }
 
 #[async_trait::async_trait]
