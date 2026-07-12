@@ -25,6 +25,9 @@ impl From<reqwest::Error> for ClientError {
     }
 }
 
+impl std::error::Error for ClientError {}
+
+#[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
     base_url: String,
@@ -87,8 +90,9 @@ impl Client {
     }
 
     pub async fn get_task(&self, id: &str) -> Result<TaskRow, ClientError> {
+        let encoded_id = id.replace('#', "%23");
         let resp = self
-            .request(reqwest::Method::GET, &format!("/api/tasks/{id}"))
+            .request(reqwest::Method::GET, &format!("/api/tasks/{encoded_id}"))
             .await
             .send()
             .await?;
