@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod llm;
 pub mod tool;
 pub mod tools;
@@ -16,6 +17,7 @@ pub struct AgentConfig {
     pub llm: llm::LlmConfig,
     pub server: ServerConfig,
     pub skills: SkillsConfig,
+    pub audio: audio::AudioConfig,
 }
 
 impl AgentConfig {
@@ -132,7 +134,7 @@ pub struct TurnResult {
 /// Serialized work turn result. Holds the assistant response text, any change receipts produced
 /// by tool calls, and whether the schedule needs recomputation.
 pub struct AgentSession {
-    config: AgentConfig,
+    pub(crate) config: AgentConfig,
     registry: ToolRegistry,
     client: takusu_client::Client,
     llm: Arc<dyn llm::LlmClient + Send + Sync>,

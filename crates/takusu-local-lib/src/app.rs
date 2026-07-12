@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
-use takusu_core::{NormalDist, Planner, Point, RescheduleRange, SleepConfig, Task as CoreTask, WorkloadConfig};
+use takusu_core::{
+    NormalDist, Planner, Point, RescheduleRange, SleepConfig, Task as CoreTask, WorkloadConfig,
+};
 use takusu_storage::{
     CreateHabit, CreateHabitPause, CreateTask, GoogleCalEventRow, HabitDetail, HabitPauseRow,
     HabitRow, HabitStepInput, HabitStepRow, SaveScheduleRequest, ScheduleEntry, ScheduleRow,
@@ -1133,8 +1135,9 @@ impl TakusuApp {
         );
 
         let workload = parse_workload(&settings);
-        let (planner, id_map, id_to_idx) =
-            self.build_planner(now_point, sleep, workload, &active, &tz).await?;
+        let (planner, id_map, id_to_idx) = self
+            .build_planner(now_point, sleep, workload, &active, &tz)
+            .await?;
 
         // Note: stability penalty (#211) is intentionally NOT applied here.
         // reschedule is a user-initiated partial reconfiguration — the user

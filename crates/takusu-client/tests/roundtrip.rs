@@ -170,7 +170,12 @@ fn update_settings_serialization() {
     assert_eq!(json["tz"], "Asia/Tokyo");
     assert_eq!(json["sleep_start"], "23:00");
     assert!(!json.as_object().unwrap().contains_key("sleep_end"));
-    assert!(!json.as_object().unwrap().contains_key("comfortable_minutes"));
+    assert!(
+        !json
+            .as_object()
+            .unwrap()
+            .contains_key("comfortable_minutes")
+    );
     assert!(!json.as_object().unwrap().contains_key("maximum_minutes"));
 }
 

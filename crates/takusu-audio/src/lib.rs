@@ -1,5 +1,6 @@
 pub mod cartesia;
 pub mod models;
+pub mod play;
 pub mod record;
 pub mod stt;
 pub mod tts;
