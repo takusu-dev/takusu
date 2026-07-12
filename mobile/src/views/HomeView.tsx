@@ -391,21 +391,16 @@ export function HomeView() {
   // Build parallel groups: host (allows_parallel=true) → overlapping guests
   // (parallelizable=true). Each guest is assigned to at most one host (the
   // first one found) to avoid duplicate rendering across groups.
-  // Only hosts whose schedule end is in the future (upcoming) form groups —
-  // a past host would render in the past section (no grouping), so its
-  // guests must not be claimed or they'd vanish from the upcoming list.
+  // Active hosts (in_progress or scheduled) form groups regardless of end
+  // time, so scheduled tasks with a past end time remain visible in the main
+  // list and their guests are not orphaned. (#472)
   const { parallelGroups, groupedGuestIds } = useMemo(() => {
     const groups = new Map<string, TaskRow[]>();
     const guestIds = new Set<string>();
-    const now = Date.now();
     const hosts = tasks.filter(
       (t) =>
         t.allows_parallel &&
-        t.status !== 'pending' &&
-        t.status !== 'completed' &&
-        t.status !== 'skipped' &&
-        (t.status === 'in_progress' ||
-          new Date(scheduleMap.get(t.id)?.end_at ?? t.end_at).getTime() >= now),
+        (t.status === 'in_progress' || t.status === 'scheduled'),
     );
     const guests = tasks.filter(
       (t) =>
@@ -477,8 +472,10 @@ export function HomeView() {
     // #254: 完了/スキップ済みタスクは end_at に関わらず過去セクションへ。
     // fixed タスクは完了後も schedule の end_at が未来になりうるため、
     // status ベースで過去判定しないと upcoming に残り続ける。
+    // #472: scheduled タスクも過去扱いにしない。未完了なのでメインリストに残す。
     const isPast = (t: TaskRow): boolean => {
       if (t.status === 'in_progress') return false;
+      if (t.status === 'scheduled') return false;
       if (t.status === 'completed' || t.status === 'skipped') return true;
       const entry = scheduleMap.get(t.id);
       const end = entry?.end_at ?? t.end_at;
@@ -602,6 +599,7 @@ export function HomeView() {
     return tasks.filter((t) => {
       if (t.status === 'pending') return false;
       if (t.status === 'in_progress') return false;
+      if (t.status === 'scheduled') return false;
       if (t.status === 'completed' || t.status === 'skipped') return true;
       const entry = scheduleMap.get(t.id);
       const end = entry?.end_at ?? t.end_at;
