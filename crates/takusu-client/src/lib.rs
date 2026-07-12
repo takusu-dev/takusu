@@ -413,6 +413,42 @@ impl Client {
 
     // ── Schedule ──
 
+    pub async fn preview_schedule(
+        &self,
+        body: &SchedulePreviewRequest,
+    ) -> Result<serde_json::Value, ClientError> {
+        let resp = self
+            .request(reqwest::Method::POST, "/api/schedule/preview")
+            .await
+            .json(body)
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn replace_schedule(
+        &self,
+        body: &SaveScheduleRequest,
+    ) -> Result<ScheduleRow, ClientError> {
+        let resp = self
+            .request(reqwest::Method::POST, "/api/schedule/replace")
+            .await
+            .json(body)
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
     pub async fn get_schedule(&self) -> Result<ScheduleRow, ClientError> {
         let resp = self
             .request(reqwest::Method::GET, "/api/schedule")
@@ -700,7 +736,7 @@ pub struct TaskRow {
     pub updated_at: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CreateTask {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -729,7 +765,7 @@ pub struct CreateTask {
     pub habit_step_id: Option<String>,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UpdateTask {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -795,7 +831,7 @@ pub struct HabitRow {
     pub updated_at: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CreateHabit {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -818,7 +854,7 @@ pub struct CreateHabit {
     pub window_mode: Option<String>,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UpdateHabit {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -945,6 +981,28 @@ pub struct DependencyAnalysisResponse {
     pub redundant: Vec<RedundantDependency>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SchedulePreviewRequest {
+    pub mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub until: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub pinned: Vec<String>,
+    #[serde(default = "default_sleep")]
+    pub sleep: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SaveScheduleRequest {
+    pub entries: Vec<ScheduleEntry>,
+    #[serde(default)]
+    pub mark_scheduled_task_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleRow {
     pub id: String,
@@ -960,7 +1018,7 @@ pub struct ScheduleEntry {
     pub end_at: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct GenerateSchedule {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_ids: Option<Vec<String>>,
@@ -973,7 +1031,7 @@ fn default_sleep() -> String {
     "recommended".to_string()
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Reschedule {
     pub mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]

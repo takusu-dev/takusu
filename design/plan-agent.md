@@ -69,8 +69,16 @@ takusu server/storage/client extensions
 └── /api/tasks/:id/work/*, /progress, and /split
 ```
 
+Schedule preview is an application/planner concern, not a storage concern. The local server and
+`takusu-local-lib` run `takusu-core` to calculate a candidate without replacing the active schedule.
+The Cloudflare Worker is a storage backend for D1: it exposes schedule read/save operations used by
+`WorkersStorage`, but it must not run planner preview logic. The approval flow sends the accepted
+candidate back through the local application layer, which atomically saves it through the selected
+storage backend.
+
 The current latest local migration is `013_habit_task_display_id.sql`; therefore this plan starts
-at 014. Both SQLite/local and D1/Worker implementations must expose the same behavior.
+at 014. SQLite/local and D1/Worker must expose the same storage behavior, while planner-only
+operations remain in the application layer.
 
 ### Runtime data flow
 

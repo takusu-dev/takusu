@@ -491,6 +491,26 @@ pub struct RescheduleInput {
     pub sleep: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct SchedulePreviewInput {
+    pub mode: String,
+    pub from: Option<String>,
+    pub until: Option<String>,
+    pub task_ids: Option<Vec<String>>,
+    pub pinned: Vec<String>,
+    pub sleep: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SchedulePreviewOutput {
+    pub entries: Vec<ScheduleEntry>,
+    pub unscheduled_task_ids: Vec<String>,
+    pub displaced_task_ids: Vec<String>,
+    pub sleep_minutes_before: i64,
+    pub sleep_minutes_after: i64,
+    pub warnings: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct MoveEntryOutput {
     pub task_id: String,
@@ -1098,6 +1118,130 @@ impl TakusuApp {
 
         if let Err(e) = self.do_sync().await {
             tracing::warn!("google calendar sync failed: {e}");
+        }
+        Ok(result)
+    }
+
+    pub async fn preview_schedule(
+        &self,
+        input: &SchedulePreviewInput,
+    ) -> Result<SchedulePreviewOutput, AppError> {
+        let settings = self.get_settings_or_default().await?;
+        let sleep = parse_sleep(&input.sleep, &settings);
+        let from_point = Point::from_timestamp(Timestamp::now(), 5);
+        let task_rows = self.load_task_rows(input.task_ids.as_ref()).await?;
+        let tz = jiff::tz::TimeZone::get(&settings.tz).unwrap_or(jiff::tz::TimeZone::UTC);
+        let habit_rows = self.sync_habit_tasks(&tz).await?;
+        let all_rows: Vec<TaskRow> = task_rows
+            .into_iter()
+            .chain(habit_rows)
+            .filter(|task| task.status == "pending" || task.status == "scheduled")
+            .collect();
+        let workload = parse_workload(&settings);
+        let (mut planner, id_map, id_to_idx) = self
+            .build_planner(from_point, sleep, workload, &all_rows, &tz)
+            .await?;
+        let existing_entries = self
+            .storage
+            .get_schedule()
+            .await
+            .map_err(storage_to_app)?
+            .and_then(|row| serde_json::from_str::<Vec<ScheduleEntry>>(&row.schedule).ok())
+            .unwrap_or_default();
+        let current_schedule = existing_entries
+            .iter()
+            .filter_map(|entry| {
+                Some((
+                    iso_to_point(&entry.start_at, &tz).ok()?,
+                    iso_to_point(&entry.end_at, &tz).ok()?,
+                    *id_to_idx.get(&entry.task_id)?,
+                ))
+            })
+            .collect::<Vec<_>>();
+        let plan = match input.mode.as_str() {
+            "full" => {
+                if !current_schedule.is_empty() {
+                    planner.set_previous_schedule(&current_schedule);
+                }
+                planner.plan()
+            }
+            "tasks" => {
+                if !current_schedule.is_empty() {
+                    planner.set_previous_schedule(&current_schedule);
+                }
+                let task_ids = input.task_ids.as_ref().ok_or_else(|| {
+                    AppError::BadRequest("task_ids is required for tasks mode".into())
+                })?;
+                let pinned = current_schedule
+                    .iter()
+                    .filter(|(_, _, idx)| {
+                        !task_ids.contains(&id_map[*idx]) || input.pinned.contains(&id_map[*idx])
+                    })
+                    .copied()
+                    .collect::<Vec<_>>();
+                planner.plan_partial(&pinned)
+            }
+            "range" => {
+                let from_str = input.from.as_ref().ok_or_else(|| {
+                    AppError::BadRequest("from is required for range mode".into())
+                })?;
+                let until_str = input.until.as_ref().ok_or_else(|| {
+                    AppError::BadRequest("until is required for range mode".into())
+                })?;
+                let range = RescheduleRange {
+                    from: iso_to_point(from_str, &tz)?,
+                    until: iso_to_point(until_str, &tz)?,
+                };
+                let extra_pinned: Vec<usize> = input
+                    .pinned
+                    .iter()
+                    .filter_map(|pid| id_to_idx.get(pid).copied())
+                    .collect();
+                planner.plan_in_range(&range, &current_schedule, &extra_pinned)
+            }
+            _ => {
+                return Err(AppError::BadRequest(format!(
+                    "unknown mode: {}",
+                    input.mode
+                )));
+            }
+        };
+        let entries = self.plan_to_entries(&plan, &id_map);
+        let scheduled = entries
+            .iter()
+            .map(|entry| entry.task_id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        let all_ids = all_rows
+            .iter()
+            .map(|task| task.id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        let unscheduled_task_ids = all_ids.difference(&scheduled).cloned().collect();
+        let displaced_task_ids = existing_entries
+            .iter()
+            .map(|entry| entry.task_id.clone())
+            .filter(|id| !scheduled.contains(id))
+            .collect();
+        Ok(SchedulePreviewOutput {
+            entries,
+            unscheduled_task_ids,
+            displaced_task_ids,
+            sleep_minutes_before: 0,
+            sleep_minutes_after: 0,
+            warnings: Vec::new(),
+        })
+    }
+
+    pub async fn replace_schedule(
+        &self,
+        request: &SaveScheduleRequest,
+    ) -> Result<ScheduleRow, AppError> {
+        let result = self
+            .storage
+            .save_schedule(request)
+            .await
+            .map_err(storage_to_app)?;
+        if let Err(error) = self.do_sync().await {
+            tracing::warn!("google calendar sync failed: {error}");
         }
         Ok(result)
     }
