@@ -3216,6 +3216,7 @@ version = "0.20260709.2"
 dependencies = [
  "async-trait",
  "axum",
+ "clap",
  "config",
  "jiff",
  "rand 0.10.1",

@@ -796,4 +796,24 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&temp);
     }
+
+    #[tokio::test]
+    async fn text_mode_run_turn_returns_text_and_no_changes() {
+        let registry = ToolRegistry::new();
+        let mock = MockLlm {
+            calls: Mutex::new(Vec::new()),
+            responses: Mutex::new(vec![llm::LlmResponse {
+                content: llm::LlmResponseContent::Text("今日は会議が2つあります".to_string()),
+                prompt_tokens: None,
+                finish_reason: None,
+            }]),
+        };
+
+        let agent = AgentSession::new(AgentConfig::default(), registry, mock);
+        let result = agent.run_turn("今日の予定は？").await.unwrap();
+
+        assert_eq!(result.text, "今日は会議が2つあります");
+        assert!(result.changes.is_empty());
+        assert!(!result.schedule_dirty);
+    }
 }
