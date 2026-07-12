@@ -105,7 +105,11 @@ impl HushConfig {
 
         let default = HushConfig::default();
         let target_rms_f = parse(&map, "hush/target_rms", default.target_rms.unwrap_or(0.0));
-        let target_rms = if target_rms_f > 0.0 { Some(target_rms_f) } else { None };
+        let target_rms = if target_rms_f > 0.0 {
+            Some(target_rms_f)
+        } else {
+            None
+        };
 
         Ok(HushConfig {
             sr: parse(&map, "df/sr", 16000),
@@ -583,7 +587,9 @@ fn find_onnxruntime_dylib() -> Option<PathBuf> {
         std::env::consts::DLL_PREFIX,
         std::env::consts::DLL_SUFFIX
     );
-    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from))?;
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(PathBuf::from))?;
     for dir in [exe_dir.clone(), exe_dir.parent().map(PathBuf::from)?] {
         let candidate = dir.join(&name);
         if candidate.exists() {

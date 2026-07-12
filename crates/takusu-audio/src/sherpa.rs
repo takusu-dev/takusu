@@ -91,7 +91,12 @@ impl SherpaOnnxAsr {
                     })?;
                 offline_config.model_config.sense_voice = OfflineSenseVoiceModelConfig {
                     model: Some(model.to_string_lossy().to_string()),
-                    language: Some(config.language.clone().unwrap_or_else(|| "auto".to_string())),
+                    language: Some(
+                        config
+                            .language
+                            .clone()
+                            .unwrap_or_else(|| "auto".to_string()),
+                    ),
                     use_itn: config.use_itn,
                 };
             }

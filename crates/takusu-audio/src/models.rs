@@ -14,8 +14,7 @@ use flate2::read::GzDecoder;
 use tar::Archive;
 use thiserror::Error;
 
-const HUSH_URL: &str =
-    "https://huggingface.co/weya-ai/hush/resolve/main/onnx/advanced_dfnet16k_model_best_onnx.tar.gz";
+const HUSH_URL: &str = "https://huggingface.co/weya-ai/hush/resolve/main/onnx/advanced_dfnet16k_model_best_onnx.tar.gz";
 const SHERPA_SENSE_VOICE_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2";
 
 /// Archive compression used by a model bundle.
@@ -248,7 +247,9 @@ fn unpack_entries<R: std::io::Read>(
 ) -> Result<(), ModelError> {
     for entry in archive.entries()? {
         let mut entry = entry.map_err(|e| ModelError::Extract(e.to_string()))?;
-        let path = entry.path().map_err(|e| ModelError::Extract(e.to_string()))?;
+        let path = entry
+            .path()
+            .map_err(|e| ModelError::Extract(e.to_string()))?;
         if !is_safe_archive_path(&path) {
             continue;
         }
@@ -272,7 +273,9 @@ fn is_safe_archive_path(path: &Path) -> bool {
 }
 
 fn has_expected_files(dir: &Path, expected: &[&str]) -> bool {
-    expected.iter().all(|name| find_file_recursive(dir, name).is_some())
+    expected
+        .iter()
+        .all(|name| find_file_recursive(dir, name).is_some())
 }
 
 fn has_expected_files_direct(dir: &Path, expected: &[&str]) -> bool {
@@ -287,7 +290,9 @@ fn find_file_recursive(dir: &Path, name: &str) -> Option<PathBuf> {
     for entry in fs::read_dir(dir).ok()? {
         let entry = entry.ok()?;
         let path = entry.path();
-        if path.is_dir() && let Some(found) = find_file_recursive(&path, name) {
+        if path.is_dir()
+            && let Some(found) = find_file_recursive(&path, name)
+        {
             return Some(found);
         }
     }
