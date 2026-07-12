@@ -1,10 +1,14 @@
 //! Text-to-speech provider trait and shared request/response types.
 //!
-//! Backends other than the legacy Irodori-TTS implementation will be added
-//! here as concrete `TextToSpeech` implementors.
+//! `TextToSpeech` returns a chunked byte stream so callers can play audio
+//! incrementally. The default `synthesize` method collects that stream into
+//! a single `Vec<u8>` for callers that do not need streaming.
 
 use std::path::PathBuf;
+use std::pin::Pin;
 
+use bytes::Bytes;
+use futures_util::Stream;
 use thiserror::Error;
 
 /// TTS backend identifier.
@@ -58,7 +62,27 @@ pub enum TtsError {
     Io(#[from] std::io::Error),
 }
 
+/// A stream of audio chunks produced by a TTS backend.
+pub type TtsStream =
+    Pin<Box<dyn Stream<Item = Result<Bytes, TtsError>> + Send + 'static>>;
+
 #[async_trait::async_trait]
 pub trait TextToSpeech: Send + Sync {
-    async fn synthesize(&self, request: &TtsRequest) -> Result<Vec<u8>, TtsError>;
+    /// Synthesize the request into a chunked audio stream.
+    async fn synthesize_stream(&self, request: &TtsRequest) -> Result<TtsStream, TtsError>;
+
+    /// Synthesize the request into a single audio buffer.
+    ///
+    /// The default implementation collects `synthesize_stream` into a `Vec<u8>`.
+    async fn synthesize(&self, request: &TtsRequest) -> Result<Vec<u8>, TtsError> {
+        use futures_util::TryStreamExt;
+
+        let stream = self.synthesize_stream(request).await?;
+        let chunks: Vec<Bytes> = stream.try_collect().await?;
+        let mut audio = Vec::with_capacity(chunks.iter().map(|c| c.len()).sum());
+        for chunk in chunks {
+            audio.extend_from_slice(&chunk);
+        }
+        Ok(audio)
+    }
 }
