@@ -132,10 +132,11 @@
               alsa-lib
               libpulseaudio
               openblas
-            ];
+            ] ++ [ sherpaOnnxLinuxX64Shared ];
             LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
             OPENBLAS_PATH = "${pkgs.openblas}/lib";
             BLAS_INCLUDE_DIRS = "${pkgs.openblas.dev}/include";
+            SHERPA_ONNX_LIB_DIR = "${sherpaOnnxLinuxX64Shared}/lib";
           };
 
           takusu-cli = craneLib.buildPackage {
@@ -152,10 +153,11 @@
               alsa-lib
               libpulseaudio
               openblas
-            ];
+            ] ++ [ sherpaOnnxLinuxX64Shared ];
             LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
             OPENBLAS_PATH = "${pkgs.openblas}/lib";
             BLAS_INCLUDE_DIRS = "${pkgs.openblas.dev}/include";
+            SHERPA_ONNX_LIB_DIR = "${sherpaOnnxLinuxX64Shared}/lib";
             meta.mainProgram = "takusu";
           };
 
@@ -173,10 +175,11 @@
               alsa-lib
               libpulseaudio
               openblas
-            ];
+            ] ++ [ sherpaOnnxLinuxX64Shared ];
             LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
             OPENBLAS_PATH = "${pkgs.openblas}/lib";
             BLAS_INCLUDE_DIRS = "${pkgs.openblas.dev}/include";
+            SHERPA_ONNX_LIB_DIR = "${sherpaOnnxLinuxX64Shared}/lib";
           };
 
           # Cross-compile takusu-android .so for all Android ABIs.
@@ -278,10 +281,11 @@
               alsa-lib
               libpulseaudio
               openblas
-            ];
+            ] ++ [ sherpaOnnxLinuxX64Shared ];
             LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
             OPENBLAS_PATH = "${pkgs.openblas}/lib";
             BLAS_INCLUDE_DIRS = "${pkgs.openblas.dev}/include";
+            SHERPA_ONNX_LIB_DIR = "${sherpaOnnxLinuxX64Shared}/lib";
             doCheck = false;
           };
 
