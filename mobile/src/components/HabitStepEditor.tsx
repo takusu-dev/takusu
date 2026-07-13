@@ -126,6 +126,13 @@ export function HabitStepEditor({ drafts, onChange }: HabitStepEditorProps) {
   function dateToTimeString(d: Date): string {
     return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
   }
+  function windowMinutes(start: string, end: string): number {
+    const s = timeStringToDate(start);
+    const e = timeStringToDate(end);
+    let diffMs = e.getTime() - s.getTime();
+    if (diffMs <= 0) diffMs += 24 * 60 * 60 * 1000;
+    return Math.round(diffMs / 60000);
+  }
 
   return (
     <View style={styles.container}>
@@ -135,6 +142,8 @@ export function HabitStepEditor({ drafts, onChange }: HabitStepEditorProps) {
           .map((t) => drafts.find((x) => x.tempId === t))
           .filter(Boolean)
           .map((x) => stepLabel(drafts.indexOf(x!), x!));
+        const windowMin = windowMinutes(d.start_time, d.end_time);
+        const canMaximize = windowMin > 0;
         return (
           <View
             key={d.tempId}
@@ -271,21 +280,46 @@ export function HabitStepEditor({ drafts, onChange }: HabitStepEditorProps) {
 
                 {/* Cost */}
                 <View style={styles.row}>
-                  <PaperTextInput
-                    mode="outlined"
-                    label="avg"
-                    value={String(d.avg_minutes)}
-                    onChangeText={(v) => {
-                      const parsed = parseDuration(v);
-                      if (parsed !== null && parsed > 0)
-                        update(d.tempId, { avg_minutes: parsed });
-                      else if (v === '') update(d.tempId, { avg_minutes: 0 });
-                    }}
-                    outlineColor={colors.separator}
-                    activeOutlineColor={BRAND_COLOR}
-                    style={{ flex: 1 }}
-                    dense
-                  />
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.rowWithButton}>
+                      <PaperTextInput
+                        mode="outlined"
+                        label="avg"
+                        value={String(d.avg_minutes)}
+                        onChangeText={(v) => {
+                          const parsed = parseDuration(v);
+                          if (parsed !== null && parsed > 0)
+                            update(d.tempId, { avg_minutes: parsed });
+                          else if (v === '')
+                            update(d.tempId, { avg_minutes: 0 });
+                        }}
+                        outlineColor={colors.separator}
+                        activeOutlineColor={BRAND_COLOR}
+                        style={styles.inputWithButton}
+                        dense
+                      />
+                      <Pressable
+                        style={[
+                          styles.maximizeButton,
+                          { borderColor: BRAND_COLOR },
+                          !canMaximize && styles.maximizeButtonDisabled,
+                        ]}
+                        onPress={() => {
+                          if (!canMaximize) return;
+                          haptic.light();
+                          update(d.tempId, { avg_minutes: windowMin });
+                        }}
+                        disabled={!canMaximize}
+                      >
+                        <Ionicons name="expand" size={16} color={BRAND_COLOR} />
+                      </Pressable>
+                    </View>
+                    {canMaximize && (
+                      <Text style={[styles.hint, { color: colors.grayLight }]}>
+                        window: {windowMin}分
+                      </Text>
+                    )}
+                  </View>
                   <PaperTextInput
                     mode="outlined"
                     label="sigma"
@@ -533,6 +567,26 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     gap: 10,
+  },
+  rowWithButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  inputWithButton: {
+    flex: 1,
+  },
+  maximizeButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  maximizeButtonDisabled: {
+    borderColor: '#CCC',
+    opacity: 0.4,
   },
   timeField: {
     flex: 1,
