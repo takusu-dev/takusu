@@ -310,30 +310,28 @@ export function HomeView() {
       setServerTz(settings?.tz);
       // Push a fresh snapshot to the home screen widget so it shows
       // current data immediately (without waiting for WorkManager).
+      // Mirror the HomeView upcoming list: include scheduled and in_progress
+      // tasks regardless of their end time, and sort by scheduled start time
+      // (with end_at as a fallback). Completed/skipped tasks are excluded.
       try {
         const schedEntries = sched ? parseSchedule(sched.schedule) : [];
         const schedMap = new Map(schedEntries.map((e) => [e.task_id, e]));
-        const now = Date.now();
         const doingTitles: string[] = [];
         let unscheduledCount = 0;
         const upcoming: {
+          id: string;
           title: string;
           startAt: string | null;
           endAt: string;
         }[] = [];
         for (const t of taskList) {
-          if (t.status === 'in_progress') {
-            doingTitles.push(t.title);
-          } else if (t.status === 'pending') {
+          if (t.status === 'pending') {
             unscheduledCount++;
-          } else if (t.status === 'scheduled') {
+          } else if (t.status === 'scheduled' || t.status === 'in_progress') {
             const entry = schedMap.get(t.id);
             const startAt = entry?.start_at ?? t.start_at ?? null;
             const endAt = entry?.end_at ?? t.end_at;
-            const endTime = new Date(endAt).getTime();
-            if (endTime >= now) {
-              upcoming.push({ title: t.title, startAt, endAt });
-            }
+            upcoming.push({ id: t.id, title: t.title, startAt, endAt });
           }
         }
         upcoming.sort((a, b) => {
@@ -343,7 +341,7 @@ export function HomeView() {
         });
         TakusuWidgetModule.saveSnapshot({
           doingTitles,
-          upcoming: upcoming.slice(0, 5),
+          upcoming,
           unscheduledCount,
         });
       } catch {

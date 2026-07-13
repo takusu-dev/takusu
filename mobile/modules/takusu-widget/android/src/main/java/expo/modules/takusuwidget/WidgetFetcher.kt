@@ -36,38 +36,25 @@ object WidgetFetcher {
             val schedule = fetchJsonObject("$BASE/api/schedule", token)
             val scheduleMap = parseScheduleMap(schedule)
 
-            var doing = mutableListOf<String>()
+            val doing = emptyList<String>()
             val upcoming = mutableListOf<UpcomingTask>()
             var unscheduled = 0
-            val now = System.currentTimeMillis()
 
             for (i in 0 until tasks.length()) {
                 val t = tasks.getJSONObject(i)
                 val status = t.optString("status")
                 when (status) {
-                    "in_progress" -> {
-                        doing.add(t.optString("title"))
-                    }
-
                     "pending" -> {
                         unscheduled++
                     }
 
-                    "scheduled", "completed", "skipped" -> {
+                    "scheduled", "in_progress" -> {
                         val entry = scheduleMap[t.getString("id")]
                         // optString returns literal "null" for JSON null, so
                         // check isNull first to get a real Kotlin null.
                         val startAt = entry?.first ?: optStringOrNull(t, "start_at")
                         val endAt = entry?.second ?: t.getString("end_at")
-                        // Skip past completed/skipped tasks from the upcoming list
-                        if (status == "completed" || status == "skipped") {
-                            // past — skip
-                        } else {
-                            val endTime = parseIso(endAt) ?: 0L
-                            if (endTime >= now) {
-                                upcoming.add(UpcomingTask(t.getString("id"), t.getString("title"), startAt, endAt))
-                            }
-                        }
+                        upcoming.add(UpcomingTask(t.getString("id"), t.getString("title"), startAt, endAt))
                     }
                 }
             }
