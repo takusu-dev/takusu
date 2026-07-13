@@ -1336,7 +1336,7 @@ dependencies = [
 
 [[package]]
 name = "google-cal"
-version = "0.20260714.2"
+version = "0.20260714.3"
 dependencies = [
  "reqwest",
  "serde",
@@ -3830,7 +3830,7 @@ dependencies = [
 
 [[package]]
 name = "takusu-agent"
-version = "0.20260714.2"
+version = "0.20260714.3"
 dependencies = [
  "async-trait",
  "axum",
@@ -3852,7 +3852,7 @@ dependencies = [
 
 [[package]]
 name = "takusu-android"
-version = "0.20260714.2"
+version = "0.20260714.3"
 dependencies = [
  "axum",
  "reqwest",
@@ -3873,7 +3873,7 @@ dependencies = [
 
 [[package]]
 name = "takusu-audio"
-version = "0.20260714.2"
+version = "0.20260714.3"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3898,7 +3898,7 @@ dependencies = [
 
 [[package]]
 name = "takusu-audio-cli"
-version = "0.20260714.2"
+version = "0.20260714.3"
 dependencies = [
  "clap",
  "hound",
@@ -3908,7 +3908,7 @@ dependencies = [
 
 [[package]]
 name = "takusu-cli"
-version = "0.20260714.2"
+version = "0.20260714.3"
 dependencies = [
  "atty",
  "clap",
@@ -3927,7 +3927,7 @@ dependencies = [
 
 [[package]]
 name = "takusu-client"
-version = "0.20260714.2"
+version = "0.20260714.3"
 dependencies = [
  "reqwest",
  "serde",
@@ -3936,7 +3936,7 @@ dependencies = [
 
 [[package]]
 name = "takusu-core"
-version = "0.20260714.2"
+version = "0.20260714.3"
 dependencies = [
  "criterion",
  "jiff",
@@ -3948,7 +3948,7 @@ dependencies = [
 
 [[package]]
 name = "takusu-habit"
-version = "0.20260714.2"
+version = "0.20260714.3"
 dependencies = [
  "jiff",
  "serde",
@@ -3959,7 +3959,7 @@ dependencies = [
 
 [[package]]
 name = "takusu-ical"
-version = "0.20260714.2"
+version = "0.20260714.3"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
@@ -3967,7 +3967,7 @@ dependencies = [
 
 [[package]]
 name = "takusu-local"
-version = "0.20260714.2"
+version = "0.20260714.3"
 dependencies = [
  "async-trait",
  "axum",
@@ -3991,7 +3991,7 @@ dependencies = [
 
 [[package]]
 name = "takusu-local-lib"
-version = "0.20260714.2"
+version = "0.20260714.3"
 dependencies = [
  "async-trait",
  "config",
@@ -4017,7 +4017,7 @@ dependencies = [
 
 [[package]]
 name = "takusu-storage"
-version = "0.20260714.2"
+version = "0.20260714.3"
 dependencies = [
  "async-trait",
  "serde",
@@ -4028,7 +4028,7 @@ dependencies = [
 
 [[package]]
 name = "takusu-util"
-version = "0.20260714.2"
+version = "0.20260714.3"
 dependencies = [
  "jiff",
  "uuid",
@@ -4036,7 +4036,7 @@ dependencies = [
 
 [[package]]
 name = "takusu-worker"
-version = "0.20260714.2"
+version = "0.20260714.3"
 dependencies = [
  "console_error_panic_hook",
  "getrandom 0.4.3",
