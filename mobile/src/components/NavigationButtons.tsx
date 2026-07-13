@@ -47,6 +47,7 @@ export function NavigationButtons({
     calMonth.getMonth(),
     1,
   ).getDay();
+  const today = new Date();
 
   function prevMonth() {
     haptic.select();
@@ -154,12 +155,21 @@ export function NavigationButtons({
               {Array.from({ length: daysInMonth }).map((_, i) => {
                 const day = i + 1;
                 const marked = markedDates?.has(dateKey(day));
+                const isToday =
+                  day === today.getDate() &&
+                  calMonth.getMonth() === today.getMonth() &&
+                  calMonth.getFullYear() === today.getFullYear();
                 return (
                   <Pressable
                     key={day}
                     style={[
                       styles.calDay,
                       marked && { backgroundColor: colors.brand },
+                      isToday && {
+                        borderRadius: 18,
+                        borderWidth: 1.5,
+                        borderColor: marked ? colors.white : colors.brand,
+                      },
                     ]}
                     onPress={() => selectDay(day)}
                   >
