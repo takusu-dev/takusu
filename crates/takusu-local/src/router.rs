@@ -1,6 +1,9 @@
 use axum::Router;
+use axum::body::Body;
+use axum::http::Request;
 use axum::middleware;
 use axum::routing::{delete, get, patch, post, put};
+use sentry::integrations::tower::{NewSentryLayer, SentryHttpLayer};
 
 use crate::auth;
 use crate::handlers;
@@ -94,6 +97,8 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .nest("/api", api)
         .with_state(state)
+        .layer(SentryHttpLayer::new().enable_transaction())
+        .layer(NewSentryLayer::<Request<Body>>::new_from_top())
 }
 
 async fn health() -> &'static str {

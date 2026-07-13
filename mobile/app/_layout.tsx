@@ -1,3 +1,4 @@
+import { isRunningInExpoGo } from 'expo';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -6,6 +7,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useEffect, useRef, type RefObject } from 'react';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
+import * as Sentry from '@sentry/react-native';
 import type { TakusuClient } from '@/src/api/client';
 import { ServerProvider, useServer } from '@/src/api/ServerProvider';
 import { installGlobalErrorHandler } from '@/src/api/installGlobalErrorHandler';
@@ -44,6 +46,21 @@ function isValidRoute(url: string): boolean {
   return (
     url === '/' || VALID_ROUTE_PREFIXES.some((prefix) => url.startsWith(prefix))
   );
+}
+
+if (process.env.EXPO_PUBLIC_SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
+    environment: __DEV__ ? 'development' : 'production',
+    debug: __DEV__,
+    tracesSampleRate: 1.0,
+    enableNativeFramesTracking: !isRunningInExpoGo(),
+    integrations: [
+      Sentry.expoRouterIntegration({
+        enableTimeToInitialDisplay: !isRunningInExpoGo(),
+      }),
+    ],
+  });
 }
 
 // Process a notification action response (START / DONE / CANCEL).
@@ -246,7 +263,7 @@ function ThemedApp() {
   );
 }
 
-export default function RootLayout() {
+function RootLayout() {
   // Forward uncaught JS exceptions and promise rejections to the native log
   // ring buffer so they appear in log exports alongside server logs.
   useEffect(() => {
@@ -263,3 +280,5 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   );
 }
+
+export default Sentry.wrap(RootLayout);

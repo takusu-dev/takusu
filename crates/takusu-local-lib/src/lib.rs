@@ -5,5 +5,6 @@ pub mod error;
 mod graph;
 #[cfg(feature = "sqlite")]
 pub mod storage_sqlite;
+pub mod sentry;
 pub mod storage_workers;
 pub mod token_cache;

@@ -23,6 +23,12 @@ on:
 #   TAKUSU_STORE_PASSWORD  - keystore store password
 #   TAKUSU_KEY_PASSWORD    - keystore key password
 #   TAKUSU_KEY_ALIAS       - keystore key alias (e.g. "takusu")
+#   SENTRY_DSN            - Rust Sentry DSN (used by takusu-cli / takusu-local at runtime)
+#   EXPO_PUBLIC_SENTRY_DSN - Mobile Sentry DSN (embedded into the Expo bundle)
+#   SENTRY_AUTH_TOKEN      - Sentry auth token for uploading mobile source maps
+#   SENTRY_URL             - Sentry URL (optional, defaults to https://sentry.io/)
+#   SENTRY_ORG             - Sentry organization slug (optional, defaults to satler-git)
+#   SENTRY_PROJECT         - Sentry project slug (optional, defaults to takusu)
 
 env:
   WORKER_DIR: crates/takusu-worker
@@ -75,6 +81,8 @@ jobs:
 
   build-cli:
     runs-on: ubuntu-latest
+    env:
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -200,6 +208,11 @@ jobs:
         env:
           EXPO_PUBLIC_WORKERS_URL: ${{ secrets.EXPO_PUBLIC_WORKERS_URL }}
           EXPO_PUBLIC_ROOT_TOKEN: ${{ secrets.EXPO_PUBLIC_ROOT_TOKEN }}
+          EXPO_PUBLIC_SENTRY_DSN: ${{ secrets.EXPO_PUBLIC_SENTRY_DSN }}
+          SENTRY_URL: ${{ secrets.SENTRY_URL }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           TAKUSU_KEYSTORE_PATH: ${{ github.workspace }}/mobile/android-release.keystore
           TAKUSU_STORE_PASSWORD: ${{ secrets.TAKUSU_STORE_PASSWORD }}
           TAKUSU_KEY_PASSWORD: ${{ secrets.TAKUSU_KEY_PASSWORD }}

@@ -522,73 +522,84 @@ enum SyncCommands {
     Trigger,
 }
 
-#[tokio::main]
-async fn main() {
-    let cli = Cli::parse();
-    let cfg = config::load();
+fn main() {
+    let _guard = takusu_local_lib::sentry::init(
+        "takusu_local_lib=info",
+        Some(concat!(env!("CARGO_PKG_NAME"), "@", env!("CARGO_PKG_VERSION")).into()),
+    );
 
-    let tz_str = cli.tz.or(cfg.tz).unwrap_or_else(|| "UTC".into());
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
 
-    if matches!(cli.command, Commands::GenRootToken) {
-        let token = generate_root_token();
-        println!("{token}");
-        eprintln!("\nSet this as TAKUSU_ROOT_TOKEN env var for takusu.");
-        return;
-    }
+    runtime.block_on(async {
+        let cli = Cli::parse();
+        let cfg = config::load();
 
-    if matches!(cli.command, Commands::Completion { .. }) {
-        let shell = match cli.command {
-            Commands::Completion { shell } => shell,
-            _ => unreachable!(),
-        };
-        let mut cmd = Cli::command();
-        clap_complete::generate(shell, &mut cmd, "takusu", &mut io::stdout());
-        return;
-    }
+        let tz_str = cli.tz.or(cfg.tz).unwrap_or_else(|| "UTC".into());
 
-    // Initialize local storage and app
-    let local_cfg = LocalConfig::load().unwrap_or_else(|e| {
-        eprintln!("Error loading config: {e}");
-        process::exit(1);
-    });
+        if matches!(cli.command, Commands::GenRootToken) {
+            let token = generate_root_token();
+            println!("{token}");
+            eprintln!("\nSet this as TAKUSU_ROOT_TOKEN env var for takusu.");
+            return;
+        }
 
-    let storage: Arc<dyn takusu_storage::Storage> = match local_cfg.storage_kind() {
-        StorageKind::Workers => WorkersStorage::shared(&local_cfg).unwrap_or_else(|e| {
-            eprintln!("Error initializing workers storage: {e}");
+        if matches!(cli.command, Commands::Completion { .. }) {
+            let shell = match cli.command {
+                Commands::Completion { shell } => shell,
+                _ => unreachable!(),
+            };
+            let mut cmd = Cli::command();
+            clap_complete::generate(shell, &mut cmd, "takusu", &mut io::stdout());
+            return;
+        }
+
+        // Initialize local storage and app
+        let local_cfg = LocalConfig::load().unwrap_or_else(|e| {
+            eprintln!("Error loading config: {e}");
             process::exit(1);
-        }),
-        StorageKind::Sqlite => {
-            let root_token = LocalConfig::load_root_token().unwrap_or_else(|e| {
-                eprintln!("Error: {e}");
+        });
+
+        let storage: Arc<dyn takusu_storage::Storage> = match local_cfg.storage_kind() {
+            StorageKind::Workers => WorkersStorage::shared(&local_cfg).unwrap_or_else(|e| {
+                eprintln!("Error initializing workers storage: {e}");
                 process::exit(1);
-            });
-            let storage = SqliteStorage::init(&local_cfg, root_token)
-                .await
-                .unwrap_or_else(|e| {
-                    eprintln!("Error initializing sqlite storage: {e}");
+            }),
+            StorageKind::Sqlite => {
+                let root_token = LocalConfig::load_root_token().unwrap_or_else(|e| {
+                    eprintln!("Error: {e}");
                     process::exit(1);
                 });
-            Arc::new(storage)
+                let storage = SqliteStorage::init(&local_cfg, root_token)
+                    .await
+                    .unwrap_or_else(|e| {
+                        eprintln!("Error initializing sqlite storage: {e}");
+                        process::exit(1);
+                    });
+                Arc::new(storage)
+            }
+        };
+
+        let root_token = LocalConfig::load_root_token().unwrap_or_else(|e| {
+            eprintln!("Error: {e}");
+            process::exit(1);
+        });
+
+        let token_cache = Arc::new(TokenCache::with_default_ttl());
+        let app = TakusuApp::new(storage, root_token, token_cache);
+
+        let tz = jiff::tz::TimeZone::get(&tz_str).unwrap_or_else(|_| {
+            eprintln!("Error: invalid timezone '{tz_str}' (e.g. Asia/Tokyo)");
+            process::exit(1);
+        });
+
+        if let Err(e) = run(cli.mode, &app, tz, cli.command).await {
+            eprintln!("Error: {e}");
+            process::exit(1);
         }
-    };
-
-    let root_token = LocalConfig::load_root_token().unwrap_or_else(|e| {
-        eprintln!("Error: {e}");
-        process::exit(1);
-    });
-
-    let token_cache = Arc::new(TokenCache::with_default_ttl());
-    let app = TakusuApp::new(storage, root_token, token_cache);
-
-    let tz = jiff::tz::TimeZone::get(&tz_str).unwrap_or_else(|_| {
-        eprintln!("Error: invalid timezone '{tz_str}' (e.g. Asia/Tokyo)");
-        process::exit(1);
-    });
-
-    if let Err(e) = run(cli.mode, &app, tz, cli.command).await {
-        eprintln!("Error: {e}");
-        process::exit(1);
-    }
+    })
 }
 
 async fn run(
