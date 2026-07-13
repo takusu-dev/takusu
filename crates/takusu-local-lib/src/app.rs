@@ -2152,11 +2152,17 @@ impl TakusuApp {
         }
 
         // 過去の生成で作られたが、今回期待されなくなった習慣タスクを削除。
-        // ただし pending かつユーザーが編集していないものだけ:
-        // 手動で status 変更したタスク (scheduled, in_progress, completed, skipped) および
-        // ユーザーが編集したタスクは削除しない。
+        // ユーザーが編集していない、かつ in_progress / completed / skipped ではない
+        // タスクを削除対象とする。scheduled はスケジュール生成によって付与された
+        // システム状態なので、削除対象に含める (generate_schedule 内で sync が呼ばれる
+        // たびに schedule 自体も再構築される)。
         for (_, task) in existing_by_key {
-            if task.status == "pending" && !task.user_edited {
+            let deletable = !task.user_edited
+                && !matches!(
+                    task.status.as_str(),
+                    "in_progress" | "completed" | "skipped"
+                );
+            if deletable {
                 self.storage
                     .delete_task(&task.id)
                     .await
