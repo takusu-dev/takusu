@@ -51,6 +51,24 @@ ext.ndkVersion = "29.0.14206865"\
   echo "  Added NDK version override"
 fi
 
+# 2.5. Patch Sentry's Android module to use the same NDK version as the root project.
+#    Sentry's build.gradle does not read rootProject.ext.ndkVersion, so AGP falls back
+#    to its default NDK (27.0.12077973) and tries to install it in the read-only Nix store.
+SENTRY_BUILD_GRADLE="$ANDROID_DIR/../node_modules/@sentry/react-native/android/build.gradle"
+if [ -f "$SENTRY_BUILD_GRADLE" ] && ! grep -q "safeExtGet('ndkVersion'," "$SENTRY_BUILD_GRADLE"; then
+  awk -f - "$SENTRY_BUILD_GRADLE" > "$SENTRY_BUILD_GRADLE.tmp" <<'AWK'
+index($0, "    compileSdkVersion safeExtGet('compileSdkVersion', 31)") == 1 {
+    print
+    print "    // Use the root project's NDK version so the Nix-managed NDK is picked."
+    print "    ndkVersion safeExtGet('ndkVersion', '27.0.12077973')"
+    next
+}
+{ print }
+AWK
+  mv "$SENTRY_BUILD_GRADLE.tmp" "$SENTRY_BUILD_GRADLE"
+  echo "  Patched Sentry ndkVersion"
+fi
+
 # 3. Suppress compileSdk 37 warning
 GRADLE_PROPERTIES="$ANDROID_DIR/gradle.properties"
 if ! grep -q 'android.suppressUnsupportedCompileSdk' "$GRADLE_PROPERTIES"; then
