@@ -2478,6 +2478,70 @@ async fn habit_steps_sync_generates_one_task_per_step() {
     }
 }
 
+#[tokio::test]
+async fn habit_steps_replace_on_simple_habit_cleans_up_original_tasks() {
+    // #505: a habit that was originally simple (no steps) and already had
+    // generated tasks must clean up the original simple tasks when steps are
+    // added and the schedule is regenerated.
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "シンプル→ステップ").await;
+
+    // Generate tasks as a simple habit; generate_schedule marks them 'scheduled'.
+    let tasks_before = sync_habit_tasks(&app, &habit_id).await;
+    assert!(
+        !tasks_before.is_empty(),
+        "simple habit should generate tasks"
+    );
+    assert!(
+        tasks_before.iter().all(|t| t["habit_step_id"].is_null()),
+        "simple tasks should not have a habit_step_id"
+    );
+
+    // Add steps to the previously simple habit.
+    let req = auth_req_body(
+        Method::PUT,
+        &format!("/api/habits/{habit_id}/steps"),
+        json!([
+            {
+                "position": 0,
+                "title": "準備",
+                "start_time": "06:00",
+                "end_time": "06:15",
+                "avg_minutes": 15
+            },
+            {
+                "position": 1,
+                "title": "実行",
+                "start_time": "06:15",
+                "end_time": "06:45",
+                "avg_minutes": 30,
+                "depends_on": []
+            }
+        ]),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // Re-generate the schedule. The original simple tasks should be deleted
+    // and replaced by step tasks.
+    let tasks_after = sync_habit_tasks(&app, &habit_id).await;
+    let simple_tasks: Vec<&serde_json::Value> = tasks_after
+        .iter()
+        .filter(|t| t["habit_step_id"].is_null())
+        .collect();
+    assert!(
+        simple_tasks.is_empty(),
+        "original simple tasks should be cleaned up after adding steps: {simple_tasks:?}"
+    );
+    assert!(
+        tasks_after
+            .iter()
+            .all(|t| t["habit_step_id"].as_str().is_some()),
+        "all tasks after cleanup should carry a habit_step_id"
+    );
+}
+
 /// Create a weekly habit with `window_mode = "period"` and return its id.
 async fn create_weekly_period_habit(app: &axum::Router, title: &str) -> String {
     let req = auth_req_body(
