@@ -7,6 +7,7 @@ const VALID: SettingsCategory[] = [
   'sleep',
   'workload',
   'notifications',
+  'agent',
   'worker',
   'google',
   'info',

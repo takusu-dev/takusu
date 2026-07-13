@@ -1,6 +1,9 @@
 {
   "platforms": ["android"],
   "android": {
-    "modules": ["expo.modules.takususerver.TakusuServerModule"]
+    "modules": [
+      "expo.modules.takususerver.TakusuServerModule",
+      "expo.modules.takususerver.TakusuAudioModule"
+    ]
   }
 }

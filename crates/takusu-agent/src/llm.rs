@@ -7,6 +7,26 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LlmProviderKind {
+    Openai,
+    Openrouter,
+    Custom,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmProviderConfig {
+    pub id: String,
+    pub name: String,
+    pub provider: LlmProviderKind,
+    pub base_url: String,
+    pub selected_model: String,
+    #[serde(default)]
+    pub cached_models: Vec<String>,
+    pub models_fetched_at: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct LlmConfig {
@@ -16,6 +36,8 @@ pub struct LlmConfig {
     pub model: String,
     #[serde(default = "default_llm_api_key_env")]
     pub api_key_env: String,
+    #[serde(default)]
+    pub api_key: String,
     #[serde(default = "default_max_history")]
     pub max_history: usize,
     #[serde(default = "default_max_context_tokens")]
@@ -32,6 +54,7 @@ impl Default for LlmConfig {
             base_url: default_llm_base_url(),
             model: default_llm_model(),
             api_key_env: default_llm_api_key_env(),
+            api_key: String::new(),
             max_history: default_max_history(),
             max_context_tokens: default_max_context_tokens(),
             max_tool_calls: default_max_tool_calls(),
@@ -258,7 +281,11 @@ impl OpenAIClient {
             .build()
             .map_err(|e| LlmError::Other(e.into()))?;
 
-        let api_key = std::env::var(&config.api_key_env).unwrap_or_default();
+        let api_key = if config.api_key.is_empty() {
+            std::env::var(&config.api_key_env).unwrap_or_default()
+        } else {
+            config.api_key
+        };
 
         Ok(Self {
             client,
@@ -274,6 +301,54 @@ impl OpenAIClient {
     pub fn with_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
         self
+    }
+
+    /// Fetch model IDs from an OpenAI-compatible `/models` endpoint.
+    ///
+    /// Providers may expose additional fields, but only the stable `id` is
+    /// surfaced to the UI so the dropdown stays provider-neutral.
+    pub async fn list_models(&self) -> Result<Vec<String>, LlmError> {
+        let url = format!("{}/models", self.base_url.trim_end_matches('/'));
+        let response = tokio::time::timeout(
+            self.request_timeout,
+            self.client.get(url).bearer_auth(&self.api_key).send(),
+        )
+        .await
+        .map_err(|_| LlmError::Timeout)?
+        .map_err(|e| {
+            if e.is_timeout() {
+                LlmError::Timeout
+            } else if e.is_request() {
+                LlmError::Request(e.to_string())
+            } else {
+                LlmError::Other(e.into())
+            }
+        })?;
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            return Err(if status == 429 {
+                LlmError::RateLimited
+            } else {
+                LlmError::Http {
+                    status: status.as_u16(),
+                    message: extract_error_message(&text),
+                }
+            });
+        }
+        let body = response
+            .json::<ModelsResponse>()
+            .await
+            .map_err(|e| LlmError::Parse(e.to_string()))?;
+        let mut models: Vec<String> = body
+            .data
+            .into_iter()
+            .map(|model| model.id)
+            .filter(|id| !id.trim().is_empty())
+            .collect();
+        models.sort_unstable();
+        models.dedup();
+        Ok(models)
     }
 
     async fn chat_once(
@@ -383,6 +458,17 @@ impl LlmClient for OpenAIClient {
             }
         }
     }
+}
+
+#[derive(Deserialize, Debug)]
+struct ModelsResponse {
+    #[serde(default)]
+    data: Vec<ModelResponse>,
+}
+
+#[derive(Deserialize, Debug)]
+struct ModelResponse {
+    id: String,
 }
 
 #[derive(Serialize, Debug)]

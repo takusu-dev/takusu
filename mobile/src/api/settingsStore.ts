@@ -17,7 +17,32 @@ const KEYS = {
   workersToken: 'takusu.workersToken',
   darkMode: 'takusu.darkMode',
   undoSteps: 'takusu.undoSteps',
+  llmProviders: 'takusu.agent.llmProviders',
+  activeLlmProvider: 'takusu.agent.activeLlmProvider',
+  ttsProviders: 'takusu.agent.ttsProviders',
+  activeTtsProvider: 'takusu.agent.activeTtsProvider',
 } as const;
+
+export interface LlmProviderSettings {
+  id: string;
+  name: string;
+  provider: 'openai' | 'openrouter' | 'custom';
+  baseUrl: string;
+  selectedModel: string;
+  cachedModels: string[];
+  modelsFetchedAt?: string;
+}
+
+export interface TtsProviderSettings {
+  id: string;
+  name: string;
+  provider: 'cartesia';
+  voiceId: string;
+  model?: string;
+  language: string;
+  sampleRate: number;
+  speed?: number;
+}
 
 export interface PersistedSettings {
   workersUrl: string;
@@ -25,17 +50,34 @@ export interface PersistedSettings {
   darkMode: boolean;
   undoSteps: number;
   notifications: NotificationSettings;
+  llmProviders: LlmProviderSettings[];
+  activeLlmProvider: string | null;
+  ttsProviders: TtsProviderSettings[];
+  activeTtsProvider: string | null;
 }
 
 export async function loadSettings(): Promise<PersistedSettings> {
-  const [workersUrl, workersToken, darkModeStr, undoStepsStr, notifications] =
-    await Promise.all([
-      SecureStore.getItemAsync(KEYS.workersUrl),
-      SecureStore.getItemAsync(KEYS.workersToken),
-      AsyncStorage.getItem(KEYS.darkMode),
-      AsyncStorage.getItem(KEYS.undoSteps),
-      loadNotificationSettings(),
-    ]);
+  const [
+    workersUrl,
+    workersToken,
+    darkModeStr,
+    undoStepsStr,
+    notifications,
+    llmProvidersStr,
+    activeLlmProvider,
+    ttsProvidersStr,
+    activeTtsProvider,
+  ] = await Promise.all([
+    SecureStore.getItemAsync(KEYS.workersUrl),
+    SecureStore.getItemAsync(KEYS.workersToken),
+    AsyncStorage.getItem(KEYS.darkMode),
+    AsyncStorage.getItem(KEYS.undoSteps),
+    loadNotificationSettings(),
+    AsyncStorage.getItem(KEYS.llmProviders),
+    AsyncStorage.getItem(KEYS.activeLlmProvider),
+    AsyncStorage.getItem(KEYS.ttsProviders),
+    AsyncStorage.getItem(KEYS.activeTtsProvider),
+  ]);
   const parsedUndoSteps = undoStepsStr ? parseInt(undoStepsStr, 10) : NaN;
   return {
     workersUrl: workersUrl ?? '',
@@ -46,7 +88,65 @@ export async function loadSettings(): Promise<PersistedSettings> {
         ? parsedUndoSteps
         : DEFAULT_MAX_HISTORY,
     notifications,
+    llmProviders: parseJsonArray<LlmProviderSettings>(llmProvidersStr),
+    activeLlmProvider: activeLlmProvider ?? null,
+    ttsProviders: parseJsonArray<TtsProviderSettings>(ttsProvidersStr),
+    activeTtsProvider: activeTtsProvider ?? null,
   };
+}
+
+function parseJsonArray<T>(value: string | null): T[] {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveAgentProviders(
+  llmProviders: LlmProviderSettings[],
+  activeLlmProvider: string | null,
+  ttsProviders: TtsProviderSettings[],
+  activeTtsProvider: string | null,
+): Promise<void> {
+  await Promise.all([
+    AsyncStorage.setItem(KEYS.llmProviders, JSON.stringify(llmProviders)),
+    AsyncStorage.setItem(KEYS.activeLlmProvider, activeLlmProvider ?? ''),
+    AsyncStorage.setItem(KEYS.ttsProviders, JSON.stringify(ttsProviders)),
+    AsyncStorage.setItem(KEYS.activeTtsProvider, activeTtsProvider ?? ''),
+  ]);
+}
+
+export async function loadAgentApiKey(
+  kind: 'llm' | 'tts',
+  providerId: string,
+): Promise<string> {
+  return (
+    (await SecureStore.getItemAsync(
+      `takusu.agent.${kind}.apiKey.${providerId}`,
+    )) ?? ''
+  );
+}
+
+export async function saveAgentApiKey(
+  kind: 'llm' | 'tts',
+  providerId: string,
+  apiKey: string,
+): Promise<void> {
+  const key = `takusu.agent.${kind}.apiKey.${providerId}`;
+  if (apiKey) await SecureStore.setItemAsync(key, apiKey);
+  else await SecureStore.deleteItemAsync(key);
+}
+
+export async function deleteAgentApiKey(
+  kind: 'llm' | 'tts',
+  providerId: string,
+): Promise<void> {
+  await SecureStore.deleteItemAsync(
+    `takusu.agent.${kind}.apiKey.${providerId}`,
+  );
 }
 
 export async function saveWorkersUrl(url: string): Promise<void> {

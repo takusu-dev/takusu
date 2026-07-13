@@ -1636,6 +1636,7 @@ export function HomeView() {
       {/* Bottom bar */}
       <View style={[styles.bottomBar, { paddingBottom: 16 + insets.bottom }]}>
         <AddButton
+          onTap={() => router.push('/agent')}
           onSlideUp={() => {}}
           sheetY={sheetY}
           screenHeight={screenHeight}

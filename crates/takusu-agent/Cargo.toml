@@ -8,9 +8,15 @@ repository.workspace = true
 [[bin]]
 name = "takusu-agent"
 path = "src/bin/agent.rs"
+required-features = ["audio-device"]
+
+[features]
+default = ["audio-device"]
+audio-device = ["takusu-audio/funasr", "takusu-audio/record"]
 
 [dependencies]
 async-trait = { workspace = true }
+axum = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 config = { workspace = true }
 jiff = { workspace = true }
@@ -21,7 +27,8 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
 tokio = { workspace = true }
-takusu-audio = { workspace = true }
+uuid = { workspace = true }
+takusu-audio = { path = "../takusu-audio", default-features = false }
 takusu-client = { workspace = true }
 takusu-util = { workspace = true }
 

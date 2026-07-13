@@ -232,6 +232,7 @@ function ThemedApp() {
           }}
         >
           <Stack.Screen name="index" />
+          <Stack.Screen name="agent" />
           <Stack.Screen name="task/[id]" />
           <Stack.Screen name="task/add" />
           <Stack.Screen name="habit/[id]" />

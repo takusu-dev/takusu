@@ -6,8 +6,9 @@
 //! cache directory from the Kotlin layer).
 
 use std::fs;
-use std::io::{self, BufReader, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
@@ -25,6 +26,23 @@ pub enum ArchiveFormat {
     /// `.tar.bz2`
     TarBz2,
 }
+
+/// Progress phase for model preparation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DownloadStage {
+    Downloading,
+    Extracting,
+    Verifying,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DownloadProgress {
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub stage: DownloadStage,
+}
+
+pub type ProgressCallback = Arc<dyn Fn(DownloadProgress) + Send + Sync>;
 
 /// Description of a downloadable model bundle.
 #[derive(Debug, Clone, Copy)]
@@ -121,12 +139,21 @@ impl ModelCache {
     ///
     /// Returns the path to the extracted model directory.
     pub fn ensure(&self, id: &str) -> Result<PathBuf, ModelError> {
+        self.ensure_with_progress(id, None)
+    }
+
+    /// Ensure a model is available while reporting throttled preparation progress.
+    pub fn ensure_with_progress(
+        &self,
+        id: &str,
+        progress: Option<ProgressCallback>,
+    ) -> Result<PathBuf, ModelError> {
         let spec = ModelRegistry::find(id).ok_or(ModelError::UnknownModel(id.to_string()))?;
         let model_dir = self.cache_dir.join(spec.id);
         if model_dir.is_dir() && has_expected_files(&model_dir, spec.expected_files) {
             return Ok(model_dir);
         }
-        self.download_and_extract(&spec)?;
+        self.download_and_extract(&spec, progress)?;
         if !has_expected_files(&model_dir, spec.expected_files) {
             return Err(ModelError::MissingFiles(model_dir.display().to_string()));
         }
@@ -135,16 +162,28 @@ impl ModelCache {
 
     /// Force a re-download of a model.
     pub fn download(&self, id: &str) -> Result<PathBuf, ModelError> {
+        self.download_with_progress(id, None)
+    }
+
+    pub fn download_with_progress(
+        &self,
+        id: &str,
+        progress: Option<ProgressCallback>,
+    ) -> Result<PathBuf, ModelError> {
         let spec = ModelRegistry::find(id).ok_or(ModelError::UnknownModel(id.to_string()))?;
         let model_dir = self.cache_dir.join(spec.id);
         if model_dir.is_dir() {
             fs::remove_dir_all(&model_dir)?;
         }
-        self.download_and_extract(&spec)?;
+        self.download_and_extract(&spec, progress)?;
         Ok(model_dir)
     }
 
-    fn download_and_extract(&self, spec: &ModelSpec) -> Result<(), ModelError> {
+    fn download_and_extract(
+        &self,
+        spec: &ModelSpec,
+        progress: Option<ProgressCallback>,
+    ) -> Result<(), ModelError> {
         let model_dir = self.cache_dir.join(spec.id);
         fs::create_dir_all(&model_dir)?;
 
@@ -162,12 +201,44 @@ impl ModelCache {
             ));
         }
 
+        let total_bytes = response.content_length();
+        let mut downloaded_bytes = 0;
         let mut file = fs::File::create(&archive_path)?;
-        response.copy_to(&mut file)?;
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let read = response.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            file.write_all(&buffer[..read])?;
+            downloaded_bytes += read as u64;
+            if let Some(callback) = &progress {
+                callback(DownloadProgress {
+                    downloaded_bytes,
+                    total_bytes,
+                    stage: DownloadStage::Downloading,
+                });
+            }
+        }
         file.flush()?;
         drop(file);
 
+        if let Some(callback) = &progress {
+            callback(DownloadProgress {
+                downloaded_bytes,
+                total_bytes,
+                stage: DownloadStage::Extracting,
+            });
+        }
         extract_archive(&archive_path, &model_dir, spec.format)?;
+
+        if let Some(callback) = &progress {
+            callback(DownloadProgress {
+                downloaded_bytes,
+                total_bytes,
+                stage: DownloadStage::Verifying,
+            });
+        }
 
         // Some archives have a single top-level directory. If the model dir
         // contains only one directory and no expected files, move the contents

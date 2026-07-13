@@ -1,9 +1,15 @@
 uniffi::setup_scaffolding!();
 
+mod audio;
 mod log_buffer;
+mod model;
 
 use std::sync::{Arc, Mutex};
 
+use axum::Router;
+use takusu_agent::tools::takusu::register_tools;
+use takusu_agent::transport::AgentApiState;
+use takusu_agent::{AgentConfig, AgentSession, ToolRegistry};
 use takusu_local::router::router;
 use takusu_local::state::AppState;
 use takusu_local_lib::app::TakusuApp;
@@ -23,6 +29,10 @@ pub enum TakusuError {
     InvalidConfig { detail: String },
     #[error("server error: {detail}")]
     Server { detail: String },
+    #[error("model error: {detail}")]
+    Model { detail: String },
+    #[error("audio error: {detail}")]
+    Audio { detail: String },
 }
 
 #[derive(Debug, Clone, uniffi::Enum)]
@@ -57,12 +67,23 @@ impl TakusuServer {
         }
     }
 
-    /// Start the server on the given port, using the provided Workers URL and token.
+    /// Backwards-compatible server start used by the widget worker.
     pub fn start(
         &self,
         port: u16,
         workers_url: String,
         root_token: String,
+    ) -> Result<(), TakusuError> {
+        self.start_with_agent_config(port, workers_url, root_token, String::new())
+    }
+
+    /// Start the server and configure the in-process Agent.
+    pub fn start_with_agent_config(
+        &self,
+        port: u16,
+        workers_url: String,
+        root_token: String,
+        agent_config_json: String,
     ) -> Result<(), TakusuError> {
         // Install the in-process log ring buffer first so that validation
         // errors and subsequent server logs are captured. Uses try_init() so
@@ -129,9 +150,34 @@ impl TakusuServer {
             root_token.clone(),
         ));
         let token_cache = Arc::new(TokenCache::with_default_ttl());
-        let app = Arc::new(TakusuApp::new(storage, root_token, token_cache));
+        let app = Arc::new(TakusuApp::new(storage, root_token.clone(), token_cache));
         let state = AppState::new(app);
-        let app_router = router(state);
+
+        // Agent sessions run in the same process as the planner server. The
+        // factory creates a fresh session for each authenticated Mobile
+        // session, while keeping provider credentials in the native layer.
+        let mut agent_config = if agent_config_json.trim().is_empty() {
+            AgentConfig::default()
+        } else {
+            serde_json::from_str(&agent_config_json).map_err(|e| TakusuError::InvalidConfig {
+                detail: format!("invalid agent configuration: {e}"),
+            })?
+        };
+        agent_config.server.url = format!("http://127.0.0.1:{port}");
+        agent_config.server.token = root_token.clone();
+        let agent_factory = Arc::new(move || {
+            let llm = takusu_agent::llm::OpenAIClient::new(agent_config.llm.clone())?;
+            let planner_client =
+                takusu_client::Client::new(&agent_config.server.url, &agent_config.server.token);
+            let mut registry = ToolRegistry::new();
+            register_tools(&mut registry, planner_client);
+            Ok(AgentSession::new(agent_config.clone(), registry, llm))
+        });
+        let agent_state = Arc::new(AgentApiState::new(root_token, agent_factory));
+        let app_router = router(state).merge(Router::new().nest(
+            "/api/agent/v1",
+            takusu_agent::transport::router(agent_state),
+        ));
 
         let bind_addr = format!("127.0.0.1:{port}");
         let listener = runtime

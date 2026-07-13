@@ -17,6 +17,8 @@ class StartOptions : Record {
     @Field val workersUrl: String = ""
 
     @Field val rootToken: String = ""
+
+    @Field val agentConfigJson: String = ""
 }
 
 class TakusuServerModule : Module() {
@@ -26,13 +28,26 @@ class TakusuServerModule : Module() {
         ModuleDefinition {
             Name("TakusuServer")
 
+            Function("startModelDownload") { modelId: String ->
+                val context =
+                    appContext.reactContext
+                        ?: throw CodedException("ERR_NO_CONTEXT", "Android context is unavailable", null)
+                ModelDownloadWorker.enqueue(context, modelId)
+                true
+            }
+
             Function("start") { options: StartOptions ->
                 try {
                     if (server != null) {
                         throw CodedException("ERR_ALREADY_RUNNING", "Server already running", null)
                     }
                     val instance = TakusuServer()
-                    instance.start(options.port.toUShort(), options.workersUrl, options.rootToken)
+                    instance.startWithAgentConfig(
+                        options.port.toUShort(),
+                        options.workersUrl,
+                        options.rootToken,
+                        options.agentConfigJson,
+                    )
                     server = instance
                     true
                 } catch (e: CodedException) {

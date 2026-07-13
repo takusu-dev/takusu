@@ -74,6 +74,48 @@
           };
           androidNdkHome = "${androidComposition.ndk-bundle}/libexec/android-sdk/ndk-bundle";
 
+          # Sherpa-ONNX prebuilt shared libraries for host tests and the Android
+          # cross-build. Nix-managed so CI doesn't depend on the build.rs
+          # download/extract cache under target/.
+          sherpaOnnxAndroid =
+            pkgs.runCommand "sherpa-onnx-android-1.13.4"
+              {
+                nativeBuildInputs = [
+                  pkgs.bzip2
+                  pkgs.gnutar
+                ];
+              }
+              ''
+                mkdir -p $out
+                tar -xjf ${
+                  pkgs.fetchurl {
+                    url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/sherpa-onnx-v1.13.4-android.tar.bz2";
+                    hash = "sha256-eYP8PeI/bmQUjy+wX6lKLvqowFFswVczg9xcfU0qQ7A=";
+                  }
+                } -C $out
+              '';
+
+          sherpaOnnxLinuxX64Shared =
+            pkgs.runCommand "sherpa-onnx-linux-x64-shared-1.13.4"
+              {
+                nativeBuildInputs = [
+                  pkgs.bzip2
+                  pkgs.gnutar
+                ];
+              }
+              ''
+                mkdir -p $out
+                tar -xjf ${
+                  pkgs.fetchurl {
+                    url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/sherpa-onnx-v1.13.4-linux-x64-shared-lib.tar.bz2";
+                    hash = "sha256-PnzoA3nJOGaPERV7H1SgJytAly9hj0RdyucdEidk0fo=";
+                  }
+                } -C $out
+                mv $out/sherpa-onnx-v1.13.4-linux-x64-shared-lib/lib $out/lib
+                rm -rf $out/sherpa-onnx-v1.13.4-linux-x64-shared-lib
+                chmod -R +w $out/lib
+              '';
+
           src = lib.cleanSource ./.;
 
           inherit (craneLib.crateNameFromCargoToml { inherit src; }) version;
@@ -174,6 +216,11 @@
                 LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
                 OPENBLAS_PATH = "${pkgs.openblas}/lib";
                 BLAS_INCLUDE_DIRS = "${pkgs.openblas.dev}/include";
+                SHERPA_ONNX_LIB_DIR = "${sherpaOnnxAndroid}/jniLibs/arm64-v8a";
+                # cargo-ndk exports the Android clang as CC. Keep host C
+                # build scripts (bzip2/ring) on the host compiler.
+                "CC_x86_64-unknown-linux-gnu" = "${pkgs.stdenv.cc}/bin/cc";
+                C_x86_64_unknown_linux_gnu = "${pkgs.stdenv.cc}/bin/cc";
               };
 
               # Don't run tests — cross-compiled binaries can't execute on host.
@@ -210,6 +257,7 @@
                   esac
                   mkdir -p "$out/jniLibs/$abi_dir"
                   cp "target/$target/release/libtakusu_android.so" "$out/jniLibs/$abi_dir/"
+                  cp "${sherpaOnnxAndroid}/jniLibs/$abi_dir"/lib*.so "$out/jniLibs/$abi_dir/"
                 done
                 runHook postInstall
               '';
@@ -456,6 +504,7 @@
                   libclang
                   openblas
                   zlib
+                  sherpaOnnxLinuxX64Shared
                 ];
               };
 
@@ -472,6 +521,7 @@
                     stdenv.cc
                     openblas
                     zlib
+                    sherpaOnnxAndroid
                   ]
                   ++ [ androidComposition.ndk-bundle ];
               };
@@ -533,8 +583,27 @@
                 openblas
                 stdenv.cc.cc.lib
                 zlib
+                sherpaOnnxLinuxX64Shared
               ];
-              shellHook = commonRustShellHook;
+              shellHook = commonRustShellHook + ''
+                # Copy Sherpa-ONNX shared libs into a writable directory so the
+                # build.rs copy step can overwrite them on rebuilds (the Nix store
+                # files are read-only and would cause "Permission denied").
+                _setup_sherpa_host() {
+                  local _sherpa_lib_dir="$PWD/target/sherpa-onnx-linux-x64-shared"
+                  mkdir -p "$_sherpa_lib_dir"
+                  cp -f "${sherpaOnnxLinuxX64Shared}/lib"/*.so "$_sherpa_lib_dir/"
+                  chmod +w "$_sherpa_lib_dir"/*.so
+                  export SHERPA_ONNX_LIB_DIR="$_sherpa_lib_dir"
+                  export LD_LIBRARY_PATH="$_sherpa_lib_dir''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+                }
+                _setup_sherpa_host
+                unset -f _setup_sherpa_host
+                # Remove stale read-only copies from previous builds so the
+                # build.rs copy step can overwrite them.
+                rm -f target/debug/libonnxruntime.so target/debug/libsherpa-onnx-*.so \
+                  target/debug/examples/libonnxruntime.so target/debug/examples/libsherpa-onnx-*.so 2>/dev/null || true
+              '';
             };
 
             android = pkgs.mkShell {
@@ -551,9 +620,18 @@
                 stdenv.cc.cc.lib
                 zlib
                 androidComposition.ndk-bundle
+                sherpaOnnxAndroid
               ];
               shellHook = commonRustShellHook + ''
                 export ANDROID_NDK_HOME=${androidNdkHome}
+                export SHERPA_ONNX_LIB_DIR="${sherpaOnnxAndroid}/jniLibs/arm64-v8a"
+                # cargo-ndk sets CC/CXX to the Android NDK clang for the target,
+                # but build-dependencies (bzip2/ring) compile for the host. Keep
+                # host builds on the Nix-provided host compiler.
+                export HOST_CC="${pkgs.stdenv.cc}/bin/cc"
+                export HOST_CXX="${pkgs.stdenv.cc}/bin/c++"
+                export HOST_CFLAGS=""
+                export HOST_CXXFLAGS=""
               '';
             };
 
@@ -582,22 +660,20 @@
             # Full shell for local development — keeps everything (Android SDK,
             # Node, JVM, MCP config symlink, etc.).
             default = pkgs.mkShell {
-              nativeBuildInputs =
-                with pkgs;
-                [
-                  cargo-expand
-                  cargo-nextest
-                  cargo-ndk
-                  rust-bin
-                  pkg-config
-                  cmake
-                  stdenv.cc
-                  mold
-                  nodejs
-                  wrangler
-                  openjdk_headless
-                  ktlint
-                ];
+              nativeBuildInputs = with pkgs; [
+                cargo-expand
+                cargo-nextest
+                cargo-ndk
+                rust-bin
+                pkg-config
+                cmake
+                stdenv.cc
+                mold
+                nodejs
+                wrangler
+                openjdk_headless
+                ktlint
+              ];
 
               buildInputs = with pkgs; [
                 alsa-lib
@@ -608,12 +684,29 @@
                 zlib
                 worker-build
                 androidComposition.ndk-bundle
+                sherpaOnnxLinuxX64Shared
+                sherpaOnnxAndroid
               ];
 
               shellHook = commonRustShellHook + ''
                 export ANDROID_NDK_HOME=${androidNdkHome}
                 export ANDROID_HOME=${androidComposition.androidsdk}/libexec/android-sdk
                 export JAVA_HOME=${pkgs.openjdk_headless}/lib/openjdk
+                # Copy Sherpa-ONNX shared libs into a writable directory so the
+                # build.rs copy step can overwrite them on rebuilds.
+                _setup_sherpa_host() {
+                  local _sherpa_lib_dir="$PWD/target/sherpa-onnx-linux-x64-shared"
+                  mkdir -p "$_sherpa_lib_dir"
+                  cp -f "${sherpaOnnxLinuxX64Shared}/lib"/*.so "$_sherpa_lib_dir/"
+                  chmod +w "$_sherpa_lib_dir"/*.so
+                  export SHERPA_ONNX_LIB_DIR="$_sherpa_lib_dir"
+                  export LD_LIBRARY_PATH="$_sherpa_lib_dir''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+                }
+                _setup_sherpa_host
+                unset -f _setup_sherpa_host
+                # Remove stale read-only copies from previous builds.
+                rm -f target/debug/libonnxruntime.so target/debug/libsherpa-onnx-*.so \
+                  target/debug/examples/libonnxruntime.so target/debug/examples/libsherpa-onnx-*.so 2>/dev/null || true
                 if [ -L .devin/config.json ]; then
                   unlink .devin/config.json
                 fi

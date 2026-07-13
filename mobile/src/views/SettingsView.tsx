@@ -44,12 +44,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { haptic } from '@/src/components/haptics';
 import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
+import { AgentSettingsView } from '@/src/views/AgentSettingsView';
 
 export type SettingsCategory =
   | 'general'
   | 'sleep'
   | 'workload'
   | 'notifications'
+  | 'agent'
   | 'worker'
   | 'google'
   | 'info';
@@ -59,6 +61,7 @@ const CATEGORY_LABELS: Record<SettingsCategory, string> = {
   sleep: '睡眠',
   workload: '作業負荷',
   notifications: '通知',
+  agent: 'Agent',
   worker: 'Worker',
   google: 'Google Calendar',
   info: '情報',
@@ -69,6 +72,7 @@ const CATEGORY_ORDER: SettingsCategory[] = [
   'sleep',
   'workload',
   'notifications',
+  'agent',
   'worker',
   'google',
   'info',
@@ -669,6 +673,7 @@ export function SettingsDetailView({
             { paddingBottom: 16 + insets.bottom },
           ]}
         >
+          {category === 'agent' && <AgentSettingsView />}
           {category === 'general' && (
             <>
               <View style={styles.settingRow}>

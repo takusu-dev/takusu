@@ -9,10 +9,12 @@ use std::pin::Pin;
 
 use bytes::Bytes;
 use futures_util::Stream;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// TTS backend identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum TtsBackend {
     Cartesia,
 }
@@ -33,6 +35,19 @@ impl std::str::FromStr for TtsBackend {
             _ => Err(format!("unsupported TTS backend: {s}")),
         }
     }
+}
+
+/// Persistable provider-neutral settings used by Mobile and future backends.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TtsProviderConfig {
+    pub id: String,
+    pub name: String,
+    pub provider: TtsBackend,
+    pub voice_id: String,
+    pub model: Option<String>,
+    pub language: String,
+    pub sample_rate: u32,
+    pub speed: Option<f32>,
 }
 
 #[derive(Debug, Clone)]
