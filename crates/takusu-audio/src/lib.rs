@@ -1,6 +1,8 @@
 pub mod cartesia;
 pub mod models;
+#[cfg(feature = "record")]
 pub mod play;
+#[cfg(feature = "record")]
 pub mod record;
 pub mod stt;
 pub mod tts;
@@ -24,7 +26,11 @@ pub use cartesia::{
 };
 #[cfg(feature = "funasr")]
 pub use funasr::{FunASRClient, FunASRConfig, FunASRError, FunASRMode, default_hotwords};
-pub use models::{ModelCache, ModelError, ModelRegistry, ModelSpec};
+pub use models::{
+    DownloadProgress, DownloadStage, ModelCache, ModelError, ModelRegistry, ModelSpec,
+    ProgressCallback,
+};
+#[cfg(feature = "record")]
 pub use record::{RecordConfig, RecorderError, record};
 pub use stt::{SpeechToText, SttError};
 pub use tts::{TextToSpeech, TtsBackend, TtsConfig, TtsError, TtsOptions, TtsRequest, TtsStream};

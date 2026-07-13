@@ -1,13 +1,16 @@
+#[cfg(feature = "audio-device")]
 pub mod audio;
+pub mod audio_config;
 pub mod llm;
 pub mod tool;
 pub mod tools;
+pub mod transport;
 
 pub use tool::{
     ChangeReceipt, InferredField, ProposedChange, Tool, ToolError, ToolOutput, ToolRegistry,
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -23,7 +26,7 @@ pub struct AgentConfig {
     pub llm: llm::LlmConfig,
     pub server: ServerConfig,
     pub skills: SkillsConfig,
-    pub audio: audio::AudioConfig,
+    pub audio: audio_config::AudioConfig,
 }
 
 impl AgentConfig {
@@ -130,17 +133,25 @@ pub enum AgentError {
     TooManyToolCalls,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ApprovalRequest {
     pub id: String,
     pub why: String,
     pub changes: Vec<ProposedChange>,
     pub inferred_fields: Vec<InferredField>,
     pub warnings: Vec<String>,
+    #[serde(serialize_with = "serialize_timestamp")]
     pub expires_at: jiff::Timestamp,
 }
 
-#[derive(Debug, Clone)]
+fn serialize_timestamp<S>(timestamp: &jiff::Timestamp, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&timestamp.to_string())
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ApprovalResult {
     pub id: String,
     pub approved: bool,
@@ -148,7 +159,7 @@ pub struct ApprovalResult {
     pub schedule_dirty: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TurnResult {
     pub text: String,
     pub changes: Vec<ChangeReceipt>,
@@ -334,6 +345,10 @@ impl AgentSession {
         };
         *self.pending_approval.lock().unwrap() = Some(request.clone());
         Some(request)
+    }
+
+    pub fn pending_approval(&self) -> Option<ApprovalRequest> {
+        self.pending_approval.lock().ok()?.clone()
     }
 
     pub async fn resolve_approval(

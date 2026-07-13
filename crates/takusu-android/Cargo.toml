@@ -15,6 +15,9 @@ required-features = ["bindgen"]
 
 [dependencies]
 takusu-local = { workspace = true, default-features = false }
+takusu-agent = { path = "../takusu-agent", default-features = false }
+takusu-audio = { path = "../takusu-audio", default-features = false, features = ["hush", "sherpa"] }
+takusu-client = { workspace = true }
 takusu-local-lib = { workspace = true }
 takusu-storage = { workspace = true }
 tokio = { workspace = true }
@@ -24,6 +27,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uniffi = "0.31.2"
 reqwest = { workspace = true }
+serde_json = { workspace = true }
 webpki-root-certs = "1"
 
 [features]

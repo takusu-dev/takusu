@@ -4,6 +4,7 @@ export interface StartOptions {
   port: number;
   workersUrl: string;
   rootToken: string;
+  agentConfigJson?: string;
 }
 
 export interface ServerStatusResult {
@@ -23,6 +24,7 @@ interface TakusuServerModuleType extends NativeModule {
   getLogs(): string[];
   clearLogs(): boolean;
   pushLog(line: string): boolean;
+  startModelDownload(modelId: string): boolean;
 }
 
 const TakusuServerModule =

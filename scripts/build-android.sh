@@ -15,6 +15,12 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ANDROID_CRATE="takusu-android"
+SHERPA_VERSION="1.13.4"
+SHERPA_ARCHIVE="sherpa-onnx-v${SHERPA_VERSION}-android.tar.bz2"
+SHERPA_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}/${SHERPA_ARCHIVE}"
+SHERPA_SHA256="7983fc3de23f6e64148f2fb05fa94a2efaa8c0516cc1573383dc5c7d4d2a43b0"
+ANDROID_DEPS_DIR="$REPO_ROOT/target/android-deps/sherpa-onnx-v${SHERPA_VERSION}"
+HOST_CC="${HOST_CC:-gcc}"
 MODULE_DIR="$REPO_ROOT/mobile/modules/takusu-server"
 JNILIBS_DIR="$MODULE_DIR/android/src/main/jniLibs"
 
@@ -47,14 +53,38 @@ fi
 
 echo "Building takusu-android for ${#ALL_ABIS[@]} ABI(s)..."
 
+ensure_sherpa_android_libs() {
+  local archive_path="$ANDROID_DEPS_DIR/$SHERPA_ARCHIVE"
+  local extracted_dir="$ANDROID_DEPS_DIR/jniLibs"
+
+  if [ -d "$extracted_dir/arm64-v8a" ]; then
+    echo "Using cached Sherpa-ONNX Android libraries at $extracted_dir"
+    return
+  fi
+
+  mkdir -p "$ANDROID_DEPS_DIR"
+  echo "Downloading Sherpa-ONNX Android libraries v$SHERPA_VERSION..."
+  curl --fail --location --retry 3 --output "$archive_path.part" "$SHERPA_URL"
+  echo "$SHERPA_SHA256  $archive_path.part" | sha256sum --check --strict
+  mv "$archive_path.part" "$archive_path"
+  tar -xjf "$archive_path" -C "$ANDROID_DEPS_DIR"
+  test -d "$extracted_dir/arm64-v8a"
+}
+
+ensure_sherpa_android_libs
+
 # Build each target
 for abi in "${ALL_ABIS[@]}"; do
   target="${abi%%:*}"
   android_abi="${abi##*:}"
+  sherpa_lib_dir="$ANDROID_DEPS_DIR/jniLibs/$android_abi"
 
   echo ""
   echo "── Building $target ($android_abi) ──"
-  cargo ndk -t "$target" build -p "$ANDROID_CRATE" --release --no-default-features
+  env SHERPA_ONNX_LIB_DIR="$sherpa_lib_dir" \
+    CC_x86_64-unknown-linux-gnu="$HOST_CC" \
+    C_x86_64_unknown_linux_gnu="$HOST_CC" \
+    cargo ndk -t "$target" build -p "$ANDROID_CRATE" --release --no-default-features
 
   # Copy .so to jniLibs
   so_file="lib${ANDROID_CRATE//-/_}.so"
@@ -63,7 +93,8 @@ for abi in "${ALL_ABIS[@]}"; do
 
   mkdir -p "$(dirname "$dst")"
   cp "$src" "$dst"
-  echo "  copied: $dst"
+  cp "$sherpa_lib_dir"/lib*.so "$(dirname "$dst")/"
+  echo "  copied: $dst and Sherpa-ONNX runtime libraries"
 done
 
 # Generate UniFFI Kotlin bindings

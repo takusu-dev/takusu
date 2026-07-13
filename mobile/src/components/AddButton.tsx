@@ -8,7 +8,7 @@
 // On release the parent decides whether to commit (sheet fully opens) or
 // cancel (sheet animates closed) via `onDragEnd`.
 
-import { Alert, Pressable, StyleSheet } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Reanimated, {
@@ -27,6 +27,8 @@ const DRAG_SCALE = 4;
 const COMMIT_THRESHOLD = 60;
 
 interface AddButtonProps {
+  /** Called by a tap without an upward slide. */
+  onTap: () => void;
   /** Called when the user releases past the commit threshold. */
   onSlideUp: () => void;
   /** Shared value the button writes the sheet's translateY into during drag.
@@ -42,6 +44,7 @@ interface AddButtonProps {
 }
 
 export function AddButton({
+  onTap,
   onSlideUp,
   sheetY,
   screenHeight,
@@ -95,7 +98,7 @@ export function AddButton({
 
   function handleTap() {
     haptic.light();
-    Alert.alert('未実装', '音声アシスタントは今後実装予定です');
+    onTap();
   }
 
   return (

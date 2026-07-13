@@ -9,6 +9,7 @@ export const CHANNELS = {
   taskSummary: 'task-summary',
   taskInProgress: 'task-in-progress',
   taskIdle: 'task-idle',
+  agentModelDownloads: 'agent-model-downloads',
 } as const;
 
 export async function setupNotificationChannels(): Promise<void> {
@@ -36,6 +37,11 @@ export async function setupNotificationChannels(): Promise<void> {
       name: '未スケジュール通知',
       description: '長時間放置された未スケジュールタスクの通知',
       importance: Notifications.AndroidImportance.DEFAULT,
+    }),
+    Notifications.setNotificationChannelAsync(CHANNELS.agentModelDownloads, {
+      name: '音声モデルの準備',
+      description: '音声エージェントのモデルダウンロード進捗',
+      importance: Notifications.AndroidImportance.LOW,
     }),
     // Clean up the orphaned habit-reminder channel from previous versions
     // (#360). deleteNotificationChannelAsync is a no-op if the channel

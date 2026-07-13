@@ -13,6 +13,7 @@ import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModu
 import TakusuWidgetModule from '../../modules/takusu-widget/src/TakusuWidgetModule';
 import {
   loadSettings,
+  loadAgentApiKey,
   saveWorkersUrl,
   saveWorkersToken,
   saveDarkMode,
@@ -58,7 +59,7 @@ const ServerContext = createContext<ServerContextValue>({
   setNotifications: async () => {},
 });
 
-const DEFAULT_PORT = 3838;
+export const DEFAULT_PORT = 3838;
 
 export function ServerProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<ServerState>({
@@ -89,10 +90,44 @@ export function ServerProvider({ children }: { children: ReactNode }) {
         throw new Error('Workers URL and token are required');
       }
 
+      const agentSettings = await loadSettings();
+      const activeLlm = agentSettings.llmProviders.find(
+        (provider) => provider.id === agentSettings.activeLlmProvider,
+      );
+      const activeTts = agentSettings.ttsProviders.find(
+        (provider) => provider.id === agentSettings.activeTtsProvider,
+      );
+      const [llmKey, ttsKey] = await Promise.all([
+        activeLlm ? loadAgentApiKey('llm', activeLlm.id) : Promise.resolve(''),
+        activeTts ? loadAgentApiKey('tts', activeTts.id) : Promise.resolve(''),
+      ]);
+      const agentConfigJson = JSON.stringify({
+        llm: activeLlm
+          ? {
+              base_url: activeLlm.baseUrl,
+              model: activeLlm.selectedModel,
+              api_key: llmKey,
+            }
+          : undefined,
+        audio: activeTts
+          ? {
+              tts: {
+                backend: activeTts.provider,
+                api_key: ttsKey,
+                voice_id: activeTts.voiceId,
+                language: activeTts.language,
+                sample_rate: activeTts.sampleRate,
+                speed: activeTts.speed,
+              },
+            }
+          : undefined,
+      });
+
       await TakusuServerModule.start({
         port: DEFAULT_PORT,
         workersUrl: finalUrl,
         rootToken: finalToken,
+        agentConfigJson,
       });
 
       // Persist credentials for the home screen widget so the

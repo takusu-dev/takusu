@@ -28,4 +28,6 @@ android {
 dependencies {
   // UniFFI-generated Kotlin bindings use JNA for FFI
   implementation 'net.java.dev.jna:jna:5.16.0@aar'
+  // Model preparation must continue when the JS runtime is backgrounded.
+  implementation 'androidx.work:work-runtime-ktx:2.10.0'
 }
