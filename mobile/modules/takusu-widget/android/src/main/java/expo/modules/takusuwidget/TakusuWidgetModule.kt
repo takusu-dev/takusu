@@ -15,6 +15,8 @@ class WidgetConfig : Record {
 }
 
 class WidgetUpcomingTask : Record {
+    @Field val id: String = ""
+
     @Field val title: String = ""
 
     @Field val startAt: String? = null
@@ -72,6 +74,7 @@ class TakusuWidgetModule : Module() {
                     val arr = JSONArray()
                     for (task in input.upcoming) {
                         val o = JSONObject()
+                        o.put("id", task.id)
                         o.put("title", task.title)
                         if (task.startAt !=
                             null
