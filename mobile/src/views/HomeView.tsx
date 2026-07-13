@@ -181,6 +181,16 @@ export function HomeView() {
     () => new Map(habits.map((h) => [h.id, h.display_id])),
     [habits],
   );
+  // task_id → number of tasks that depend on it (reverse dependency count)
+  const dependentCountMap = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const t of tasks) {
+      for (const depId of parseDepends(t.depends)) {
+        counts.set(depId, (counts.get(depId) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [tasks]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [refreshing, setRefreshing] = useState(false);
   // Server-configured timezone (from GET /api/settings). Used by dateKey
@@ -1404,6 +1414,7 @@ export function HomeView() {
           guestScheduleEnds={item.guestScheduleEnds}
           selected={isSelected}
           habitDisplayIdMap={habitDisplayIdMap}
+          dependentCountMap={dependentCountMap}
           onHostPress={() => {
             if (selected.size > 0) {
               toggleGroupSelection();
@@ -1437,6 +1448,7 @@ export function HomeView() {
             ? habitDisplayIdMap.get(item.task.habit_id)
             : undefined
         }
+        dependentCount={dependentCountMap.get(item.task.id)}
         onPress={() => {
           if (selected.size > 0) {
             toggleSelection(item.task.id);
