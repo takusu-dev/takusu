@@ -80,6 +80,7 @@ export function HabitDetailView() {
   const [stepRedundantEdges, setStepRedundantEdges] = useState<
     RedundantDependency[]
   >([]);
+  const [simpleInfoExpanded, setSimpleInfoExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
   const [pickerField, setPickerField] = useState<'start' | 'end' | null>(null);
@@ -667,6 +668,9 @@ export function HabitDetailView() {
     );
   }
 
+  const hasSteps = stepDrafts.length > 0;
+  const showSimpleInfo = !hasSteps || simpleInfoExpanded;
+
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
       <View style={[styles.topBar, { paddingTop: 4 + insets.top }]}>
@@ -950,222 +954,290 @@ export function HabitDetailView() {
           )}
         </View>
 
-        {/* Time */}
-        <View
-          style={[
-            styles.section,
-            stepDrafts.length > 0 && editing && styles.sectionDimmed,
-          ]}
-          pointerEvents={stepDrafts.length > 0 && editing ? 'none' : 'auto'}
-        >
-          <Text style={[styles.label, { color: colors.gray }]}>時間</Text>
-          {editing ? (
-            <View style={styles.row}>
-              <Pressable
-                style={[
-                  styles.timeField,
-                  {
-                    borderColor: colors.separator,
-                    backgroundColor: colors.white,
-                  },
-                ]}
-                onPress={() => {
-                  haptic.select();
-                  setPickerField('start');
-                }}
-              >
-                <Text style={[styles.timeFieldLabel, { color: colors.gray }]}>
-                  開始
-                </Text>
-                <Text style={[styles.timeFieldValue, { color: colors.black }]}>
-                  {startTime}
-                </Text>
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.timeField,
-                  {
-                    borderColor: colors.separator,
-                    backgroundColor: colors.white,
-                  },
-                  windowMode === WINDOW_MODE_PERIOD && { opacity: 0.4 },
-                ]}
-                disabled={windowMode === WINDOW_MODE_PERIOD}
-                onPress={() => {
-                  haptic.select();
-                  setPickerField('end');
-                }}
-              >
-                <Text style={[styles.timeFieldLabel, { color: colors.gray }]}>
-                  終了
-                </Text>
-                <Text style={[styles.timeFieldValue, { color: colors.black }]}>
-                  {endTime}
-                </Text>
-              </Pressable>
-            </View>
-          ) : (
-            <Text style={[styles.value, { color: colors.black }]}>
-              {habit.start_time} → {habit.end_time}
-            </Text>
-          )}
-          {editing && windowMode === WINDOW_MODE_PERIOD && (
-            <Text style={[styles.hint, { color: colors.grayLight }]}>
-              終了時刻は次の周期の直前が自動設定されます
-            </Text>
-          )}
-        </View>
-
-        {/* Cost */}
-        <View
-          style={[
-            styles.section,
-            stepDrafts.length > 0 && editing && styles.sectionDimmed,
-          ]}
-          pointerEvents={stepDrafts.length > 0 && editing ? 'none' : 'auto'}
-        >
-          <Text style={[styles.label, { color: colors.gray }]}>コスト</Text>
-          {editing ? (
-            <View style={styles.row}>
-              <PaperTextInput
-                mode="outlined"
-                label="avg (1h30m / 90m / 90)"
-                value={avgMinutes}
-                onChangeText={setAvgMinutes}
-                autoCapitalize="none"
-                autoCorrect={false}
-                outlineColor={colors.separator}
-                activeOutlineColor={BRAND_COLOR}
-                style={[styles.costInput, { flex: 1 }]}
-                dense
+        {hasSteps && (
+          <View style={styles.section}>
+            <Pressable
+              style={styles.foldToggle}
+              onPress={() => {
+                haptic.light();
+                setSimpleInfoExpanded((v) => !v);
+              }}
+            >
+              <Ionicons
+                name={simpleInfoExpanded ? 'chevron-down' : 'chevron-forward'}
+                size={16}
+                color={BRAND_COLOR}
               />
-              <View style={[styles.costInput, { flex: 1 }]}>
-                <PaperTextInput
-                  mode="outlined"
-                  label="sigma (1h30m / 90m / 90)"
-                  value={sigmaMinutes}
-                  onChangeText={setSigmaMinutes}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  outlineColor={colors.separator}
-                  activeOutlineColor={BRAND_COLOR}
-                  dense
-                />
-                {sigmaMinutes === '' && (
-                  <Text style={[styles.costHint, { color: colors.grayLight }]}>
-                    {habit.sigma_minutes}m
-                  </Text>
-                )}
-              </View>
-            </View>
-          ) : (
-            <Text style={[styles.value, { color: colors.black }]}>
-              avg: {habit.avg_minutes}m, sigma:{' '}
-              {habit.sigma_minutes > 0 ? (
-                `${habit.sigma_minutes}m`
-              ) : (
-                <Text style={{ color: colors.grayLight }}>0m</Text>
-              )}
-            </Text>
-          )}
-        </View>
-
-        {/* Abandonability */}
-        <View
-          style={[
-            styles.section,
-            stepDrafts.length > 0 && editing && styles.sectionDimmed,
-          ]}
-          pointerEvents={stepDrafts.length > 0 && editing ? 'none' : 'auto'}
-        >
-          <Text style={[styles.label, { color: colors.gray }]}>
-            abandonability
-          </Text>
-          {editing ? (
-            <View style={styles.sliderContainer}>
-              <Slider
-                value={abandonability}
-                onValueChange={setAbandonability}
-                minimumValue={0}
-                maximumValue={1}
-                step={0.25}
-                minimumTrackTintColor={BRAND_COLOR}
-                style={styles.slider}
-              />
-              <Text style={[styles.sliderValue, { color: BRAND_COLOR }]}>
-                {abandonability.toFixed(2)}
+              <Text style={[styles.label, { color: BRAND_COLOR }]}>
+                Habit 本体の設定（ステップが有効なため無視）
               </Text>
-            </View>
-          ) : (
-            <Text style={[styles.value, { color: colors.black }]}>
-              {habit.abandonability.toFixed(2)}
-            </Text>
-          )}
-        </View>
+            </Pressable>
+          </View>
+        )}
 
-        {/* Parallel config */}
-        <View
-          style={[
-            styles.section,
-            stepDrafts.length > 0 && editing && styles.sectionDimmed,
-          ]}
-          pointerEvents={stepDrafts.length > 0 && editing ? 'none' : 'auto'}
-        >
-          <Text style={[styles.label, { color: colors.gray }]}>並列設定</Text>
-          {editing ? (
-            <View style={styles.toggleRow}>
-              <Pressable
-                style={styles.toggleItem}
-                onPress={() => setParallelizable(!parallelizable)}
-              >
-                <Text style={[styles.toggleLabel, { color: colors.black }]}>
-                  並列実行可能
+        {showSimpleInfo && (
+          <>
+            {/* Time */}
+            <View
+              style={[
+                styles.section,
+                hasSteps && editing && styles.sectionDimmed,
+              ]}
+              pointerEvents={hasSteps && editing ? 'none' : 'auto'}
+            >
+              <Text style={[styles.label, { color: colors.gray }]}>時間</Text>
+              {editing ? (
+                <View style={styles.row}>
+                  <Pressable
+                    style={[
+                      styles.timeField,
+                      {
+                        borderColor: colors.separator,
+                        backgroundColor: colors.white,
+                      },
+                    ]}
+                    onPress={() => {
+                      haptic.select();
+                      setPickerField('start');
+                    }}
+                  >
+                    <Text
+                      style={[styles.timeFieldLabel, { color: colors.gray }]}
+                    >
+                      開始
+                    </Text>
+                    <Text
+                      style={[styles.timeFieldValue, { color: colors.black }]}
+                    >
+                      {startTime}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.timeField,
+                      {
+                        borderColor: colors.separator,
+                        backgroundColor: colors.white,
+                      },
+                      windowMode === WINDOW_MODE_PERIOD && { opacity: 0.4 },
+                    ]}
+                    disabled={windowMode === WINDOW_MODE_PERIOD}
+                    onPress={() => {
+                      haptic.select();
+                      setPickerField('end');
+                    }}
+                  >
+                    <Text
+                      style={[styles.timeFieldLabel, { color: colors.gray }]}
+                    >
+                      終了
+                    </Text>
+                    <Text
+                      style={[styles.timeFieldValue, { color: colors.black }]}
+                    >
+                      {endTime}
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <Text style={[styles.value, { color: colors.black }]}>
+                  {habit.start_time} → {habit.end_time}
                 </Text>
-                <Checkbox
-                  status={parallelizable ? 'checked' : 'unchecked'}
-                  onPress={() => setParallelizable(!parallelizable)}
-                  color={BRAND_COLOR}
-                />
-              </Pressable>
-              <Pressable
-                style={styles.toggleItem}
-                onPress={() => setAllowsParallel(!allowsParallel)}
-              >
-                <Text style={[styles.toggleLabel, { color: colors.black }]}>
-                  並列受け入れ
+              )}
+              {editing && windowMode === WINDOW_MODE_PERIOD && (
+                <Text style={[styles.hint, { color: colors.grayLight }]}>
+                  終了時刻は次の周期の直前が自動設定されます
                 </Text>
-                <Checkbox
-                  status={allowsParallel ? 'checked' : 'unchecked'}
-                  onPress={() => setAllowsParallel(!allowsParallel)}
-                  color={BRAND_COLOR}
-                />
-              </Pressable>
+              )}
             </View>
-          ) : (
-            <View style={styles.toggleRow}>
-              <View style={styles.toggleItem}>
-                <Text style={[styles.toggleLabel, { color: colors.black }]}>
-                  並列実行可能
+
+            {/* Cost */}
+            <View
+              style={[
+                styles.section,
+                stepDrafts.length > 0 && editing && styles.sectionDimmed,
+              ]}
+              pointerEvents={stepDrafts.length > 0 && editing ? 'none' : 'auto'}
+            >
+              <Text style={[styles.label, { color: colors.gray }]}>コスト</Text>
+              {editing ? (
+                <View style={styles.row}>
+                  <PaperTextInput
+                    mode="outlined"
+                    label="avg (1h30m / 90m / 90)"
+                    value={avgMinutes}
+                    onChangeText={setAvgMinutes}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    outlineColor={colors.separator}
+                    activeOutlineColor={BRAND_COLOR}
+                    style={[styles.costInput, { flex: 1 }]}
+                    dense
+                  />
+                  <View style={[styles.costInput, { flex: 1 }]}>
+                    <PaperTextInput
+                      mode="outlined"
+                      label="sigma (1h30m / 90m / 90)"
+                      value={sigmaMinutes}
+                      onChangeText={setSigmaMinutes}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      outlineColor={colors.separator}
+                      activeOutlineColor={BRAND_COLOR}
+                      dense
+                    />
+                    {sigmaMinutes === '' && (
+                      <Text
+                        style={[styles.costHint, { color: colors.grayLight }]}
+                      >
+                        {habit.sigma_minutes}m
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              ) : (
+                <Text style={[styles.value, { color: colors.black }]}>
+                  avg: {habit.avg_minutes}m, sigma:{' '}
+                  {habit.sigma_minutes > 0 ? (
+                    `${habit.sigma_minutes}m`
+                  ) : (
+                    <Text style={{ color: colors.grayLight }}>0m</Text>
+                  )}
                 </Text>
+              )}
+            </View>
+
+            {/* Abandonability */}
+            <View
+              style={[
+                styles.section,
+                stepDrafts.length > 0 && editing && styles.sectionDimmed,
+              ]}
+              pointerEvents={stepDrafts.length > 0 && editing ? 'none' : 'auto'}
+            >
+              <Text style={[styles.label, { color: colors.gray }]}>
+                abandonability
+              </Text>
+              {editing ? (
+                <View style={styles.sliderContainer}>
+                  <Slider
+                    value={abandonability}
+                    onValueChange={setAbandonability}
+                    minimumValue={0}
+                    maximumValue={1}
+                    step={0.25}
+                    minimumTrackTintColor={BRAND_COLOR}
+                    style={styles.slider}
+                  />
+                  <Text style={[styles.sliderValue, { color: BRAND_COLOR }]}>
+                    {abandonability.toFixed(2)}
+                  </Text>
+                </View>
+              ) : (
+                <Text style={[styles.value, { color: colors.black }]}>
+                  {habit.abandonability.toFixed(2)}
+                </Text>
+              )}
+            </View>
+
+            {/* Parallel config */}
+            <View
+              style={[
+                styles.section,
+                stepDrafts.length > 0 && editing && styles.sectionDimmed,
+              ]}
+              pointerEvents={stepDrafts.length > 0 && editing ? 'none' : 'auto'}
+            >
+              <Text style={[styles.label, { color: colors.gray }]}>
+                並列設定
+              </Text>
+              {editing ? (
+                <View style={styles.toggleRow}>
+                  <Pressable
+                    style={styles.toggleItem}
+                    onPress={() => setParallelizable(!parallelizable)}
+                  >
+                    <Text style={[styles.toggleLabel, { color: colors.black }]}>
+                      並列実行可能
+                    </Text>
+                    <Checkbox
+                      status={parallelizable ? 'checked' : 'unchecked'}
+                      onPress={() => setParallelizable(!parallelizable)}
+                      color={BRAND_COLOR}
+                    />
+                  </Pressable>
+                  <Pressable
+                    style={styles.toggleItem}
+                    onPress={() => setAllowsParallel(!allowsParallel)}
+                  >
+                    <Text style={[styles.toggleLabel, { color: colors.black }]}>
+                      並列受け入れ
+                    </Text>
+                    <Checkbox
+                      status={allowsParallel ? 'checked' : 'unchecked'}
+                      onPress={() => setAllowsParallel(!allowsParallel)}
+                      color={BRAND_COLOR}
+                    />
+                  </Pressable>
+                </View>
+              ) : (
+                <View style={styles.toggleRow}>
+                  <View style={styles.toggleItem}>
+                    <Text style={[styles.toggleLabel, { color: colors.black }]}>
+                      並列実行可能
+                    </Text>
+                    <Checkbox
+                      status={habit.parallelizable ? 'checked' : 'unchecked'}
+                      disabled
+                      color={BRAND_COLOR}
+                    />
+                  </View>
+                  <View style={styles.toggleItem}>
+                    <Text style={[styles.toggleLabel, { color: colors.black }]}>
+                      並列受け入れ
+                    </Text>
+                    <Checkbox
+                      status={habit.allows_parallel ? 'checked' : 'unchecked'}
+                      disabled
+                      color={BRAND_COLOR}
+                    />
+                  </View>
+                </View>
+              )}
+            </View>
+
+            {/* Fixed */}
+            <View
+              style={[
+                styles.section,
+                stepDrafts.length > 0 && editing && styles.sectionDimmed,
+              ]}
+              pointerEvents={stepDrafts.length > 0 && editing ? 'none' : 'auto'}
+            >
+              <Text style={[styles.label, { color: colors.gray }]}>
+                時間固定
+              </Text>
+              {editing ? (
+                <>
+                  <Checkbox
+                    status={fixed ? 'checked' : 'unchecked'}
+                    onPress={() => setFixed(!fixed)}
+                    color={BRAND_COLOR}
+                  />
+                  <Text style={[styles.hint, { color: colors.grayLight }]}>
+                    開始時刻を固定し、スケジューラの移動を許可しない
+                  </Text>
+                </>
+              ) : (
                 <Checkbox
-                  status={habit.parallelizable ? 'checked' : 'unchecked'}
+                  status={habit.fixed ? 'checked' : 'unchecked'}
                   disabled
                   color={BRAND_COLOR}
                 />
-              </View>
-              <View style={styles.toggleItem}>
-                <Text style={[styles.toggleLabel, { color: colors.black }]}>
-                  並列受け入れ
-                </Text>
-                <Checkbox
-                  status={habit.allows_parallel ? 'checked' : 'unchecked'}
-                  disabled
-                  color={BRAND_COLOR}
-                />
-              </View>
+              )}
             </View>
-          )}
-        </View>
+          </>
+        )}
 
         {/* Active */}
         <View style={styles.section}>
@@ -1179,35 +1251,6 @@ export function HabitDetailView() {
           ) : (
             <Checkbox
               status={habit.active ? 'checked' : 'unchecked'}
-              disabled
-              color={BRAND_COLOR}
-            />
-          )}
-        </View>
-
-        {/* Fixed */}
-        <View
-          style={[
-            styles.section,
-            stepDrafts.length > 0 && editing && styles.sectionDimmed,
-          ]}
-          pointerEvents={stepDrafts.length > 0 && editing ? 'none' : 'auto'}
-        >
-          <Text style={[styles.label, { color: colors.gray }]}>時間固定</Text>
-          {editing ? (
-            <>
-              <Checkbox
-                status={fixed ? 'checked' : 'unchecked'}
-                onPress={() => setFixed(!fixed)}
-                color={BRAND_COLOR}
-              />
-              <Text style={[styles.hint, { color: colors.grayLight }]}>
-                開始時刻を固定し、スケジューラの移動を許可しない
-              </Text>
-            </>
-          ) : (
-            <Checkbox
-              status={habit.fixed ? 'checked' : 'unchecked'}
               disabled
               color={BRAND_COLOR}
             />
@@ -1523,6 +1566,11 @@ const styles = StyleSheet.create({
   },
   section: {
     gap: 4,
+  },
+  foldToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   label: {
     fontSize: 13,

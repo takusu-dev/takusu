@@ -441,29 +441,48 @@ export function HabitView({ client }: HabitViewProps) {
                 )}
               </View>
             </View>
-            <Text style={[styles.habitTime, { color: colors.gray }]}>
-              時間: {h.start_time} → {h.end_time}
-            </Text>
-            <Text style={[styles.habitRecurrence, { color: colors.gray }]}>
-              周期: {summarizeRule(parseRule(h.recurrence))}
-            </Text>
-            <Text style={[styles.habitCost, { color: colors.gray }]}>
-              {h.avg_minutes}m ±{h.sigma_minutes}
-            </Text>
-            <Text style={[styles.habitParallel, { color: colors.gray }]}>
-              parallel:{' '}
-              {h.parallelizable && h.allows_parallel
-                ? 'host+guest'
-                : h.parallelizable
-                  ? 'guest'
-                  : h.allows_parallel
-                    ? 'host'
-                    : 'none'}
-              {h.fixed ? ' · fixed' : ''}
-            </Text>
-            <Text style={[styles.habitAbandon, { color: colors.gray }]}>
-              abandon: {h.abandonability.toFixed(2)}
-            </Text>
+            {(() => {
+              const hasSteps = (stepCounts.get(h.id) ?? 0) > 0;
+              return (
+                <>
+                  {!hasSteps && (
+                    <Text style={[styles.habitTime, { color: colors.gray }]}>
+                      時間: {h.start_time} → {h.end_time}
+                    </Text>
+                  )}
+                  <Text
+                    style={[styles.habitRecurrence, { color: colors.gray }]}
+                  >
+                    周期: {summarizeRule(parseRule(h.recurrence))}
+                  </Text>
+                  {!hasSteps && (
+                    <>
+                      <Text style={[styles.habitCost, { color: colors.gray }]}>
+                        {h.avg_minutes}m ±{h.sigma_minutes}
+                      </Text>
+                      <Text
+                        style={[styles.habitParallel, { color: colors.gray }]}
+                      >
+                        parallel:{' '}
+                        {h.parallelizable && h.allows_parallel
+                          ? 'host+guest'
+                          : h.parallelizable
+                            ? 'guest'
+                            : h.allows_parallel
+                              ? 'host'
+                              : 'none'}
+                        {h.fixed ? ' · fixed' : ''}
+                      </Text>
+                      <Text
+                        style={[styles.habitAbandon, { color: colors.gray }]}
+                      >
+                        abandon: {h.abandonability.toFixed(2)}
+                      </Text>
+                    </>
+                  )}
+                </>
+              );
+            })()}
           </Pressable>
         )}
         refreshControl={
