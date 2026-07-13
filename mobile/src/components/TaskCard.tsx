@@ -34,6 +34,8 @@ interface TaskCardProps {
   // Habit display_id for habit-based coloring (#309). Undefined when the
   // task has no habit or the habit map is unavailable.
   habitDisplayId?: number;
+  // Number of tasks that depend on this task (reverse dependencies).
+  dependentCount?: number;
 }
 
 function formatTime(iso?: string): string {
@@ -73,6 +75,7 @@ function TaskCardImpl({
   onLongPress,
   selected,
   habitDisplayId,
+  dependentCount,
 }: TaskCardProps) {
   const translateX = useSharedValue(0);
   // Track which direction the haptic last fired for (0=none, 1=right, -1=left)
@@ -308,10 +311,26 @@ function TaskCardImpl({
               >
                 {task.title}
               </Text>
-              {deps.length > 0 && (
-                <Text style={[styles.depsCount, { color: colors.gray }]}>
-                  ↳ {deps.length} deps
-                </Text>
+              {(deps.length > 0 || (dependentCount ?? 0) > 0) && (
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                >
+                  {deps.length > 0 && (
+                    <Text style={[styles.depsCount, { color: colors.gray }]}>
+                      ↳ {deps.length} deps
+                    </Text>
+                  )}
+                  {(dependentCount ?? 0) > 0 && (
+                    <Text style={[styles.depsCount, { color: colors.gray }]}>
+                      ↗ {dependentCount}{' '}
+                      {dependentCount === 1 ? 'dependent' : 'dependents'}
+                    </Text>
+                  )}
+                </View>
               )}
             </View>
 
@@ -462,6 +481,8 @@ interface ParallelGroupCardProps {
   onDelete?: () => void;
   // habit_id → display_id map for habit-based coloring (#309).
   habitDisplayIdMap?: Map<string, number>;
+  // task_id → number of tasks that depend on it (reverse dependency count).
+  dependentCountMap?: Map<string, number>;
 }
 
 function ParallelGroupCardImpl({
@@ -478,6 +499,7 @@ function ParallelGroupCardImpl({
   onDone,
   onDelete,
   habitDisplayIdMap,
+  dependentCountMap,
 }: ParallelGroupCardProps) {
   const translateX = useSharedValue(0);
   // Track which direction the haptic last fired for (0=none, 1=right, -1=left)
@@ -573,6 +595,8 @@ function ParallelGroupCardImpl({
     dark,
   );
   const hostDone = host.status === 'completed' || host.status === 'skipped';
+  const hostDeps = parseDepends(host.depends);
+  const hostDependentCount = dependentCountMap?.get(host.id) ?? 0;
   // Slide-right preview: icon and color depend on the host's next state
   // in the 3-state cycle (#389), matching the single task card (#312).
   // pending → completed (checkmark, green)
@@ -704,6 +728,24 @@ function ParallelGroupCardImpl({
             >
               {host.title}
             </Text>
+            {(hostDeps.length > 0 || hostDependentCount > 0) && (
+              <View style={groupStyles.hostDepBadges}>
+                {hostDeps.length > 0 && (
+                  <Text
+                    style={[groupStyles.hostDepBadge, { color: colors.gray }]}
+                  >
+                    ↳ {hostDeps.length}
+                  </Text>
+                )}
+                {hostDependentCount > 0 && (
+                  <Text
+                    style={[groupStyles.hostDepBadge, { color: colors.gray }]}
+                  >
+                    ↗ {hostDependentCount}
+                  </Text>
+                )}
+              </View>
+            )}
           </Pressable>
 
           {/* Right: guests stacked (50%) */}
@@ -720,6 +762,7 @@ function ParallelGroupCardImpl({
                 dark,
               );
               const guestDeps = parseDepends(guest.depends);
+              const guestDependentCount = dependentCountMap?.get(guest.id) ?? 0;
               return (
                 <Pressable
                   key={guest.id}
@@ -781,12 +824,29 @@ function ParallelGroupCardImpl({
                     >
                       {guest.title}
                     </Text>
-                    {guestDeps.length > 0 && (
-                      <Text
-                        style={[groupStyles.guestDeps, { color: colors.gray }]}
-                      >
-                        ↳ {guestDeps.length}
-                      </Text>
+                    {(guestDeps.length > 0 || guestDependentCount > 0) && (
+                      <View style={groupStyles.guestDepBadges}>
+                        {guestDeps.length > 0 && (
+                          <Text
+                            style={[
+                              groupStyles.guestDepBadge,
+                              { color: colors.gray },
+                            ]}
+                          >
+                            ↳ {guestDeps.length}
+                          </Text>
+                        )}
+                        {guestDependentCount > 0 && (
+                          <Text
+                            style={[
+                              groupStyles.guestDepBadge,
+                              { color: colors.gray },
+                            ]}
+                          >
+                            ↗ {guestDependentCount}
+                          </Text>
+                        )}
+                      </View>
                     )}
                   </View>
                   <View style={groupStyles.guestCost}>
@@ -844,6 +904,16 @@ const groupStyles = StyleSheet.create({
     fontWeight: '500',
     marginTop: 2,
   },
+  hostDepBadges: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    marginTop: 2,
+  },
+  hostDepBadge: {
+    fontSize: 9,
+    fontVariant: ['tabular-nums'],
+  },
   guestsColumn: {
     flex: 1,
     flexDirection: 'column',
@@ -886,6 +956,15 @@ const groupStyles = StyleSheet.create({
   },
   guestDeps: {
     fontSize: 9,
+  },
+  guestDepBadges: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  guestDepBadge: {
+    fontSize: 9,
+    fontVariant: ['tabular-nums'],
   },
   guestCost: {
     alignSelf: 'flex-end',
