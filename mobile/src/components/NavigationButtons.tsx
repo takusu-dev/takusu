@@ -58,6 +58,14 @@ export function NavigationButtons({
     setCalMonth(new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 1));
   }
 
+  function jumpToCurrentMonth() {
+    haptic.select();
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    now.setDate(1);
+    setCalMonth(now);
+  }
+
   function selectDay(day: number) {
     haptic.medium();
     const date = new Date(calMonth.getFullYear(), calMonth.getMonth(), day);
@@ -129,9 +137,15 @@ export function NavigationButtons({
               >
                 <Text style={[styles.calNav, { color: colors.brand }]}>‹</Text>
               </Pressable>
-              <Text style={[styles.calMonthLabel, { color: colors.black }]}>
-                {monthLabel}
-              </Text>
+              <Pressable
+                onPress={jumpToCurrentMonth}
+                style={styles.calMonthLabelPressable}
+                hitSlop={8}
+              >
+                <Text style={[styles.calMonthLabel, { color: colors.black }]}>
+                  {monthLabel}
+                </Text>
+              </Pressable>
               <Pressable
                 onPress={nextMonth}
                 style={styles.calNavButton}
@@ -283,6 +297,12 @@ const styles = StyleSheet.create({
   calMonthLabel: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  calMonthLabelPressable: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
   },
   calGrid: {
     flexDirection: 'row',
