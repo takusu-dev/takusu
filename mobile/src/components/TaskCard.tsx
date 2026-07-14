@@ -716,7 +716,8 @@ function ParallelGroupCardImpl({
                   color: colors.done,
                 },
               ]}
-              numberOfLines={4}
+              numberOfLines={2}
+              ellipsizeMode="tail"
             >
               {host.title}
             </Text>
