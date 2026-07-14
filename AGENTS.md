@@ -464,7 +464,7 @@ CLI client using clap derive with nested subcommands: `task`, `schedule`, `token
   Lines starting with `#` are comments. Empty values are not updated.
 - **Subcommands**: `task {list,show,create,edit,update,replace,delete,status}`,
   `schedule {get,generate,reschedule,move,clear}`,
-  `token {create,list,revoke}`, `sync {settings,setup,oauth-url,oauth-callback,trigger}`,
+  `token {create,list,revoke}`, `sync {settings,setup,login,trigger}`,
   `habit {list,show,create,edit,update,replace,delete}`
 
 ## takusu-client
