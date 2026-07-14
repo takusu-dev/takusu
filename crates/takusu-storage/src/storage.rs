@@ -70,6 +70,13 @@ pub trait Storage: Send + Sync + 'static {
     async fn get_settings(&self) -> StorageResult<SettingsRow>;
     async fn update_settings(&self, body: &UpdateSettings) -> StorageResult<SettingsRow>;
 
+    // ── Skills (#WI-6) ────────────────────────────────────
+    async fn list_skills(&self) -> StorageResult<Vec<SkillRow>>;
+    async fn get_skill(&self, slug: &str) -> StorageResult<SkillRow>;
+    async fn create_skill(&self, body: &CreateSkill) -> StorageResult<SkillRow>;
+    async fn update_skill(&self, slug: &str, body: &UpdateSkill) -> StorageResult<SkillRow>;
+    async fn delete_skill(&self, slug: &str) -> StorageResult<()>;
+
     async fn get_gcal_settings(&self) -> StorageResult<GoogleCalSettingsRow>;
     async fn update_gcal_settings(
         &self,

@@ -9,7 +9,7 @@ use takusu_local_lib::error::AppError;
 
 pub async fn auth_middleware(
     State(state): State<AppState>,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> Result<Response, HttpError> {
     let token = req
@@ -29,6 +29,8 @@ pub async fn auth_middleware(
     .map_err(|e| HttpError(AppError::Internal(e.to_string())))?;
 
     if valid {
+        let token = token.to_string();
+        req.extensions_mut().insert(token);
         Ok(next.run(req).await)
     } else {
         Err(HttpError(AppError::Unauthorized))

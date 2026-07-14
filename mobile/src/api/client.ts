@@ -25,6 +25,9 @@ import type {
   GoogleCalEventMapping,
   IcalImportResult,
   DependencyAnalysisResponse,
+  SkillRow,
+  CreateSkill,
+  UpdateSkill,
 } from './types';
 
 export class ApiError extends Error {
@@ -269,6 +272,27 @@ export class TakusuClient {
 
   async listGcalMappings(): Promise<GoogleCalEventMapping[]> {
     return this.request('GET', '/api/sync/mappings');
+  }
+
+  // ── Skills (#WI-6) ──
+  async listSkills(): Promise<SkillRow[]> {
+    return this.request('GET', '/api/skills');
+  }
+
+  async getSkill(slug: string): Promise<SkillRow> {
+    return this.request('GET', `/api/skills/${slug}`);
+  }
+
+  async createSkill(body: CreateSkill): Promise<SkillRow> {
+    return this.request('POST', '/api/skills', body);
+  }
+
+  async updateSkill(slug: string, body: UpdateSkill): Promise<SkillRow> {
+    return this.request('PATCH', `/api/skills/${slug}`, body);
+  }
+
+  async deleteSkill(slug: string): Promise<void> {
+    return this.request('DELETE', `/api/skills/${slug}`);
   }
 
   // ── Health ──

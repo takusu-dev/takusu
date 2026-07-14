@@ -87,6 +87,11 @@ pub fn router(state: AppState) -> Router {
         .route("/sync/mappings", get(handlers::sync::list_mappings))
         .route("/settings", get(handlers::settings::get_settings))
         .route("/settings", put(handlers::settings::update_settings))
+        .route("/skills", get(handlers::skills::list_skills))
+        .route("/skills", post(handlers::skills::create_skill))
+        .route("/skills/{slug}", get(handlers::skills::get_skill))
+        .route("/skills/{slug}", patch(handlers::skills::update_skill))
+        .route("/skills/{slug}", delete(handlers::skills::delete_skill))
         .route("/workers/health", get(handlers::settings::workers_health))
         .layer(middleware::from_fn_with_state(
             state.clone(),

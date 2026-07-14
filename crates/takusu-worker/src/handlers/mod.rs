@@ -4,6 +4,7 @@ pub mod habits;
 pub mod health;
 pub mod schedule;
 pub mod settings;
+pub mod skills;
 pub mod sync;
 pub mod tasks;
 pub mod tokens;

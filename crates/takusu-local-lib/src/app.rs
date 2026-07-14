@@ -8,10 +8,10 @@ use takusu_core::{
     NormalDist, Planner, Point, RescheduleRange, SleepConfig, Task as CoreTask, WorkloadConfig,
 };
 use takusu_storage::{
-    CreateHabit, CreateHabitPause, CreateTask, GoogleCalEventRow, HabitDetail, HabitPauseRow,
-    HabitRow, HabitStepInput, HabitStepRow, SaveScheduleRequest, ScheduleEntry, ScheduleRow,
-    SettingsRow, Storage, TaskQuery, TaskRow, TokenCreateResponse, TokenRow,
-    UpdateGoogleCalSettings, UpdateHabit, UpdateSettings, UpdateTask,
+    CreateHabit, CreateHabitPause, CreateSkill, CreateTask, GoogleCalEventRow, HabitDetail,
+    HabitPauseRow, HabitRow, HabitStepInput, HabitStepRow, SaveScheduleRequest, ScheduleEntry,
+    ScheduleRow, SettingsRow, SkillRow, Storage, TaskQuery, TaskRow, TokenCreateResponse, TokenRow,
+    UpdateGoogleCalSettings, UpdateHabit, UpdateSettings, UpdateSkill, UpdateTask,
 };
 
 use crate::error::AppError;
@@ -62,6 +62,50 @@ fn validate_window_mode(mode: &str) -> Result<(), AppError> {
             "window_mode must be 'day' or 'period' (got {mode:?})"
         )))
     }
+}
+
+/// Validate a skill slug, name, description, and body (#WI-6).
+fn validate_skill(create: &CreateSkill) -> Result<(), AppError> {
+    const MAX_SLUG_LEN: usize = 64;
+    const MAX_NAME_LEN: usize = 100;
+    const MAX_DESC_LEN: usize = 500;
+    const MAX_BODY_LEN: usize = 64 * 1024;
+
+    if create.slug.is_empty() || create.slug.len() > MAX_SLUG_LEN {
+        return Err(AppError::BadRequest(format!(
+            "slug must be 1..{MAX_SLUG_LEN} characters"
+        )));
+    }
+    if create.slug.starts_with('.') || create.slug.contains('/') || create.slug.contains("..") {
+        return Err(AppError::BadRequest(
+            "slug must not contain path components".into(),
+        ));
+    }
+    if !create
+        .slug
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(AppError::BadRequest(
+            "slug must contain only ASCII letters, digits, '-', '_'".into(),
+        ));
+    }
+    if create.name.is_empty() || create.name.len() > MAX_NAME_LEN {
+        return Err(AppError::BadRequest(format!(
+            "name must be 1..{MAX_NAME_LEN} characters"
+        )));
+    }
+    if create.description.len() > MAX_DESC_LEN {
+        return Err(AppError::BadRequest(format!(
+            "description must be at most {MAX_DESC_LEN} characters"
+        )));
+    }
+    if create.body.is_empty() || create.body.len() > MAX_BODY_LEN {
+        return Err(AppError::BadRequest(format!(
+            "body must be 1..{MAX_BODY_LEN} characters"
+        )));
+    }
+    Ok(())
 }
 
 /// Validate a `HH:MM` time string (#95).
@@ -605,6 +649,88 @@ impl TakusuApp {
         }
         self.storage
             .update_settings(body)
+            .await
+            .map_err(storage_to_app)
+    }
+
+    // ── Skills ────────────────────────────────────────────
+
+    pub async fn create_skill(
+        &self,
+        body: &CreateSkill,
+        token: &str,
+    ) -> Result<SkillRow, AppError> {
+        validate_skill(body)?;
+        if body.built_in == Some(true) && token != self.root_token {
+            return Err(AppError::Unauthorized);
+        }
+        if let Ok(existing) = self.storage.get_skill(&body.slug).await {
+            if existing.built_in {
+                return Err(AppError::Conflict {
+                    message: format!("built-in skill {} cannot be overwritten", body.slug),
+                });
+            }
+            return Err(AppError::Conflict {
+                message: format!("skill {} already exists", body.slug),
+            });
+        }
+        self.storage
+            .create_skill(body)
+            .await
+            .map_err(storage_to_app)
+    }
+
+    pub async fn list_skills(&self) -> Result<Vec<SkillRow>, AppError> {
+        self.storage.list_skills().await.map_err(storage_to_app)
+    }
+
+    pub async fn get_skill(&self, slug: &str) -> Result<SkillRow, AppError> {
+        self.storage.get_skill(slug).await.map_err(storage_to_app)
+    }
+
+    pub async fn update_skill(&self, slug: &str, body: &UpdateSkill) -> Result<SkillRow, AppError> {
+        let existing = self.storage.get_skill(slug).await.map_err(storage_to_app)?;
+        if existing.built_in {
+            return Err(AppError::Conflict {
+                message: format!("built-in skill {slug} cannot be edited"),
+            });
+        }
+        if body
+            .name
+            .as_ref()
+            .is_some_and(|n| n.is_empty() || n.len() > 100)
+        {
+            return Err(AppError::BadRequest(
+                "name must be 1..100 characters".into(),
+            ));
+        }
+        if body.description.as_ref().is_some_and(|d| d.len() > 500) {
+            return Err(AppError::BadRequest(
+                "description must be at most 500 characters".into(),
+            ));
+        }
+        if body
+            .body
+            .as_ref()
+            .is_some_and(|b| b.is_empty() || b.len() > 64 * 1024)
+        {
+            return Err(AppError::BadRequest("body length is invalid".into()));
+        }
+        self.storage
+            .update_skill(slug, body)
+            .await
+            .map_err(storage_to_app)
+    }
+
+    pub async fn delete_skill(&self, slug: &str) -> Result<(), AppError> {
+        let existing = self.storage.get_skill(slug).await.map_err(storage_to_app)?;
+        if existing.built_in {
+            return Err(AppError::Conflict {
+                message: format!("built-in skill {slug} cannot be deleted"),
+            });
+        }
+        self.storage
+            .delete_skill(slug)
             .await
             .map_err(storage_to_app)
     }

@@ -45,6 +45,7 @@ import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { haptic } from '@/src/components/haptics';
 import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
 import { AgentSettingsView } from '@/src/views/AgentSettingsView';
+import { SkillsSettingsView } from '@/src/views/SkillsSettingsView';
 
 export type SettingsCategory =
   | 'general'
@@ -52,6 +53,7 @@ export type SettingsCategory =
   | 'workload'
   | 'notifications'
   | 'agent'
+  | 'skills'
   | 'worker'
   | 'google'
   | 'info';
@@ -62,6 +64,7 @@ const CATEGORY_LABELS: Record<SettingsCategory, string> = {
   workload: '作業負荷',
   notifications: '通知',
   agent: 'Agent',
+  skills: 'スキル',
   worker: 'Worker',
   google: 'Google Calendar',
   info: '情報',
@@ -73,6 +76,7 @@ const CATEGORY_ORDER: SettingsCategory[] = [
   'workload',
   'notifications',
   'agent',
+  'skills',
   'worker',
   'google',
   'info',
@@ -674,6 +678,7 @@ export function SettingsDetailView({
           ]}
         >
           {category === 'agent' && <AgentSettingsView />}
+          {category === 'skills' && <SkillsSettingsView />}
           {category === 'general' && (
             <>
               <View style={styles.settingRow}>

@@ -1,6 +1,7 @@
 #[cfg(feature = "audio-device")]
 pub mod audio;
 pub mod audio_config;
+pub mod bundled_skills;
 pub mod llm;
 pub mod tool;
 pub mod tools;
@@ -12,10 +13,11 @@ pub use tool::{
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use takusu_client::{
-    CreateHabit, CreateTask, SaveScheduleRequest, ScheduleEntry, UpdateHabit, UpdateTask,
+    ClientError, CreateHabit, CreateSkill, CreateTask, SaveScheduleRequest, ScheduleEntry,
+    UpdateHabit, UpdateSkill, UpdateTask,
 };
 
 use jiff::Unit;
@@ -25,7 +27,6 @@ use jiff::Unit;
 pub struct AgentConfig {
     pub llm: llm::LlmConfig,
     pub server: ServerConfig,
-    pub skills: SkillsConfig,
     pub audio: audio_config::AudioConfig,
 }
 
@@ -74,21 +75,6 @@ impl Default for ServerConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct SkillsConfig {
-    #[serde(default = "default_skills_dir")]
-    pub dir: String,
-}
-
-impl Default for SkillsConfig {
-    fn default() -> Self {
-        Self {
-            dir: default_skills_dir(),
-        }
-    }
-}
-
 fn config_dir() -> Option<PathBuf> {
     std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -101,26 +87,8 @@ fn config_dir() -> Option<PathBuf> {
         })
 }
 
-fn data_dir() -> Option<PathBuf> {
-    std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| {
-                let mut p = PathBuf::from(h);
-                p.push(".local/share");
-                p
-            })
-        })
-}
-
 fn default_server_url() -> String {
     "http://127.0.0.1:3000".into()
-}
-
-fn default_skills_dir() -> String {
-    data_dir()
-        .map(|d| d.join("takusu/skills").to_string_lossy().into_owned())
-        .unwrap_or_else(|| "~/.local/share/takusu/skills".into())
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -129,6 +97,8 @@ pub enum AgentError {
     Llm(#[from] llm::LlmError),
     #[error("tool error: {0}")]
     Tool(#[from] ToolError),
+    #[error("client error: {0}")]
+    Client(#[from] ClientError),
     #[error("too many tool calls")]
     TooManyToolCalls,
 }
@@ -175,7 +145,6 @@ pub struct AgentSession {
     client: takusu_client::Client,
     llm: Arc<dyn llm::LlmClient + Send + Sync>,
     history: Mutex<Vec<llm::Message>>,
-    skills_index: String,
     /// Ensures only one turn mutates the session at a time.
     turn_lock: tokio::sync::Mutex<()>,
     /// Last provider-reported prompt token count, used to guide history trimming.
@@ -183,6 +152,8 @@ pub struct AgentSession {
     pending_approval: Mutex<Option<ApprovalRequest>>,
     approval_sequence: Mutex<u64>,
     schedule_dirty: Mutex<bool>,
+    bundled_skills_synced: std::sync::atomic::AtomicBool,
+    skills_index: Mutex<Option<String>>,
 }
 
 impl AgentSession {
@@ -192,19 +163,19 @@ impl AgentSession {
         llm: impl llm::LlmClient + 'static,
     ) -> Self {
         let client = takusu_client::Client::new(&config.server.url, &config.server.token);
-        let skills_index = Self::load_skills_index(&config.skills.dir);
         Self {
             config,
             registry,
             client,
             llm: Arc::new(llm),
             history: Mutex::new(Vec::new()),
-            skills_index,
             turn_lock: tokio::sync::Mutex::new(()),
             last_prompt_tokens: Mutex::new(None),
             pending_approval: Mutex::new(None),
             approval_sequence: Mutex::new(0),
             schedule_dirty: Mutex::new(false),
+            bundled_skills_synced: std::sync::atomic::AtomicBool::new(false),
+            skills_index: Mutex::new(None),
         }
     }
 
@@ -416,6 +387,7 @@ impl AgentSession {
         let target = args
             .get("task_ref")
             .or_else(|| args.get("habit_ref"))
+            .or_else(|| args.get("slug"))
             .and_then(Value::as_str)
             .unwrap_or("schedule")
             .to_owned();
@@ -435,6 +407,12 @@ impl AgentSession {
                     .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
                     .habit
                     .id
+            } else if change.target_label.starts_with("skill") {
+                self.client
+                    .get_skill(&target)
+                    .await
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
+                    .slug
             } else {
                 target.clone()
             };
@@ -445,13 +423,21 @@ impl AgentSession {
                     .await
                     .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
                     .updated_at
-            } else {
+            } else if change.target_label.starts_with("habit") {
                 self.client
                     .get_habit(&target)
                     .await
                     .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
                     .habit
                     .updated_at
+            } else if change.target_label.starts_with("skill") {
+                self.client
+                    .get_skill(&target)
+                    .await
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
+                    .updated_at
+            } else {
+                String::new()
             };
             if &current != observed {
                 return Err(AgentError::Tool(ToolError::Conflict(
@@ -519,6 +505,27 @@ impl AgentSession {
                     .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?;
                 target_id.clone()
             }
+            (Some("skill"), "create") => {
+                self.client
+                    .create_skill(
+                        &serde_json::from_value::<CreateSkill>(Value::Object(args))
+                            .map_err(|e| AgentError::Tool(ToolError::InvalidArgs(e.to_string())))?,
+                    )
+                    .await
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
+                    .slug
+            }
+            (Some("skill"), "update") => {
+                self.client
+                    .update_skill(
+                        &target_id,
+                        &serde_json::from_value::<UpdateSkill>(Value::Object(args))
+                            .map_err(|e| AgentError::Tool(ToolError::InvalidArgs(e.to_string())))?,
+                    )
+                    .await
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
+                    .slug
+            }
             (_, "generate") | (_, "reschedule") => {
                 let entries = args.get("_preview_entries").cloned().ok_or_else(|| {
                     AgentError::Tool(ToolError::InvalidArgs("schedule preview is missing".into()))
@@ -549,6 +556,9 @@ impl AgentSession {
                 )));
             }
         };
+        if change.target_label.starts_with("skill") {
+            self.clear_skills_index();
+        }
         Ok(ChangeReceipt {
             operation: change.operation.clone(),
             target_type: change
@@ -562,6 +572,10 @@ impl AgentSession {
         })
     }
 
+    fn clear_skills_index(&self) {
+        *self.skills_index.lock().unwrap() = None;
+    }
+
     async fn build_system_prompt(&self) -> String {
         let tz = self.load_server_timezone().await;
         let now = jiff::Timestamp::now()
@@ -569,7 +583,7 @@ impl AgentSession {
             .round(Unit::Second)
             .unwrap_or_else(|_| jiff::Timestamp::now().to_zoned(tz));
         let tz_name = now.time_zone().iana_name().unwrap_or("unknown");
-        let skills = &self.skills_index;
+        let skills = self.build_skills_index().await;
 
         // TODO: 以下の指示は `similar_tasks`（memory-based estimation）と `memory_save`
         //       （memory tools）が実装されたら system prompt に復活させる。
@@ -598,6 +612,8 @@ impl AgentSession {
             - get_habit: 指定した習慣の詳細を取得
             - get_schedule: 現在のスケジュールを取得
             - get_settings: タイムゾーン・就寝・勤務時間設定を取得
+            - skills_list: スキル一覧を取得
+            - skills_read: 指定したスキルの詳細を取得
 
             ### 変更提案（承認が必要）
             - create_task: タスク作成を提案
@@ -609,6 +625,8 @@ impl AgentSession {
             - generate_schedule: スケジュール生成を提案
             - reschedule: 部分的なスケジュール変更を提案
             - preview_schedule: スケジュール変更の影響を試算
+            - skills_propose_add: 新しいスキル作成を提案
+            - skills_propose_edit: 既存のスキル更新を提案
 
             ## 行動指針
             1. 調査してから行動してください。タスク・習慣・スケジュールの変更を提案する前は、必ず関連する情報を取得してください。
@@ -643,6 +661,58 @@ impl AgentSession {
                 .unwrap_or_else(|_| jiff::Zoned::now().time_zone().clone()),
             Err(_) => jiff::Zoned::now().time_zone().clone(),
         }
+    }
+
+    async fn sync_built_in_skills(&self) -> Result<(), AgentError> {
+        use std::sync::atomic::Ordering;
+        if self
+            .bundled_skills_synced
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Ok(());
+        }
+        if let Err(e) = crate::tools::skills::sync_built_in_skills(&self.client).await {
+            self.bundled_skills_synced.store(false, Ordering::SeqCst);
+            return Err(AgentError::Client(e));
+        }
+        Ok(())
+    }
+
+    async fn build_skills_index(&self) -> String {
+        {
+            let guard = self.skills_index.lock().unwrap();
+            if let Some(cached) = guard.clone() {
+                return cached;
+            }
+        }
+
+        let sync_ok = self.sync_built_in_skills().await.is_ok();
+        let list_result = self.client.list_skills().await;
+        let should_cache = sync_ok && list_result.is_ok();
+        let index = match list_result {
+            Ok(skills) if skills.is_empty() => crate::tools::skills::built_in_skills_index(),
+            Ok(skills) => skills
+                .iter()
+                .map(|s| {
+                    if s.built_in {
+                        format!(
+                            "- {} ({}): {} [built-in]\n{}",
+                            s.name, s.slug, s.description, s.body
+                        )
+                    } else {
+                        format!("- {} ({}): {}\n{}", s.name, s.slug, s.description, s.body)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            Err(_) => crate::tools::skills::built_in_skills_index(),
+        };
+
+        if should_cache {
+            *self.skills_index.lock().unwrap() = Some(index.clone());
+        }
+        index
     }
 
     fn trim_messages(&self, mut messages: Vec<llm::Message>) -> Vec<llm::Message> {
@@ -770,57 +840,6 @@ impl AgentSession {
         let mut guard = self.history.lock().unwrap();
         *guard = local;
     }
-
-    fn load_skills_index(dir: &str) -> String {
-        let expanded = if dir.starts_with("~") {
-            std::env::var("HOME")
-                .map(|h| h + &dir[1..])
-                .unwrap_or_else(|_| dir.to_string())
-        } else {
-            dir.to_string()
-        };
-
-        let path = Path::new(&expanded);
-        if !path.exists() {
-            return "（スキルはまだ登録されていません）".into();
-        }
-
-        let mut entries = Vec::new();
-        if let Ok(read_dir) = std::fs::read_dir(path) {
-            for entry in read_dir.flatten() {
-                let p = entry.path();
-                if p.extension().and_then(|s| s.to_str()) != Some("md") {
-                    continue;
-                }
-                if let Some(meta) = Self::parse_skill_front_matter(&p) {
-                    entries.push(format!("- {}: {}", meta.name, meta.description));
-                }
-            }
-        }
-
-        if entries.is_empty() {
-            "（スキルはまだ登録されていません）".into()
-        } else {
-            entries.join("\n")
-        }
-    }
-
-    fn parse_skill_front_matter(path: &Path) -> Option<SkillFrontMatter> {
-        let content = std::fs::read_to_string(path).ok()?;
-        let body = content.trim_start();
-        if !body.starts_with("+++") {
-            return None;
-        }
-        let end = body[3..].find("+++")?;
-        let front = &body[3..3 + end];
-        toml::from_str(front).ok()
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct SkillFrontMatter {
-    name: String,
-    description: String,
 }
 
 #[cfg(test)]
@@ -1101,21 +1120,34 @@ mod tests {
     }
 
     #[test]
-    fn load_skills_index_reads_front_matter() {
-        let temp = std::env::temp_dir().join(format!("takusu-skills-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&temp);
-        std::fs::create_dir_all(&temp).unwrap();
-        std::fs::write(
-            temp.join("weekly-review.md"),
-            "+++\nname = \"weekly-review\"\ndescription = \"Run the weekly review\"\n+++\n\nfree-form\n",
-        )
-        .unwrap();
-
-        let index = AgentSession::load_skills_index(&temp.to_string_lossy());
+    fn built_in_skills_index_reads_bundled_front_matter() {
+        let index = crate::tools::skills::built_in_skills_index();
         assert!(index.contains("weekly-review"));
         assert!(index.contains("Run the weekly review"));
+    }
 
-        let _ = std::fs::remove_dir_all(&temp);
+    #[test]
+    fn agent_session_is_send_and_sync() {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+        assert_send::<AgentSession>();
+        assert_sync::<AgentSession>();
+        assert_send::<jiff::tz::TimeZone>();
+        assert_sync::<jiff::tz::TimeZone>();
+    }
+
+    #[test]
+    fn run_turn_future_is_send() {
+        fn assert_send<T: Send>(_: T) {}
+        let session = AgentSession::new(
+            AgentConfig::default(),
+            ToolRegistry::new(),
+            MockLlm {
+                calls: std::sync::Mutex::new(Vec::new()),
+                responses: std::sync::Mutex::new(Vec::new()),
+            },
+        );
+        assert_send(session.run_turn(""));
     }
 
     #[tokio::test]

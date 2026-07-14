@@ -267,6 +267,32 @@ export interface UpdateGoogleCalSettings {
   refresh_token?: string;
 }
 
+// ── Skills (#WI-6) ──
+
+export interface SkillRow {
+  slug: string;
+  name: string;
+  description: string;
+  body: string;
+  built_in: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateSkill {
+  slug: string;
+  name: string;
+  description: string;
+  body: string;
+  built_in?: boolean;
+}
+
+export interface UpdateSkill {
+  name?: string;
+  description?: string;
+  body?: string;
+}
+
 export interface SyncTriggerResponse {
   status: string;
 }

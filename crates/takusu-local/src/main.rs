@@ -12,10 +12,7 @@ use takusu_local_lib::token_cache::TokenCache;
 use takusu_storage::Storage;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let _guard = takusu_local_lib::sentry::init(
-        "takusu_local=info",
-        sentry::release_name!(),
-    );
+    let _guard = takusu_local_lib::sentry::init("takusu_local=info", sentry::release_name!());
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

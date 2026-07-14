@@ -36,6 +36,18 @@ pub async fn verify(req: Request, env: Env) -> Result<Response, WorkerError> {
     ok()
 }
 
+pub fn is_root(req: &Request, env: &Env) -> Result<bool, WorkerError> {
+    let header = req
+        .headers()
+        .get("authorization")
+        .map_err(|e| WorkerError::Internal(format!("header read: {e}")))?;
+    let token = header
+        .as_deref()
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or(WorkerError::Unauthorized)?;
+    Ok(verify_root(token, env))
+}
+
 fn verify_root(token: &str, env: &Env) -> bool {
     match auth::root_token(env) {
         Ok(root) => token == root,

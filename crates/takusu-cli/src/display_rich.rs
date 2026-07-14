@@ -1,7 +1,7 @@
 use comfy_table::{Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 use jiff::Timestamp;
 use takusu_habit::{RecurrenceRule, summarize};
-use takusu_storage::{HabitRow, ScheduleEntry, TaskRow, TokenRow};
+use takusu_storage::{HabitRow, ScheduleEntry, SkillRow, TaskRow, TokenRow};
 
 /// Parse a recurrence JSON string into a human-readable summary.
 /// Falls back to the raw string if parsing fails.
@@ -350,4 +350,57 @@ pub fn display_tokens(tokens: &[TokenRow]) {
         ]);
     }
     println!("{table}");
+}
+
+pub fn display_skills(skills: &[SkillRow]) {
+    if skills.is_empty() {
+        println!("No skills found.");
+        return;
+    }
+
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_header(vec![
+            Cell::new("Slug").fg(Color::Cyan),
+            Cell::new("Name").fg(Color::Cyan),
+            Cell::new("Description").fg(Color::Cyan),
+            Cell::new("Built-in").fg(Color::Cyan),
+        ]);
+
+    for s in skills {
+        table.add_row(vec![
+            Cell::new(&s.slug),
+            Cell::new(&s.name),
+            Cell::new(&s.description).fg(Color::DarkGrey),
+            Cell::new(if s.built_in { "yes" } else { "no" }),
+        ]);
+    }
+    println!("{table}");
+}
+
+pub fn display_skill_detail(skill: &SkillRow) {
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .set_content_arrangement(ContentArrangement::Dynamic);
+    table.set_header(vec![
+        Cell::new("Slug").fg(Color::Cyan),
+        Cell::new("Name").fg(Color::Cyan),
+        Cell::new("Description").fg(Color::Cyan),
+        Cell::new("Built-in").fg(Color::Cyan),
+        Cell::new("Created").fg(Color::Cyan),
+        Cell::new("Updated").fg(Color::Cyan),
+    ]);
+    table.add_row(vec![
+        Cell::new(&skill.slug),
+        Cell::new(&skill.name),
+        Cell::new(&skill.description),
+        Cell::new(if skill.built_in { "yes" } else { "no" }),
+        Cell::new(&skill.created_at),
+        Cell::new(&skill.updated_at),
+    ]);
+    println!("{table}");
+    println!("\n{}", skill.body);
 }

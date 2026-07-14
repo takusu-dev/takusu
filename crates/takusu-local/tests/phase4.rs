@@ -193,6 +193,28 @@ impl Storage for CountingStorage {
     async fn health_check(&self) -> StorageResult<String> {
         Ok("mock ok".into())
     }
+    async fn list_skills(&self) -> StorageResult<Vec<takusu_storage::SkillRow>> {
+        Ok(vec![])
+    }
+    async fn get_skill(&self, _id: &str) -> StorageResult<takusu_storage::SkillRow> {
+        Err(StorageError::NotFound("n/a".into()))
+    }
+    async fn create_skill(
+        &self,
+        _b: &takusu_storage::CreateSkill,
+    ) -> StorageResult<takusu_storage::SkillRow> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn update_skill(
+        &self,
+        _id: &str,
+        _b: &takusu_storage::UpdateSkill,
+    ) -> StorageResult<takusu_storage::SkillRow> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn delete_skill(&self, _id: &str) -> StorageResult<()> {
+        Ok(())
+    }
 }
 
 #[tokio::test]
