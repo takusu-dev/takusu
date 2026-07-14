@@ -134,7 +134,7 @@ function hitTestNode(
   x: number,
   y: number,
   fontSize: number,
-  labelHeights: Map<string, number>,
+  labelHeights: Record<string, number>,
   hitRadius: number,
   labelOffset: number,
 ): boolean {
@@ -144,7 +144,7 @@ function hitTestNode(
   if (Math.hypot(dx, dy) < hitRadius) return true;
   const halfW = LABEL_WIDTH / 2 + LABEL_PAD_X;
   const top = node.y + labelOffset - LABEL_PAD_Y;
-  const labelHeight = labelHeights.get(node.id) ?? fontSize + LABEL_PAD_Y * 2;
+  const labelHeight = labelHeights[node.id] ?? fontSize + LABEL_PAD_Y * 2;
   const bottom = top + labelHeight;
   return x >= node.x - halfW && x <= node.x + halfW && y >= top && y <= bottom;
 }
@@ -587,13 +587,15 @@ export function DependencyGraph({
   );
 
   // Exact label hit heights for the node's label pill (#422).
+  // Stored as a plain object so it can be serialized into Reanimated worklets;
+  // a Map would become undefined in the worklet runtime and crash (#495).
   const labelHeights = useMemo(() => {
-    const map = new Map<string, number>();
+    const heights: Record<string, number> = {};
     for (const node of inputNodes) {
       const text = truncate(node.label, MAX_LABEL_CHARS);
-      map.set(node.id, getLabelHeight(text, fontSize) + LABEL_PAD_Y * 2);
+      heights[node.id] = getLabelHeight(text, fontSize) + LABEL_PAD_Y * 2;
     }
-    return map;
+    return heights;
   }, [inputNodes, fontSize]);
 
   const edgePaths = useMemo(() => {
