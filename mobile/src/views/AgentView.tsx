@@ -13,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DEFAULT_PORT, useServer } from '@/src/api/ServerProvider';
 import TakusuAudioModule from '../../modules/takusu-server/src/TakusuAudioModule';
@@ -40,6 +41,7 @@ function newId(prefix: string): string {
 export function AgentView() {
   const router = useRouter();
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const { workersToken, ready } = useServer();
   const client = useMemo(
     () => new AgentClient(`http://127.0.0.1:${DEFAULT_PORT}`, workersToken),
@@ -208,7 +210,15 @@ export function AgentView() {
       style={[styles.container, { backgroundColor: colors.white }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={[styles.header, { borderBottomColor: colors.separator }]}>
+      <View
+        style={[
+          styles.header,
+          {
+            borderBottomColor: colors.separator,
+            paddingTop: 8 + insets.top,
+          },
+        ]}
+      >
         <Pressable onPress={() => router.back()} style={styles.back}>
           <Text style={[styles.backText, { color: BRAND_COLOR }]}>‹</Text>
         </Pressable>
@@ -292,7 +302,15 @@ export function AgentView() {
           <Text style={styles.error}>{error}</Text>
         </Pressable>
       )}
-      <View style={[styles.composer, { borderTopColor: colors.separator }]}>
+      <View
+        style={[
+          styles.composer,
+          {
+            borderTopColor: colors.separator,
+            paddingBottom: 12 + insets.bottom,
+          },
+        ]}
+      >
         <Pressable
           disabled={busy}
           onPress={toggleRecording}
@@ -335,7 +353,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: 1,
-    paddingTop: 48,
     paddingBottom: 10,
   },
   back: { width: 56, alignItems: 'center' },
@@ -380,7 +397,13 @@ const styles = StyleSheet.create({
   },
   approveText: { color: COLORS.white, fontWeight: '700' },
   error: { color: '#B33A3A', paddingHorizontal: 16, paddingBottom: 8 },
-  composer: { flexDirection: 'row', gap: 8, padding: 12, borderTopWidth: 1 },
+  composer: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+  },
   record: {
     minWidth: 52,
     borderRadius: 10,
