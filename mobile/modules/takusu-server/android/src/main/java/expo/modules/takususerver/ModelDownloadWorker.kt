@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.ServiceInfo
 import androidx.core.app.NotificationCompat
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -96,7 +97,11 @@ class ModelDownloadWorker(
                 .setOngoing(!done)
                 .setProgress(100, progress, progress == 0 && !done)
                 .build()
-        return ForegroundInfo(notificationId, notification)
+        return ForegroundInfo(
+            notificationId,
+            notification,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+        )
     }
 
     companion object {
