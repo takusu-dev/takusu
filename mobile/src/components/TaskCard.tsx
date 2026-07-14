@@ -311,34 +311,26 @@ function TaskCardImpl({
               >
                 {task.title}
               </Text>
-              {(deps.length > 0 || (dependentCount ?? 0) > 0) && (
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 4,
-                  }}
-                >
-                  {deps.length > 0 && (
-                    <Text style={[styles.depsCount, { color: colors.gray }]}>
-                      ↳ {deps.length} deps
-                    </Text>
-                  )}
-                  {(dependentCount ?? 0) > 0 && (
-                    <Text style={[styles.depsCount, { color: colors.gray }]}>
-                      ↗ {dependentCount}{' '}
-                      {dependentCount === 1 ? 'dependent' : 'dependents'}
-                    </Text>
-                  )}
-                </View>
-              )}
             </View>
 
-            {/* Right-bottom: cost */}
-            <View style={styles.cost}>
-              <Text style={[styles.costText, { color: colors.gray }]}>
-                {task.avg_minutes}m ±{task.sigma_minutes}
-              </Text>
+            {/* Right: deps, dependents, and cost stacked vertically */}
+            <View style={styles.meta}>
+              {deps.length > 0 && (
+                <Text style={[styles.metaText, { color: colors.gray }]}>
+                  ↳ {deps.length} deps
+                </Text>
+              )}
+              {(dependentCount ?? 0) > 0 && (
+                <Text style={[styles.metaText, { color: colors.gray }]}>
+                  ↗ {dependentCount}{' '}
+                  {dependentCount === 1 ? 'dependent' : 'dependents'}
+                </Text>
+              )}
+              {task.avg_minutes > 0 && (
+                <Text style={[styles.metaText, { color: colors.gray }]}>
+                  {task.avg_minutes}m ±{task.sigma_minutes}
+                </Text>
+              )}
               {(() => {
                 const hint = deadlineHint(task, scheduleStart);
                 return hint ? (
@@ -440,13 +432,13 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontVariant: ['tabular-nums'],
   },
-  depsCount: {
-    fontSize: 11,
+  meta: {
+    alignSelf: 'stretch',
+    justifyContent: 'flex-end',
+    alignItems: 'flex-end',
+    gap: 1,
   },
-  cost: {
-    alignSelf: 'flex-end',
-  },
-  costText: {
+  metaText: {
     fontSize: 11,
     fontVariant: ['tabular-nums'],
   },
@@ -728,24 +720,29 @@ function ParallelGroupCardImpl({
             >
               {host.title}
             </Text>
-            {(hostDeps.length > 0 || hostDependentCount > 0) && (
-              <View style={groupStyles.hostDepBadges}>
-                {hostDeps.length > 0 && (
-                  <Text
-                    style={[groupStyles.hostDepBadge, { color: colors.gray }]}
-                  >
-                    ↳ {hostDeps.length}
-                  </Text>
-                )}
-                {hostDependentCount > 0 && (
-                  <Text
-                    style={[groupStyles.hostDepBadge, { color: colors.gray }]}
-                  >
-                    ↗ {hostDependentCount}
-                  </Text>
-                )}
-              </View>
-            )}
+            <View style={groupStyles.hostMeta}>
+              {hostDeps.length > 0 && (
+                <Text
+                  style={[groupStyles.hostMetaText, { color: colors.gray }]}
+                >
+                  ↳ {hostDeps.length}
+                </Text>
+              )}
+              {hostDependentCount > 0 && (
+                <Text
+                  style={[groupStyles.hostMetaText, { color: colors.gray }]}
+                >
+                  ↗ {hostDependentCount}
+                </Text>
+              )}
+              {host.avg_minutes > 0 && (
+                <Text
+                  style={[groupStyles.hostMetaText, { color: colors.gray }]}
+                >
+                  {host.avg_minutes}m
+                </Text>
+              )}
+            </View>
           </Pressable>
 
           {/* Right: guests stacked (50%) */}
@@ -824,40 +821,38 @@ function ParallelGroupCardImpl({
                     >
                       {guest.title}
                     </Text>
-                    {(guestDeps.length > 0 || guestDependentCount > 0) && (
-                      <View style={groupStyles.guestDepBadges}>
-                        {guestDeps.length > 0 && (
-                          <Text
-                            style={[
-                              groupStyles.guestDepBadge,
-                              { color: colors.gray },
-                            ]}
-                          >
-                            ↳ {guestDeps.length}
-                          </Text>
-                        )}
-                        {guestDependentCount > 0 && (
-                          <Text
-                            style={[
-                              groupStyles.guestDepBadge,
-                              { color: colors.gray },
-                            ]}
-                          >
-                            ↗ {guestDependentCount}
-                          </Text>
-                        )}
-                      </View>
-                    )}
                   </View>
-                  <View style={groupStyles.guestCost}>
-                    <Text
-                      style={[
-                        groupStyles.guestCostText,
-                        { color: colors.gray },
-                      ]}
-                    >
-                      {guest.avg_minutes}m
-                    </Text>
+                  <View style={groupStyles.guestMeta}>
+                    {guestDeps.length > 0 && (
+                      <Text
+                        style={[
+                          groupStyles.guestMetaText,
+                          { color: colors.gray },
+                        ]}
+                      >
+                        ↳ {guestDeps.length}
+                      </Text>
+                    )}
+                    {guestDependentCount > 0 && (
+                      <Text
+                        style={[
+                          groupStyles.guestMetaText,
+                          { color: colors.gray },
+                        ]}
+                      >
+                        ↗ {guestDependentCount}
+                      </Text>
+                    )}
+                    {guest.avg_minutes > 0 && (
+                      <Text
+                        style={[
+                          groupStyles.guestMetaText,
+                          { color: colors.gray },
+                        ]}
+                      >
+                        {guest.avg_minutes}m
+                      </Text>
+                    )}
                   </View>
                 </Pressable>
               );
@@ -904,13 +899,13 @@ const groupStyles = StyleSheet.create({
     fontWeight: '500',
     marginTop: 2,
   },
-  hostDepBadges: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
+  hostMeta: {
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    gap: 1,
     marginTop: 2,
   },
-  hostDepBadge: {
+  hostMetaText: {
     fontSize: 9,
     fontVariant: ['tabular-nums'],
   },
@@ -954,22 +949,13 @@ const groupStyles = StyleSheet.create({
     fontWeight: '500',
     flex: 1,
   },
-  guestDeps: {
-    fontSize: 9,
+  guestMeta: {
+    alignSelf: 'stretch',
+    justifyContent: 'flex-end',
+    alignItems: 'flex-end',
+    gap: 1,
   },
-  guestDepBadges: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-  },
-  guestDepBadge: {
-    fontSize: 9,
-    fontVariant: ['tabular-nums'],
-  },
-  guestCost: {
-    alignSelf: 'flex-end',
-  },
-  guestCostText: {
+  guestMetaText: {
     fontSize: 10,
     fontVariant: ['tabular-nums'],
   },
