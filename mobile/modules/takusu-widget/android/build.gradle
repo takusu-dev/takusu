@@ -22,4 +22,6 @@ dependencies {
   implementation project(':takusu-server')
   // WorkManager for periodic widget updates
   implementation 'androidx.work:work-runtime-ktx:2.10.0'
+  // RemoteViewsCompat / RemoteCollectionItems for collection widgets
+  implementation 'androidx.core:core-remoteviews:1.1.0'
 }

@@ -6,7 +6,9 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.widget.RemoteViews
+import androidx.core.widget.RemoteViewsCompat
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -16,6 +18,11 @@ import org.json.JSONObject
  * It reads the latest snapshot from SharedPreferences (written by
  * [WidgetUpdateWorker]) and renders it into a RemoteViews tree. If no
  * snapshot is available yet, it shows a placeholder.
+ *
+ * The upcoming-tasks list is populated with [RemoteViewsCompat.RemoteCollectionItems]
+ * instead of a [RemoteViewsService], so the list is updated directly as part
+ * of the [RemoteViews] tree and no longer depends on
+ * [AppWidgetManager.notifyAppWidgetViewDataChanged].
  */
 class TakusuWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(
@@ -59,33 +66,36 @@ class TakusuWidgetProvider : AppWidgetProvider() {
 
             val views = RemoteViews(context.packageName, R.layout.takusu_widget)
 
-            if (snapshotJson != null) {
-                val snap = JSONObject(snapshotJson)
-                renderSnapshot(views, snap, updatedAt)
+            val snapshot = snapshotJson?.let { JSONObject(it) }
+            if (snapshot != null) {
+                renderSnapshot(views, snapshot, updatedAt)
             } else {
                 renderPlaceholder(views)
             }
 
-            // Set up the RemoteAdapter for the ListView — always set, even
-            // when showing the placeholder, so the list has a data source on
-            // first install before any data is fetched. The factory handles
-            // the empty-snapshot case correctly.
-            val remoteAdapter =
-                android.content.Intent(context, TakusuWidgetService::class.java).apply {
-                    // Explicitly set the package to ensure the intent is resolved correctly
+            // Pass the collection items directly into the RemoteViews. This avoids the
+            // RemoteViewsService / notifyAppWidgetViewDataChanged path that can get stuck
+            // in the "loading" state on newer Android versions.
+            val items = buildCollectionItems(context, snapshot)
+            RemoteViewsCompat.setRemoteAdapter(
+                context,
+                views,
+                widgetId,
+                R.id.widget_upcoming_list,
+                items,
+            )
+
+            // Template PendingIntent for per-item clicks. Each item fills in its own
+            // data URI (takusu://task/<id>) via setOnClickFillInIntent. The template
+            // must NOT set its own data field, otherwise Intent.fillIn() will not
+            // override it.
+            val templateIntent =
+                Intent(Intent.ACTION_VIEW).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    // Make the intent explicit; Android 14+ rejects mutable PendingIntents
+                    // with implicit intents.
                     setPackage(context.packageName)
                 }
-            views.setRemoteAdapter(R.id.widget_upcoming_list, remoteAdapter)
-
-            // Template PendingIntent for per-item clicks. The factory fills
-            // in the full data URI (takusu://task/<id>) via
-            // setOnClickFillInIntent. The template must NOT set its own data
-            // field, otherwise Intent.fillIn() will not override it.
-            val templateIntent = Intent(Intent.ACTION_VIEW)
-            templateIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            // Set the package to make the intent explicit; Android 14+ rejects
-            // mutable PendingIntents with implicit intents.
-            templateIntent.setPackage(context.packageName)
             val templatePi =
                 PendingIntent.getActivity(
                     context,
@@ -95,7 +105,7 @@ class TakusuWidgetProvider : AppWidgetProvider() {
                 )
             views.setPendingIntentTemplate(R.id.widget_upcoming_list, templatePi)
 
-            // Tap on widget → open the app
+            // Tap on the widget root opens the app.
             val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
             if (launchIntent != null) {
                 val pi =
@@ -109,12 +119,8 @@ class TakusuWidgetProvider : AppWidgetProvider() {
             }
 
             manager.updateAppWidget(widgetId, views)
-
-            // Notify the remote adapter to reload its data from SharedPreferences.
-            manager.notifyAppWidgetViewDataChanged(
-                intArrayOf(widgetId),
-                R.id.widget_upcoming_list,
-            )
+            // No notifyAppWidgetViewDataChanged is needed because the RemoteViews
+            // now carries the full collection of items.
         }
 
         private fun renderSnapshot(
@@ -160,3 +166,66 @@ class TakusuWidgetProvider : AppWidgetProvider() {
         }
     }
 }
+
+private fun buildCollectionItems(
+    context: Context,
+    snapshot: JSONObject?,
+): RemoteViewsCompat.RemoteCollectionItems {
+    val builder =
+        RemoteViewsCompat.RemoteCollectionItems
+            .Builder()
+            .setViewTypeCount(1)
+            .setHasStableIds(false)
+    val upcoming = snapshot?.optJSONArray("upcoming") ?: JSONArray()
+    for (i in 0 until upcoming.length()) {
+        val task = upcoming.optJSONObject(i) ?: continue
+        builder.addItem(i.toLong(), buildItemRemoteViews(context, task))
+    }
+    return builder.build()
+}
+
+private fun buildItemRemoteViews(
+    context: Context,
+    task: JSONObject,
+): RemoteViews {
+    val views = RemoteViews(context.packageName, R.layout.takusu_widget_item)
+
+    val title = task.optString("title", "")
+    val startAt = if (task.isNull("start_at")) null else task.optString("start_at", null)
+    val time = if (startAt != null) formatTime(startAt) else ""
+    val text = if (time.isNotEmpty()) "$time  $title" else title
+    views.setTextViewText(R.id.widget_item_text, text)
+
+    val taskId = task.optString("id", "")
+    val fillIn = Intent(Intent.ACTION_VIEW, Uri.parse("takusu://task/$taskId"))
+    views.setOnClickFillInIntent(R.id.widget_item_text, fillIn)
+
+    return views
+}
+
+private val ISO_FRACTIONAL_SECONDS = Regex("\\.\\d+")
+
+private fun formatTime(iso: String): String =
+    try {
+        val s = iso.replace(ISO_FRACTIONAL_SECONDS, "").replace("Z", "+00:00")
+        val odt = java.time.OffsetDateTime.parse(s)
+        val local = odt.atZoneSameInstant(java.time.ZoneId.systemDefault())
+        local.format(
+            java.time.format.DateTimeFormatter
+                .ofPattern("HH:mm"),
+        )
+    } catch (e: Exception) {
+        try {
+            val ldt = java.time.LocalDateTime.parse(iso.replace("Z", ""))
+            val local =
+                ldt
+                    .atZone(java.time.ZoneOffset.UTC)
+                    .withZoneSameInstant(java.time.ZoneId.systemDefault())
+            local.format(
+                java.time.format.DateTimeFormatter
+                    .ofPattern("HH:mm"),
+            )
+        } catch (e2: Exception) {
+            ""
+        }
+    }

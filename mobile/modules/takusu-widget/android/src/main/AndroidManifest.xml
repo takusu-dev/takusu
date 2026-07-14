@@ -11,7 +11,7 @@
         android:resource="@xml/takusu_widget_info" />
     </receiver>
     <service
-      android:name="expo.modules.takusuwidget.TakusuWidgetService"
+      android:name="androidx.core.widget.RemoteViewsCompatService"
       android:permission="android.permission.BIND_REMOTEVIEWS"
       android:exported="false" />
   </application>
