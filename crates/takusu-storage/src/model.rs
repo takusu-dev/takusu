@@ -399,6 +399,38 @@ pub struct SettingsRow {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct SkillRow {
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    pub body: String,
+    #[serde(with = "bool_compat", default)]
+    pub built_in: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateSkill {
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    pub body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub built_in: Option<bool>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UpdateSkill {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UpdateSettings {
     #[serde(skip_serializing_if = "Option::is_none")]

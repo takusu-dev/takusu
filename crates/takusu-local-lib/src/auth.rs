@@ -267,6 +267,33 @@ mod tests {
         async fn health_check(&self) -> Result<String, takusu_storage::StorageError> {
             unimplemented()
         }
+        async fn list_skills(
+            &self,
+        ) -> Result<Vec<takusu_storage::SkillRow>, takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn get_skill(
+            &self,
+            _: &str,
+        ) -> Result<takusu_storage::SkillRow, takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn create_skill(
+            &self,
+            _: &takusu_storage::CreateSkill,
+        ) -> Result<takusu_storage::SkillRow, takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn update_skill(
+            &self,
+            _: &str,
+            _: &takusu_storage::UpdateSkill,
+        ) -> Result<takusu_storage::SkillRow, takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn delete_skill(&self, _: &str) -> Result<(), takusu_storage::StorageError> {
+            unimplemented()
+        }
     }
 
     #[tokio::test]

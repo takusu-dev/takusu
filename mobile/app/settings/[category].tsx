@@ -8,6 +8,7 @@ const VALID: SettingsCategory[] = [
   'workload',
   'notifications',
   'agent',
+  'skills',
   'worker',
   'google',
   'info',

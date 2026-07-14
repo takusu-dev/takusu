@@ -4,7 +4,7 @@ mod display_simple;
 mod editor;
 
 use clap::{CommandFactory, Parser, Subcommand};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::process;
 use std::sync::Arc;
 use takusu_local_lib::{
@@ -16,7 +16,7 @@ use takusu_local_lib::{
     token_cache::TokenCache,
 };
 use takusu_storage::{
-    CreateHabit, CreateHabitPause, CreateTask, ScheduleEntry, TaskQuery, UpdateHabit,
+    CreateHabit, CreateHabitPause, CreateSkill, CreateTask, ScheduleEntry, TaskQuery, UpdateHabit,
     UpdateSettings,
 };
 use takusu_util::{generate_root_token, parse_datetime_tz, parse_duration};
@@ -104,6 +104,12 @@ enum Commands {
     Habit {
         #[command(subcommand)]
         command: HabitCommands,
+    },
+
+    /// Skill management
+    Skill {
+        #[command(subcommand)]
+        command: SkillCommands,
     },
 }
 
@@ -405,6 +411,44 @@ enum HabitCommands {
 }
 
 #[derive(Subcommand)]
+enum SkillCommands {
+    /// List skills
+    #[command(visible_alias = "ls")]
+    List,
+
+    /// Show skill detail
+    #[command(visible_alias = "get")]
+    Show { slug: String },
+
+    /// Create a skill (interactive if no args in terminal)
+    Create {
+        #[arg(short, long, help = "Skill slug")]
+        slug: Option<String>,
+        #[arg(short, long, help = "Skill name")]
+        name: Option<String>,
+        #[arg(long, help = "Skill description")]
+        description: Option<String>,
+        #[arg(long, help = "Skill body file or '-' for stdin")]
+        body: Option<String>,
+    },
+
+    /// Update a skill (interactive if no args in terminal)
+    Update {
+        slug: String,
+        #[arg(short, long, help = "Skill name")]
+        name: Option<String>,
+        #[arg(long, help = "Skill description")]
+        description: Option<String>,
+        #[arg(long, help = "Skill body file or '-' for stdin")]
+        body: Option<String>,
+    },
+
+    /// Delete a skill
+    #[command(visible_alias = "rm")]
+    Delete { slug: String },
+}
+
+#[derive(Subcommand)]
 enum PauseCommands {
     /// Add a pause period to a habit
     Add {
@@ -617,6 +661,7 @@ async fn run(
         Commands::Token { command } => run_token(mode, app, command).await?,
         Commands::Sync { command } => run_sync(app, command).await?,
         Commands::Habit { command } => run_habit(mode, app, command).await?,
+        Commands::Skill { command } => run_skill(mode, app, command).await?,
         Commands::GenRootToken => unreachable!(),
         Commands::Completion { .. } => unreachable!(),
         Commands::Config { command } => run_config(command, app).await?,
@@ -1070,6 +1115,116 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
         }
     }
     Ok(())
+}
+
+async fn run_skill(mode: DisplayMode, app: &TakusuApp, cmd: SkillCommands) -> Result<(), AppError> {
+    match cmd {
+        SkillCommands::List => {
+            let skills = app.list_skills().await?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_skills(&skills),
+                DisplayMode::Simple => display_simple::display_skills(&skills),
+            }
+        }
+        SkillCommands::Show { slug } => {
+            let skill = app.get_skill(&slug).await?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_skill_detail(&skill),
+                DisplayMode::Simple => display_simple::display_skill_detail(&skill),
+            }
+        }
+        SkillCommands::Create {
+            slug,
+            name,
+            description,
+            body,
+        } => {
+            let (slug, name, description, body) = if is_interactive()
+                && slug.is_none()
+                && name.is_none()
+                && description.is_none()
+                && body.is_none()
+            {
+                let slug = prompt("Slug");
+                let name = prompt("Name");
+                let description = prompt("Description");
+                let body_path = prompt("Body file (or - for stdin)");
+                (Some(slug), Some(name), Some(description), Some(body_path))
+            } else {
+                (slug, name, description, body)
+            };
+            let slug = slug.ok_or_else(|| AppError::BadRequest("slug is required".into()))?;
+            let name = name.ok_or_else(|| AppError::BadRequest("name is required".into()))?;
+            let description = description.unwrap_or_default();
+            let body = read_skill_body(body).await?;
+            let body = body.ok_or_else(|| AppError::BadRequest("body is required".into()))?;
+            let created = app
+                .create_skill(
+                    &CreateSkill {
+                        slug,
+                        name,
+                        description,
+                        body,
+                        built_in: None,
+                    },
+                    &app.root_token,
+                )
+                .await?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_skill_detail(&created),
+                DisplayMode::Simple => display_simple::display_skill_detail(&created),
+            }
+        }
+        SkillCommands::Update {
+            slug,
+            name,
+            description,
+            body,
+        } => {
+            let body = read_skill_body(body).await?;
+            if name.is_none() && description.is_none() && body.is_none() {
+                return Err(AppError::BadRequest(
+                    "at least one of name, description, or body is required".into(),
+                ));
+            }
+            let updated = app
+                .update_skill(
+                    &slug,
+                    &takusu_storage::UpdateSkill {
+                        name,
+                        description,
+                        body,
+                    },
+                )
+                .await?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_skill_detail(&updated),
+                DisplayMode::Simple => display_simple::display_skill_detail(&updated),
+            }
+        }
+        SkillCommands::Delete { slug } => {
+            app.delete_skill(&slug).await?;
+            println!("Skill {slug} deleted.");
+        }
+    }
+    Ok(())
+}
+
+async fn read_skill_body(path: Option<String>) -> Result<Option<String>, AppError> {
+    match path.as_deref() {
+        None => Ok(None),
+        Some("-") => {
+            let mut buf = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .map_err(|e| AppError::BadRequest(format!("failed to read stdin: {e}")))?;
+            Ok(Some(buf))
+        }
+        Some(path) => tokio::fs::read_to_string(path)
+            .await
+            .map(Some)
+            .map_err(|e| AppError::BadRequest(format!("failed to read {path}: {e}"))),
+    }
 }
 
 async fn run_pause(

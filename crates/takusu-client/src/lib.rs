@@ -705,6 +705,84 @@ impl Client {
         }
         Ok(resp.json().await?)
     }
+
+    // ── Skills (#WI-6) ──
+
+    pub async fn list_skills(&self) -> Result<Vec<SkillRow>, ClientError> {
+        let resp = self
+            .request(reqwest::Method::GET, "/api/skills")
+            .await
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn get_skill(&self, slug: &str) -> Result<SkillRow, ClientError> {
+        let resp = self
+            .request(reqwest::Method::GET, &format!("/api/skills/{slug}"))
+            .await
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn create_skill(&self, body: &CreateSkill) -> Result<SkillRow, ClientError> {
+        let resp = self
+            .request(reqwest::Method::POST, "/api/skills")
+            .await
+            .json(body)
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn update_skill(
+        &self,
+        slug: &str,
+        body: &UpdateSkill,
+    ) -> Result<SkillRow, ClientError> {
+        let resp = self
+            .request(reqwest::Method::PATCH, &format!("/api/skills/{slug}"))
+            .await
+            .json(body)
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn delete_skill(&self, slug: &str) -> Result<(), ClientError> {
+        let resp = self
+            .request(reqwest::Method::DELETE, &format!("/api/skills/{slug}"))
+            .await
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(())
+    }
 }
 
 // ── Types (mirrors server model.rs) ──
@@ -1094,6 +1172,40 @@ pub struct UpdateSyncSettings {
     pub client_secret: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
+}
+
+// ── Skill types (#WI-6) ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillRow {
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    pub body: String,
+    #[serde(default)]
+    pub built_in: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateSkill {
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    pub body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub built_in: Option<bool>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UpdateSkill {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
 }
 
 // ── Settings types ──

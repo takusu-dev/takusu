@@ -2,10 +2,11 @@ use async_trait::async_trait;
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 use takusu_storage::{
-    CreateHabit, CreateHabitPause, CreateTask, GoogleCalEventRow, GoogleCalSettingsRow,
-    HabitPauseRow, HabitRow, HabitStepInput, HabitStepRow, SaveScheduleRequest, ScheduleRow,
-    SettingsRow, Storage, StorageError, TaskQuery, TaskRow, TokenCreateResponse, TokenRow,
-    UpdateGoogleCalSettings, UpdateHabit, UpdateSettings, UpdateTask, storage::StorageResult,
+    CreateHabit, CreateHabitPause, CreateSkill, CreateTask, GoogleCalEventRow,
+    GoogleCalSettingsRow, HabitPauseRow, HabitRow, HabitStepInput, HabitStepRow,
+    SaveScheduleRequest, ScheduleRow, SettingsRow, SkillRow, Storage, StorageError, TaskQuery,
+    TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateSettings,
+    UpdateSkill, UpdateTask, storage::StorageResult,
 };
 
 use crate::config::LocalConfig;
@@ -21,6 +22,7 @@ const MIGRATION_010: &str = include_str!("../migrations/010_habit_pauses.sql");
 const MIGRATION_012: &str = include_str!("../migrations/012_window_mode.sql");
 const MIGRATION_013: &str = include_str!("../migrations/013_habit_task_display_id.sql");
 const MIGRATION_014: &str = include_str!("../migrations/014_workload.sql");
+const MIGRATION_015: &str = include_str!("../migrations/015_skills.sql");
 // Migration 013 one-time backfill: drops the old global unique index, renumbers
 // existing habit tasks to start from 1 per habit, and seeds the per-habit
 // sequences. Non-idempotent (DROP + UPDATE renumber) — guarded by a check
@@ -244,6 +246,9 @@ impl SqliteStorage {
         if !has_workload {
             sqlx::raw_sql(MIGRATION_014).execute(&pool).await?;
         }
+
+        // Migration 015 creates the skills table (idempotent).
+        sqlx::raw_sql(MIGRATION_015).execute(&pool).await?;
 
         Ok(Self { pool, root_token })
     }
@@ -1116,6 +1121,63 @@ impl Storage for SqliteStorage {
 
     async fn clear_gcal_mappings(&self) -> StorageResult<()> {
         sqlx::query("DELETE FROM google_cal_events")
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn list_skills(&self) -> StorageResult<Vec<SkillRow>> {
+        sqlx::query_as::<_, SkillRow>("SELECT slug, name, description, body, built_in, created_at, updated_at FROM skills ORDER BY created_at DESC")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_err)
+    }
+
+    async fn get_skill(&self, slug: &str) -> StorageResult<SkillRow> {
+        sqlx::query_as::<_, SkillRow>("SELECT slug, name, description, body, built_in, created_at, updated_at FROM skills WHERE slug = ?")
+            .bind(slug)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::RowNotFound => StorageError::NotFound(format!("skill {slug} not found")),
+                other => StorageError::Internal(other.to_string()),
+            })
+    }
+
+    async fn create_skill(&self, body: &CreateSkill) -> StorageResult<SkillRow> {
+        let built_in = body.built_in.unwrap_or(false);
+        sqlx::query(
+            "INSERT INTO skills (slug, name, description, body, built_in) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(&body.slug)
+        .bind(&body.name)
+        .bind(&body.description)
+        .bind(&body.body)
+        .bind(built_in)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        self.get_skill(&body.slug).await
+    }
+
+    async fn update_skill(&self, slug: &str, body: &UpdateSkill) -> StorageResult<SkillRow> {
+        sqlx::query(
+            "UPDATE skills SET name=COALESCE(?,name), description=COALESCE(?,description), body=COALESCE(?,body), updated_at=datetime('now') WHERE slug = ?"
+        )
+        .bind(body.name.as_ref())
+        .bind(body.description.as_ref())
+        .bind(body.body.as_ref())
+        .bind(slug)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        self.get_skill(slug).await
+    }
+
+    async fn delete_skill(&self, slug: &str) -> StorageResult<()> {
+        sqlx::query("DELETE FROM skills WHERE slug = ?")
+            .bind(slug)
             .execute(&self.pool)
             .await
             .map_err(map_err)?;

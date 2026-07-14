@@ -1,5 +1,5 @@
 use jiff::Timestamp;
-use takusu_storage::{HabitRow, ScheduleEntry, TaskRow, TokenRow};
+use takusu_storage::{HabitRow, ScheduleEntry, SkillRow, TaskRow, TokenRow};
 
 /// Build the display label for a task ID.
 /// Habit-generated tasks show `h{habit_display_id}#{task_display_id}` (#305);
@@ -219,4 +219,22 @@ pub fn display_habit_detail(habit: &HabitRow) {
         println!("   {desc}");
     }
     println!();
+}
+
+pub fn display_skills(skills: &[SkillRow]) {
+    if skills.is_empty() {
+        println!("  (no skills)");
+        return;
+    }
+    for s in skills {
+        let marker = if s.built_in { "[b]" } else { "[u]" };
+        println!("{} {} {}: {}", marker, s.slug, s.name, s.description);
+    }
+}
+
+pub fn display_skill_detail(skill: &SkillRow) {
+    let marker = if skill.built_in { "built-in" } else { "user" };
+    println!("{} {} ({})", skill.slug, skill.name, marker);
+    println!("  {}\n", skill.description);
+    println!("{}", skill.body);
 }

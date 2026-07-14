@@ -1,6 +1,6 @@
 use std::borrow::Cow;
-use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::prelude::*;
 
 /// Initialize Sentry and the global `tracing` subscriber.
 ///
@@ -14,10 +14,7 @@ use tracing_subscriber::EnvFilter;
 ///
 /// `release` should be the binary's release name (e.g. `takusu-local@x.y.z`).
 /// If `None`, Sentry's release field is left empty.
-pub fn init(
-    default_filter: &str,
-    release: Option<Cow<'static, str>>,
-) -> sentry::ClientInitGuard {
+pub fn init(default_filter: &str, release: Option<Cow<'static, str>>) -> sentry::ClientInitGuard {
     let dsn: Option<sentry::types::Dsn> = std::env::var("SENTRY_DSN").ok().and_then(|s| {
         s.parse::<sentry::types::Dsn>()
             .inspect_err(|e| eprintln!("ignoring invalid SENTRY_DSN: {e}"))

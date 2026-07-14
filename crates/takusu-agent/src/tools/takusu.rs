@@ -10,7 +10,10 @@ use crate::{Tool, ToolError, ToolOutput, ToolRegistry};
 pub fn register_tools(registry: &mut ToolRegistry, client: Client) {
     register_read_tools(registry, client.clone());
     register_mutation_tools(registry, client.clone());
-    registry.register(Box::new(PreviewScheduleTool { client }));
+    registry.register(Box::new(PreviewScheduleTool {
+        client: client.clone(),
+    }));
+    crate::tools::skills::register_tools(registry, client);
 }
 
 /// Registers the read-only planner tools used by the agent.

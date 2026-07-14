@@ -7,10 +7,11 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use takusu_storage::{
-    CreateHabit, CreateHabitPause, CreateTask, GoogleCalEventRow, GoogleCalSettingsRow,
-    HabitPauseRow, HabitRow, HabitStepInput, HabitStepRow, SaveScheduleRequest, ScheduleRow,
-    SettingsRow, Storage, StorageError, TaskQuery, TaskRow, TokenCreateResponse, TokenRow,
-    UpdateGoogleCalSettings, UpdateHabit, UpdateSettings, UpdateTask, storage::StorageResult,
+    CreateHabit, CreateHabitPause, CreateSkill, CreateTask, GoogleCalEventRow,
+    GoogleCalSettingsRow, HabitPauseRow, HabitRow, HabitStepInput, HabitStepRow,
+    SaveScheduleRequest, ScheduleRow, SettingsRow, SkillRow, Storage, StorageError, TaskQuery,
+    TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateSettings,
+    UpdateSkill, UpdateTask, storage::StorageResult,
 };
 
 use crate::config::LocalConfig;
@@ -484,6 +485,40 @@ impl Storage for WorkersStorage {
             .send_with_retry(|| self.http.delete(&url).bearer_auth(&self.token).build())
             .await?;
         map_empty(resp).await
+    }
+
+    async fn list_skills(&self) -> StorageResult<Vec<SkillRow>> {
+        self.request(reqwest::Method::GET, "/api/skills").await
+    }
+
+    async fn get_skill(&self, slug: &str) -> StorageResult<SkillRow> {
+        self.request(
+            reqwest::Method::GET,
+            &format!("/api/skills/{}", url_encode(slug)),
+        )
+        .await
+    }
+
+    async fn create_skill(&self, body: &CreateSkill) -> StorageResult<SkillRow> {
+        self.request_body(reqwest::Method::POST, "/api/skills", body)
+            .await
+    }
+
+    async fn update_skill(&self, slug: &str, body: &UpdateSkill) -> StorageResult<SkillRow> {
+        self.request_body(
+            reqwest::Method::PATCH,
+            &format!("/api/skills/{}", url_encode(slug)),
+            body,
+        )
+        .await
+    }
+
+    async fn delete_skill(&self, slug: &str) -> StorageResult<()> {
+        self.request_no_body(
+            reqwest::Method::DELETE,
+            &format!("/api/skills/{}", url_encode(slug)),
+        )
+        .await
     }
 
     async fn health_check(&self) -> StorageResult<String> {
