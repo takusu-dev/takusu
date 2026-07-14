@@ -26,11 +26,11 @@ const KEYS = {
 export interface LlmProviderSettings {
   id: string;
   name: string;
-  provider: 'openai' | 'openrouter' | 'custom';
   baseUrl: string;
   selectedModel: string;
   cachedModels: string[];
   modelsFetchedAt?: string;
+  cost?: string;
 }
 
 export interface TtsProviderSettings {

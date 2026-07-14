@@ -6,10 +6,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
-import { useColors, BRAND_COLOR, COLORS } from '@/src/theme';
+import { useColors, BRAND_COLOR } from '@/src/theme';
 import { useServer } from '@/src/api/ServerProvider';
 import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
 import {
@@ -21,115 +20,286 @@ import {
   type LlmProviderSettings,
   type TtsProviderSettings,
 } from '@/src/api/settingsStore';
+import { LlmProviderEditor } from '@/src/components/settings/LlmProviderEditor';
+import { TtsProviderEditor } from '@/src/components/settings/TtsProviderEditor';
 
-const DEFAULT_LLM: LlmProviderSettings = {
-  id: 'llm-default',
-  name: 'OpenAI',
-  provider: 'openai',
-  baseUrl: 'https://api.openai.com/v1',
-  selectedModel: '',
-  cachedModels: [],
-};
+function newId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
 
-const DEFAULT_TTS: TtsProviderSettings = {
-  id: 'tts-default',
-  name: 'Cartesia',
-  provider: 'cartesia',
-  voiceId: '',
-  language: 'ja',
-  sampleRate: 44100,
-};
+function normalizeLlmProvider(p: LlmProviderSettings): LlmProviderSettings {
+  return {
+    id: p.id,
+    name: p.name,
+    baseUrl: p.baseUrl,
+    selectedModel: p.selectedModel,
+    cachedModels: p.cachedModels,
+    modelsFetchedAt: p.modelsFetchedAt,
+    cost: p.cost,
+  };
+}
+
+function newLlmProvider(): LlmProviderSettings {
+  return {
+    id: newId('llm'),
+    name: 'Custom',
+    baseUrl: '',
+    selectedModel: '',
+    cachedModels: [],
+  };
+}
+
+function newTtsProvider(): TtsProviderSettings {
+  return {
+    id: newId('tts'),
+    name: 'Cartesia',
+    provider: 'cartesia',
+    voiceId: '',
+    language: 'ja',
+    sampleRate: 44100,
+  };
+}
 
 export function AgentSettingsView() {
   const colors = useColors();
   const { client } = useServer();
-  const [llm, setLlm] = useState<LlmProviderSettings>(DEFAULT_LLM);
-  const [tts, setTts] = useState<TtsProviderSettings>(DEFAULT_TTS);
-  const [llmKey, setLlmKey] = useState('');
-  const [ttsKey, setTtsKey] = useState('');
-  const [modelsLoading, setModelsLoading] = useState(false);
+
+  const [llmProviders, setLlmProviders] = useState<LlmProviderSettings[]>([]);
+  const [activeLlm, setActiveLlm] = useState<string | null>(null);
+  const [ttsProviders, setTtsProviders] = useState<TtsProviderSettings[]>([]);
+  const [activeTts, setActiveTts] = useState<string | null>(null);
+
+  const [editingLlm, setEditingLlm] = useState<LlmProviderSettings | null>(
+    null,
+  );
+  const [editingLlmKey, setEditingLlmKey] = useState('');
+  const [editingTts, setEditingTts] = useState<TtsProviderSettings | null>(
+    null,
+  );
+  const [editingTtsKey, setEditingTtsKey] = useState('');
+
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    loadSettings().then(async (settings) => {
-      if (cancelled) return;
-      const savedLlm = settings.llmProviders[0] ?? DEFAULT_LLM;
-      const savedTts = settings.ttsProviders[0] ?? DEFAULT_TTS;
-      setLlm(savedLlm);
-      setTts(savedTts);
-      const [llmSecret, ttsSecret] = await Promise.all([
-        loadAgentApiKey('llm', savedLlm.id),
-        loadAgentApiKey('tts', savedTts.id),
-      ]);
-      if (!cancelled) {
-        setLlmKey(llmSecret);
-        setTtsKey(ttsSecret);
-      }
-    });
+    loadSettings()
+      .then((settings) => {
+        if (cancelled) return;
+        setLlmProviders(settings.llmProviders.map(normalizeLlmProvider));
+        setActiveLlm(settings.activeLlmProvider || null);
+        setTtsProviders(settings.ttsProviders);
+        setActiveTts(settings.activeTtsProvider || null);
+      })
+      .catch((e) => {
+        Alert.alert('読み込み失敗', e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  async function fetchModels() {
-    if (!llm.baseUrl.trim() || !llmKey.trim()) {
-      Alert.alert('入力不足', 'base URLとAPI keyを入力してください');
+  const editingLlmId = editingLlm?.id;
+  useEffect(() => {
+    let cancelled = false;
+    if (!editingLlmId) {
+      setEditingLlmKey('');
       return;
     }
-    setModelsLoading(true);
+    loadAgentApiKey('llm', editingLlmId).then((key) => {
+      if (!cancelled) setEditingLlmKey(key);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [editingLlmId]);
+
+  const editingTtsId = editingTts?.id;
+  useEffect(() => {
+    let cancelled = false;
+    if (!editingTtsId) {
+      setEditingTtsKey('');
+      return;
+    }
+    loadAgentApiKey('tts', editingTtsId).then((key) => {
+      if (!cancelled) setEditingTtsKey(key);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [editingTtsId]);
+
+  async function setActiveLlmAndSave(id: string | null) {
     try {
-      const response = await fetch(
-        `${llm.baseUrl.replace(/\/+$/, '')}/models`,
-        {
-          headers: { Authorization: `Bearer ${llmKey.trim()}` },
-        },
-      );
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const body = (await response.json()) as { data?: Array<{ id?: string }> };
-      const models = [
-        ...new Set(
-          (body.data ?? [])
-            .map((item) => item.id)
-            .filter((id): id is string => Boolean(id)),
-        ),
-      ].sort();
-      setLlm((current) => ({
-        ...current,
-        cachedModels: models,
-        selectedModel: current.selectedModel || models[0] || '',
-        modelsFetchedAt: new Date().toISOString(),
-      }));
-      if (models.length === 0)
-        Alert.alert('モデルなし', 'モデルIDを手入力してください');
+      await saveAgentProviders(llmProviders, id, ttsProviders, activeTts);
+      setActiveLlm(id);
     } catch (e) {
-      Alert.alert('取得失敗', e instanceof Error ? e.message : String(e));
-    } finally {
-      setModelsLoading(false);
+      Alert.alert('保存失敗', e instanceof Error ? e.message : String(e));
     }
   }
 
-  async function save() {
-    if (!llm.selectedModel.trim()) {
-      Alert.alert('入力不足', 'LLMモデルを選択または入力してください');
-      return;
+  async function setActiveTtsAndSave(id: string | null) {
+    try {
+      await saveAgentProviders(llmProviders, activeLlm, ttsProviders, id);
+      setActiveTts(id);
+    } catch (e) {
+      Alert.alert('保存失敗', e instanceof Error ? e.message : String(e));
     }
+  }
+
+  async function saveLlm(provider: LlmProviderSettings, key: string) {
     setSaving(true);
     try {
-      await saveAgentProviders([llm], llm.id, [tts], tts.id);
-      await Promise.all([
-        saveAgentApiKey('llm', llm.id, llmKey.trim()),
-        saveAgentApiKey('tts', tts.id, ttsKey.trim()),
-      ]);
+      const existing = llmProviders.find((p) => p.id === provider.id);
+      const updated = existing
+        ? llmProviders.map((p) => (p.id === provider.id ? provider : p))
+        : [...llmProviders, provider];
+      const newActive = activeLlm ?? provider.id;
+      await saveAgentApiKey('llm', provider.id, key);
+      await saveAgentProviders(updated, newActive, ttsProviders, activeTts);
+      setLlmProviders(updated);
+      setActiveLlm(newActive);
+      setEditingLlm(null);
+      setEditingLlmKey('');
       Alert.alert(
         '保存しました',
-        'Agent設定を保存しました。サーバー再起動後に反映されます',
+        'LLM Providerを保存しました。サーバー再起動後に反映されます',
       );
     } catch (e) {
       Alert.alert('保存失敗', e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
+  }
+
+  async function saveTts(provider: TtsProviderSettings, key: string) {
+    setSaving(true);
+    try {
+      const existing = ttsProviders.find((p) => p.id === provider.id);
+      const updated = existing
+        ? ttsProviders.map((p) => (p.id === provider.id ? provider : p))
+        : [...ttsProviders, provider];
+      const newActive = activeTts ?? provider.id;
+      await saveAgentApiKey('tts', provider.id, key);
+      await saveAgentProviders(llmProviders, activeLlm, updated, newActive);
+      setTtsProviders(updated);
+      setActiveTts(newActive);
+      setEditingTts(null);
+      setEditingTtsKey('');
+      Alert.alert(
+        '保存しました',
+        'TTS Providerを保存しました。サーバー再起動後に反映されます',
+      );
+    } catch (e) {
+      Alert.alert('保存失敗', e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function deleteLlm(id: string) {
+    Alert.alert('削除', 'このLLM Providerを削除しますか？', [
+      { text: 'キャンセル', style: 'cancel' },
+      {
+        text: '削除',
+        style: 'destructive',
+        onPress: async () => {
+          setSaving(true);
+          try {
+            const updated = llmProviders.filter((p) => p.id !== id);
+            const newActive =
+              activeLlm === id ? (updated[0]?.id ?? null) : activeLlm;
+            await deleteAgentApiKey('llm', id);
+            await saveAgentProviders(
+              updated,
+              newActive,
+              ttsProviders,
+              activeTts,
+            );
+            setLlmProviders(updated);
+            if (newActive !== activeLlm) setActiveLlm(newActive);
+            if (editingLlm?.id === id) setEditingLlm(null);
+          } catch (e) {
+            Alert.alert('削除失敗', e instanceof Error ? e.message : String(e));
+          } finally {
+            setSaving(false);
+          }
+        },
+      },
+    ]);
+  }
+
+  function deleteTts(id: string) {
+    Alert.alert('削除', 'このTTS Providerを削除しますか？', [
+      { text: 'キャンセル', style: 'cancel' },
+      {
+        text: '削除',
+        style: 'destructive',
+        onPress: async () => {
+          setSaving(true);
+          try {
+            const updated = ttsProviders.filter((p) => p.id !== id);
+            const newActive =
+              activeTts === id ? (updated[0]?.id ?? null) : activeTts;
+            await deleteAgentApiKey('tts', id);
+            await saveAgentProviders(
+              llmProviders,
+              activeLlm,
+              updated,
+              newActive,
+            );
+            setTtsProviders(updated);
+            if (newActive !== activeTts) setActiveTts(newActive);
+            if (editingTts?.id === id) setEditingTts(null);
+          } catch (e) {
+            Alert.alert('削除失敗', e instanceof Error ? e.message : String(e));
+          } finally {
+            setSaving(false);
+          }
+        },
+      },
+    ]);
+  }
+
+  function removeAll() {
+    Alert.alert('削除', 'すべてのProvider設定を削除しますか？', [
+      { text: 'キャンセル', style: 'cancel' },
+      {
+        text: '削除',
+        style: 'destructive',
+        onPress: async () => {
+          setSaving(true);
+          try {
+            await Promise.all(
+              llmProviders.map((p) => deleteAgentApiKey('llm', p.id)),
+            );
+            await Promise.all(
+              ttsProviders.map((p) => deleteAgentApiKey('tts', p.id)),
+            );
+            await saveAgentProviders([], null, [], null);
+            setLlmProviders([]);
+            setActiveLlm(null);
+            setTtsProviders([]);
+            setActiveTts(null);
+            setEditingLlm(null);
+            setEditingLlmKey('');
+            setEditingTts(null);
+            setEditingTtsKey('');
+            Alert.alert(
+              '削除しました',
+              'Provider設定を削除しました。サーバー再起動後に反映されます',
+            );
+          } catch (e) {
+            Alert.alert('削除失敗', e instanceof Error ? e.message : String(e));
+          } finally {
+            setSaving(false);
+          }
+        },
+      },
+    ]);
   }
 
   function startModelDownload(modelId: string) {
@@ -144,16 +314,12 @@ export function AgentSettingsView() {
     }
   }
 
-  async function remove() {
-    await Promise.all([
-      deleteAgentApiKey('llm', llm.id),
-      deleteAgentApiKey('tts', tts.id),
-      saveAgentProviders([], null, [], null),
-    ]);
-    setLlm(DEFAULT_LLM);
-    setTts(DEFAULT_TTS);
-    setLlmKey('');
-    setTtsKey('');
+  if (loading) {
+    return (
+      <View style={[styles.loading, { backgroundColor: colors.white }]}>
+        <ActivityIndicator />
+      </View>
+    );
   }
 
   return (
@@ -161,141 +327,146 @@ export function AgentSettingsView() {
       <Text style={[styles.heading, { color: colors.black }]}>
         LLM Provider
       </Text>
-      <TextInput
-        style={[
-          styles.input,
-          { color: colors.black, borderColor: colors.separator },
-        ]}
-        value={llm.name}
-        onChangeText={(name) => setLlm({ ...llm, name })}
-        placeholder="表示名"
-      />
-      <View style={styles.providerRow}>
-        {(['openai', 'openrouter', 'custom'] as const).map((provider) => (
+      {llmProviders.length === 0 && (
+        <Text style={{ color: colors.gray }}>Providerを追加してください</Text>
+      )}
+      {llmProviders.map((provider) => (
+        <View
+          key={provider.id}
+          style={[styles.row, { borderColor: colors.separator }]}
+        >
           <Pressable
-            key={provider}
-            onPress={() => setLlm({ ...llm, provider })}
-            style={[
-              styles.chip,
-              {
-                backgroundColor:
-                  llm.provider === provider ? BRAND_COLOR : colors.separator,
-              },
-            ]}
+            onPress={() => setActiveLlmAndSave(provider.id)}
+            style={styles.radio}
+            disabled={saving}
           >
             <Text
               style={{
-                color: llm.provider === provider ? COLORS.white : colors.black,
+                color: activeLlm === provider.id ? BRAND_COLOR : colors.black,
               }}
             >
-              {provider}
+              {activeLlm === provider.id ? '●' : '○'}
             </Text>
           </Pressable>
-        ))}
-      </View>
-      <TextInput
-        style={[
-          styles.input,
-          { color: colors.black, borderColor: colors.separator },
-        ]}
-        value={llm.baseUrl}
-        onChangeText={(baseUrl) => setLlm({ ...llm, baseUrl })}
-        autoCapitalize="none"
-        placeholder="Base URL"
-      />
-      <TextInput
-        style={[
-          styles.input,
-          { color: colors.black, borderColor: colors.separator },
-        ]}
-        value={llmKey}
-        onChangeText={setLlmKey}
-        autoCapitalize="none"
-        secureTextEntry
-        placeholder="API key"
-      />
-      <Pressable
-        onPress={fetchModels}
-        style={styles.secondary}
-        disabled={modelsLoading}
-      >
-        {modelsLoading ? <ActivityIndicator /> : <Text>モデルを取得</Text>}
-      </Pressable>
-      {llm.cachedModels.map((model) => (
-        <Pressable
-          key={model}
-          onPress={() => setLlm({ ...llm, selectedModel: model })}
-          style={[styles.modelRow, { borderColor: colors.separator }]}
-        >
-          <Text style={{ color: colors.black }}>
-            {llm.selectedModel === model ? '● ' : '○ '}
-            {model}
-          </Text>
-        </Pressable>
+          <View style={styles.rowText}>
+            <Text style={{ color: colors.black, fontWeight: '600' }}>
+              {provider.name}
+            </Text>
+            <Text style={{ color: colors.gray, fontSize: 12 }}>
+              {provider.selectedModel || '未設定'}
+              {provider.cost ? ` · ${provider.cost}` : ''}
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => setEditingLlm({ ...provider })}
+            style={[styles.editButton, { borderColor: colors.separator }]}
+          >
+            <Text style={{ color: colors.black }}>編集</Text>
+          </Pressable>
+        </View>
       ))}
-      <TextInput
-        style={[
-          styles.input,
-          { color: colors.black, borderColor: colors.separator },
-        ]}
-        value={llm.selectedModel}
-        onChangeText={(selectedModel) => setLlm({ ...llm, selectedModel })}
-        autoCapitalize="none"
-        placeholder="モデルID（手入力可）"
-      />
+      <Pressable
+        onPress={() => setEditingLlm(newLlmProvider())}
+        style={[styles.addButton, { borderColor: BRAND_COLOR }]}
+      >
+        <Text style={{ color: BRAND_COLOR }}>+ LLM Providerを追加</Text>
+      </Pressable>
+      {editingLlm && (
+        <LlmProviderEditor
+          provider={editingLlm}
+          apiKey={editingLlmKey}
+          onChangeProvider={setEditingLlm}
+          onChangeApiKey={setEditingLlmKey}
+          onSave={() => saveLlm(editingLlm, editingLlmKey)}
+          onCancel={() => setEditingLlm(null)}
+          onDelete={
+            llmProviders.some((p) => p.id === editingLlm.id)
+              ? () => deleteLlm(editingLlm.id)
+              : undefined
+          }
+          saving={saving}
+        />
+      )}
 
       <Text style={[styles.heading, { color: colors.black }]}>音声モデル</Text>
       <Pressable
         onPress={() => startModelDownload('hush')}
         style={styles.secondary}
       >
-        <Text>Hushノイズ除去を準備</Text>
+        <Text style={{ color: colors.black }}>Hushノイズ除去を準備</Text>
       </Pressable>
       <Pressable
         onPress={() => startModelDownload('sherpa-sense-voice-int8')}
         style={styles.secondary}
       >
-        <Text>SenseVoice音声認識を準備</Text>
+        <Text style={{ color: colors.black }}>SenseVoice音声認識を準備</Text>
       </Pressable>
 
       <Text style={[styles.heading, { color: colors.black }]}>
         TTS Provider
       </Text>
-      <View style={styles.providerRow}>
-        <View style={[styles.chip, { backgroundColor: BRAND_COLOR }]}>
-          <Text style={{ color: COLORS.white }}>cartesia</Text>
+      {ttsProviders.length === 0 && (
+        <Text style={{ color: colors.gray }}>Providerを追加してください</Text>
+      )}
+      {ttsProviders.map((provider) => (
+        <View
+          key={provider.id}
+          style={[styles.row, { borderColor: colors.separator }]}
+        >
+          <Pressable
+            onPress={() => setActiveTtsAndSave(provider.id)}
+            style={styles.radio}
+            disabled={saving}
+          >
+            <Text
+              style={{
+                color: activeTts === provider.id ? BRAND_COLOR : colors.black,
+              }}
+            >
+              {activeTts === provider.id ? '●' : '○'}
+            </Text>
+          </Pressable>
+          <View style={styles.rowText}>
+            <Text style={{ color: colors.black, fontWeight: '600' }}>
+              {provider.name}
+            </Text>
+            <Text style={{ color: colors.gray, fontSize: 12 }}>
+              {provider.provider} · {provider.voiceId || '未設定'}
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => setEditingTts({ ...provider })}
+            style={[styles.editButton, { borderColor: colors.separator }]}
+          >
+            <Text style={{ color: colors.black }}>編集</Text>
+          </Pressable>
         </View>
-      </View>
-      <TextInput
-        style={[
-          styles.input,
-          { color: colors.black, borderColor: colors.separator },
-        ]}
-        value={tts.voiceId}
-        onChangeText={(voiceId) => setTts({ ...tts, voiceId })}
-        autoCapitalize="none"
-        placeholder="Voice ID"
-      />
-      <TextInput
-        style={[
-          styles.input,
-          { color: colors.black, borderColor: colors.separator },
-        ]}
-        value={ttsKey}
-        onChangeText={setTtsKey}
-        autoCapitalize="none"
-        secureTextEntry
-        placeholder="Cartesia API key"
-      />
-      <Pressable onPress={save} style={styles.save} disabled={saving}>
-        {saving ? (
-          <ActivityIndicator color={COLORS.white} />
-        ) : (
-          <Text style={styles.saveText}>保存</Text>
-        )}
+      ))}
+      <Pressable
+        onPress={() => setEditingTts(newTtsProvider())}
+        style={[styles.addButton, { borderColor: BRAND_COLOR }]}
+      >
+        <Text style={{ color: BRAND_COLOR }}>+ TTS Providerを追加</Text>
       </Pressable>
-      <Pressable onPress={remove} style={styles.remove}>
-        <Text style={styles.removeText}>Provider設定を削除</Text>
+      {editingTts && (
+        <TtsProviderEditor
+          provider={editingTts}
+          apiKey={editingTtsKey}
+          onChangeProvider={setEditingTts}
+          onChangeApiKey={setEditingTtsKey}
+          onSave={() => saveTts(editingTts, editingTtsKey)}
+          onCancel={() => setEditingTts(null)}
+          onDelete={
+            ttsProviders.some((p) => p.id === editingTts.id)
+              ? () => deleteTts(editingTts.id)
+              : undefined
+          }
+          saving={saving}
+        />
+      )}
+
+      <Pressable onPress={removeAll} style={styles.remove}>
+        <Text style={styles.removeText}>Provider設定をすべて削除</Text>
       </Pressable>
       {!client && (
         <Text style={{ color: colors.gray }}>
@@ -307,16 +478,32 @@ export function AgentSettingsView() {
 }
 
 const styles = StyleSheet.create({
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   content: { padding: 16, gap: 10 },
   heading: { fontSize: 18, fontWeight: '700', marginTop: 12 },
-  input: {
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    borderWidth: 1,
+    borderRadius: 8,
+    gap: 8,
+  },
+  radio: { width: 28, alignItems: 'center', justifyContent: 'center' },
+  rowText: { flex: 1 },
+  editButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderRadius: 8,
+  },
+  addButton: {
     minHeight: 44,
     borderWidth: 1,
     borderRadius: 8,
-    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  providerRow: { flexDirection: 'row', gap: 8 },
-  chip: { paddingVertical: 9, paddingHorizontal: 12, borderRadius: 8 },
   secondary: {
     minHeight: 44,
     borderWidth: 1,
@@ -325,16 +512,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  modelRow: { padding: 10, borderWidth: 1, borderRadius: 8 },
-  save: {
-    minHeight: 48,
-    borderRadius: 8,
-    backgroundColor: BRAND_COLOR,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 12,
-  },
-  saveText: { color: COLORS.white, fontWeight: '700' },
-  remove: { alignItems: 'center', padding: 12 },
+  remove: { alignItems: 'center', padding: 12, marginTop: 8 },
   removeText: { color: '#B33A3A' },
 });
