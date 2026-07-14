@@ -495,9 +495,9 @@ export function SettingsDetailView({
   // Manager / One Tap flow was fragile across devices (issues #108,
   // #129, #248, #297).  Instead, the user runs OAuth on the CLI:
   //
-  //   takusu sync oauth-url --redirect-uri http://localhost
-  //   → open the URL in a browser → copy the authorization code
-  //   takusu sync oauth-callback --code <CODE> --redirect-uri http://localhost
+  //   takusu sync login --client-id <ID> --client-secret <SECRET>
+  //   → starts a local callback server on 127.0.0.1 and opens the browser
+  //   → receives the authorization code and exchanges it for a refresh token
   //
   // The CLI exchanges the code with Google and stores the refresh
   // token in the shared backend (local SQLite or Workers D1).  Mobile
@@ -1430,7 +1430,7 @@ export function SettingsDetailView({
                   autoCorrect={false}
                 />
                 <Text style={[styles.helpText, { color: colors.gray }]}>
-                  CLIで `takusu sync oauth-url` → `oauth-callback`
+                  CLIで `takusu sync login --client-id 〜 --client-secret 〜`
                   を実行して取得したトークンを貼り付けてください
                 </Text>
               </View>

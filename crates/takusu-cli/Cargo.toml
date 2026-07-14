@@ -24,3 +24,5 @@ toml = "0.8"
 comfy-table = "7"
 clap_complete = "4"
 atty = "0.2"
+axum = { workspace = true }
+rpassword = "7.5.4"

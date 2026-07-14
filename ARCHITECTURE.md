@@ -344,11 +344,11 @@ let schedule = client.generate_schedule(&req).await?;
 ### 7.1 OAuth2 フロー (CLI専用)
 
 ```
-1. takusu sync oauth-url --redirect-uri http://localhost
-   → Google認証URLを表示 (バックエンドの client_id から生成)
-2. ユーザーがブラウザで認証 → 認可コード取得
-3. takusu sync oauth-callback --code <CODE> --redirect-uri http://localhost
-   → CLIプロセスが直接Googleとトークン交換 → refresh_token をDBに保存
+takusu sync login --client-id <ID> --client-secret <SECRET>
+   → 127.0.0.1 のローカルコールバックサーバーを起動
+   → ブラウザを開いて Google 認証
+   → サーバーが認可コードを受け取り、CLI が Google とトークン交換
+   → refresh_token を DB に保存
 ```
 
 - モバイルアプリではOAuthを実行しない (Android Credential Manager / One Tap

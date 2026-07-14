@@ -7,6 +7,13 @@ use clap::{CommandFactory, Parser, Subcommand};
 use std::io::{self, Read, Write};
 use std::process;
 use std::sync::Arc;
+use std::time::Duration;
+
+use axum::Router;
+use axum::extract::{Query, State};
+use axum::response::Html;
+use axum::routing::get;
+
 use takusu_local_lib::{
     app::TakusuApp,
     config::{LocalConfig, StorageKind},
@@ -548,18 +555,18 @@ enum SyncCommands {
         refresh_token: Option<String>,
     },
 
-    /// Generate Google OAuth2 authorization URL
-    OauthUrl {
+    /// Start a local server and complete Google OAuth2 login in one step
+    Login {
         #[arg(long)]
-        redirect_uri: String,
-    },
-
-    /// Complete OAuth2 callback with authorization code
-    OauthCallback {
+        client_id: Option<String>,
         #[arg(long)]
-        code: String,
+        client_secret: Option<String>,
         #[arg(long)]
-        redirect_uri: String,
+        calendar_id: Option<String>,
+        #[arg(long, default_value_t = 8765)]
+        port: u16,
+        #[arg(long)]
+        no_browser: bool,
     },
 
     /// Manually trigger Google Calendar sync
@@ -1428,19 +1435,188 @@ async fn run_sync(app: &TakusuApp, cmd: SyncCommands) -> Result<(), AppError> {
             println!("  has_client_secret: {}", settings.has_client_secret);
             println!("  has_refresh_token:  {}", settings.has_refresh_token);
         }
-        SyncCommands::OauthUrl { redirect_uri } => {
-            let result = app.oauth_url(&redirect_uri).await?;
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
-        }
-        SyncCommands::OauthCallback { code, redirect_uri } => {
-            app.oauth_callback(&code, Some(&redirect_uri)).await?;
-            println!("OAuth callback completed successfully.");
+        SyncCommands::Login {
+            client_id,
+            client_secret,
+            calendar_id,
+            port,
+            no_browser,
+        } => {
+            oauth_login(app, client_id, client_secret, calendar_id, port, no_browser).await?;
         }
         SyncCommands::Trigger => {
             app.do_sync().await.map_err(AppError::Internal)?;
             println!("Sync triggered.");
         }
     }
+    Ok(())
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OAuthCallbackQuery {
+    code: Option<String>,
+    error: Option<String>,
+    error_description: Option<String>,
+}
+
+async fn oauth_callback_handler(
+    State(tx): State<tokio::sync::mpsc::Sender<Result<String, String>>>,
+    Query(query): Query<OAuthCallbackQuery>,
+) -> Html<&'static str> {
+    if let Some(error) = query.error {
+        let msg = match query.error_description {
+            Some(desc) => format!("{error}: {desc}"),
+            None => error,
+        };
+        let _ = tx.send(Err(msg)).await;
+        return Html(
+            "<html><body><h1>認証に失敗しました</h1><p>ターミナルを確認してください。</p></body></html>",
+        );
+    }
+    if let Some(code) = query.code {
+        let _ = tx.send(Ok(code)).await;
+        return Html(
+            "<html><body><h1>認証成功</h1><p>このウィンドウを閉じて、ターミナルに戻ってください。</p></body></html>",
+        );
+    }
+    Html("<html><body><h1>不正なリクエストです</h1></body></html>")
+}
+
+fn open_browser(url: &str) {
+    let (program, arg) = if cfg!(target_os = "macos") {
+        ("open", None)
+    } else if cfg!(target_os = "windows") {
+        ("cmd", Some("/c"))
+    } else {
+        ("xdg-open", None)
+    };
+    let mut cmd = process::Command::new(program);
+    if let Some(a) = arg {
+        cmd.arg(a);
+    }
+    if cfg!(target_os = "windows") {
+        cmd.arg("start").arg("").arg(url);
+    } else {
+        cmd.arg(url);
+    }
+    let _ = cmd.spawn();
+}
+
+fn prompt_secret(label: &str) -> Result<String, AppError> {
+    rpassword::prompt_password(format!("{label}: "))
+        .map_err(|e| AppError::Internal(format!("failed to read secret: {e}")))
+}
+
+async fn oauth_login(
+    app: &TakusuApp,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+    calendar_id: Option<String>,
+    port: u16,
+    no_browser: bool,
+) -> Result<(), AppError> {
+    let settings = app.get_gcal_settings().await?;
+
+    let client_id = if let Some(id) = client_id {
+        if id.is_empty() {
+            return Err(AppError::BadRequest("client_id must not be empty".into()));
+        }
+        id
+    } else if !settings.client_id.is_empty() {
+        settings.client_id
+    } else if is_interactive() {
+        let id = prompt("Google OAuth client_id");
+        if id.is_empty() {
+            return Err(AppError::BadRequest("client_id is required".into()));
+        }
+        id
+    } else {
+        return Err(AppError::BadRequest("client_id is required".into()));
+    };
+
+    let client_secret_opt = if let Some(secret) = client_secret {
+        if secret.is_empty() {
+            return Err(AppError::BadRequest(
+                "client_secret must not be empty".into(),
+            ));
+        }
+        Some(secret)
+    } else if settings.has_client_secret {
+        None
+    } else if is_interactive() {
+        let secret = prompt_secret("Google OAuth client_secret")?;
+        if secret.is_empty() {
+            return Err(AppError::BadRequest("client_secret is required".into()));
+        }
+        Some(secret)
+    } else {
+        return Err(AppError::BadRequest("client_secret is required".into()));
+    };
+
+    let calendar_id = if let Some(id) = calendar_id {
+        if id.is_empty() {
+            if settings.calendar_id.is_empty() {
+                "primary".to_string()
+            } else {
+                settings.calendar_id
+            }
+        } else {
+            id
+        }
+    } else if settings.calendar_id.is_empty() {
+        "primary".to_string()
+    } else {
+        settings.calendar_id
+    };
+
+    app.update_gcal_settings(&takusu_storage::UpdateGoogleCalSettings {
+        enabled: Some(true),
+        calendar_id: Some(calendar_id.clone()),
+        client_id: Some(client_id.clone()),
+        client_secret: client_secret_opt,
+        refresh_token: None,
+    })
+    .await?;
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<String, String>>(1);
+    let router = Router::new()
+        .route("/callback", get(oauth_callback_handler))
+        .with_state(tx);
+
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+        .await
+        .map_err(|e| AppError::Internal(format!("failed to bind callback server: {e}")))?;
+    let actual_port = listener
+        .local_addr()
+        .map_err(|e| AppError::Internal(format!("{e}")))?
+        .port();
+    let redirect_uri = format!("http://127.0.0.1:{actual_port}/callback");
+    let auth_url = app.oauth_url(&redirect_uri).await?;
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = axum::serve(listener, router).with_graceful_shutdown(async {
+        let _ = shutdown_rx.await;
+    });
+    let server_handle = tokio::spawn(async move { server.await });
+
+    println!("Starting local callback server on 127.0.0.1:{actual_port}");
+    if no_browser {
+        println!("Open this URL in your browser:\n  {auth_url}");
+    } else {
+        open_browser(&auth_url);
+    }
+
+    let code = tokio::time::timeout(Duration::from_secs(300), rx.recv())
+        .await
+        .map_err(|_| AppError::Internal("OAuth callback timed out".into()))?
+        .ok_or_else(|| AppError::Internal("callback channel closed".into()))?
+        .map_err(|e| AppError::Internal(format!("oauth error: {e}")))?;
+
+    let _ = shutdown_tx.send(());
+    let _ = server_handle.await;
+
+    app.oauth_callback(&code, Some(&redirect_uri)).await?;
+    println!("Google Calendar OAuth login completed successfully.");
     Ok(())
 }
 
