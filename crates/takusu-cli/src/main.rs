@@ -4,6 +4,7 @@ mod display_simple;
 mod editor;
 
 use clap::{CommandFactory, Parser, Subcommand};
+use config::CliConfig;
 use std::io::{self, Read, Write};
 use std::process;
 use std::sync::Arc;
@@ -126,8 +127,18 @@ enum ConfigCommands {
     Show,
     /// Initialize config file with defaults
     Init,
-    /// Set a config value and sync to server
+    /// Set a local config value
     Set {
+        #[arg(long)]
+        storage: Option<String>,
+        #[arg(long)]
+        db: Option<String>,
+        #[arg(long)]
+        worker_url: Option<String>,
+        #[arg(long)]
+        workers_token: Option<String>,
+        #[arg(long)]
+        root_token: Option<String>,
         #[arg(long)]
         tz: Option<String>,
         #[arg(long)]
@@ -586,9 +597,7 @@ fn main() {
 
     runtime.block_on(async {
         let cli = Cli::parse();
-        let cfg = config::load();
-
-        let tz_str = cli.tz.or(cfg.tz).unwrap_or_else(|| "UTC".into());
+        let mut cfg = config::load();
 
         if matches!(cli.command, Commands::GenRootToken) {
             let token = generate_root_token();
@@ -607,23 +616,144 @@ fn main() {
             return;
         }
 
-        // Initialize local storage and app
-        let local_cfg = LocalConfig::load().unwrap_or_else(|e| {
-            eprintln!("Error loading config: {e}");
-            process::exit(1);
-        });
+        // Handle config commands before building the app so storage/worker_url
+        // changes are reflected immediately.
+        if let Commands::Config { command } = &cli.command {
+            match command {
+                ConfigCommands::Show => {
+                    config::show();
+                    return;
+                }
+                ConfigCommands::Init => {
+                    config::init();
+                    return;
+                }
+                ConfigCommands::Set {
+                    storage,
+                    db,
+                    worker_url,
+                    workers_token,
+                    root_token,
+                    tz,
+                    sleep_start,
+                    sleep_end,
+                } => {
+                    if let Some(v) = storage {
+                        config::set("storage", v).unwrap_or_else(|e| {
+                            eprintln!("Error: {e}");
+                            process::exit(1);
+                        });
+                    }
+                    if let Some(v) = db {
+                        config::set("db", v).unwrap_or_else(|e| {
+                            eprintln!("Error: {e}");
+                            process::exit(1);
+                        });
+                    }
+                    if let Some(v) = worker_url {
+                        config::set("worker_url", v).unwrap_or_else(|e| {
+                            eprintln!("Error: {e}");
+                            process::exit(1);
+                        });
+                    }
+                    if let Some(v) = workers_token {
+                        config::set("workers_token", v).unwrap_or_else(|e| {
+                            eprintln!("Error: {e}");
+                            process::exit(1);
+                        });
+                    }
+                    if let Some(v) = root_token {
+                        config::set("root_token", v).unwrap_or_else(|e| {
+                            eprintln!("Error: {e}");
+                            process::exit(1);
+                        });
+                    }
+                    if let Some(v) = tz {
+                        config::set("tz", v).unwrap_or_else(|e| {
+                            eprintln!("Error: {e}");
+                            process::exit(1);
+                        });
+                    }
+                    if let Some(v) = sleep_start {
+                        config::set("sleep_start", v).unwrap_or_else(|e| {
+                            eprintln!("Error: {e}");
+                            process::exit(1);
+                        });
+                    }
+                    if let Some(v) = sleep_end {
+                        config::set("sleep_end", v).unwrap_or_else(|e| {
+                            eprintln!("Error: {e}");
+                            process::exit(1);
+                        });
+                    }
+                    cfg = config::load();
+                }
+            }
+        }
+
+        let tz_str = cli.tz.clone().or(cfg.tz.clone()).unwrap_or_else(|| "UTC".into());
+
+        // Build local config from CLI config and environment overrides
+        let mut local_cfg = LocalConfig::default();
+        if let Ok(v) = std::env::var("TAKUSU_STORAGE") && !v.is_empty() {
+            local_cfg.storage = v;
+        } else if let Some(ref v) = cfg.storage {
+            local_cfg.storage = v.clone();
+        }
+        if let Ok(v) = std::env::var("TAKUSU_DB") && !v.is_empty() {
+            local_cfg.db = v;
+        } else if let Some(ref v) = cfg.db {
+            local_cfg.db = v.clone();
+        }
+        if let Ok(v) = std::env::var("TAKUSU_WORKERS_URL") && !v.is_empty() {
+            local_cfg.worker_url = v;
+        } else if let Ok(v) = std::env::var("TAKUSU_WORKER_URL") && !v.is_empty() {
+            local_cfg.worker_url = v;
+        } else if let Some(ref v) = cfg.worker_url {
+            local_cfg.worker_url = v.clone();
+        }
+
+        let env_root = std::env::var("TAKUSU_ROOT_TOKEN")
+            .ok()
+            .filter(|s| !s.is_empty());
+        let env_workers = std::env::var("TAKUSU_WORKERS_TOKEN")
+            .ok()
+            .filter(|s| !s.is_empty());
+
+        let root_token = env_root
+            .clone()
+            .or_else(|| cfg.root_token.clone())
+            .unwrap_or_default();
+        let workers_token = env_workers
+            .clone()
+            .or_else(|| cfg.workers_token.clone())
+            .or_else(|| env_root.clone())
+            .or_else(|| cfg.root_token.clone())
+            .unwrap_or_default();
 
         let storage: Arc<dyn takusu_storage::Storage> = match local_cfg.storage_kind() {
-            StorageKind::Workers => WorkersStorage::shared(&local_cfg).unwrap_or_else(|e| {
-                eprintln!("Error initializing workers storage: {e}");
-                process::exit(1);
-            }),
-            StorageKind::Sqlite => {
-                let root_token = LocalConfig::load_root_token().unwrap_or_else(|e| {
-                    eprintln!("Error: {e}");
+            StorageKind::Workers => {
+                let url = std::env::var("TAKUSU_WORKERS_URL")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| local_cfg.worker_url.split('|').next().map(|s| s.to_string()))
+                    .unwrap_or_default();
+                if url.is_empty() {
+                    eprintln!("Error: worker_url is required for the workers backend");
                     process::exit(1);
-                });
-                let storage = SqliteStorage::init(&local_cfg, root_token)
+                }
+                if workers_token.is_empty() {
+                    eprintln!("Error: workers_token (or TAKUSU_ROOT_TOKEN) is required for the workers backend");
+                    process::exit(1);
+                }
+                Arc::new(WorkersStorage::new_with(url, workers_token))
+            }
+            StorageKind::Sqlite => {
+                if root_token.is_empty() {
+                    eprintln!("Error: TAKUSU_ROOT_TOKEN is required for the sqlite backend");
+                    process::exit(1);
+                }
+                let storage = SqliteStorage::init(&local_cfg, root_token.clone())
                     .await
                     .unwrap_or_else(|e| {
                         eprintln!("Error initializing sqlite storage: {e}");
@@ -633,11 +763,6 @@ fn main() {
             }
         };
 
-        let root_token = LocalConfig::load_root_token().unwrap_or_else(|e| {
-            eprintln!("Error: {e}");
-            process::exit(1);
-        });
-
         let token_cache = Arc::new(TokenCache::with_default_ttl());
         let app = TakusuApp::new(storage, root_token, token_cache);
 
@@ -646,7 +771,7 @@ fn main() {
             process::exit(1);
         });
 
-        if let Err(e) = run(cli.mode, &app, tz, cli.command).await {
+        if let Err(e) = run(cli.mode, &app, tz, cli.command, &cfg).await {
             eprintln!("Error: {e}");
             process::exit(1);
         }
@@ -658,6 +783,7 @@ async fn run(
     app: &TakusuApp,
     tz: jiff::tz::TimeZone,
     cmd: Commands,
+    cfg: &CliConfig,
 ) -> Result<(), AppError> {
     match cmd {
         Commands::Health => {
@@ -671,7 +797,7 @@ async fn run(
         Commands::Skill { command } => run_skill(mode, app, command).await?,
         Commands::GenRootToken => unreachable!(),
         Commands::Completion { .. } => unreachable!(),
-        Commands::Config { command } => run_config(command, app).await?,
+        Commands::Config { command } => run_config(command, app, cfg).await?,
     }
     Ok(())
 }
@@ -1620,7 +1746,7 @@ async fn oauth_login(
     Ok(())
 }
 
-async fn run_config(cmd: ConfigCommands, app: &TakusuApp) -> Result<(), AppError> {
+async fn run_config(cmd: ConfigCommands, app: &TakusuApp, cfg: &CliConfig) -> Result<(), AppError> {
     match cmd {
         ConfigCommands::Show => config::show(),
         ConfigCommands::Init => config::init(),
@@ -1628,23 +1754,14 @@ async fn run_config(cmd: ConfigCommands, app: &TakusuApp) -> Result<(), AppError
             tz,
             sleep_start,
             sleep_end,
+            ..
         } => {
-            if let Some(ref v) = tz {
-                config::set("tz", v).map_err(AppError::BadRequest)?;
-            }
-            if let Some(ref v) = sleep_start {
-                config::set("sleep_start", v).map_err(AppError::BadRequest)?;
-            }
-            if let Some(ref v) = sleep_end {
-                config::set("sleep_end", v).map_err(AppError::BadRequest)?;
-            }
             let mut update = UpdateSettings {
                 tz,
                 sleep_start,
                 sleep_end,
                 ..Default::default()
             };
-            let cfg = config::load();
             if update.tz.is_none() && cfg.tz.is_some() {
                 update.tz = cfg.tz.clone();
             }

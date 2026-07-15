@@ -54,21 +54,3 @@ impl LocalConfig {
         &self.worker_url
     }
 }
-
-impl LocalConfig {
-    pub fn load() -> Result<LocalConfig, config::ConfigError> {
-        config::Config::builder()
-            .add_source(
-                config::Environment::with_prefix("TAKUSU")
-                    .separator("_")
-                    .try_parsing(true),
-            )
-            .build()?
-            .try_deserialize()
-    }
-
-    pub fn load_root_token() -> Result<String, String> {
-        std::env::var("TAKUSU_ROOT_TOKEN")
-            .map_err(|_| "TAKUSU_ROOT_TOKEN environment variable is required".to_string())
-    }
-}
