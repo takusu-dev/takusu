@@ -1731,7 +1731,8 @@ impl TakusuApp {
             None => None,
         };
 
-        let client = google_cal::Client::new(client_id, client_secret, refresh_token, calendar_id);
+        let client = google_cal::Client::new(client_id, client_secret, refresh_token, calendar_id)
+            .map_err(|e| e.to_string())?;
 
         match entries {
             Some(entries) => {

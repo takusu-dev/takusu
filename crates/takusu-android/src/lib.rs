@@ -130,19 +130,10 @@ impl TakusuServer {
         // Without it, any HTTPS request panics ("Expect rustls-platform-verifier
         // to be initialized"), killing the axum task and surfacing as
         // "unexpected end of stream" on the client side.
-        let http_client = {
-            let certs: Vec<reqwest::Certificate> = webpki_root_certs::TLS_SERVER_ROOT_CERTS
-                .iter()
-                .filter_map(|c| reqwest::Certificate::from_der(c.as_ref()).ok())
-                .collect();
-            reqwest::Client::builder()
-                .use_rustls_tls()
-                .tls_certs_only(certs)
-                .build()
-                .map_err(|e| TakusuError::Server {
-                    detail: format!("failed to build HTTP client: {e}"),
-                })?
-        };
+        let http_client =
+            takusu_client::default_http_client(None).map_err(|e| TakusuError::Server {
+                detail: format!("failed to build HTTP client: {e}"),
+            })?;
 
         let storage: Arc<dyn Storage> = Arc::new(WorkersStorage::new_with_client(
             http_client,

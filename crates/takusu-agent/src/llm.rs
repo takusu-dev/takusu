@@ -276,10 +276,8 @@ pub struct OpenAIClient {
 
 impl OpenAIClient {
     pub fn new(config: LlmConfig) -> Result<Self, LlmError> {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(config.request_timeout_seconds))
-            .build()
-            .map_err(|e| LlmError::Other(e.into()))?;
+        let client = takusu_client::default_http_client(Some(config.request_timeout_seconds))
+            .map_err(|e| LlmError::Request(e.to_string()))?;
 
         let api_key = if config.api_key.is_empty() {
             std::env::var(&config.api_key_env).unwrap_or_default()

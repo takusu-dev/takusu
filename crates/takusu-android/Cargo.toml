@@ -26,9 +26,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uniffi = "0.31.2"
-reqwest = { workspace = true }
 serde_json = { workspace = true }
-webpki-root-certs = "1"
 
 [features]
 bindgen = ["uniffi/cli"]

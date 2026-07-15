@@ -1341,6 +1341,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "takusu-client",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -3876,7 +3877,6 @@ name = "takusu-android"
 version = "0.20260714.4"
 dependencies = [
  "axum",
- "reqwest",
  "serde_json",
  "takusu-agent",
  "takusu-audio",
@@ -3889,7 +3889,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uniffi",
- "webpki-root-certs",
 ]
 
 [[package]]
@@ -3956,6 +3955,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "webpki-root-certs",
 ]
 
 [[package]]
