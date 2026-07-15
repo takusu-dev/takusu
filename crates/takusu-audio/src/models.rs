@@ -190,7 +190,13 @@ impl ModelCache {
         let archive_name = archive_name_from_url(spec.url);
         let archive_path = self.cache_dir.join(format!("{}.{}", spec.id, archive_name));
 
+        let certs: Vec<reqwest::Certificate> = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+            .iter()
+            .filter_map(|c| reqwest::Certificate::from_der(c.as_ref()).ok())
+            .collect();
         let client = reqwest::blocking::Client::builder()
+            .use_rustls_tls()
+            .tls_certs_only(certs)
             .timeout(std::time::Duration::from_secs(600))
             .build()?;
         let request = client.get(spec.url);
