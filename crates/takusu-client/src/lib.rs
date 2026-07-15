@@ -3,6 +3,7 @@
 //! Provides types and a `Client` for interacting with the takusu REST API.
 
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 #[derive(Debug)]
 pub enum ClientError {
@@ -34,10 +35,48 @@ pub struct Client {
     token: String,
 }
 
+/// Build a `reqwest::Client` that is safe to use on Android.
+///
+/// `reqwest` 0.13 defaults to `rustls-platform-verifier` for certificate
+/// verification. On Android that verifier requires a JNI context that is not
+/// available in the embedded UniFFI runtime, so any HTTPS request panics and
+/// kills the server task, surfacing as "unexpected end of stream" to the
+/// client. Use bundled webpki root certificates instead on Android.
+pub fn default_http_client(
+    timeout_seconds: Option<u64>,
+) -> Result<reqwest::Client, reqwest::Error> {
+    #[cfg(target_os = "android")]
+    {
+        let certs: Vec<reqwest::Certificate> = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+            .iter()
+            .filter_map(|c| reqwest::Certificate::from_der(c.as_ref()).ok())
+            .collect();
+        assert!(
+            !certs.is_empty(),
+            "no bundled root certificates were loaded; HTTPS cannot be used"
+        );
+        let mut builder = reqwest::Client::builder()
+            .use_rustls_tls()
+            .tls_certs_only(certs);
+        if let Some(secs) = timeout_seconds {
+            builder = builder.timeout(Duration::from_secs(secs));
+        }
+        builder.build()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let mut builder = reqwest::Client::builder();
+        if let Some(secs) = timeout_seconds {
+            builder = builder.timeout(Duration::from_secs(secs));
+        }
+        builder.build()
+    }
+}
+
 impl Client {
     pub fn new(base_url: &str, token: &str) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: default_http_client(None).expect("failed to build HTTP client"),
             base_url: base_url.trim_end_matches('/').to_string(),
             token: token.to_string(),
         }

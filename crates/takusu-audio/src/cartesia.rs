@@ -136,10 +136,25 @@ pub struct CartesiaSonic {
 impl CartesiaSonic {
     /// Create a new client from the given config.
     pub fn new(config: CartesiaSonicConfig) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            config,
-        }
+        #[cfg(target_os = "android")]
+        let client = {
+            let certs: Vec<reqwest::Certificate> = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+                .iter()
+                .filter_map(|c| reqwest::Certificate::from_der(c.as_ref()).ok())
+                .collect();
+            assert!(
+                !certs.is_empty(),
+                "no bundled root certificates were loaded; Cartesia HTTPS cannot be used"
+            );
+            reqwest::Client::builder()
+                .use_rustls_tls()
+                .tls_certs_only(certs)
+                .build()
+                .expect("failed to build Cartesia HTTP client")
+        };
+        #[cfg(not(target_os = "android"))]
+        let client = reqwest::Client::new();
+        Self { client, config }
     }
 
     /// Create a new client from the environment, reading `CARTESIA_API_KEY`.

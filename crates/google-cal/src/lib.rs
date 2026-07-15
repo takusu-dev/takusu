@@ -86,7 +86,7 @@ pub async fn exchange_code(
     code: &str,
     redirect_uri: Option<&str>,
 ) -> Result<OAuthTokens> {
-    let http = reqwest::Client::new();
+    let http = takusu_client::default_http_client(None)?;
     let mut form = vec![
         ("code", code.to_string()),
         ("client_id", client_id.to_string()),
@@ -133,14 +133,14 @@ impl Client {
         client_secret: String,
         refresh_token: String,
         calendar_id: String,
-    ) -> Self {
-        Self {
-            http: reqwest::Client::new(),
+    ) -> Result<Self> {
+        Ok(Self {
+            http: takusu_client::default_http_client(None)?,
             client_id,
             client_secret,
             refresh_token,
             calendar_id,
-        }
+        })
     }
 
     async fn refresh_access_token(&self) -> Result<String> {
