@@ -804,256 +804,41 @@ export function HomeView() {
     await refresh();
   }
 
-  // Cycle the host task of a parallel group through 3 states
-  // (scheduled → in_progress → completed → scheduled), matching the
-  // single-task card's swipe behavior (#312, #389).
-  // When the host transitions to in_progress, only the host is updated.
-  // When the host transitions to completed, non-done guests are also
-  // completed. When the host transitions back to scheduled, all tasks
-  // (host + guests) are reset to scheduled.
-  async function markGroupDone(host: TaskRow, guests: TaskRow[]) {
-    if (!client) return;
-    const hostDone = host.status === 'completed' || host.status === 'skipped';
-    const hostInProgress = host.status === 'in_progress';
-    const hostPending = host.status === 'pending';
-    let newHostStatus: TaskStatus;
-    let actionLabel: string;
-    let errorLabel: string;
-    if (hostPending) {
-      newHostStatus = 'completed';
-      actionLabel = 'mark done';
-      errorLabel = 'タスクの完了に失敗';
-    } else if (hostInProgress) {
-      newHostStatus = 'completed';
-      actionLabel = 'mark done';
-      errorLabel = 'タスクの完了に失敗';
-    } else if (hostDone) {
-      newHostStatus = 'scheduled';
-      actionLabel = 'undone';
-      errorLabel = 'タスクの未完了に失敗';
-    } else {
-      // scheduled → in_progress (only host changes)
-      newHostStatus = 'in_progress';
-      actionLabel = 'start';
-      errorLabel = 'タスクの開始に失敗';
-    }
-
-    // Determine which tasks to update.
-    // - in_progress: only the host
-    // - completed: host + non-done guests
-    // - scheduled (undone): host + all guests
-    const allTasks = [host, ...guests];
-    const prevStatuses = new Map(allTasks.map((t) => [t.id, t.status]));
-    const toChange: TaskRow[] = [];
-    if (newHostStatus === 'in_progress') {
-      toChange.push(host);
-    } else if (newHostStatus === 'completed') {
-      toChange.push(host);
-      for (const g of guests) {
-        const gDone = g.status === 'completed' || g.status === 'skipped';
-        if (!gDone) toChange.push(g);
-      }
-    } else {
-      // scheduled: reset all
-      toChange.push(...allTasks);
-    }
-
-    const changed: TaskRow[] = [];
-    for (const t of toChange) {
-      const targetStatus =
-        t === host
-          ? newHostStatus
-          : newHostStatus === 'scheduled'
-            ? 'scheduled'
-            : 'completed';
-      try {
-        await client.updateTask(t.id, { status: targetStatus });
-        changed.push(t);
-        dismissTaskNotifications(t.id).catch((e) => logError('通知の消去', e));
-      } catch (e) {
-        showError(e, errorLabel);
-        if (changed.length > 0) {
-          undoRedo.push({
-            description: `${actionLabel} group (partial): ${host.title}`,
-            undo: async () => {
-              for (const ct of changed) {
-                const prev = prevStatuses.get(ct.id)!;
-                await client.updateTask(ct.id, { status: prev });
-              }
-              await refresh();
-            },
-            redo: async () => {
-              for (const ct of changed) {
-                const target =
-                  ct === host
-                    ? newHostStatus
-                    : newHostStatus === 'scheduled'
-                      ? 'scheduled'
-                      : 'completed';
-                await client.updateTask(ct.id, { status: target });
-              }
-              await refresh();
-            },
-          });
-        }
-        await refresh();
-        return;
-      }
-      if (t.status === 'in_progress') {
-        dismissInProgressNotification(t.id).catch((e) =>
-          logError('通知の消去', e),
-        );
-      }
-      if (targetStatus === 'completed') {
-        cancelScheduledTaskNotifications(t.id).catch((e) =>
-          logError('通知のキャンセル', e),
-        );
-      }
-    }
-    // Post in-progress notification when starting host via swipe (#312)
-    if (newHostStatus === 'in_progress' && notifications.inProgress) {
-      postInProgressNotification(host).catch((e) => logError('通知の投稿', e));
-    }
-    undoRedo.push({
-      description: `${actionLabel} group: ${host.title}`,
-      undo: async () => {
-        for (const t of toChange) {
-          const prev = prevStatuses.get(t.id)!;
-          await client.updateTask(t.id, { status: prev });
-        }
-        if (newHostStatus === 'in_progress') {
-          dismissInProgressNotification(host.id).catch((e) =>
-            logError('通知の消去', e),
-          );
-        }
-        if (
-          host.status === 'in_progress' &&
-          newHostStatus === 'completed' &&
-          notifications.inProgress
-        ) {
-          postInProgressNotification(host).catch((e) =>
-            logError('通知の投稿', e),
-          );
-        }
-        await refresh();
-      },
-      redo: async () => {
-        for (const t of toChange) {
-          const target =
-            t === host
-              ? newHostStatus
-              : newHostStatus === 'scheduled'
-                ? 'scheduled'
-                : 'completed';
-          await client.updateTask(t.id, { status: target });
-        }
-        if (newHostStatus === 'in_progress' && notifications.inProgress) {
-          postInProgressNotification(host).catch((e) =>
-            logError('通知の投稿', e),
-          );
-        }
-        if (host.status === 'in_progress' && newHostStatus === 'completed') {
-          dismissInProgressNotification(host.id).catch((e) =>
-            logError('通知の消去', e),
-          );
-        }
-        await refresh();
-      },
-    });
-    await refresh();
-  }
-
-  // Delete all tasks in a parallel group (#194).
-  // Tracks partial success so an undo entry is pushed even if some deletes
-  // fail, and remaps inter-group dependencies on undo (two-pass).
-  async function deleteGroup(host: TaskRow, guests: TaskRow[]) {
-    if (!client) return;
-    const allTasks = [host, ...guests];
-    const deleted: TaskRow[] = [];
-    for (const t of allTasks) {
-      try {
-        await client.deleteTask(t.id);
-        deleted.push(t);
-      } catch (e) {
-        showError(e, 'タスクの削除に失敗');
-        break;
-      }
-    }
-    if (deleted.length === 0) return;
-    // Track the ids assigned by the server when undo recreates the tasks,
-    // so redo deletes the recreated (not the stale original) ids.
-    const currentIds: string[] = [...deleted.map((t) => t.id)];
-    // Track which tasks have been recreated so a retry after partial
-    // failure doesn't create duplicates (mirrors deleteSelected pattern).
-    const createdIdx = new Set<number>();
-    undoRedo.push({
-      description: `delete group: ${host.title}`,
-      undo: async () => {
-        const oldToNew = new Map<string, string>();
-        // First pass: create tasks with no deps, build ID mapping.
-        for (let i = 0; i < deleted.length; i++) {
-          if (createdIdx.has(i)) {
-            // Already recreated on a previous (partial) attempt —
-            // record the mapping so the dep-remap pass can find it.
-            oldToNew.set(deleted[i].id, currentIds[i]);
-            continue;
-          }
-          const t = deleted[i];
-          const recreated = await client.createTask({
-            title: t.title,
-            description: t.description,
-            start_at: t.start_at,
-            end_at: t.end_at,
-            avg_minutes: t.avg_minutes,
-            sigma_minutes: t.sigma_minutes,
-            depends: [],
-            parallelizable: t.parallelizable,
-            allows_parallel: t.allows_parallel,
-            abandonability: t.abandonability,
-            ical_uid: t.ical_uid,
-            habit_id: t.habit_id,
-            fixed: t.fixed,
-          });
-          if (t.status !== 'pending') {
-            await client.updateTask(recreated.id, { status: t.status });
-          }
-          currentIds[i] = recreated.id;
-          oldToNew.set(t.id, recreated.id);
-          createdIdx.add(i);
-        }
-        // Second pass: remap inter-group dependencies to new IDs.
-        for (let i = 0; i < deleted.length; i++) {
-          const t = deleted[i];
-          const origDeps = parseDepends(t.depends);
-          if (origDeps.length === 0) continue;
-          const newId = oldToNew.get(t.id);
-          if (!newId) continue;
-          const remapped = origDeps.map((d) => oldToNew.get(d) ?? d);
-          await client.updateTask(newId, { depends: remapped });
-        }
-        await refresh();
-      },
-      redo: async () => {
-        createdIdx.clear();
-        for (const id of currentIds) {
-          await client.deleteTask(id);
-        }
-        await refresh();
-      },
-    });
-    await refresh();
-  }
-
   async function deleteTask(task: TaskRow) {
     if (!client) return;
+    // Remove the deleted task from any other task's depends before deleting,
+    // so a deleted host doesn't leave guests with an invalid dependency.
+    // Keep the original depends arrays so undo can restore them.
+    const dependents: { id: string; original: string[] }[] = [];
+    for (const t of tasks) {
+      if (t.id === task.id) continue;
+      const deps = parseDepends(t.depends);
+      if (deps.includes(task.id)) {
+        dependents.push({ id: t.id, original: deps });
+      }
+    }
+    try {
+      for (const d of dependents) {
+        await client.updateTask(d.id, {
+          depends: d.original.filter((id) => id !== task.id),
+        });
+      }
+    } catch (e) {
+      showError(e, '依存関係の更新に失敗');
+      return;
+    }
     try {
       await client.deleteTask(task.id);
     } catch (e) {
       showError(e, 'タスクの削除に失敗');
+      // Best-effort rollback of dependency updates.
+      for (const d of dependents) {
+        await client.updateTask(d.id, { depends: d.original }).catch((err) => {
+          logError('依存関係の復元に失敗', err);
+        });
+      }
       return;
     }
-    // Track the id assigned by the server when undo recreates the task,
-    // so redo deletes the recreated (not the stale original) id.
     let currentId = task.id;
     undoRedo.push({
       description: `delete: ${task.title}`,
@@ -1079,10 +864,21 @@ export function HomeView() {
           await client.updateTask(recreated.id, { status: task.status });
         }
         currentId = recreated.id;
+        // Restore dependents to point to the recreated task.
+        for (const d of dependents) {
+          await client.updateTask(d.id, {
+            depends: d.original.map((id) => (id === task.id ? currentId : id)),
+          });
+        }
         await refresh();
       },
       redo: async () => {
         await client.deleteTask(currentId);
+        for (const d of dependents) {
+          await client.updateTask(d.id, {
+            depends: d.original.filter((id) => id !== task.id),
+          });
+        }
         await refresh();
       },
     });
@@ -1428,8 +1224,8 @@ export function HomeView() {
             }
           }}
           onLongPress={toggleGroupSelection}
-          onDone={() => markGroupDone(item.host, item.guests)}
-          onDelete={() => deleteGroup(item.host, item.guests)}
+          onDone={markDone}
+          onDelete={deleteTask}
         />
       );
     }

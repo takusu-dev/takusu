@@ -7,7 +7,13 @@
 // Done tasks: strikethrough + gray
 
 import { memo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type ViewStyle,
+} from 'react-native';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Reanimated, {
   useSharedValue,
@@ -27,8 +33,8 @@ interface TaskCardProps {
   scheduleEnd?: string;
   isDone: boolean;
   onPress: () => void;
-  onDone?: () => void;
-  onDelete?: () => void;
+  onDone?: () => void | Promise<void>;
+  onDelete?: () => void | Promise<void>;
   onLongPress?: () => void;
   selected?: boolean;
   // Habit display_id for habit-based coloring (#309). Undefined when the
@@ -36,6 +42,8 @@ interface TaskCardProps {
   habitDisplayId?: number;
   // Number of tasks that depend on this task (reverse dependencies).
   dependentCount?: number;
+  // Optional override for the outer container (e.g. to remove margins in a group).
+  containerStyle?: ViewStyle;
 }
 
 function formatTime(iso?: string): string {
@@ -76,6 +84,7 @@ function TaskCardImpl({
   selected,
   habitDisplayId,
   dependentCount,
+  containerStyle,
 }: TaskCardProps) {
   const translateX = useSharedValue(0);
   // Track which direction the haptic last fired for (0=none, 1=right, -1=left)
@@ -231,7 +240,7 @@ function TaskCardImpl({
     : undefined;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, containerStyle]}>
       {/* Slide action preview backgrounds (#170) */}
       <Reanimated.View
         style={[styles.doneBg, { backgroundColor: doneColor }, doneBgStyle]}
@@ -453,10 +462,14 @@ const styles = StyleSheet.create({
 export const TaskCard = memo(TaskCardImpl);
 
 // ── ParallelGroupCard ──
-// Renders a parallel task group: host (allows_parallel) on the left (50%),
-// guests (parallelizable) stacked on the right (50%).
-// A single slide gesture applies to the whole group:
-//   slide right → complete all, slide left → delete all (#194).
+// Renders a parallel task group as a rotated "L": host on top, a thin
+// vertical rail (same color as the host) extending down, and guests
+// indented on the right as normal TaskCards. Each task keeps its own
+// 3-state swipe gesture; the rail is static and does not move (#573).
+
+const RAIL_WIDTH = 10;
+const OUTLINE_WIDTH = 1;
+const INDENT_WIDTH = RAIL_WIDTH + OUTLINE_WIDTH;
 
 interface ParallelGroupCardProps {
   host: TaskRow;
@@ -469,8 +482,8 @@ interface ParallelGroupCardProps {
   onHostPress: () => void;
   onGuestPress: (index: number) => void;
   onLongPress: () => void;
-  onDone?: () => void;
-  onDelete?: () => void;
+  onDone?: (task: TaskRow) => void | Promise<void>;
+  onDelete?: (task: TaskRow) => void | Promise<void>;
   // habit_id → display_id map for habit-based coloring (#309).
   habitDisplayIdMap?: Map<string, number>;
   // task_id → number of tasks that depend on it (reverse dependency count).
@@ -493,374 +506,62 @@ function ParallelGroupCardImpl({
   habitDisplayIdMap,
   dependentCountMap,
 }: ParallelGroupCardProps) {
-  const translateX = useSharedValue(0);
-  // Track which direction the haptic last fired for (0=none, 1=right, -1=left)
-  // so reversing swipe direction mid-gesture re-fires the haptic (#313).
-  const hapticFiredDir = useSharedValue(0);
-  const { dark, colors } = useTheme();
-  // #393: two-step delete — swipe left reveals a delete button instead of
-  // deleting immediately. When revealed, tapping the card snaps it back.
-  // Use a SharedValue for the UI-thread worklet logic (avoids stale React
-  // state in gesture callbacks) and mirror to React state for rendering.
-  const deleteRevealedSV = useSharedValue(false);
-  const [deleteRevealed, setDeleteRevealed] = useState(false);
-  const DELETE_REVEAL_WIDTH = 72;
-
-  const pan = Gesture.Pan()
-    .activeOffsetX([-10, 10])
-    .failOffsetY([-10, 10])
-    .onUpdate((e) => {
-      const base = deleteRevealedSV.value ? -DELETE_REVEAL_WIDTH : 0;
-      translateX.value = base + e.translationX;
-      // Fire haptic when crossing the action threshold mid-slide (#313).
-      // Suppress haptics when delete is revealed — no action will fire
-      // regardless of swipe direction (#393).
-      if (
-        e.translationX > 80 &&
-        onDone &&
-        hapticFiredDir.value !== 1 &&
-        !deleteRevealedSV.value
-      ) {
-        hapticFiredDir.value = 1;
-        runOnJS(haptic.light)();
-      } else if (
-        e.translationX < -80 &&
-        onDelete &&
-        hapticFiredDir.value !== -1 &&
-        !deleteRevealedSV.value
-      ) {
-        hapticFiredDir.value = -1;
-        runOnJS(haptic.medium)();
-      }
-    })
-    .onEnd((e) => {
-      if (deleteRevealedSV.value) {
-        // When delete is revealed, any right swipe just hides it (#393).
-        // Don't trigger onDone even if the swipe passes the threshold.
-        if (e.translationX > -20) {
-          deleteRevealedSV.value = false;
-          runOnJS(setDeleteRevealed)(false);
-          translateX.value = withSpring(0);
-        } else {
-          translateX.value = withSpring(-DELETE_REVEAL_WIDTH);
-        }
-      } else if (e.translationX > 80 && onDone) {
-        runOnJS(onDone)();
-        translateX.value = withSpring(0);
-      } else if (e.translationX < -80 && onDelete) {
-        // #393: reveal the delete button instead of deleting immediately.
-        deleteRevealedSV.value = true;
-        runOnJS(setDeleteRevealed)(true);
-        translateX.value = withSpring(-DELETE_REVEAL_WIDTH);
-      } else {
-        translateX.value = withSpring(0);
-      }
-    })
-    // onFinalize fires for both END and CANCELLED terminal states, ensuring
-    // hapticFiredDir is always reset even if the gesture is interrupted.
-    // Only snap to resting position when the gesture was cancelled (not
-    // when it ended normally — onEnd already handles that) to avoid
-    // restarting the spring animation (#393).
-    .onFinalize((_e, success) => {
-      hapticFiredDir.value = 0;
-      if (!success) {
-        translateX.value = withSpring(
-          deleteRevealedSV.value ? -DELETE_REVEAL_WIDTH : 0,
-        );
-      }
-    });
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: translateX.value }],
-  }));
-  const doneBgStyle = useAnimatedStyle(() => ({
-    opacity: Math.min(1, Math.max(0, translateX.value / 80)),
-  }));
-  const deleteBgStyle = useAnimatedStyle(() => ({
-    opacity: Math.min(1, Math.max(0, -translateX.value / 80)),
-  }));
-
+  const { dark } = useTheme();
+  const hostHabitDisplayId = host.habit_id
+    ? habitDisplayIdMap?.get(host.habit_id)
+    : undefined;
   const hostBgColor = taskCardColor(
     host.abandonability,
     host.habit_id,
-    host.habit_id ? habitDisplayIdMap?.get(host.habit_id) : undefined,
+    hostHabitDisplayId,
     dark,
   );
-  const hostDone = host.status === 'completed' || host.status === 'skipped';
-  const hostDeps = parseDepends(host.depends);
-  const hostDependentCount = dependentCountMap?.get(host.id) ?? 0;
-  // Slide-right preview: icon and color depend on the host's next state
-  // in the 3-state cycle (#389), matching the single task card (#312).
-  // pending → completed (checkmark, green)
-  // scheduled → in_progress (play, blue)
-  // in_progress → completed (checkmark, green)
-  // completed → scheduled (refresh, red)
-  const hostPending = host.status === 'pending';
-  const hostInProgress = host.status === 'in_progress';
-  const doneIcon = hostDone
-    ? 'refresh'
-    : hostPending
-      ? 'checkmark'
-      : hostInProgress
-        ? 'checkmark'
-        : 'play';
-  const doneColor = hostDone
-    ? COLORS.red
-    : hostPending
-      ? COLORS.green
-      : hostInProgress
-        ? COLORS.green
-        : BRAND_COLOR;
-
-  const handleHostPress = () => {
-    if (deleteRevealed) {
-      haptic.light();
-      deleteRevealedSV.value = false;
-      setDeleteRevealed(false);
-      translateX.value = withSpring(0);
-      return;
-    }
-    haptic.light();
-    onHostPress();
-  };
-  const handleLongPress = () => {
-    if (deleteRevealed) {
-      haptic.light();
-      deleteRevealedSV.value = false;
-      setDeleteRevealed(false);
-      translateX.value = withSpring(0);
-      return;
-    }
-    haptic.medium();
-    onLongPress();
-  };
+  const outlineColor = dark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
 
   return (
-    <View style={groupStyles.container}>
-      {/* Slide action preview backgrounds */}
-      <Reanimated.View
-        style={[styles.doneBg, { backgroundColor: doneColor }, doneBgStyle]}
-        pointerEvents="none"
-      >
-        <Ionicons name={doneIcon} size={28} color={COLORS.white} />
-      </Reanimated.View>
-      <Reanimated.View
-        style={[
-          styles.deleteBg,
-          { backgroundColor: COLORS.red },
-          deleteBgStyle,
-        ]}
-        pointerEvents="none"
-      >
-        <Ionicons name="trash" size={28} color={COLORS.white} />
-      </Reanimated.View>
-      {/* #393: revealed delete button — tap to confirm deletion */}
-      {deleteRevealed && onDelete && (
-        <Pressable
-          style={styles.deleteButton}
-          onPress={() => {
-            haptic.medium();
-            deleteRevealedSV.value = false;
-            setDeleteRevealed(false);
-            translateX.value = withSpring(0);
-            onDelete();
-          }}
-        >
-          <Ionicons name="trash" size={24} color={COLORS.white} />
-        </Pressable>
-      )}
-
-      <GestureDetector gesture={pan}>
-        <Reanimated.View
-          style={[
-            groupStyles.groupContainer,
-            selected && styles.cardSelected,
-            hostInProgress && {
-              borderLeftColor: BRAND_COLOR,
-              borderLeftWidth: 4,
-            },
-            animatedStyle,
-          ]}
-        >
-          {/* Left: host (50%) */}
-          <Pressable
-            style={({ pressed }) => [
-              groupStyles.hostCard,
-              { backgroundColor: hostBgColor },
-              pressed && styles.pressed,
-            ]}
-            onPress={handleHostPress}
-            onLongPress={handleLongPress}
-          >
-            <Text style={[groupStyles.hostTime, { color: colors.grayDark }]}>
-              {formatTime(hostScheduleStart)}
-            </Text>
-            <Text style={[groupStyles.hostTime, { color: colors.grayDark }]}>
-              {formatTime(hostScheduleEnd)}
-            </Text>
-            <Text
-              style={[groupStyles.hostTaskId, { color: colors.gray }]}
-              numberOfLines={1}
-            >
-              {host.habit_id &&
-              habitDisplayIdMap?.get(host.habit_id) !== undefined
-                ? `h${habitDisplayIdMap.get(host.habit_id)}#${host.display_id}`
-                : `#${host.display_id}`}
-            </Text>
-            <Text
-              style={[
-                groupStyles.hostTitle,
-                { color: colors.black },
-                hostDone && {
-                  textDecorationLine: 'line-through',
-                  color: colors.done,
-                },
-              ]}
-              numberOfLines={2}
-              ellipsizeMode="tail"
-            >
-              {host.title}
-            </Text>
-            <View style={groupStyles.hostMeta}>
-              {hostDeps.length > 0 && (
-                <Text
-                  style={[groupStyles.hostMetaText, { color: colors.gray }]}
-                >
-                  ↳ {hostDeps.length}
-                </Text>
-              )}
-              {hostDependentCount > 0 && (
-                <Text
-                  style={[groupStyles.hostMetaText, { color: colors.gray }]}
-                >
-                  ↗ {hostDependentCount}
-                </Text>
-              )}
-              {host.avg_minutes > 0 && (
-                <Text
-                  style={[groupStyles.hostMetaText, { color: colors.gray }]}
-                >
-                  {host.avg_minutes}m
-                </Text>
-              )}
-            </View>
-          </Pressable>
-
-          {/* Right: guests stacked (50%) */}
-          <View style={groupStyles.guestsColumn}>
-            {guests.map((guest, idx) => {
-              const guestDone =
-                guest.status === 'completed' || guest.status === 'skipped';
-              const guestBg = taskCardColor(
-                guest.abandonability,
-                guest.habit_id,
-                guest.habit_id
-                  ? habitDisplayIdMap?.get(guest.habit_id)
-                  : undefined,
-                dark,
-              );
-              const guestDeps = parseDepends(guest.depends);
-              const guestDependentCount = dependentCountMap?.get(guest.id) ?? 0;
-              return (
-                <Pressable
-                  key={guest.id}
-                  style={({ pressed }) => [
-                    groupStyles.guestCard,
-                    { backgroundColor: guestBg },
-                    idx === guests.length - 1 && groupStyles.guestCardLast,
-                    pressed && styles.pressed,
-                  ]}
-                  onPress={() => {
-                    if (deleteRevealed) {
-                      haptic.light();
-                      deleteRevealedSV.value = false;
-                      setDeleteRevealed(false);
-                      translateX.value = withSpring(0);
-                      return;
-                    }
-                    haptic.light();
-                    onGuestPress(idx);
-                  }}
-                >
-                  <View style={groupStyles.guestTimes}>
-                    <Text
-                      style={[
-                        groupStyles.guestTime,
-                        { color: colors.grayDark },
-                      ]}
-                    >
-                      {formatTime(guestScheduleStarts[idx])}
-                    </Text>
-                    <Text
-                      style={[
-                        groupStyles.guestTime,
-                        { color: colors.grayDark },
-                      ]}
-                    >
-                      {formatTime(guestScheduleEnds[idx])}
-                    </Text>
-                  </View>
-                  <View style={groupStyles.guestTitleContainer}>
-                    <Text
-                      style={[groupStyles.guestTaskId, { color: colors.gray }]}
-                    >
-                      {guest.habit_id &&
-                      habitDisplayIdMap?.get(guest.habit_id) !== undefined
-                        ? `h${habitDisplayIdMap.get(guest.habit_id)}#${guest.display_id}`
-                        : `#${guest.display_id}`}
-                    </Text>
-                    <Text
-                      style={[
-                        groupStyles.guestTitle,
-                        { color: colors.black },
-                        guestDone && {
-                          textDecorationLine: 'line-through',
-                          color: colors.done,
-                        },
-                      ]}
-                      numberOfLines={2}
-                    >
-                      {guest.title}
-                    </Text>
-                  </View>
-                  <View style={groupStyles.guestMeta}>
-                    {guestDeps.length > 0 && (
-                      <Text
-                        style={[
-                          groupStyles.guestMetaText,
-                          { color: colors.gray },
-                        ]}
-                      >
-                        ↳ {guestDeps.length}
-                      </Text>
-                    )}
-                    {guestDependentCount > 0 && (
-                      <Text
-                        style={[
-                          groupStyles.guestMetaText,
-                          { color: colors.gray },
-                        ]}
-                      >
-                        ↗ {guestDependentCount}
-                      </Text>
-                    )}
-                    {guest.avg_minutes > 0 && (
-                      <Text
-                        style={[
-                          groupStyles.guestMetaText,
-                          { color: colors.gray },
-                        ]}
-                      >
-                        {guest.avg_minutes}m
-                      </Text>
-                    )}
-                  </View>
-                </Pressable>
-              );
-            })}
-          </View>
-        </Reanimated.View>
-      </GestureDetector>
+    <View
+      style={[groupStyles.container, selected && { borderColor: BRAND_COLOR }]}
+    >
+      <View style={[groupStyles.rail, { backgroundColor: hostBgColor }]} />
+      <View style={[groupStyles.outline, { backgroundColor: outlineColor }]} />
+      <View style={groupStyles.cards}>
+        <TaskCard
+          task={host}
+          scheduleStart={hostScheduleStart}
+          scheduleEnd={hostScheduleEnd}
+          isDone={host.status === 'completed' || host.status === 'skipped'}
+          onPress={onHostPress}
+          onDone={onDone ? () => onDone(host) : undefined}
+          onDelete={onDelete ? () => onDelete(host) : undefined}
+          onLongPress={onLongPress}
+          habitDisplayId={hostHabitDisplayId}
+          dependentCount={dependentCountMap?.get(host.id)}
+          containerStyle={groupStyles.groupCard}
+        />
+        {guests.map((guest, idx) => {
+          const guestHabitDisplayId = guest.habit_id
+            ? habitDisplayIdMap?.get(guest.habit_id)
+            : undefined;
+          return (
+            <TaskCard
+              key={guest.id}
+              task={guest}
+              scheduleStart={guestScheduleStarts[idx]}
+              scheduleEnd={guestScheduleEnds[idx]}
+              isDone={
+                guest.status === 'completed' || guest.status === 'skipped'
+              }
+              onPress={() => onGuestPress(idx)}
+              onDone={onDone ? () => onDone(guest) : undefined}
+              onDelete={onDelete ? () => onDelete(guest) : undefined}
+              onLongPress={onLongPress}
+              habitDisplayId={guestHabitDisplayId}
+              dependentCount={dependentCountMap?.get(guest.id)}
+              containerStyle={groupStyles.groupCard}
+            />
+          );
+        })}
+      </View>
     </View>
   );
 }
@@ -869,96 +570,36 @@ const groupStyles = StyleSheet.create({
   container: {
     marginHorizontal: 12,
     marginVertical: 4,
-    position: 'relative',
-  },
-  groupContainer: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
     borderRadius: 12,
     overflow: 'hidden',
-    minHeight: 72,
     borderWidth: 2,
     borderColor: 'transparent',
+    position: 'relative',
+    minHeight: 72,
   },
-  hostCard: {
-    flex: 1,
-    padding: 6,
-    justifyContent: 'center',
-    gap: 2,
-    alignSelf: 'stretch',
+  rail: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: RAIL_WIDTH,
+    borderTopLeftRadius: 12,
+    borderBottomLeftRadius: 12,
   },
-  hostTime: {
-    fontSize: 10,
-    fontVariant: ['tabular-nums'],
+  outline: {
+    position: 'absolute',
+    left: RAIL_WIDTH,
+    top: 0,
+    bottom: 0,
+    width: OUTLINE_WIDTH,
   },
-  hostTaskId: {
-    fontSize: 9,
-    fontVariant: ['tabular-nums'],
-  },
-  hostTitle: {
-    fontSize: 11,
-    fontWeight: '500',
-    marginTop: 2,
-  },
-  hostMeta: {
-    flexDirection: 'column',
-    alignItems: 'flex-end',
-    gap: 1,
-    marginTop: 2,
-  },
-  hostMetaText: {
-    fontSize: 9,
-    fontVariant: ['tabular-nums'],
-  },
-  guestsColumn: {
-    flex: 1,
+  cards: {
     flexDirection: 'column',
   },
-  guestCard: {
-    flex: 1,
-    flexDirection: 'row',
-    padding: 8,
-    alignItems: 'center',
-    gap: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(0,0,0,0.08)',
-    minHeight: 48,
-  },
-  guestCardLast: {
-    borderBottomWidth: 0,
-  },
-  guestTimes: {
-    width: 36,
-    alignItems: 'center',
-  },
-  guestTime: {
-    fontSize: 10,
-    fontVariant: ['tabular-nums'],
-  },
-  guestTitleContainer: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  guestTaskId: {
-    fontSize: 9,
-    fontVariant: ['tabular-nums'],
-  },
-  guestTitle: {
-    fontSize: 13,
-    fontWeight: '500',
-    flex: 1,
-  },
-  guestMeta: {
-    alignSelf: 'stretch',
-    justifyContent: 'center',
-    alignItems: 'flex-end',
-    gap: 1,
-  },
-  guestMetaText: {
-    fontSize: 10,
-    fontVariant: ['tabular-nums'],
+  groupCard: {
+    marginHorizontal: 0,
+    marginVertical: 0,
+    marginLeft: INDENT_WIDTH,
   },
 });
 
