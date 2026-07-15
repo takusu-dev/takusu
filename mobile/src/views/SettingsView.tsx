@@ -1,6 +1,7 @@
 // SettingsView — categorized settings
 // general: dark/white theme
-// worker: endpoint, key (with server restart)
+// worker: endpoint, key
+// server restart: bottom of the settings category list
 // google calendar: config + OAuth + manual sync
 // info: license, version (build number)
 //
@@ -8,7 +9,7 @@
 // detail screen. The horizontal tab bar overflowed on small screens, making
 // some categories (notably "情報") unreachable.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -28,11 +29,7 @@ import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as Clipboard from 'expo-clipboard';
 import Constants from 'expo-constants';
-import {
-  useServer,
-  saveWorkersUrl,
-  saveWorkersToken,
-} from '@/src/api/ServerProvider';
+import { useServer } from '@/src/api/ServerProvider';
 import type { GoogleCalSettings, SettingsRow } from '@/src/api/types';
 import { useColors, BRAND_COLOR } from '@/src/theme';
 import {
@@ -105,6 +102,21 @@ export function SettingsCategoryView() {
   const router = useRouter();
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const {
+    restartServer,
+    restarting,
+    error: restartError,
+    workersUrl,
+    workersToken,
+  } = useServer();
+  const previousRestartErrorRef = useRef<string | null>(restartError);
+
+  useEffect(() => {
+    if (restartError && previousRestartErrorRef.current !== restartError) {
+      Alert.alert('サーバー再起動失敗', restartError);
+    }
+    previousRestartErrorRef.current = restartError;
+  }, [restartError]);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
@@ -150,6 +162,29 @@ export function SettingsCategoryView() {
             <Ionicons name="chevron-forward" size={20} color={colors.gray} />
           </Pressable>
         ))}
+
+        <View style={styles.field}>
+          <Text style={[styles.label, { color: colors.gray }]}>サーバー</Text>
+          <Pressable
+            style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
+            onPress={() => {
+              haptic.medium();
+              restartServer();
+            }}
+            disabled={restarting || !workersUrl.trim() || !workersToken.trim()}
+          >
+            {restarting ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.actionButtonText}>サーバーを再起動</Text>
+            )}
+          </Pressable>
+          {restartError && (
+            <Text style={[styles.warning, { color: colors.red }]}>
+              {restartError}
+            </Text>
+          )}
+        </View>
       </ScrollView>
     </View>
   );
@@ -170,8 +205,8 @@ export function SettingsDetailView({
     setUndoSteps,
     workersUrl: savedUrl,
     workersToken: savedToken,
-    restartServer,
-    restarting,
+    setWorkersUrl,
+    setWorkersToken,
     notifications,
     setNotifications,
   } = useServer();
@@ -364,14 +399,9 @@ export function SettingsDetailView({
     }
   }, [category, loadWorkloadSettings]);
   async function saveWorkerSettings() {
-    await saveWorkersUrl(workerUrl);
-    await saveWorkersToken(workerKey);
+    await setWorkersUrl(workerUrl);
+    await setWorkersToken(workerKey);
     setWorkerDirty(false);
-  }
-
-  async function handleRestartServer() {
-    await saveWorkerSettings();
-    await restartServer(workerUrl, workerKey);
   }
 
   async function saveSleepSettings() {
@@ -1212,7 +1242,7 @@ export function SettingsDetailView({
 
               {workerDirty && (
                 <Text style={[styles.warning, { color: colors.red }]}>
-                  ⚠ サーバーを再起動するまで反映されません
+                  ⚠ 保存してからサーバーを再起動してください
                 </Text>
               )}
 
@@ -1220,15 +1250,11 @@ export function SettingsDetailView({
                 style={[styles.actionButton, { backgroundColor: BRAND_COLOR }]}
                 onPress={() => {
                   haptic.medium();
-                  handleRestartServer();
+                  saveWorkerSettings();
                 }}
-                disabled={restarting}
+                disabled={!workerDirty}
               >
-                {restarting ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.actionButtonText}>サーバーを再起動</Text>
-                )}
+                <Text style={styles.actionButtonText}>保存</Text>
               </Pressable>
 
               {/* Health checks */}

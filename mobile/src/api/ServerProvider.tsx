@@ -38,6 +38,8 @@ interface ServerState {
 
 interface ServerContextValue extends ServerState {
   restartServer: (url?: string, token?: string) => Promise<void>;
+  setWorkersUrl: (url: string) => Promise<void>;
+  setWorkersToken: (token: string) => Promise<void>;
   setDarkMode: (enabled: boolean) => Promise<void>;
   setUndoSteps: (steps: number) => Promise<void>;
   setNotifications: (settings: NotificationSettings) => Promise<void>;
@@ -54,6 +56,8 @@ const ServerContext = createContext<ServerContextValue>({
   notifications: {} as NotificationSettings,
   restarting: false,
   restartServer: async () => {},
+  setWorkersUrl: async () => {},
+  setWorkersToken: async () => {},
   setDarkMode: async () => {},
   setUndoSteps: async () => {},
   setNotifications: async () => {},
@@ -151,7 +155,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       const newUrl = url ?? state.workersUrl;
       const newToken = token ?? state.workersToken;
 
-      setState((prev) => ({ ...prev, restarting: true }));
+      setState((prev) => ({ ...prev, restarting: true, error: null }));
 
       try {
         if (Platform.OS === 'android') {
@@ -183,6 +187,16 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     },
     [state.workersUrl, state.workersToken, startServer],
   );
+
+  const setWorkersUrl = useCallback(async (url: string) => {
+    await saveWorkersUrl(url);
+    setState((prev) => ({ ...prev, workersUrl: url }));
+  }, []);
+
+  const setWorkersToken = useCallback(async (token: string) => {
+    await saveWorkersToken(token);
+    setState((prev) => ({ ...prev, workersToken: token }));
+  }, []);
 
   const setDarkMode = useCallback(async (enabled: boolean) => {
     await saveDarkMode(enabled);
@@ -269,11 +283,21 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     () => ({
       ...state,
       restartServer,
+      setWorkersUrl,
+      setWorkersToken,
       setDarkMode,
       setUndoSteps,
       setNotifications,
     }),
-    [state, restartServer, setDarkMode, setUndoSteps, setNotifications],
+    [
+      state,
+      restartServer,
+      setWorkersUrl,
+      setWorkersToken,
+      setDarkMode,
+      setUndoSteps,
+      setNotifications,
+    ],
   );
 
   return (
