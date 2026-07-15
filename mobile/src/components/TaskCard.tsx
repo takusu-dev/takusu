@@ -434,7 +434,7 @@ const styles = StyleSheet.create({
   },
   meta: {
     alignSelf: 'stretch',
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
     alignItems: 'flex-end',
     gap: 1,
   },
@@ -589,6 +589,8 @@ function ParallelGroupCardImpl({
   const hostDone = host.status === 'completed' || host.status === 'skipped';
   const hostDeps = parseDepends(host.depends);
   const hostDependentCount = dependentCountMap?.get(host.id) ?? 0;
+  const showHostMeta =
+    hostDeps.length > 0 || hostDependentCount > 0 || host.avg_minutes > 0;
   // Slide-right preview: icon and color depend on the host's next state
   // in the 3-state cycle (#389), matching the single task card (#312).
   // pending → completed (checkmark, green)
@@ -721,29 +723,31 @@ function ParallelGroupCardImpl({
             >
               {host.title}
             </Text>
-            <View style={groupStyles.hostMeta}>
-              {hostDeps.length > 0 && (
-                <Text
-                  style={[groupStyles.hostMetaText, { color: colors.gray }]}
-                >
-                  ↳ {hostDeps.length}
-                </Text>
-              )}
-              {hostDependentCount > 0 && (
-                <Text
-                  style={[groupStyles.hostMetaText, { color: colors.gray }]}
-                >
-                  ↗ {hostDependentCount}
-                </Text>
-              )}
-              {host.avg_minutes > 0 && (
-                <Text
-                  style={[groupStyles.hostMetaText, { color: colors.gray }]}
-                >
-                  {host.avg_minutes}m
-                </Text>
-              )}
-            </View>
+            {showHostMeta && (
+              <View style={groupStyles.hostMeta}>
+                {hostDeps.length > 0 && (
+                  <Text
+                    style={[groupStyles.hostMetaText, { color: colors.gray }]}
+                  >
+                    ↳ {hostDeps.length}
+                  </Text>
+                )}
+                {hostDependentCount > 0 && (
+                  <Text
+                    style={[groupStyles.hostMetaText, { color: colors.gray }]}
+                  >
+                    ↗ {hostDependentCount}
+                  </Text>
+                )}
+                {host.avg_minutes > 0 && (
+                  <Text
+                    style={[groupStyles.hostMetaText, { color: colors.gray }]}
+                  >
+                    {host.avg_minutes}m
+                  </Text>
+                )}
+              </View>
+            )}
           </Pressable>
 
           {/* Right: guests stacked (50%) */}
@@ -901,10 +905,11 @@ const groupStyles = StyleSheet.create({
     marginTop: 2,
   },
   hostMeta: {
+    flex: 1,
     flexDirection: 'column',
+    justifyContent: 'flex-end',
     alignItems: 'flex-end',
     gap: 1,
-    marginTop: 2,
   },
   hostMetaText: {
     fontSize: 9,
@@ -952,7 +957,7 @@ const groupStyles = StyleSheet.create({
   },
   guestMeta: {
     alignSelf: 'stretch',
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
     alignItems: 'flex-end',
     gap: 1,
   },
