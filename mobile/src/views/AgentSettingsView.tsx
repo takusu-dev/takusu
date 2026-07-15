@@ -27,6 +27,11 @@ function newId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+const MODEL_SIZES: Record<string, string> = {
+  hush: '約8 MB',
+  'sherpa-sense-voice-int8': '約160 MB',
+};
+
 function normalizeLlmProvider(p: LlmProviderSettings): LlmProviderSettings {
   return {
     id: p.id,
@@ -314,6 +319,17 @@ export function AgentSettingsView() {
     }
   }
 
+  function promptModelDownload(modelId: string) {
+    const size = MODEL_SIZES[modelId];
+    const message = size
+      ? `${size}のデータをダウンロードします。よろしいですか？`
+      : 'データをダウンロードします。よろしいですか？';
+    Alert.alert('ダウンロード確認', message, [
+      { text: 'いいえ', style: 'cancel' },
+      { text: 'はい', onPress: () => startModelDownload(modelId) },
+    ]);
+  }
+
   if (loading) {
     return (
       <View style={[styles.loading, { backgroundColor: colors.white }]}>
@@ -390,13 +406,13 @@ export function AgentSettingsView() {
 
       <Text style={[styles.heading, { color: colors.black }]}>音声モデル</Text>
       <Pressable
-        onPress={() => startModelDownload('hush')}
+        onPress={() => promptModelDownload('hush')}
         style={styles.secondary}
       >
         <Text style={{ color: colors.black }}>Hushノイズ除去を準備</Text>
       </Pressable>
       <Pressable
-        onPress={() => startModelDownload('sherpa-sense-voice-int8')}
+        onPress={() => promptModelDownload('sherpa-sense-voice-int8')}
         style={styles.secondary}
       >
         <Text style={{ color: colors.black }}>SenseVoice音声認識を準備</Text>
