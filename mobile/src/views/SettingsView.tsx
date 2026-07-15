@@ -82,6 +82,23 @@ const CATEGORY_ORDER: SettingsCategory[] = [
   'info',
 ];
 
+// Convert stored minutes back to hours for the workload inputs.
+// `0` or `null` means "use the default", so the input is left empty.
+function formatMinutesToHours(minutes: number | null | undefined): string {
+  if (!minutes || minutes <= 0) return '';
+  return String(parseFloat((minutes / 60).toFixed(2)));
+}
+
+// Parse an hours string into minutes. Empty string or "0" resolves to 0
+// (the default sentinel). Returns null for invalid/negative input.
+function parseHoursToMinutes(value: string): number | null {
+  const trimmed = value.trim();
+  if (trimmed === '') return 0;
+  const n = parseFloat(trimmed);
+  if (!isFinite(n) || n < 0) return null;
+  return Math.round(n * 60);
+}
+
 // ── Category list screen ──
 // Replaces the horizontal tab bar that overflowed on small screens (issue #127).
 export function SettingsCategoryView() {
@@ -332,16 +349,8 @@ export function SettingsDetailView({
     try {
       const s = await client.getSettings();
       setWorkloadSettings(s);
-      setWorkloadComfortable(
-        s.comfortable_minutes != null
-          ? String(Math.floor(s.comfortable_minutes / 60))
-          : '',
-      );
-      setWorkloadMaximum(
-        s.maximum_minutes != null
-          ? String(Math.floor(s.maximum_minutes / 60))
-          : '',
-      );
+      setWorkloadComfortable(formatMinutesToHours(s.comfortable_minutes));
+      setWorkloadMaximum(formatMinutesToHours(s.maximum_minutes));
     } catch {
       setWorkloadSettings(null);
     } finally {
@@ -434,29 +443,21 @@ export function SettingsDetailView({
       );
       return;
     }
+    const comfortable = parseHoursToMinutes(workloadComfortable);
+    const maximum = parseHoursToMinutes(workloadMaximum);
+    if (comfortable === null || maximum === null) {
+      Alert.alert('エラー', '作業時間は0以上の数値を入力してください');
+      return;
+    }
     setWorkloadSaving(true);
     try {
-      const parseHours = (s: string): number | null => {
-        const n = parseInt(s.trim(), 10);
-        return isNaN(n) || n <= 0 ? null : n * 60;
-      };
-      const comfortable = parseHours(workloadComfortable);
-      const maximum = parseHours(workloadMaximum);
       const s = await client.updateSettings({
         comfortable_minutes: comfortable,
         maximum_minutes: maximum,
       });
       setWorkloadSettings(s);
-      setWorkloadComfortable(
-        s.comfortable_minutes != null
-          ? String(Math.floor(s.comfortable_minutes / 60))
-          : '',
-      );
-      setWorkloadMaximum(
-        s.maximum_minutes != null
-          ? String(Math.floor(s.maximum_minutes / 60))
-          : '',
-      );
+      setWorkloadComfortable(formatMinutesToHours(s.comfortable_minutes));
+      setWorkloadMaximum(formatMinutesToHours(s.maximum_minutes));
       haptic.success();
       Alert.alert('保存しました', '作業負荷設定を保存しました');
     } catch (e) {
