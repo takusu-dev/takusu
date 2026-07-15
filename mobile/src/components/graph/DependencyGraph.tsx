@@ -223,6 +223,18 @@ export function DependencyGraph({
     return `${nodeIds}|${edgeKeys}`;
   }, [inputNodes, inputEdges]);
 
+  // Exact label hit heights for the node's label pill (#422).
+  // Stored as a plain object so it can be serialized into Reanimated worklets;
+  // a Map would become undefined in the worklet runtime and crash (#495).
+  const labelHeights = useMemo(() => {
+    const heights: Record<string, number> = {};
+    for (const node of inputNodes) {
+      const text = truncate(node.label, MAX_LABEL_CHARS);
+      heights[node.id] = getLabelHeight(text, fontSize) + LABEL_PAD_Y * 2;
+    }
+    return heights;
+  }, [inputNodes, fontSize]);
+
   // ── Force simulation ──
 
   useEffect(() => {
@@ -585,18 +597,6 @@ export function DependencyGraph({
     () => new Map(inputNodes.map((n) => [n.id, n])),
     [inputNodes],
   );
-
-  // Exact label hit heights for the node's label pill (#422).
-  // Stored as a plain object so it can be serialized into Reanimated worklets;
-  // a Map would become undefined in the worklet runtime and crash (#495).
-  const labelHeights = useMemo(() => {
-    const heights: Record<string, number> = {};
-    for (const node of inputNodes) {
-      const text = truncate(node.label, MAX_LABEL_CHARS);
-      heights[node.id] = getLabelHeight(text, fontSize) + LABEL_PAD_Y * 2;
-    }
-    return heights;
-  }, [inputNodes, fontSize]);
 
   const edgePaths = useMemo(() => {
     const paths: {
