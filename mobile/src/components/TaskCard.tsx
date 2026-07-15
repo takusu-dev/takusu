@@ -434,7 +434,7 @@ const styles = StyleSheet.create({
   },
   meta: {
     alignSelf: 'stretch',
-    justifyContent: 'flex-end',
+    justifyContent: 'center',
     alignItems: 'flex-end',
     gap: 1,
   },
@@ -952,7 +952,7 @@ const groupStyles = StyleSheet.create({
   },
   guestMeta: {
     alignSelf: 'stretch',
-    justifyContent: 'flex-end',
+    justifyContent: 'center',
     alignItems: 'flex-end',
     gap: 1,
   },
