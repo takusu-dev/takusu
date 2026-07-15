@@ -208,7 +208,7 @@ export function AgentView() {
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.white }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior="padding"
     >
       <View
         style={[
