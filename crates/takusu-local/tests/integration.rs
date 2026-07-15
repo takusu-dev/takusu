@@ -930,6 +930,42 @@ async fn settings_update_partial() {
 }
 
 #[tokio::test]
+async fn settings_update_workload() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let req = auth_req_body(
+        Method::PUT,
+        "/api/settings",
+        json!({
+            "comfortable_minutes": 480,
+            "maximum_minutes": 720
+        }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(body["comfortable_minutes"], 480);
+    assert_eq!(body["maximum_minutes"], 720);
+
+    // Clear with 0 (the mobile default sentinel) — the server stores 0 and
+    // parse_workload treats it as default.
+    let req = auth_req_body(
+        Method::PUT,
+        "/api/settings",
+        json!({
+            "comfortable_minutes": 0,
+            "maximum_minutes": 0
+        }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(body["comfortable_minutes"], 0);
+    assert_eq!(body["maximum_minutes"], 0);
+}
+
+#[tokio::test]
 async fn schedule_generate_with_custom_sleep() {
     let (state, pool) = setup().await;
 
