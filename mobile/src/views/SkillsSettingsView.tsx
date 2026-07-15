@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -6,26 +6,20 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useServer } from '@/src/api/ServerProvider';
-import type { SkillRow, CreateSkill, UpdateSkill } from '@/src/api/types';
+import type { SkillRow } from '@/src/api/types';
 import { useColors, BRAND_COLOR } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
 
 export function SkillsSettingsView() {
   const { client } = useServer();
   const colors = useColors();
-
+  const router = useRouter();
   const [skills, setSkills] = useState<SkillRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState<SkillRow | null>(null);
-  const [slug, setSlug] = useState('');
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [body, setBody] = useState('');
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -43,18 +37,15 @@ export function SkillsSettingsView() {
     }
   }, [client]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   function openCreate() {
     haptic.light();
-    setEditing(null);
-    setSlug('');
-    setName('');
-    setDescription('');
-    setBody('');
-    setFormOpen(true);
+    router.push('/settings/skills/edit');
   }
 
   function openEdit(skill: SkillRow) {
@@ -62,81 +53,10 @@ export function SkillsSettingsView() {
       return;
     }
     haptic.light();
-    setEditing(skill);
-    setSlug(skill.slug);
-    setName(skill.name);
-    setDescription(skill.description);
-    setBody(skill.body);
-    setFormOpen(true);
-  }
-
-  function closeForm() {
-    setFormOpen(false);
-    setEditing(null);
-  }
-
-  function normalizeSlug(text: string) {
-    return text
-      .toLowerCase()
-      .replace(/[^a-z0-9-_]/g, '')
-      .slice(0, 64);
-  }
-
-  function validate(): string | null {
-    const s = slug.trim();
-    if (!editing) {
-      if (!s) return 'slug は必須です';
-      if (!/^[a-z0-9_-]+$/.test(s)) {
-        return 'slug は小文字英数字、-、_ のみ使用できます';
-      }
-      if (!name.trim()) return 'name は必須です';
-      if (!body.trim()) return 'body は必須です';
-    } else if (!name.trim() && !description.trim() && !body.trim()) {
-      return 'name, description, body のいずれかを入力してください';
-    }
-    if (name.trim().length > 100) return 'name は100文字以下にしてください';
-    if (description.trim().length > 500) {
-      return 'description は500文字以下にしてください';
-    }
-    if (body.trim().length > 64 * 1024) {
-      return 'body は64KB以下にしてください';
-    }
-    return null;
-  }
-
-  async function save() {
-    if (!client) return;
-    const error = validate();
-    if (error) {
-      Alert.alert('入力エラー', error);
-      return;
-    }
-    try {
-      if (editing) {
-        const bodyUpdate: UpdateSkill = {
-          name: name.trim() || undefined,
-          description: description.trim() || undefined,
-          body: body.trim() || undefined,
-        };
-        await client.updateSkill(editing.slug, bodyUpdate);
-      } else {
-        const create: CreateSkill = {
-          slug: slug.trim(),
-          name: name.trim(),
-          description: description.trim(),
-          body: body.trim(),
-        };
-        await client.createSkill(create);
-      }
-      haptic.success();
-      closeForm();
-      await load();
-    } catch (e) {
-      Alert.alert(
-        'エラー',
-        `保存に失敗: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
+    router.push({
+      pathname: '/settings/skills/edit',
+      params: { slug: skill.slug },
+    });
   }
 
   async function remove(skill: SkillRow) {
@@ -209,71 +129,6 @@ export function SkillsSettingsView() {
           ))}
         </ScrollView>
       )}
-      {formOpen && (
-        <View style={styles.overlay}>
-          <View style={[styles.modal, { backgroundColor: colors.white }]}>
-            <Text style={[styles.title, { color: colors.black }]}>
-              {editing ? 'スキルを編集' : 'スキルを作成'}
-            </Text>
-            <TextInput
-              style={[
-                styles.input,
-                { color: colors.black, borderColor: colors.separator },
-              ]}
-              placeholder="slug (a-z, 0-9, -, _)"
-              placeholderTextColor={colors.gray}
-              value={slug}
-              onChangeText={(text) => setSlug(normalizeSlug(text))}
-              editable={!editing}
-              maxLength={64}
-              autoCapitalize="none"
-            />
-            <TextInput
-              style={[
-                styles.input,
-                { color: colors.black, borderColor: colors.separator },
-              ]}
-              placeholder="name"
-              placeholderTextColor={colors.gray}
-              value={name}
-              onChangeText={setName}
-              maxLength={100}
-            />
-            <TextInput
-              style={[
-                styles.input,
-                { color: colors.black, borderColor: colors.separator },
-              ]}
-              placeholder="description"
-              placeholderTextColor={colors.gray}
-              value={description}
-              onChangeText={setDescription}
-              maxLength={500}
-            />
-            <TextInput
-              style={[
-                styles.bodyInput,
-                { color: colors.black, borderColor: colors.separator },
-              ]}
-              placeholder="body (markdown)"
-              placeholderTextColor={colors.gray}
-              value={body}
-              onChangeText={setBody}
-              multiline
-              textAlignVertical="top"
-              maxLength={64 * 1024}
-            />
-            <View style={styles.actions}>
-              <Pressable onPress={closeForm} style={styles.cancel}>
-                <Text style={styles.cancelText}>キャンセル</Text>
-              </Pressable>
-              <Pressable onPress={save} style={styles.save}>
-                <Text style={styles.saveText}>保存</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      )}
     </View>
   );
 }
@@ -296,19 +151,4 @@ const styles = StyleSheet.create({
   desc: { fontSize: 13 },
   delete: { padding: 8 },
   deleteText: { color: '#B33A3A', fontWeight: '700' },
-  overlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  modal: { borderRadius: 12, padding: 16, gap: 12 },
-  title: { fontSize: 18, fontWeight: '700' },
-  input: { borderWidth: 1, borderRadius: 8, padding: 10, minHeight: 44 },
-  bodyInput: { borderWidth: 1, borderRadius: 8, padding: 10, minHeight: 120 },
-  actions: { flexDirection: 'row', gap: 8, justifyContent: 'flex-end' },
-  cancel: { padding: 10 },
-  cancelText: { color: '#666' },
-  save: { backgroundColor: BRAND_COLOR, borderRadius: 8, padding: 10 },
-  saveText: { color: '#fff', fontWeight: '700' },
 });
