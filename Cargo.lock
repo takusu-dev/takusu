@@ -3946,6 +3946,7 @@ dependencies = [
  "takusu-util",
  "tokio",
  "toml 0.8.23",
+ "toml_edit 0.22.27",
 ]
 
 [[package]]
@@ -4018,7 +4019,6 @@ name = "takusu-local-lib"
 version = "0.20260714.4"
 dependencies = [
  "async-trait",
- "config",
  "google-cal",
  "jiff",
  "petgraph",

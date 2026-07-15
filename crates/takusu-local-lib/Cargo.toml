@@ -28,5 +28,4 @@ thiserror.workspace = true
 jiff.workspace = true
 async-trait.workspace = true
 reqwest = { workspace = true }
-config.workspace = true
 petgraph.workspace = true

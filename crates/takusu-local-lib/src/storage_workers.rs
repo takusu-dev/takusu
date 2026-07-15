@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -13,8 +12,6 @@ use takusu_storage::{
     TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateSettings,
     UpdateSkill, UpdateTask, storage::StorageResult,
 };
-
-use crate::config::LocalConfig;
 
 const RETRY_STATUSES: &[u16] = &[429, 500, 502, 503, 504];
 const RETRY_DELAYS_MS: &[u64] = &[100, 200, 400];
@@ -46,30 +43,6 @@ impl WorkersStorage {
             base_url: base_url.trim_end_matches('/').to_string(),
             token,
         }
-    }
-
-    pub fn new(cfg: &LocalConfig) -> Result<Self, Box<dyn std::error::Error>> {
-        let url = std::env::var("TAKUSU_WORKERS_URL")
-            .or_else(|_| Ok::<_, std::env::VarError>(cfg.workers_url().to_string()))
-            .map_err(|e| match e {
-                std::env::VarError::NotPresent => Box::<dyn std::error::Error>::from(
-                    "TAKUSU_WORKERS_URL is required for the workers backend",
-                ),
-                other => Box::<dyn std::error::Error>::from(other),
-            })?;
-        if url.is_empty() {
-            return Err("TAKUSU_WORKERS_URL is required for the workers backend".into());
-        }
-        let token = std::env::var("TAKUSU_WORKERS_TOKEN")
-            .or_else(|_| std::env::var("TAKUSU_ROOT_TOKEN"))
-            .map_err(|_| {
-                "TAKUSU_WORKERS_TOKEN (or TAKUSU_ROOT_TOKEN) is required for the workers backend"
-            })?;
-        Ok(Self::new_with(url, token))
-    }
-
-    pub fn shared(cfg: &LocalConfig) -> Result<Arc<dyn Storage>, Box<dyn std::error::Error>> {
-        Ok(Arc::new(Self::new(cfg)?))
     }
 
     async fn request<T: DeserializeOwned>(
