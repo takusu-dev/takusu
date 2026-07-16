@@ -1179,18 +1179,12 @@ impl TakusuApp {
         let sleep = parse_sleep(&input.sleep, &settings);
         let from_point = Point::from_timestamp(Timestamp::now(), 5);
 
-        let task_rows = self.load_task_rows(input.task_ids.as_ref()).await?;
         let tz = jiff::tz::TimeZone::get(&settings.tz).unwrap_or(jiff::tz::TimeZone::UTC);
         let habit_rows = self.sync_habit_tasks(&tz).await?;
-        let all_rows: Vec<TaskRow> = task_rows
-            .into_iter()
-            .chain(habit_rows)
-            // load_task_rows で既に status フィルタ済みだが、habit_rows から
-            // 来たタスクは created_at=ステータス変更前に取得された可能性があるため
-            // 二重チェックする。「scheduled」も含める理由: 前回生成結果のタスクが
-            // 既に scheduled 状態になっているため、再生成でそれらも対象にする。
-            .filter(|t| t.status == "pending" || t.status == "scheduled")
-            .collect();
+        // Load non-habit tasks after syncing so any tasks deleted by sync
+        // (stale habit tasks) are not carried into the planner (#582).
+        let task_rows = self.load_task_rows(input.task_ids.as_ref()).await?;
+        let all_rows = Self::merge_active_tasks(habit_rows, task_rows);
         let workload = parse_workload(&settings);
         let (mut planner, id_map, id_to_idx) = self
             .build_planner(from_point, sleep, workload, &all_rows, &tz)
@@ -1255,14 +1249,10 @@ impl TakusuApp {
         let settings = self.get_settings_or_default().await?;
         let sleep = parse_sleep(&input.sleep, &settings);
         let from_point = Point::from_timestamp(Timestamp::now(), 5);
-        let task_rows = self.load_task_rows(input.task_ids.as_ref()).await?;
         let tz = jiff::tz::TimeZone::get(&settings.tz).unwrap_or(jiff::tz::TimeZone::UTC);
         let habit_rows = self.sync_habit_tasks(&tz).await?;
-        let all_rows: Vec<TaskRow> = task_rows
-            .into_iter()
-            .chain(habit_rows)
-            .filter(|task| task.status == "pending" || task.status == "scheduled")
-            .collect();
+        let task_rows = self.load_task_rows(input.task_ids.as_ref()).await?;
+        let all_rows = Self::merge_active_tasks(habit_rows, task_rows);
         let workload = parse_workload(&settings);
         let (mut planner, id_map, id_to_idx) = self
             .build_planner(from_point, sleep, workload, &all_rows, &tz)
@@ -1386,23 +1376,11 @@ impl TakusuApp {
         let entries: Vec<ScheduleEntry> = serde_json::from_str(&schedule_row.schedule)
             .map_err(|e| AppError::Internal(e.to_string()))?;
 
-        let task_rows = self
-            .storage
-            .list_tasks(&TaskQuery::default())
-            .await
-            .map_err(storage_to_app)?;
-        let mut active: Vec<TaskRow> = task_rows
-            .into_iter()
-            .filter(|t| t.status == "pending" || t.status == "scheduled")
-            .collect();
-
         let tz = jiff::tz::TimeZone::get(&settings.tz).unwrap_or(jiff::tz::TimeZone::UTC);
         let habit_rows = self.sync_habit_tasks(&tz).await?;
-        active.extend(
-            habit_rows
-                .into_iter()
-                .filter(|t| t.status == "pending" || t.status == "scheduled"),
-        );
+        // Load active tasks after sync to avoid stale rows deleted by sync.
+        let task_rows = self.load_task_rows(None).await?;
+        let active = Self::merge_active_tasks(habit_rows, task_rows);
 
         let workload = parse_workload(&settings);
         let (planner, id_map, id_to_idx) = self
@@ -1881,6 +1859,23 @@ impl TakusuApp {
         }
     }
 
+    /// Merge habit-synced task rows with the active task list and deduplicate by
+    /// task id. Both sources are read after `sync_habit_tasks`, but `habit_rows`
+    /// is processed first because it is the authoritative result of the sync
+    /// and may contain newly created/updated habit tasks. This also ensures habit
+    /// tasks are included even when `input.task_ids` filters `task_rows` to a
+    /// subset. `task_rows` then adds non-habit tasks. Only `pending` / `scheduled`
+    /// tasks are kept.
+    fn merge_active_tasks(habit_rows: Vec<TaskRow>, task_rows: Vec<TaskRow>) -> Vec<TaskRow> {
+        let mut seen = std::collections::HashSet::new();
+        habit_rows
+            .into_iter()
+            .chain(task_rows)
+            .filter(|t| t.status == "pending" || t.status == "scheduled")
+            .filter(|t| seen.insert(t.id.clone()))
+            .collect()
+    }
+
     pub async fn sync_habit_tasks(
         &self,
         tz: &jiff::tz::TimeZone,
@@ -2338,12 +2333,13 @@ impl TakusuApp {
             for dep_id in &dep_ids {
                 if let Some(&idx) = id_to_idx.get(dep_id) {
                     resolved.push(idx);
-                } else {
-                    return Err(AppError::BadRequest(format!(
-                        "task {} depends on unknown task {}",
-                        row.id, dep_id
-                    )));
                 }
+                // Dependencies that are not part of the active schedule set
+                // (e.g. already completed, skipped, or deleted) are treated as
+                // satisfied and ignored rather than breaking generation (#582).
+                // Note: this also silently ignores typos or stale ids in the
+                // depends column; the active-set filter makes this the intended
+                // behavior, but it weakens detection of benign data drift.
             }
             all_depends.push(resolved);
         }
