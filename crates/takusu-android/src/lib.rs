@@ -161,8 +161,13 @@ impl TakusuServer {
             let planner_client =
                 takusu_client::Client::new(&agent_config.server.url, &agent_config.server.token);
             let mut registry = ToolRegistry::new();
-            register_tools(&mut registry, planner_client);
-            Ok(AgentSession::new(agent_config.clone(), registry, llm))
+            register_tools(&mut registry, planner_client.clone());
+            Ok(AgentSession::new_with_client(
+                agent_config.clone(),
+                planner_client,
+                registry,
+                llm,
+            ))
         });
         let agent_state = Arc::new(AgentApiState::new(root_token, agent_factory));
         let app_router = router(state).merge(Router::new().nest(

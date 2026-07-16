@@ -1,9 +1,6 @@
 use clap::Parser;
 use std::process;
-use takusu_agent::audio::AudioAdapter;
-use takusu_agent::llm::OpenAIClient;
-use takusu_agent::tools::takusu::register_tools;
-use takusu_agent::{AgentConfig, AgentSession, ToolRegistry};
+use takusu_agent::AgentConfig;
 use takusu_client::Client;
 
 #[derive(Parser)]
@@ -29,14 +26,11 @@ async fn main() {
 async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
     let cli = Cli::parse();
     let config = AgentConfig::load()?;
-    let llm = OpenAIClient::new(config.llm.clone())?;
-    let mut registry = ToolRegistry::new();
     let client = Client::new(&config.server.url, &config.server.token);
-    register_tools(&mut registry, client);
-    let session = AgentSession::new(config, registry, llm);
+    let session = takusu_agent::runner::build_session(&config, client)?;
 
     if let Some(text) = cli.text {
-        let result = session.run_turn(&text).await?;
+        let result = takusu_agent::runner::run_text(&session, &text).await?;
 
         println!("{}", result.text);
         if !result.changes.is_empty() {
@@ -47,8 +41,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>
             eprintln!("schedule dirty: true");
         }
     } else {
-        let adapter = AudioAdapter::new(session)?;
-        adapter.run(cli.no_tts).await?;
+        #[cfg(feature = "audio-device")]
+        {
+            takusu_agent::runner::run_audio(session, cli.no_tts).await?;
+        }
+        #[cfg(not(feature = "audio-device"))]
+        {
+            return Err("audio support is not enabled".into());
+        }
     }
 
     Ok(())
