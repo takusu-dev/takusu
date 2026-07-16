@@ -1,7 +1,11 @@
+mod agent;
 mod config;
 mod display_rich;
 mod display_simple;
 mod editor;
+#[cfg(feature = "mcp")]
+mod mcp;
+mod server;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use config::CliConfig;
@@ -119,6 +123,21 @@ enum Commands {
         #[command(subcommand)]
         command: SkillCommands,
     },
+
+    /// Agent assistant (text mode; --text for a single turn)
+    Agent {
+        /// Single text input for one agent turn
+        #[arg(short, long)]
+        text: Option<String>,
+
+        /// Auto-approve any pending changes without prompting
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// MCP server over stdio
+    #[cfg(feature = "mcp")]
+    Mcp,
 }
 
 #[derive(Subcommand)]
@@ -785,14 +804,14 @@ fn main() {
         };
 
         let token_cache = Arc::new(TokenCache::with_default_ttl());
-        let app = TakusuApp::new(storage, token_cache);
+        let app = Arc::new(TakusuApp::new(storage, token_cache));
 
         let tz = jiff::tz::TimeZone::get(&tz_str).unwrap_or_else(|_| {
             eprintln!("Error: invalid timezone '{tz_str}' (e.g. Asia/Tokyo)");
             process::exit(1);
         });
 
-        if let Err(e) = run(cli.mode, &app, tz, cli.command, &cfg).await {
+        if let Err(e) = run(cli.mode, Arc::clone(&app), tz, cli.command, &cfg).await {
             eprintln!("Error: {e}");
             process::exit(1);
         }
@@ -801,7 +820,7 @@ fn main() {
 
 async fn run(
     mode: DisplayMode,
-    app: &TakusuApp,
+    app: Arc<TakusuApp>,
     tz: jiff::tz::TimeZone,
     cmd: Commands,
     cfg: &CliConfig,
@@ -810,15 +829,18 @@ async fn run(
         Commands::Health => {
             println!("OK (local mode)");
         }
-        Commands::Task { command } => run_task(mode, app, &tz, command).await?,
-        Commands::Schedule { command } => run_schedule(mode, app, &tz, command).await?,
-        Commands::Token { command } => run_token(mode, app, command).await?,
-        Commands::Sync { command } => run_sync(app, command).await?,
-        Commands::Habit { command } => run_habit(mode, app, command).await?,
-        Commands::Skill { command } => run_skill(mode, app, command).await?,
+        Commands::Task { command } => run_task(mode, app.as_ref(), &tz, command).await?,
+        Commands::Schedule { command } => run_schedule(mode, app.as_ref(), &tz, command).await?,
+        Commands::Token { command } => run_token(mode, app.as_ref(), command).await?,
+        Commands::Sync { command } => run_sync(app.as_ref(), command).await?,
+        Commands::Habit { command } => run_habit(mode, app.as_ref(), command).await?,
+        Commands::Skill { command } => run_skill(mode, app.as_ref(), command).await?,
+        Commands::Agent { text, yes } => agent::run(app, text, yes).await?,
+        #[cfg(feature = "mcp")]
+        Commands::Mcp => mcp::run(app).await?,
         Commands::GenRootToken => unreachable!(),
         Commands::Completion { .. } => unreachable!(),
-        Commands::Config { command } => run_config(command, app, cfg).await?,
+        Commands::Config { command } => run_config(command, app.as_ref(), cfg).await?,
     }
     Ok(())
 }

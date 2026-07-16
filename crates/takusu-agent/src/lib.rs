@@ -3,6 +3,7 @@ pub mod audio;
 pub mod audio_config;
 pub mod bundled_skills;
 pub mod llm;
+pub mod runner;
 pub mod tool;
 pub mod tools;
 pub mod transport;
@@ -183,6 +184,15 @@ impl AgentSession {
         llm: impl llm::LlmClient + 'static,
     ) -> Self {
         let client = takusu_client::Client::new(&config.server.url, &config.server.token);
+        Self::new_with_client(config, client, registry, llm)
+    }
+
+    pub fn new_with_client(
+        config: AgentConfig,
+        client: takusu_client::Client,
+        registry: ToolRegistry,
+        llm: impl llm::LlmClient + 'static,
+    ) -> Self {
         Self {
             config,
             registry,
