@@ -13,3 +13,5 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 takusu-client = { workspace = true }
+rand = { workspace = true }
+httparse = "1"

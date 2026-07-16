@@ -1338,6 +1338,8 @@ dependencies = [
 name = "google-cal"
 version = "0.20260716.1"
 dependencies = [
+ "httparse",
+ "rand 0.10.1",
  "reqwest",
  "serde",
  "serde_json",

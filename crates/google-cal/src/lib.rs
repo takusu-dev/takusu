@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 const GOOGLE_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const GOOGLE_CALENDAR_BASE: &str = "https://www.googleapis.com/calendar/v3";
+const GOOGLE_BATCH_URL: &str = "https://www.googleapis.com/batch/calendar/v3";
+// Google returns 410 Gone when the event was already deleted on their side.
+const ALREADY_DELETED: u16 = 410;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -224,36 +227,10 @@ impl Client {
             .ok_or_else(|| Error::Api("missing event id in response".into()))
     }
 
-    async fn update_event(&self, token: &str, event_id: &str, entry: &SyncEntry) -> Result<String> {
-        let url = self.event_url(event_id);
-        let body = self.event_body(entry);
-        let resp = self
-            .http
-            .put(&url)
-            .bearer_auth(token)
-            .json(&body)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(Error::Api(format!("update event ({status}): {text}")));
-        }
-
-        let result: serde_json::Value = resp.json().await?;
-        result["id"]
-            .as_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| Error::Api("missing event id in response".into()))
-    }
-
     async fn delete_event(&self, token: &str, event_id: &str) -> Result<()> {
         let url = self.event_url(event_id);
         let resp = self.http.delete(&url).bearer_auth(token).send().await?;
 
-        // Google returns 410 Gone when the event was already deleted on their side
-        const ALREADY_DELETED: u16 = 410;
         if !resp.status().is_success() && resp.status().as_u16() != ALREADY_DELETED {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
@@ -275,66 +252,102 @@ impl Client {
 
         let entry_ids: Vec<&str> = entries.iter().map(|e| e.task_id.as_str()).collect();
 
+        let mut ops: Vec<BatchOp> = Vec::new();
         for (task_id, event_id) in existing {
             if !entry_ids.contains(&task_id.as_str()) {
-                match self.delete_event(&token, event_id).await {
-                    Ok(()) => deleted.push(event_id.clone()),
-                    Err(e) => {
-                        tracing::warn!("failed to delete event {event_id}: {e}");
-                        failed.push(SyncFailure {
-                            task_id: task_id.clone(),
-                            operation: "delete".to_string(),
-                            error: e.to_string(),
-                        });
-                    }
-                }
+                ops.push(BatchOp::Delete { task_id, event_id });
+            }
+        }
+        for entry in entries {
+            if let Some(event_id) = existing.get(&entry.task_id) {
+                ops.push(BatchOp::Update {
+                    task_id: &entry.task_id,
+                    event_id,
+                    entry,
+                });
+            } else {
+                ops.push(BatchOp::Create {
+                    task_id: &entry.task_id,
+                    entry,
+                });
             }
         }
 
-        for entry in entries {
-            if let Some(event_id) = existing.get(&entry.task_id) {
-                match self.update_event(&token, event_id, entry).await {
-                    Ok(new_id) => mappings.push((entry.task_id.clone(), new_id)),
-                    Err(e) => {
+        let results = self.batch_execute(&token, &ops).await?;
+        for (i, result) in results.iter().enumerate() {
+            let idx = op_index_from_content_id(&result.content_id).unwrap_or(i);
+            let op = ops
+                .get(idx)
+                .ok_or_else(|| Error::Api(format!("batch response index {idx} out of bounds")))?;
+            match op {
+                BatchOp::Delete { task_id, event_id } => {
+                    if result.status == 200
+                        || result.status == 204
+                        || result.status == ALREADY_DELETED
+                    {
+                        deleted.push(event_id.to_string());
+                    } else {
+                        tracing::warn!("failed to delete event {event_id}: {}", result.status);
+                        failed.push(SyncFailure {
+                            task_id: task_id.to_string(),
+                            operation: "delete".to_string(),
+                            error: format!("batch delete ({}): {}", result.status, result.body),
+                        });
+                    }
+                }
+                BatchOp::Update {
+                    task_id,
+                    event_id,
+                    entry,
+                } => {
+                    if result.status == 200 {
+                        if let Some(id) = parse_event_id(&result.body) {
+                            mappings.push((task_id.to_string(), id));
+                        } else {
+                            failed.push(SyncFailure {
+                                task_id: task_id.to_string(),
+                                operation: "update".to_string(),
+                                error: format!("missing event id in response: {}", result.body),
+                            });
+                        }
+                    } else {
                         tracing::warn!(
-                            "failed to update event {event_id} for task {}: {e}, trying delete+create",
-                            entry.task_id
+                            "failed to update event {event_id} for task {task_id}: {}, trying delete+create",
+                            result.status
                         );
-                        // Best-effort cleanup of the orphaned event before
-                        // creating a replacement. Ignore errors: the event
-                        // may already be gone (404/410) or the delete may
-                        // fail transiently — either way we still want to
-                        // create the replacement so the task stays in sync.
                         if let Err(de) = self.delete_event(&token, event_id).await {
                             tracing::warn!(
                                 "best-effort delete of orphaned event {event_id} failed: {de}"
                             );
                         }
                         match self.create_event(&token, entry).await {
-                            Ok(id) => mappings.push((entry.task_id.clone(), id)),
+                            Ok(id) => mappings.push((task_id.to_string(), id)),
                             Err(e2) => {
-                                tracing::error!(
-                                    "failed to create event for task {}: {e2}",
-                                    entry.task_id
-                                );
                                 failed.push(SyncFailure {
-                                    task_id: entry.task_id.clone(),
+                                    task_id: task_id.to_string(),
                                     operation: "update+create".to_string(),
-                                    error: format!("{e}; then {e2}"),
+                                    error: format!("batch update ({}); then {e2}", result.status),
                                 });
                             }
                         }
                     }
                 }
-            } else {
-                match self.create_event(&token, entry).await {
-                    Ok(id) => mappings.push((entry.task_id.clone(), id)),
-                    Err(e) => {
-                        tracing::error!("failed to create event for task {}: {e}", entry.task_id);
+                BatchOp::Create { task_id, entry: _ } => {
+                    if result.status == 200 {
+                        if let Some(id) = parse_event_id(&result.body) {
+                            mappings.push((task_id.to_string(), id));
+                        } else {
+                            failed.push(SyncFailure {
+                                task_id: task_id.to_string(),
+                                operation: "create".to_string(),
+                                error: format!("missing event id in response: {}", result.body),
+                            });
+                        }
+                    } else {
                         failed.push(SyncFailure {
-                            task_id: entry.task_id.clone(),
+                            task_id: task_id.to_string(),
                             operation: "create".to_string(),
-                            error: e.to_string(),
+                            error: format!("batch create ({}): {}", result.status, result.body),
                         });
                     }
                 }
@@ -350,19 +363,341 @@ impl Client {
 
     pub async fn delete_all(&self, event_ids: &[(String, String)]) -> Result<Vec<String>> {
         let token = self.refresh_access_token().await?;
-        let mut deleted = Vec::new();
 
-        for (task_id, event_id) in event_ids {
-            match self.delete_event(&token, event_id).await {
-                Ok(()) => {
-                    deleted.push(task_id.clone());
-                }
-                Err(e) => {
-                    tracing::warn!("failed to delete event {event_id}: {e}");
+        let ops: Vec<BatchOp> = event_ids
+            .iter()
+            .map(|(task_id, event_id)| BatchOp::Delete {
+                task_id: task_id.as_str(),
+                event_id: event_id.as_str(),
+            })
+            .collect();
+
+        let results = self.batch_execute(&token, &ops).await?;
+        let mut deleted = Vec::new();
+        for (i, result) in results.iter().enumerate() {
+            let idx = op_index_from_content_id(&result.content_id).unwrap_or(i);
+            if let Some(BatchOp::Delete { task_id, .. }) = ops.get(idx) {
+                if result.status == 200 || result.status == 204 || result.status == ALREADY_DELETED
+                {
+                    deleted.push(task_id.to_string());
+                } else {
+                    tracing::warn!("failed to delete event: {}", result.status);
                 }
             }
         }
 
         Ok(deleted)
+    }
+
+    async fn batch_execute(&self, token: &str, ops: &[BatchOp<'_>]) -> Result<Vec<BatchResult>> {
+        const BATCH_MAX: usize = 1000;
+        if ops.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut all_results = Vec::with_capacity(ops.len());
+        let mut start_idx = 0;
+        for chunk in ops.chunks(BATCH_MAX) {
+            let (boundary, body) = self.build_batch_body(chunk, start_idx)?;
+            let resp = self
+                .http
+                .post(GOOGLE_BATCH_URL)
+                .bearer_auth(token)
+                .header(
+                    "Content-Type",
+                    format!("multipart/mixed; boundary={boundary}"),
+                )
+                .body(body)
+                .send()
+                .await?;
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                return Err(Error::Api(format!("batch request ({status}): {text}")));
+            }
+
+            let content_type = resp
+                .headers()
+                .get("content-type")
+                .and_then(|h| h.to_str().ok())
+                .unwrap_or("");
+            let response_boundary = parse_boundary(content_type)
+                .ok_or_else(|| Error::Api("missing boundary in batch response".into()))?;
+            let text = resp.text().await?;
+            let results = parse_batch_response(&text, &response_boundary)?;
+            all_results.extend(results);
+            start_idx += chunk.len();
+        }
+
+        Ok(all_results)
+    }
+
+    fn build_batch_body(&self, ops: &[BatchOp<'_>], start_idx: usize) -> Result<(String, String)> {
+        let boundary = format!("batch_{:032x}", rand::random::<u128>());
+        let mut body = String::new();
+
+        for (idx, op) in ops.iter().enumerate() {
+            let content_id = format!("item-{}", start_idx + idx);
+            let inner = self.build_inner_request(op)?;
+            body.push_str("--");
+            body.push_str(&boundary);
+            body.push_str("\r\n");
+            body.push_str("Content-Type: application/http\r\n");
+            body.push_str("Content-ID: ");
+            body.push_str(&content_id);
+            body.push_str("\r\n\r\n");
+            body.push_str(&inner);
+            body.push_str("\r\n");
+        }
+
+        body.push_str("--");
+        body.push_str(&boundary);
+        body.push_str("--\r\n");
+
+        Ok((boundary, body))
+    }
+
+    fn build_inner_request(&self, op: &BatchOp<'_>) -> Result<String> {
+        let calendar = urlencoding::encode(&self.calendar_id);
+        match op {
+            BatchOp::Delete { event_id, .. } => {
+                let path = format!(
+                    "/calendar/v3/calendars/{calendar}/events/{}",
+                    urlencoding::encode(event_id)
+                );
+                Ok(format!("DELETE {path} HTTP/1.1\r\n"))
+            }
+            BatchOp::Update {
+                event_id, entry, ..
+            } => {
+                let path = format!(
+                    "/calendar/v3/calendars/{calendar}/events/{}",
+                    urlencoding::encode(event_id)
+                );
+                let body = serde_json::to_string(&self.event_body(entry))
+                    .map_err(|e| Error::Api(e.to_string()))?;
+                Ok(format!(
+                    "PUT {path} HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                ))
+            }
+            BatchOp::Create { entry, .. } => {
+                let path = format!("/calendar/v3/calendars/{calendar}/events");
+                let body = serde_json::to_string(&self.event_body(entry))
+                    .map_err(|e| Error::Api(e.to_string()))?;
+                Ok(format!(
+                    "POST {path} HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                ))
+            }
+        }
+    }
+}
+
+enum BatchOp<'a> {
+    Delete {
+        task_id: &'a str,
+        event_id: &'a str,
+    },
+    Update {
+        task_id: &'a str,
+        event_id: &'a str,
+        entry: &'a SyncEntry,
+    },
+    Create {
+        task_id: &'a str,
+        entry: &'a SyncEntry,
+    },
+}
+
+struct BatchResult {
+    content_id: String,
+    status: u16,
+    body: String,
+}
+
+fn parse_event_id(body: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v["id"].as_str().map(|s| s.to_string()))
+}
+
+fn op_index_from_content_id(content_id: &str) -> Option<usize> {
+    let trimmed = content_id.trim().trim_matches(|c| c == '<' || c == '>');
+    let s = trimmed.strip_prefix("response-").unwrap_or(trimmed);
+    s.strip_prefix("item-")
+        .and_then(|s| s.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|s| s.parse().ok())
+}
+
+fn parse_boundary(content_type: &str) -> Option<String> {
+    content_type
+        .split(';')
+        .map(str::trim)
+        .find(|part| part.starts_with("boundary="))
+        .map(|part| {
+            part.trim_start_matches("boundary=")
+                .trim_matches('"')
+                .to_string()
+        })
+}
+
+fn parse_batch_response(body: &str, boundary: &str) -> Result<Vec<BatchResult>> {
+    let delimiter = format!("--{boundary}");
+    let mut results = Vec::new();
+
+    for (i, part) in body.split(&delimiter).enumerate() {
+        if i == 0 {
+            // Everything before the first boundary marker is preamble and should be empty.
+            continue;
+        }
+        let part = part.strip_prefix("\r\n").unwrap_or(part);
+        let part = part.strip_suffix("\r\n").unwrap_or(part);
+        if part == "--" || part.is_empty() {
+            // Final boundary marker (`--boundary--`) or trailing empty part.
+            continue;
+        }
+        results.push(parse_batch_part(part)?);
+    }
+
+    Ok(results)
+}
+
+fn parse_batch_part(part: &str) -> Result<BatchResult> {
+    let (part_headers, http_response) = split_once_crlf2(part).ok_or_else(|| {
+        Error::Api("malformed batch part: missing part header/body separator".into())
+    })?;
+    let content_id = part_headers
+        .lines()
+        .find(|line| line.trim().starts_with("Content-ID") || line.trim().starts_with("content-id"))
+        .and_then(|line| line.split_once(':'))
+        .map(|(_, value)| {
+            value
+                .trim()
+                .trim_matches(|c| c == '<' || c == '>')
+                .strip_prefix("response-")
+                .unwrap_or(value.trim())
+                .to_string()
+        })
+        .unwrap_or_default();
+
+    let (status, body) = parse_inner_http_response(http_response)?;
+    Ok(BatchResult {
+        content_id,
+        status,
+        body,
+    })
+}
+
+fn parse_inner_http_response(response: &str) -> Result<(u16, String)> {
+    let buf = response.as_bytes();
+    let mut headers = [httparse::EMPTY_HEADER; 128];
+    let mut resp = httparse::Response::new(&mut headers);
+    let body_offset = match resp.parse(buf).map_err(|e| Error::Api(e.to_string()))? {
+        httparse::Status::Complete(idx) => idx,
+        httparse::Status::Partial => {
+            return Err(Error::Api("incomplete inner HTTP response".into()));
+        }
+    };
+    let status = resp
+        .code
+        .ok_or_else(|| Error::Api("missing status code in inner HTTP response".into()))?;
+
+    let content_length = resp
+        .headers
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case("content-length"))
+        .and_then(|h| std::str::from_utf8(h.value).ok())
+        .and_then(|v| v.trim().parse::<usize>().ok());
+
+    let body = &response[body_offset..];
+    let body = if let Some(len) = content_length {
+        body.as_bytes()
+            .get(..len)
+            .map(|b| std::str::from_utf8(b).unwrap_or(body).to_string())
+            .unwrap_or_else(|| body.to_string())
+    } else {
+        body.to_string()
+    };
+
+    Ok((status, body))
+}
+
+fn split_once_crlf2(s: &str) -> Option<(&str, &str)> {
+    if let Some(pos) = s.find("\r\n\r\n") {
+        return Some((&s[..pos], &s[pos + 4..]));
+    }
+    s.find("\n\n").map(|pos| (&s[..pos], &s[pos + 2..]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_batch_response_with_create_and_delete() {
+        let boundary = "abc";
+        let body = concat!(
+            "--abc\r\n",
+            "Content-Type: application/http\r\n",
+            "Content-ID: response-item-0\r\n",
+            "\r\n",
+            "HTTP/1.1 200 OK\r\n",
+            "Content-Type: application/json\r\n",
+            "Content-Length: 10\r\n",
+            "\r\n",
+            "{\"id\":\"x\"}\r\n",
+            "--abc\r\n",
+            "Content-Type: application/http\r\n",
+            "Content-ID: response-item-1\r\n",
+            "\r\n",
+            "HTTP/1.1 204 No Content\r\n",
+            "\r\n",
+            "\r\n",
+            "--abc--\r\n"
+        );
+
+        let results = parse_batch_response(body, boundary).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].content_id, "item-0");
+        assert_eq!(results[0].status, 200);
+        assert_eq!(results[0].body, "{\"id\":\"x\"}");
+        assert_eq!(results[1].content_id, "item-1");
+        assert_eq!(results[1].status, 204);
+        assert_eq!(results[1].body, "");
+    }
+
+    #[test]
+    fn parse_inner_http_response_without_content_length() {
+        let response = "HTTP/1.1 410 Gone\r\n\r\n";
+        let (status, body) = parse_inner_http_response(response).unwrap();
+        assert_eq!(status, 410);
+        assert_eq!(body, "");
+    }
+
+    #[test]
+    fn parse_boundary_with_quotes() {
+        assert_eq!(
+            parse_boundary("multipart/mixed; boundary=\"foo\""),
+            Some("foo".to_string())
+        );
+        assert_eq!(
+            parse_boundary("multipart/mixed; boundary=bar"),
+            Some("bar".to_string())
+        );
+    }
+
+    #[test]
+    fn op_index_from_content_id_variants() {
+        assert_eq!(op_index_from_content_id("item-0"), Some(0));
+        assert_eq!(op_index_from_content_id("response-item-1"), Some(1));
+        assert_eq!(op_index_from_content_id("<response-item-2>"), Some(2));
+        assert_eq!(op_index_from_content_id("item-3@example.com"), Some(3));
+        assert_eq!(
+            op_index_from_content_id("<response-item-4@example.com>"),
+            Some(4)
+        );
+        assert_eq!(op_index_from_content_id(""), None);
     }
 }

@@ -364,16 +364,17 @@ takusu sync login --client-id <ID> --client-secret <SECRET>
 do_sync():
 1. DB の schedule エントリ一覧を取得
 2. DB の google_cal_events マッピング一覧を取得
-3. 新しいエントリ → create_event()
-4. 既存エントリ（時刻変更） → update_event()
-5. 削除されたエントリ → delete_event()
-6. マッピングを upsert/delete
+3. 削除・更新・作成を `BatchOp` に変換
+4. Google Calendar Batch API (`/batch/calendar/v3`) へ 1 リクエストにまとめて送信
+   - 1 リクエストあたり最大 1000 件で chunk 分割
+5. 各レスポンスの `Content-ID` から対応する `BatchOp` を特定
+6. 更新失敗時は `delete_event()` → `create_event()` にフォールバック
+7. マッピングを upsert/delete
 ```
 
 - リトライなし（同期は schedule 操作のたびに実行されるため、失敗分は次回同期で回収）
-- `update_event()` 失敗時は `create_event()` にフォールバック
-- `delete_event()` 失敗時はマッピングを保持し、次回同期で再試行
-- `delete_event()` で 410 Gone は成功扱い
+- `delete_event()` 410 Gone は成功扱い
+- `delete_all()` も同様に Batch API を使用
 
 ## 8. iCal インポート (takusu-ical)
 
