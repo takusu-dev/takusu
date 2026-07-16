@@ -120,6 +120,13 @@ export function AgentView() {
   const sessionIdRef = useRef<string | null>(null);
   const sessionHistoryCountRef = useRef(AGENT_SESSION_HISTORY_DEFAULT);
   const isSwitchingRef = useRef(false);
+  const audioReadyRef = useRef(false);
+  const lastTtsRef = useRef<{
+    id: string;
+    voiceId: string;
+    language: string;
+    sampleRate: number;
+  } | null>(null);
   const viewOffset = useSharedValue(0);
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: viewOffset.value }],
@@ -340,31 +347,61 @@ export function AgentView() {
     }, []),
   );
 
-  useEffect(() => {
-    if (!ready || !workersToken) return;
-    loadSettings()
-      .then(async (settings) => {
-        const provider = settings.ttsProviders.find(
-          (item) => item.id === settings.activeTtsProvider,
-        );
-        if (!provider) return;
-        const apiKey = await loadAgentApiKey('tts', provider.id);
-        await TakusuAudioModule.configure({
-          modelDir: '',
-          apiKey,
-          voiceId: provider.voiceId,
-          language: provider.language,
-          sampleRate: provider.sampleRate,
-        });
-        setAudioReady(true);
-      })
-      .catch((e: unknown) => {
-        setAudioReady(false);
-        setError(
-          `音声モデルを準備してください: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      });
-  }, [ready, workersToken]);
+  useFocusEffect(
+    useCallback(() => {
+      if (!ready || !workersToken) return;
+      let cancelled = false;
+      async function configureAudio() {
+        try {
+          const settings = await loadSettings();
+          const provider = settings.ttsProviders.find(
+            (item) => item.id === settings.activeTtsProvider,
+          );
+          if (!provider) return;
+          const last = lastTtsRef.current;
+          if (
+            audioReadyRef.current &&
+            last &&
+            last.id === provider.id &&
+            last.voiceId === provider.voiceId &&
+            last.language === provider.language &&
+            last.sampleRate === provider.sampleRate
+          ) {
+            return;
+          }
+          const apiKey = await loadAgentApiKey('tts', provider.id);
+          await TakusuAudioModule.configure({
+            modelDir: '',
+            apiKey,
+            voiceId: provider.voiceId,
+            language: provider.language,
+            sampleRate: provider.sampleRate,
+          });
+          if (cancelled) return;
+          audioReadyRef.current = true;
+          setAudioReady(true);
+          setError(null);
+          lastTtsRef.current = {
+            id: provider.id,
+            voiceId: provider.voiceId,
+            language: provider.language,
+            sampleRate: provider.sampleRate,
+          };
+        } catch (e: unknown) {
+          if (cancelled) return;
+          audioReadyRef.current = false;
+          setAudioReady(false);
+          setError(
+            `音声モデルを準備してください: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
+      configureAudio();
+      return () => {
+        cancelled = true;
+      };
+    }, [ready, workersToken]),
+  );
 
   useEffect(() => {
     if (!sessionIdRef.current || busy) return;
