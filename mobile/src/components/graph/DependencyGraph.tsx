@@ -2,7 +2,13 @@
 // Uses @shopify/react-native-skia + d3-force
 // Shared by GraphView (full-screen, editable) and TaskDetailView (embedded, read-only)
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  type ComponentProps,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import {
   Platform,
   type LayoutChangeEvent,
@@ -28,6 +34,9 @@ import Reanimated, {
 } from 'react-native-reanimated';
 import * as d3 from 'd3-force';
 import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
+
+// Paragraph object type from react-native-skia.
+type SkParagraph = NonNullable<ComponentProps<typeof Paragraph>['paragraph']>;
 
 // ── Types ──
 
@@ -223,16 +232,33 @@ export function DependencyGraph({
     return `${nodeIds}|${edgeKeys}`;
   }, [inputNodes, inputEdges]);
 
-  // Exact label hit heights for the node's label pill (#422).
-  // Stored as a plain object so it can be serialized into Reanimated worklets;
+  // Exact label hit heights and prebuilt Paragraphs for the node's label pill.
+  // Stored as plain objects so they can be serialized into Reanimated worklets;
   // a Map would become undefined in the worklet runtime and crash (#495).
-  const labelHeights = useMemo(() => {
+  const { labelHeights, labelParagraphs } = useMemo(() => {
     const heights: Record<string, number> = {};
+    const paragraphs: Record<string, SkParagraph> = {};
     for (const node of inputNodes) {
       const text = truncate(node.label, MAX_LABEL_CHARS);
-      heights[node.id] = getLabelHeight(text, fontSize) + LABEL_PAD_Y * 2;
+      const isDone = node.color === '#aaa';
+      const color = isDone ? '#999' : '#333';
+      const builder = Skia.ParagraphBuilder.Make({
+        textAlign: TextAlign.Center,
+      });
+      builder.pushStyle({
+        fontFamilies: NODE_LABEL_FONTS,
+        fontSize,
+        fontStyle: { weight: 500 },
+        color: Skia.Color(color),
+      });
+      builder.addText(text);
+      builder.pop();
+      const p = builder.build();
+      p.layout(LABEL_WIDTH);
+      heights[node.id] = p.getHeight() + LABEL_PAD_Y * 2;
+      paragraphs[node.id] = p;
     }
-    return heights;
+    return { labelHeights: heights, labelParagraphs: paragraphs };
   }, [inputNodes, fontSize]);
 
   // ── Force simulation ──
@@ -694,7 +720,17 @@ export function DependencyGraph({
           {/* Pan/zoom applied to the Skia Group so the Canvas background
               stays fixed and the parent container doesn't clip. */}
           <Group transform={groupTransform}>
-            {/* Edges — redundant edges drawn in a warning color (#387) */}
+            {/* Label backgrounds — drawn first so edges appear on top (#589) */}
+            {simNodes.map((node) => (
+              <NodeLabelBackground
+                key={`lb-${node.id}`}
+                x={node.x}
+                y={node.y + labelOffset}
+                height={labelHeights[node.id] ?? fontSize + LABEL_PAD_Y * 2}
+              />
+            ))}
+
+            {/* Edges — drawn on top of label backgrounds but below nodes and label text (#589) */}
             {edgePaths.map((ep) => (
               <Path
                 key={`e-${ep.key}`}
@@ -704,6 +740,7 @@ export function DependencyGraph({
                 strokeWidth={
                   crossingEdges.has(ep.key) ? 4 : ep.redundant ? 3 : 2
                 }
+                zIndex={1}
               />
             ))}
 
@@ -714,6 +751,7 @@ export function DependencyGraph({
                 path={ap.d}
                 color={edgeColor(ap.key, ap.redundant)}
                 style="fill"
+                zIndex={1}
               />
             ))}
 
@@ -724,6 +762,7 @@ export function DependencyGraph({
               style="stroke"
               strokeWidth={2}
               opacity={dragActive}
+              zIndex={1}
             />
 
             {/* Cut line (#382) — dashed red line for edge cutting */}
@@ -733,6 +772,7 @@ export function DependencyGraph({
               style="stroke"
               strokeWidth={2}
               opacity={cutActive}
+              zIndex={1}
             >
               <DashPathEffect intervals={[8, 6]} />
             </Path>
@@ -749,25 +789,19 @@ export function DependencyGraph({
                 : isHighlight
                   ? COLORS.red
                   : (inputNode?.color ?? BRAND_COLOR);
-              // Label is outside the node on a white background, so use
-              // dark text for readability (#294)
-              const textColor = isDone ? '#999' : '#333';
-              const label = inputNode?.label ?? node.label;
 
               return (
-                <Group key={node.id}>
+                <Group key={node.id} zIndex={2}>
                   <Circle
                     cx={node.x}
                     cy={node.y}
                     r={nodeRadius}
                     color={bgColor}
                   />
-                  <NodeLabel
+                  <NodeLabelText
                     x={node.x}
                     y={node.y + labelOffset}
-                    text={truncate(label, MAX_LABEL_CHARS)}
-                    color={textColor}
-                    fontSize={fontSize}
+                    paragraph={labelParagraphs[node.id] ?? null}
                   />
                   {/* Highlight border */}
                   {isHighlight && (
@@ -794,31 +828,15 @@ function truncate(s: string, maxLen: number): string {
   return s.length > maxLen ? s.slice(0, maxLen - 1) + '…' : s;
 }
 
-// ── Label height measurement ──
-
-/** Measure the rendered height of a node label pill for hit testing (#422). */
-function getLabelHeight(text: string, fontSize: number): number {
-  const builder = Skia.ParagraphBuilder.Make({ textAlign: TextAlign.Center });
-  builder.pushStyle({
-    fontFamilies: NODE_LABEL_FONTS,
-    fontSize,
-    fontStyle: { weight: 500 },
-    color: Skia.Color('#000000'),
-  });
-  builder.addText(text);
-  builder.pop();
-  const p = builder.build();
-  p.layout(LABEL_WIDTH);
-  return p.getHeight();
-}
-
-// ── NodeLabel — uses Skia Paragraph for CJK font fallback (#251) ──
+// ── Node labels ──
+// Uses Skia Paragraph for CJK font fallback (#251).
 // matchFont returns a single font with no fallback, so Japanese glyphs
 // don't render on Android (Roboto lacks CJK). Paragraph's fontFamilies
 // list provides per-character fallback: Latin chars use sans-serif,
 // Japanese chars fall through to NotoSansCJK.
 // Label is drawn below the node (#294) with a white background pill so
-// it stays readable even when zoomed out.
+// it stays readable even when zoomed out. The background and text are
+// rendered in separate passes so edges can be drawn between them (#589).
 const NODE_LABEL_FONTS = Platform.select<string[]>({
   ios: ['Helvetica', 'Hiragino Sans', 'NotoSansCJK'],
   default: [
@@ -830,57 +848,46 @@ const NODE_LABEL_FONTS = Platform.select<string[]>({
   ],
 })!;
 
-function NodeLabel({
+function NodeLabelBackground({
   x,
   y,
-  text,
-  color,
-  fontSize,
+  height,
 }: {
   x: number;
   y: number;
-  text: string;
-  color: string;
-  fontSize: number;
+  height: number;
 }) {
-  const paragraph = useMemo(() => {
-    const builder = Skia.ParagraphBuilder.Make({
-      textAlign: TextAlign.Center,
-    });
-    builder.pushStyle({
-      fontFamilies: NODE_LABEL_FONTS,
-      fontSize,
-      fontStyle: { weight: 500 },
-      color: Skia.Color(color),
-    });
-    builder.addText(text);
-    builder.pop();
-    const p = builder.build();
-    p.layout(LABEL_WIDTH);
+  const bgPath = useMemo(() => {
+    const bgRect = Skia.XYWHRect(
+      x - LABEL_WIDTH / 2 - LABEL_PAD_X,
+      y - LABEL_PAD_Y,
+      LABEL_WIDTH + LABEL_PAD_X * 2,
+      height,
+    );
+    const p = Skia.Path.Make();
+    p.addRRect(Skia.RRectXY(bgRect, 6, 6));
     return p;
-  }, [text, color, fontSize]);
+  }, [x, y, height]);
 
-  const h = paragraph.getHeight();
-  const bgRect = Skia.XYWHRect(
-    x - LABEL_WIDTH / 2 - LABEL_PAD_X,
-    y - LABEL_PAD_Y,
-    LABEL_WIDTH + LABEL_PAD_X * 2,
-    h + LABEL_PAD_Y * 2,
-  );
-  const bgPath = Skia.Path.Make();
-  bgPath.addRRect(Skia.RRectXY(bgRect, 6, 6));
+  return <Path path={bgPath} color="#ffffff" style="fill" opacity={0.85} />;
+}
 
+function NodeLabelText({
+  x,
+  y,
+  paragraph,
+}: {
+  x: number;
+  y: number;
+  paragraph: SkParagraph | null;
+}) {
   return (
-    <>
-      {/* White background pill for readability when zoomed out */}
-      <Path path={bgPath} color="#ffffff" style="fill" opacity={0.85} />
-      <Paragraph
-        paragraph={paragraph}
-        x={x - LABEL_WIDTH / 2}
-        y={y}
-        width={LABEL_WIDTH}
-      />
-    </>
+    <Paragraph
+      paragraph={paragraph}
+      x={x - LABEL_WIDTH / 2}
+      y={y}
+      width={LABEL_WIDTH}
+    />
   );
 }
 
