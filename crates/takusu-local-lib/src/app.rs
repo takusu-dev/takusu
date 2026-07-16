@@ -478,21 +478,8 @@ fn parse_workload(settings: &SettingsRow) -> WorkloadConfig {
 /// タイムゾーン。過去にモバイルアプリがオフセットを削除した文字列を保存して
 /// しまった場合などに救済する。
 fn iso_to_point(iso: &str, tz: &jiff::tz::TimeZone) -> Result<Point, AppError> {
-    let ts = if iso.eq_ignore_ascii_case("now") {
-        Timestamp::now()
-    } else {
-        match Timestamp::from_str(iso) {
-            Ok(ts) => ts,
-            Err(_) => {
-                // オフセット無しの naive 日時 → tz で解釈するフォールバック
-                let dt = jiff::civil::DateTime::from_str(iso)
-                    .map_err(|e| AppError::BadRequest(format!("invalid datetime: {e}")))?;
-                dt.to_zoned(tz.clone())
-                    .map_err(|e| AppError::BadRequest(format!("invalid datetime: {e}")))?
-                    .timestamp()
-            }
-        }
-    };
+    let ts = takusu_util::parse_datetime_to_timestamp(iso, tz)
+        .map_err(|e| AppError::BadRequest(format!("invalid datetime: {e}")))?;
     Ok(Point::from_timestamp(ts, 5))
 }
 
@@ -2681,6 +2668,14 @@ mod tests {
     fn iso_to_point_now() {
         let tz = jiff::tz::TimeZone::UTC;
         let _ = iso_to_point("now", &tz).unwrap();
+    }
+
+    #[test]
+    fn iso_to_point_date_only_end_of_day() {
+        let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+        let p = iso_to_point("2026-07-04", &tz).unwrap();
+        let p2 = iso_to_point("2026-07-04T23:59:59+09:00", &tz).unwrap();
+        assert_eq!(p.0, p2.0);
     }
 
     // ── parse_timezone accepts IANA and fixed-offset timezones (#607) ────

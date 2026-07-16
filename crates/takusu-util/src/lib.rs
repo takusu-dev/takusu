@@ -40,16 +40,20 @@ pub fn parse_duration(s: &str) -> Result<i64, String> {
             let num: i64 = num_str
                 .parse()
                 .map_err(|_| format!("invalid number in duration: {num_str}"))?;
-            match unit {
-                'h' => total_minutes += num * 60,
-                'm' => total_minutes += num,
-                's' => total_minutes += num * 5,
+            let value = match unit {
+                'h' => num.checked_mul(60),
+                'm' => Some(num),
+                's' => num.checked_mul(5),
                 _ => {
                     return Err(format!(
                         "unknown unit '{unit}' in duration (use h, m, s for slots)"
                     ));
                 }
             }
+            .ok_or_else(|| format!("duration overflow in {num}{unit}"))?;
+            total_minutes = total_minutes
+                .checked_add(value)
+                .ok_or_else(|| "duration overflow".to_string())?;
             parsed_something = true;
             pending_number = false;
         }
@@ -67,21 +71,28 @@ pub fn parse_duration(s: &str) -> Result<i64, String> {
 }
 
 pub fn parse_datetime(s: &str) -> Result<String, String> {
-    parse_datetime_tz(s, &jiff::tz::TimeZone::UTC)
+    parse_datetime_to_timestamp(s, &jiff::tz::TimeZone::UTC).map(|ts| ts.to_string())
 }
 
 pub fn parse_datetime_tz(s: &str, tz: &jiff::tz::TimeZone) -> Result<String, String> {
+    parse_datetime_to_timestamp(s, tz).map(|ts| ts.to_string())
+}
+
+pub fn parse_datetime_to_timestamp(
+    s: &str,
+    tz: &jiff::tz::TimeZone,
+) -> Result<jiff::Timestamp, String> {
     let s = s.trim();
 
     if s.eq_ignore_ascii_case("now") {
-        return Ok(jiff::Timestamp::now().to_string());
+        return Ok(jiff::Timestamp::now());
     }
 
     let today = jiff::Timestamp::now().to_zoned(tz.clone()).date();
 
     // Full ISO 8601 timestamp
     if let Ok(ts) = jiff::Timestamp::from_str(s) {
-        return Ok(ts.to_string());
+        return Ok(ts);
     }
 
     // Normalize "2025-06-05 14:00" → "2025-06-05T14:00" so the civil
@@ -107,7 +118,7 @@ pub fn parse_datetime_tz(s: &str, tz: &jiff::tz::TimeZone) -> Result<String, Str
             .parse()
             .map_err(|_| format!("invalid day: {day_str}"))?;
         let dt = try_build_datetime(today.year(), today.month(), day, time_part)?;
-        return dt_to_iso(dt, tz);
+        return dt_to_timestamp(dt, tz);
     }
 
     if let Some(idx) = s.find('-') {
@@ -130,7 +141,7 @@ pub fn parse_datetime_tz(s: &str, tz: &jiff::tz::TimeZone) -> Result<String, Str
                 .parse()
                 .map_err(|_| format!("invalid day: {day_str}"))?;
             let dt = try_build_datetime(today.year(), month, day, time_part)?;
-            return dt_to_iso(dt, tz);
+            return dt_to_timestamp(dt, tz);
         }
     }
 
@@ -143,7 +154,7 @@ pub fn parse_datetime_tz(s: &str, tz: &jiff::tz::TimeZone) -> Result<String, Str
             let zdt = dt
                 .to_zoned(tz.clone())
                 .map_err(|e| format!("could not convert datetime: {e}"))?;
-            return Ok(zdt.timestamp().to_string());
+            return Ok(zdt.timestamp());
         }
     } else if let Ok(d) = jiff::civil::Date::from_str(s) {
         // Full date without timezone: "2025-06-05" → end-of-day in tz
@@ -151,7 +162,7 @@ pub fn parse_datetime_tz(s: &str, tz: &jiff::tz::TimeZone) -> Result<String, Str
             .at(23, 59, 59, 0)
             .to_zoned(tz.clone())
             .map_err(|e| format!("could not convert date: {e}"))?;
-        return Ok(zdt.timestamp().to_string());
+        return Ok(zdt.timestamp());
     }
 
     Err(format!(
@@ -178,11 +189,14 @@ fn try_build_datetime(
     Ok(dt)
 }
 
-fn dt_to_iso(dt: jiff::civil::DateTime, tz: &jiff::tz::TimeZone) -> Result<String, String> {
+fn dt_to_timestamp(
+    dt: jiff::civil::DateTime,
+    tz: &jiff::tz::TimeZone,
+) -> Result<jiff::Timestamp, String> {
     let zdt = dt
         .to_zoned(tz.clone())
         .map_err(|e| format!("could not convert to timezone: {e}"))?;
-    Ok(zdt.timestamp().to_string())
+    Ok(zdt.timestamp())
 }
 
 #[cfg(test)]
@@ -313,6 +327,13 @@ mod tests {
     fn parse_duration_empty_errors() {
         assert!(parse_duration("").is_err());
         assert!(parse_duration("   ").is_err());
+    }
+
+    #[test]
+    fn parse_duration_overflow_errors() {
+        let max = i64::MAX.to_string();
+        assert!(parse_duration(&format!("{max}h")).is_err());
+        assert!(parse_duration(&format!("{max}m1m")).is_err());
     }
 
     #[test]
