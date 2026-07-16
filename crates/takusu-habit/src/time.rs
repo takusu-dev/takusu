@@ -45,9 +45,7 @@ pub fn point_to_date(point: Point, tz: &TimeZone) -> Option<Date> {
 
 pub fn date_time_to_point(date: Date, time: &TimeOfDay, tz: &TimeZone) -> Option<Point> {
     let dt = date.at(time.hour(), time.minute(), 0, 0);
-    let tz_name = tz.iana_name()?;
-    let zdt = dt.in_tz(tz_name).ok()?;
-    let ts = zdt.timestamp();
+    let ts = tz.to_timestamp(dt).ok()?;
     Some(Point::from_timestamp(ts, SLOT_MINUTES as u16))
 }
 

@@ -25,6 +25,68 @@ fn parse_hhmm(s: &str) -> (u8, u8) {
     (h, m)
 }
 
+/// Resolve a timezone string to a `jiff::tz::TimeZone`.
+///
+/// Accepts IANA identifiers (e.g. `Asia/Tokyo`) and fixed-offset strings
+/// (e.g. `+09:00` or `-05:30`).
+fn parse_timezone(tz: &str) -> Result<jiff::tz::TimeZone, AppError> {
+    if let Ok(tz) = jiff::tz::TimeZone::get(tz) {
+        return Ok(tz);
+    }
+    if let Some(tz) = parse_fixed_offset_timezone(tz) {
+        return Ok(tz);
+    }
+    Err(AppError::BadRequest(format!("invalid timezone: {tz}")))
+}
+
+fn parse_fixed_offset_timezone(s: &str) -> Option<jiff::tz::TimeZone> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let (sign, rest) = match s.as_bytes().first()? {
+        b'+' => (1, &s[1..]),
+        b'-' => (-1, &s[1..]),
+        _ => return None,
+    };
+    let (hours, minutes, seconds) = if rest.contains(':') {
+        let parts: Vec<&str> = rest.split(':').collect();
+        if parts.is_empty() || parts.len() > 3 {
+            return None;
+        }
+        let h: i32 = parts[0].parse().ok()?;
+        let m: i32 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let sec: i32 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+        (h, m, sec)
+    } else {
+        match rest.len() {
+            0 => return None,
+            1 | 2 => {
+                let h: i32 = rest.parse().ok()?;
+                (h, 0, 0)
+            }
+            4 => {
+                let h: i32 = rest[..2].parse().ok()?;
+                let m: i32 = rest[2..].parse().ok()?;
+                (h, m, 0)
+            }
+            6 => {
+                let h: i32 = rest[..2].parse().ok()?;
+                let m: i32 = rest[2..4].parse().ok()?;
+                let sec: i32 = rest[4..].parse().ok()?;
+                (h, m, sec)
+            }
+            _ => return None,
+        }
+    };
+    if !(0..=25).contains(&hours) || !(0..60).contains(&minutes) || !(0..60).contains(&seconds) {
+        return None;
+    }
+    let total_seconds = sign * (hours * 3600 + minutes * 60 + seconds);
+    let offset = jiff::tz::Offset::from_seconds(total_seconds).ok()?;
+    Some(jiff::tz::TimeZone::fixed(offset))
+}
+
 /// Reject negative `avg_minutes` / `sigma_minutes`, which would wrap to a
 /// huge `u64` slot count in the planner and break the schedule (#269).
 fn validate_minutes(avg: i64, sigma: Option<i64>) -> Result<(), AppError> {
@@ -189,9 +251,7 @@ fn topo_sort_steps(steps: &[HabitStepRow]) -> Result<Vec<usize>, AppError> {
 /// Verify the timezone string resolves to a real `jiff::tz::TimeZone` so that
 /// typos don't silently fall back to UTC (#277).
 fn validate_timezone(tz: &str) -> Result<(), AppError> {
-    jiff::tz::TimeZone::get(tz)
-        .map(|_| ())
-        .map_err(|_| AppError::BadRequest(format!("invalid timezone: {tz}")))
+    parse_timezone(tz).map(|_| ())
 }
 
 /// Build a `CoreTask` for a single step occurrence (#95). The step's window is
@@ -326,24 +386,26 @@ fn parse_calendar_date(s: &str) -> Option<(i64, u32, u32)> {
     Some((y, m, d))
 }
 
-fn parse_sleep(s: &str, settings: &SettingsRow) -> SleepConfig {
+fn parse_sleep(
+    s: &str,
+    settings: &SettingsRow,
+    tz: &jiff::tz::TimeZone,
+) -> Result<SleepConfig, AppError> {
     match s {
         "recommended" => {
             let (sh, sm) = parse_hhmm(&settings.sleep_start);
             let (eh, em) = parse_hhmm(&settings.sleep_end);
-            let tz = jiff::tz::TimeZone::get(&settings.tz).unwrap_or(jiff::tz::TimeZone::UTC);
-            SleepConfig::from_local(5, &tz, sh, sm, eh, em)
+            Ok(SleepConfig::from_local(5, tz, sh, sm, eh, em))
         }
-        "disabled" => SleepConfig::disabled(),
+        "disabled" => Ok(SleepConfig::disabled()),
         custom => {
             let parts: Vec<&str> = custom.splitn(2, '-').collect();
             if parts.len() == 2 {
                 let (sh, sm) = parse_hhmm(parts[0]);
                 let (eh, em) = parse_hhmm(parts[1]);
-                let tz = jiff::tz::TimeZone::get(&settings.tz).unwrap_or(jiff::tz::TimeZone::UTC);
-                SleepConfig::from_local(5, &tz, sh, sm, eh, em)
+                Ok(SleepConfig::from_local(5, tz, sh, sm, eh, em))
             } else {
-                SleepConfig::disabled()
+                Ok(SleepConfig::disabled())
             }
         }
     }
@@ -1176,10 +1238,10 @@ impl TakusuApp {
         input: &GenerateScheduleInput,
     ) -> Result<ScheduleRow, AppError> {
         let settings = self.get_settings_or_default().await?;
-        let sleep = parse_sleep(&input.sleep, &settings);
+        let tz = parse_timezone(&settings.tz)?;
+        let sleep = parse_sleep(&input.sleep, &settings, &tz)?;
         let from_point = Point::from_timestamp(Timestamp::now(), 5);
 
-        let tz = jiff::tz::TimeZone::get(&settings.tz).unwrap_or(jiff::tz::TimeZone::UTC);
         let habit_rows = self.sync_habit_tasks(&tz).await?;
         // Load non-habit tasks after syncing so any tasks deleted by sync
         // (stale habit tasks) are not carried into the planner (#582).
@@ -1247,9 +1309,9 @@ impl TakusuApp {
         input: &SchedulePreviewInput,
     ) -> Result<SchedulePreviewOutput, AppError> {
         let settings = self.get_settings_or_default().await?;
-        let sleep = parse_sleep(&input.sleep, &settings);
+        let tz = parse_timezone(&settings.tz)?;
+        let sleep = parse_sleep(&input.sleep, &settings, &tz)?;
         let from_point = Point::from_timestamp(Timestamp::now(), 5);
-        let tz = jiff::tz::TimeZone::get(&settings.tz).unwrap_or(jiff::tz::TimeZone::UTC);
         let habit_rows = self.sync_habit_tasks(&tz).await?;
         let task_rows = self.load_task_rows(input.task_ids.as_ref()).await?;
         let all_rows = Self::merge_active_tasks(habit_rows, task_rows);
@@ -1364,7 +1426,8 @@ impl TakusuApp {
 
     pub async fn reschedule(&self, input: &RescheduleInput) -> Result<ScheduleRow, AppError> {
         let settings = self.get_settings_or_default().await?;
-        let sleep = parse_sleep(&input.sleep, &settings);
+        let tz = parse_timezone(&settings.tz)?;
+        let sleep = parse_sleep(&input.sleep, &settings, &tz)?;
         let now_point = Point::from_timestamp(Timestamp::now(), 5);
 
         let schedule_row = self
@@ -1376,7 +1439,6 @@ impl TakusuApp {
         let entries: Vec<ScheduleEntry> = serde_json::from_str(&schedule_row.schedule)
             .map_err(|e| AppError::Internal(e.to_string()))?;
 
-        let tz = jiff::tz::TimeZone::get(&settings.tz).unwrap_or(jiff::tz::TimeZone::UTC);
         let habit_rows = self.sync_habit_tasks(&tz).await?;
         // Load active tasks after sync to avoid stale rows deleted by sync.
         let task_rows = self.load_task_rows(None).await?;
@@ -1481,7 +1543,7 @@ impl TakusuApp {
             .map_err(storage_to_app)?;
 
         let settings = self.get_settings_or_default().await?;
-        let tz = jiff::tz::TimeZone::get(&settings.tz).unwrap_or(jiff::tz::TimeZone::UTC);
+        let tz = parse_timezone(&settings.tz)?;
 
         let schedule_row = self
             .storage
@@ -2516,6 +2578,21 @@ mod tests {
     fn iso_to_point_now() {
         let tz = jiff::tz::TimeZone::UTC;
         let _ = iso_to_point("now", &tz).unwrap();
+    }
+
+    // ── parse_timezone accepts IANA and fixed-offset timezones (#607) ────
+
+    #[test]
+    fn parse_timezone_accepts_iana_and_fixed_offset() {
+        assert!(parse_timezone("Asia/Tokyo").is_ok());
+        assert!(parse_timezone("UTC").is_ok());
+        assert!(parse_timezone("+09:00").is_ok());
+        assert!(parse_timezone("-05:30").is_ok());
+        assert!(parse_timezone("+0900").is_ok());
+        assert!(parse_timezone("+09").is_ok());
+        assert!(parse_timezone("+25:59:59").is_ok());
+        assert!(parse_timezone("not/a/tz").is_err());
+        assert!(parse_timezone("+26:00:00").is_err());
     }
 
     // ── iso_to_local_date naive fallback (#348) ─────────────────────────
