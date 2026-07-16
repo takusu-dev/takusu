@@ -35,3 +35,21 @@ export interface ApprovalResult {
   changes: ChangeReceipt[];
   schedule_dirty: boolean;
 }
+
+export interface AgentTurnResult {
+  text: string;
+  changes: ChangeReceipt[];
+  schedule_dirty: boolean;
+  approval_request: ApprovalRequest | null;
+}
+
+export type TurnEvent =
+  | { type: 'Thinking'; data: string }
+  | { type: 'Text'; data: string }
+  | { type: 'ToolCall'; data: { name: string; arguments: unknown } }
+  | {
+      type: 'ToolResult';
+      data: { name: string; content: string; is_error: boolean };
+    }
+  | { type: 'Error'; data: string }
+  | { type: 'Done'; data: AgentTurnResult };

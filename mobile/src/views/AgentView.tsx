@@ -18,18 +18,25 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DEFAULT_PORT, useServer } from '@/src/api/ServerProvider';
 import TakusuAudioModule from '../../modules/takusu-server/src/TakusuAudioModule';
 import { loadAgentApiKey, loadSettings } from '@/src/api/settingsStore';
-import {
-  AgentClient,
-  AgentApiError,
-  type AgentTurnResult,
-} from '@/src/api/agentClient';
-import type { ApprovalRequest } from '@/src/api/agentTypes';
+import { AgentClient, AgentApiError } from '@/src/api/agentClient';
+import type { ApprovalRequest, TurnEvent } from '@/src/api/agentTypes';
 import { BRAND_COLOR, COLORS, useColors } from '@/src/theme';
+
+interface ToolCallItem {
+  name: string;
+  arguments?: unknown;
+  result?: string;
+  isError?: boolean;
+}
 
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   text: string;
+  thinking?: string;
+  toolCalls?: ToolCallItem[];
+  state?: 'thinking' | 'tool_call' | 'answering' | 'done';
+  collapsed?: boolean;
 }
 
 const SESSION_KEY = 'takusu.agent.sessionId';
@@ -112,29 +119,104 @@ export function AgentView() {
       { id: newId('user'), role: 'user', text: value.trim() },
     ]);
     setBusy(true);
+    let assistantId: string | null = null;
     try {
       const session = await ensureSession();
-      const result: AgentTurnResult = await client.runTurn(
+      const id = newId('assistant');
+      assistantId = id;
+      setMessages((current) => [
+        ...current,
+        {
+          id,
+          role: 'assistant',
+          text: '',
+          thinking: '',
+          toolCalls: [],
+          state: 'thinking',
+          collapsed: false,
+        },
+      ]);
+      const result = await client.runTurnStream(
         session,
         value.trim(),
         newId('turn'),
+        (event: TurnEvent) => {
+          setMessages((current) => {
+            if (!assistantId) return current;
+            const index = current.findIndex((m) => m.id === assistantId);
+            if (index === -1) return current;
+            const msg = current[index];
+            const next = { ...msg };
+            switch (event.type) {
+              case 'Thinking':
+                next.thinking = (next.thinking ?? '') + event.data;
+                next.state = 'thinking';
+                break;
+              case 'ToolCall':
+                next.toolCalls = [
+                  ...(next.toolCalls ?? []),
+                  {
+                    name: event.data.name,
+                    arguments: event.data.arguments,
+                  },
+                ];
+                next.state = 'tool_call';
+                break;
+              case 'ToolResult': {
+                const calls = [...(next.toolCalls ?? [])];
+                const last = calls[calls.length - 1];
+                if (last) {
+                  last.result = event.data.content;
+                  last.isError = event.data.is_error;
+                }
+                next.toolCalls = calls;
+                break;
+              }
+              case 'Text':
+                next.text = (next.text ?? '') + event.data;
+                next.state = 'answering';
+                next.collapsed = true;
+                break;
+              case 'Error':
+                next.text = event.data;
+                next.state = 'done';
+                break;
+              case 'Done':
+                next.text = event.data.text;
+                next.state = 'done';
+                next.collapsed = true;
+                break;
+            }
+            return [
+              ...current.slice(0, index),
+              next,
+              ...current.slice(index + 1),
+            ];
+          });
+        },
       );
-      setMessages((current) => [
-        ...current,
-        { id: newId('assistant'), role: 'assistant', text: result.text },
-      ]);
       setApproval(result.approval_request);
       if (audioReady && result.text.trim()) {
         await TakusuAudioModule.synthesizeAndPlay(result.text);
       }
     } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (assistantId) {
+        setMessages((current) =>
+          current.map((m) =>
+            m.id === assistantId
+              ? { ...m, text: message, state: 'done', toolCalls: [] }
+              : m,
+          ),
+        );
+      }
       if (e instanceof AgentApiError && e.status === 404) {
         await AsyncStorage.removeItem(SESSION_KEY);
         setSessionId(null);
         setApproval(null);
         setError('Agentセッションが終了しました。もう一度送信してください');
       } else {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(message);
       }
     } finally {
       setBusy(false);
@@ -146,6 +228,12 @@ export function AgentView() {
     if (!value || busy) return;
     setText('');
     await sendText(value);
+  }
+
+  function toggleCollapsed(id: string) {
+    setMessages((current) =>
+      current.map((m) => (m.id === id ? { ...m, collapsed: !m.collapsed } : m)),
+    );
   }
 
   async function toggleRecording() {
@@ -230,26 +318,100 @@ export function AgentView() {
         contentContainerStyle={styles.messageContent}
         data={messages}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <View
-            style={[
-              styles.bubble,
-              item.role === 'user' ? styles.userBubble : styles.assistantBubble,
-              {
-                backgroundColor:
-                  item.role === 'user' ? BRAND_COLOR : colors.separator,
-              },
-            ]}
-          >
-            <Text
-              style={{
-                color: item.role === 'user' ? COLORS.white : colors.black,
-              }}
+        renderItem={({ item }) => {
+          if (item.role === 'user') {
+            return (
+              <View
+                style={[
+                  styles.bubble,
+                  styles.userBubble,
+                  { backgroundColor: BRAND_COLOR },
+                ]}
+              >
+                <Text style={{ color: COLORS.white }}>{item.text}</Text>
+              </View>
+            );
+          }
+          const hasContext =
+            (item.thinking && item.thinking.length > 0) ||
+            (item.toolCalls && item.toolCalls.length > 0);
+          return (
+            <View
+              style={[
+                styles.bubble,
+                styles.assistantBubble,
+                { backgroundColor: colors.separator },
+              ]}
             >
-              {item.text}
-            </Text>
-          </View>
-        )}
+              {hasContext && (
+                <Pressable
+                  onPress={() => toggleCollapsed(item.id)}
+                  style={styles.contextHeader}
+                >
+                  <Text
+                    style={[styles.contextHeaderText, { color: colors.black }]}
+                  >
+                    {item.collapsed ? '▶ ' : '▼ '}
+                    {item.thinking && item.thinking.length > 0 ? '考え中' : ''}
+                    {item.thinking &&
+                    item.toolCalls &&
+                    item.toolCalls.length > 0
+                      ? ' / '
+                      : ''}
+                    {item.toolCalls && item.toolCalls.length > 0
+                      ? `ツール (${item.toolCalls.length})`
+                      : ''}
+                  </Text>
+                </Pressable>
+              )}
+              {!item.collapsed && hasContext && (
+                <View style={styles.contextBody}>
+                  {item.thinking && item.thinking.length > 0 && (
+                    <Text style={[styles.thinkingText, { color: colors.gray }]}>
+                      {item.thinking}
+                    </Text>
+                  )}
+                  {item.toolCalls?.map((call, index) => (
+                    <View key={index} style={styles.toolCall}>
+                      <Text style={{ color: colors.black, fontWeight: '700' }}>
+                        {call.name}
+                      </Text>
+                      {call.arguments !== undefined && (
+                        <Text style={[styles.toolArgs, { color: colors.gray }]}>
+                          {JSON.stringify(call.arguments, null, 2)}
+                        </Text>
+                      )}
+                      {call.result !== undefined && (
+                        <Text
+                          style={{
+                            color: call.isError ? '#B33A3A' : '#2E7D32',
+                          }}
+                        >
+                          {call.isError
+                            ? `エラー: ${call.result}`
+                            : call.result}
+                        </Text>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              )}
+              {item.text.length > 0 && (
+                <Text
+                  style={{
+                    color: colors.black,
+                    marginTop: hasContext ? 8 : 0,
+                  }}
+                >
+                  {item.text}
+                </Text>
+              )}
+              {item.state !== 'done' && item.text.length === 0 && (
+                <ActivityIndicator color={BRAND_COLOR} />
+              )}
+            </View>
+          );
+        }}
         ListEmptyComponent={
           <Text style={[styles.empty, { color: colors.gray }]}>
             何を予定しますか？
@@ -370,6 +532,17 @@ const styles = StyleSheet.create({
   bubble: { maxWidth: '85%', padding: 12, borderRadius: 14 },
   userBubble: { alignSelf: 'flex-end' },
   assistantBubble: { alignSelf: 'flex-start' },
+  contextHeader: { marginBottom: 4 },
+  contextHeaderText: { fontSize: 12, fontWeight: '700' },
+  contextBody: { gap: 6, marginBottom: 8 },
+  thinkingText: { fontSize: 12, fontStyle: 'italic' },
+  toolCall: {
+    backgroundColor: 'rgba(0,0,0,0.03)',
+    borderRadius: 8,
+    padding: 8,
+    gap: 4,
+  },
+  toolArgs: { fontSize: 11, fontFamily: 'monospace' },
   approval: {
     margin: 12,
     padding: 12,

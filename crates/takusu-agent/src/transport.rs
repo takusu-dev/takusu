@@ -5,17 +5,22 @@
 //! adapter share the exact same session and approval contract.
 
 use std::collections::{HashMap, VecDeque};
+use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
+use futures_util::StreamExt as _;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc::unbounded_channel;
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use uuid::Uuid;
 
-use crate::{AgentError, AgentSession, ApprovalRequest, ApprovalResult, TurnResult};
+use crate::{AgentError, AgentSession, ApprovalRequest, ApprovalResult, TurnEvent, TurnResult};
 
 pub const API_VERSION: u8 = 1;
 
@@ -196,6 +201,7 @@ pub fn router(state: Arc<AgentApiState>) -> Router {
         .route("/capabilities", get(capabilities))
         .route("/sessions", post(create_session))
         .route("/sessions/{id}/turns", post(run_turn))
+        .route("/sessions/{id}/turns/stream", post(run_turn_stream))
         .route("/sessions/{id}/approval", get(get_approval))
         .route(
             "/sessions/{id}/approvals/{approval_id}",
@@ -293,6 +299,80 @@ async fn run_turn(
         value: result,
     })
     .into_response()
+}
+
+async fn run_turn_stream(
+    State(state): State<Arc<AgentApiState>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<Versioned<TurnRequest>>,
+) -> Response {
+    if !authorized(&headers, &state.bearer_token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if body.version != API_VERSION || body.value.text.trim().is_empty() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let session = match state.session(&id) {
+        Some(session) => session,
+        None => return StatusCode::NOT_FOUND.into_response(),
+    };
+    let key = body.value.idempotency_key.filter(|key| !key.is_empty());
+    if let Some(key) = &key
+        && let Ok(results) = state.turn_results.lock()
+        && let Some(result) = results.get(&(id.clone(), key.clone()))
+    {
+        let cached = TurnResult {
+            text: result.text.clone(),
+            changes: result.changes.clone(),
+            schedule_dirty: result.schedule_dirty,
+            approval_request: result.approval_request.clone(),
+        };
+        let event = TurnEvent::Done(cached);
+        let json = serde_json::to_string(&event).unwrap();
+        let stream = futures_util::stream::once(std::future::ready(Ok::<_, Infallible>(
+            Event::default().data(json),
+        )));
+        return Sse::new(stream)
+            .keep_alive(KeepAlive::default())
+            .into_response();
+    }
+    let text = body.value.text.clone();
+    let (tx, rx) = unbounded_channel::<TurnEvent>();
+    let tx_closed = tx.clone();
+    let session2 = session.clone();
+    let id2 = id.clone();
+    let key2 = key.clone();
+    let state2 = Arc::clone(&state);
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = tx_closed.closed() => {}
+            result = session2.run_turn_stream(&text, |event| {
+                let _ = tx.send(event);
+            }) => {
+                match result {
+                    Ok(result) => {
+                        let _ = tx.send(TurnEvent::Done(result.clone()));
+                        if let Some(key) = key2
+                            && let Ok(mut results) = state2.turn_results.lock()
+                        {
+                            results.insert((id2, key), TurnResultDto::from(result));
+                        }
+                    }
+                    Err(error) => {
+                        let _ = tx.send(TurnEvent::Error(error.to_string()));
+                    }
+                }
+            }
+        }
+    });
+    let stream = UnboundedReceiverStream::new(rx).map(|event| {
+        let json = serde_json::to_string(&event).unwrap();
+        Ok::<_, Infallible>(Event::default().data(json))
+    });
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
 }
 
 async fn get_approval(
