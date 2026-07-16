@@ -103,22 +103,24 @@ async fn dispatch(req: Request, env: Env) -> Result<Response, crate::error::Work
         (Method::Delete, ["tasks", id]) => handlers::tasks::delete(req, env, id).await,
         (Method::Get, ["habits"]) => handlers::habits::list(req, env).await,
         (Method::Post, ["habits"]) => handlers::habits::create(req, env).await,
-        // Literal "pauses" / "steps" segments must precede the `["habits", id]`
+        // Literal "scheduled-spans" / "steps" segments must precede the `["habits", id]`
         // arms so they are not treated as a habit id (#303 / #95).
-        (Method::Get, ["habits", "pauses"]) => handlers::habits::list_all_pauses(req, env).await,
+        (Method::Get, ["habits", "scheduled-spans"]) => {
+            handlers::habits::list_all_scheduled_spans(req, env).await
+        }
         (Method::Get, ["habits", "steps"]) => handlers::habits::list_all_steps(req, env).await,
         (Method::Get, ["habits", id]) => handlers::habits::get(req, env, id).await,
         (Method::Patch, ["habits", id]) => handlers::habits::update(req, env, id).await,
         (Method::Put, ["habits", id]) => handlers::habits::replace(req, env, id).await,
         (Method::Delete, ["habits", id]) => handlers::habits::delete(req, env, id).await,
-        (Method::Get, ["habits", id, "pauses"]) => {
-            handlers::habits::list_pauses(req, env, id).await
+        (Method::Get, ["habits", id, "scheduled-spans"]) => {
+            handlers::habits::list_scheduled_spans(req, env, id).await
         }
-        (Method::Post, ["habits", id, "pauses"]) => {
-            handlers::habits::create_pause(req, env, id).await
+        (Method::Post, ["habits", id, "scheduled-spans"]) => {
+            handlers::habits::create_scheduled_span(req, env, id).await
         }
-        (Method::Delete, ["habits", id, "pauses", pause_id]) => {
-            handlers::habits::delete_pause(req, env, id, pause_id).await
+        (Method::Delete, ["habits", id, "scheduled-spans", span_id]) => {
+            handlers::habits::delete_scheduled_span(req, env, id, span_id).await
         }
         (Method::Get, ["habits", id, "steps"]) => handlers::habits::list_steps(req, env, id).await,
         (Method::Put, ["habits", id, "steps"]) => {

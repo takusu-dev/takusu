@@ -1845,7 +1845,7 @@ async fn task_replace_rejects_negative_avg_minutes() {
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 }
 
-// ── Habit pauses (#303) ────────────────────────────────────────────────
+// ── Habit spans (#303) ────────────────────────────────────────────────
 
 /// Create a daily habit and return its id.
 async fn create_daily_habit(app: &axum::Router, title: &str) -> String {
@@ -1884,27 +1884,27 @@ async fn sync_habit_tasks(app: &axum::Router, habit_id: &str) -> Vec<serde_json:
 }
 
 #[tokio::test]
-async fn habit_pause_skips_occurrences_in_range() {
+async fn habit_scheduled_span_skips_occurrences_in_range() {
     let (state, _) = setup().await;
     let app = build_router(state);
     let habit_id = create_daily_habit(&app, "朝のランニング").await;
 
-    // Pick a date 3 days from today as the pause start, 5 days as the end.
+    // Pick a date 3 days from today as the span start, 5 days as the end.
     let today = jiff::Zoned::now().date();
-    let pause_start = today
+    let span_start = today
         .checked_add(jiff::Span::new().days(3))
         .unwrap()
         .to_string();
-    let pause_end = today
+    let span_end = today
         .checked_add(jiff::Span::new().days(5))
         .unwrap()
         .to_string();
 
-    // Add the pause before generating tasks.
+    // Add the scheduled span before generating tasks.
     let req = auth_req_body(
         Method::POST,
-        &format!("/api/habits/{habit_id}/pauses"),
-        json!({ "start_date": pause_start, "end_date": pause_end, "reason": "休暇" }),
+        &format!("/api/habits/{habit_id}/scheduled-spans"),
+        json!({ "start_date": span_start, "end_date": span_end, "reason": "休暇" }),
     );
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::CREATED);
@@ -1912,10 +1912,10 @@ async fn habit_pause_skips_occurrences_in_range() {
     let tasks = sync_habit_tasks(&app, &habit_id).await;
     assert!(
         !tasks.is_empty(),
-        "habit should still generate tasks outside the pause"
+        "habit should still generate tasks outside the span"
     );
 
-    // No task title should contain a date within the pause range.
+    // No task title should contain a date within the span range.
     for t in &tasks {
         let title = t["title"].as_str().unwrap();
         for d in 3..=5 {
@@ -1925,33 +1925,105 @@ async fn habit_pause_skips_occurrences_in_range() {
                 .to_string();
             assert!(
                 !title.contains(&date),
-                "task title '{title}' should not contain paused date {date}"
+                "task title '{title}' should not contain skipped date {date}"
             );
         }
     }
 }
 
 #[tokio::test]
-async fn habit_pause_deletes_existing_pending_unedited_tasks() {
+async fn habit_scheduled_span_generates_only_in_range_for_disabled_habit() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let habit_id = create_daily_habit(&app, "夜ジム").await;
+
+    // Disable the habit.
+    let req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/habits/{habit_id}"),
+        json!({ "active": false }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // No tasks should be generated while the habit is disabled and spanless.
+    let tasks_before = sync_habit_tasks(&app, &habit_id).await;
+    assert!(
+        tasks_before.is_empty(),
+        "disabled habit without spans should generate no tasks"
+    );
+
+    // Pick a date 3 days from today as the span start, 5 days as the end.
+    let today = jiff::Zoned::now().date();
+    let span_start = today
+        .checked_add(jiff::Span::new().days(3))
+        .unwrap()
+        .to_string();
+    let span_end = today
+        .checked_add(jiff::Span::new().days(5))
+        .unwrap()
+        .to_string();
+
+    // Add the scheduled span.
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/habits/{habit_id}/scheduled-spans"),
+        json!({ "start_date": span_start, "end_date": span_end, "reason": "集中ウィーク" }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+
+    let tasks = sync_habit_tasks(&app, &habit_id).await;
+    assert!(
+        !tasks.is_empty(),
+        "disabled habit should generate tasks inside the span"
+    );
+    // The span covers three inclusive days and the habit is daily, so exactly
+    // three tasks should be generated (and none outside the span).
+    assert_eq!(tasks.len(), 3, "expected exactly 3 tasks for a 3-day span");
+
+    // Every task title should contain a date within the span range.
+    for t in &tasks {
+        let title = t["title"].as_str().unwrap();
+        let mut in_range = false;
+        for d in 3..=5 {
+            let date = today
+                .checked_add(jiff::Span::new().days(d))
+                .unwrap()
+                .to_string();
+            if title.contains(&date) {
+                in_range = true;
+                break;
+            }
+        }
+        assert!(
+            in_range,
+            "task title '{title}' should be within the scheduled span range"
+        );
+    }
+}
+
+#[tokio::test]
+async fn habit_scheduled_span_deletes_existing_pending_unedited_tasks() {
     let (state, pool) = setup().await;
     let app = build_router(state);
     let habit_id = create_daily_habit(&app, "ジム").await;
 
-    // Generate tasks first (no pause yet). generate_schedule marks tasks as
+    // Generate tasks first (no span yet). generate_schedule marks tasks as
     // 'scheduled', so reset the target task to 'pending' + unedited
     // afterwards to make it eligible for the sync cleanup loop.
     let tasks_before = sync_habit_tasks(&app, &habit_id).await;
     assert!(!tasks_before.is_empty());
 
-    // Find a generated task's date to pause. Use the first task's date.
+    // Find a generated task's date to skip. Use the first task's date.
     let first_title = tasks_before[0]["title"].as_str().unwrap();
     // Title format: "ジム (YYYY-MM-DD)"
-    let pause_date = first_title
+    let span_date = first_title
         .split('(')
         .nth(1)
         .map(|s| s.trim_end_matches(')').trim())
         .unwrap();
-    let pause_date = pause_date.to_string();
+    let span_date = span_date.to_string();
     let first_id = tasks_before[0]["id"].as_str().unwrap().to_string();
 
     // Reset to pending + unedited so the cleanup loop can delete it.
@@ -1961,28 +2033,28 @@ async fn habit_pause_deletes_existing_pending_unedited_tasks() {
         .await
         .unwrap();
 
-    // Add a pause covering that single date.
+    // Add a span covering that single date.
     let req = auth_req_body(
         Method::POST,
-        &format!("/api/habits/{habit_id}/pauses"),
-        json!({ "start_date": pause_date, "end_date": pause_date }),
+        &format!("/api/habits/{habit_id}/scheduled-spans"),
+        json!({ "start_date": span_date, "end_date": span_date }),
     );
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::CREATED);
 
-    // Re-sync; the paused date's pending unedited task should be deleted.
+    // Re-sync; the skipped date's pending unedited task should be deleted.
     let tasks_after = sync_habit_tasks(&app, &habit_id).await;
     for t in &tasks_after {
         let title = t["title"].as_str().unwrap();
         assert!(
-            !title.contains(&pause_date),
-            "task for paused date {pause_date} should have been deleted"
+            !title.contains(&span_date),
+            "task for skipped date {span_date} should have been deleted"
         );
     }
 }
 
 #[tokio::test]
-async fn habit_pause_protects_edited_and_nonpending_tasks() {
+async fn habit_scheduled_span_protects_edited_and_nonpending_tasks() {
     let (state, pool) = setup().await;
     let app = build_router(state);
     let habit_id = create_daily_habit(&app, "読書").await;
@@ -2000,9 +2072,9 @@ async fn habit_pause_protects_edited_and_nonpending_tasks() {
         .await
         .unwrap();
 
-    // Derive the date from the title to build a pause covering it.
+    // Derive the date from the title to build a span covering it.
     let first_title = tasks[0]["title"].as_str().unwrap();
-    let pause_date = first_title
+    let span_date = first_title
         .split('(')
         .nth(1)
         .map(|s| s.trim_end_matches(')').trim())
@@ -2011,8 +2083,8 @@ async fn habit_pause_protects_edited_and_nonpending_tasks() {
 
     let req = auth_req_body(
         Method::POST,
-        &format!("/api/habits/{habit_id}/pauses"),
-        json!({ "start_date": pause_date, "end_date": pause_date }),
+        &format!("/api/habits/{habit_id}/scheduled-spans"),
+        json!({ "start_date": span_date, "end_date": span_date }),
     );
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::CREATED);
@@ -2024,18 +2096,18 @@ async fn habit_pause_protects_edited_and_nonpending_tasks() {
     assert_eq!(
         res.status(),
         StatusCode::OK,
-        "completed/edited task should be protected from pause cleanup"
+        "completed/edited task should be protected from span cleanup"
     );
 }
 
 #[tokio::test]
-async fn habit_pause_rejects_reversed_dates() {
+async fn habit_scheduled_span_rejects_reversed_dates() {
     let (state, _) = setup().await;
     let app = build_router(state);
     let habit_id = create_daily_habit(&app, "散歩").await;
     let req = auth_req_body(
         Method::POST,
-        &format!("/api/habits/{habit_id}/pauses"),
+        &format!("/api/habits/{habit_id}/scheduled-spans"),
         json!({ "start_date": "2026-08-07", "end_date": "2026-08-01" }),
     );
     let res = app.clone().oneshot(req).await.unwrap();
@@ -2043,13 +2115,13 @@ async fn habit_pause_rejects_reversed_dates() {
 }
 
 #[tokio::test]
-async fn habit_pause_rejects_bad_date_format() {
+async fn habit_scheduled_span_rejects_bad_date_format() {
     let (state, _) = setup().await;
     let app = build_router(state);
     let habit_id = create_daily_habit(&app, "瞑想").await;
     let req = auth_req_body(
         Method::POST,
-        &format!("/api/habits/{habit_id}/pauses"),
+        &format!("/api/habits/{habit_id}/scheduled-spans"),
         json!({ "start_date": "2026/08/01", "end_date": "2026-08-07" }),
     );
     let res = app.clone().oneshot(req).await.unwrap();
@@ -2057,16 +2129,16 @@ async fn habit_pause_rejects_bad_date_format() {
 }
 
 #[tokio::test]
-async fn habit_pause_rejects_non_zero_padded_dates() {
+async fn habit_scheduled_span_rejects_non_zero_padded_dates() {
     // Non-zero-padded dates like "2026-8-1" would pass numeric parsing
-    // but break the lexicographic pause-matching comparison against
+    // but break the lexicographic span-matching comparison against
     // jiff's zero-padded Date::to_string, so they must be rejected (#303).
     let (state, _) = setup().await;
     let app = build_router(state);
     let habit_id = create_daily_habit(&app, "ストレッチ").await;
     let req = auth_req_body(
         Method::POST,
-        &format!("/api/habits/{habit_id}/pauses"),
+        &format!("/api/habits/{habit_id}/scheduled-spans"),
         json!({ "start_date": "2026-8-1", "end_date": "2026-08-07" }),
     );
     let res = app.clone().oneshot(req).await.unwrap();
@@ -2075,7 +2147,7 @@ async fn habit_pause_rejects_non_zero_padded_dates() {
     // End date non-zero-padded should also fail.
     let req = auth_req_body(
         Method::POST,
-        &format!("/api/habits/{habit_id}/pauses"),
+        &format!("/api/habits/{habit_id}/scheduled-spans"),
         json!({ "start_date": "2026-08-01", "end_date": "2026-8-7" }),
     );
     let res = app.clone().oneshot(req).await.unwrap();
@@ -2083,116 +2155,122 @@ async fn habit_pause_rejects_non_zero_padded_dates() {
 }
 
 #[tokio::test]
-async fn habit_pause_list_and_delete() {
+async fn habit_scheduled_span_list_and_delete() {
     let (state, _) = setup().await;
     let app = build_router(state);
     let habit_id = create_daily_habit(&app, "日記").await;
 
-    // Add a pause.
+    // Add a span.
     let req = auth_req_body(
         Method::POST,
-        &format!("/api/habits/{habit_id}/pauses"),
+        &format!("/api/habits/{habit_id}/scheduled-spans"),
         json!({ "start_date": "2026-08-01", "end_date": "2026-08-07", "reason": "夏休み" }),
     );
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::CREATED);
-    let pause_body: serde_json::Value =
+    let span_body: serde_json::Value =
         serde_json::from_str(&body_str(res.into_body()).await).unwrap();
-    let pause_id = pause_body["id"].as_str().unwrap().to_string();
+    let span_id = span_body["id"].as_str().unwrap().to_string();
 
-    // List pauses.
-    let req = auth_req(Method::GET, &format!("/api/habits/{habit_id}/pauses"));
+    // List spans.
+    let req = auth_req(
+        Method::GET,
+        &format!("/api/habits/{habit_id}/scheduled-spans"),
+    );
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let pauses: Vec<serde_json::Value> =
+    let spans: Vec<serde_json::Value> =
         serde_json::from_str(&body_str(res.into_body()).await).unwrap();
-    assert_eq!(pauses.len(), 1);
-    assert_eq!(pauses[0]["id"].as_str().unwrap(), pause_id);
-    assert_eq!(pauses[0]["reason"].as_str().unwrap(), "夏休み");
+    assert_eq!(spans.len(), 1);
+    assert_eq!(spans[0]["id"].as_str().unwrap(), span_id);
+    assert_eq!(spans[0]["reason"].as_str().unwrap(), "夏休み");
 
-    // Delete the pause.
+    // Delete the span.
     let req = auth_req(
         Method::DELETE,
-        &format!("/api/habits/{habit_id}/pauses/{pause_id}"),
+        &format!("/api/habits/{habit_id}/scheduled-spans/{span_id}"),
     );
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NO_CONTENT);
 
     // List should now be empty.
-    let req = auth_req(Method::GET, &format!("/api/habits/{habit_id}/pauses"));
+    let req = auth_req(
+        Method::GET,
+        &format!("/api/habits/{habit_id}/scheduled-spans"),
+    );
     let res = app.clone().oneshot(req).await.unwrap();
-    let pauses: Vec<serde_json::Value> =
+    let spans: Vec<serde_json::Value> =
         serde_json::from_str(&body_str(res.into_body()).await).unwrap();
-    assert!(pauses.is_empty());
+    assert!(spans.is_empty());
 }
 
 #[tokio::test]
-async fn habit_pause_list_all_endpoint() {
+async fn habit_scheduled_span_list_all_endpoint() {
     let (state, _) = setup().await;
     let app = build_router(state);
     let h1 = create_daily_habit(&app, "習慣A").await;
     let h2 = create_daily_habit(&app, "習慣B").await;
 
-    // Add a pause to each.
+    // Add a span to each.
     for (hid, start) in [(&h1, "2026-09-01"), (&h2, "2026-10-01")] {
         let req = auth_req_body(
             Method::POST,
-            &format!("/api/habits/{hid}/pauses"),
+            &format!("/api/habits/{hid}/scheduled-spans"),
             json!({ "start_date": start, "end_date": start }),
         );
         let res = app.clone().oneshot(req).await.unwrap();
         assert_eq!(res.status(), StatusCode::CREATED);
     }
 
-    // GET /api/habits/pauses must return both (and not be shadowed by
+    // GET /api/habits/spans must return both (and not be shadowed by
     // the /api/habits/{id} route).
-    let req = auth_req(Method::GET, "/api/habits/pauses");
+    let req = auth_req(Method::GET, "/api/habits/scheduled-spans");
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let pauses: Vec<serde_json::Value> =
+    let spans: Vec<serde_json::Value> =
         serde_json::from_str(&body_str(res.into_body()).await).unwrap();
-    assert_eq!(pauses.len(), 2);
+    assert_eq!(spans.len(), 2);
 }
 
 #[tokio::test]
-async fn habit_delete_removes_its_pauses() {
-    // Regression: deleting a habit must also delete its pause rows so
-    // they don't accumulate as orphans in list_all_habit_pauses (#303).
+async fn habit_delete_removes_its_scheduled_spans() {
+    // Regression: deleting a habit must also delete its scheduled span rows so
+    // they don't accumulate as orphans in list_all_habit_scheduled_spans (#303 / #503).
     // SQLite does not enable PRAGMA foreign_keys, so the ON DELETE
     // CASCADE in the schema does not fire — the cleanup must be explicit.
     let (state, _) = setup().await;
     let app = build_router(state);
     let habit_id = create_daily_habit(&app, "一時停止削除対象").await;
 
-    // Add a pause.
+    // Add a span.
     let req = auth_req_body(
         Method::POST,
-        &format!("/api/habits/{habit_id}/pauses"),
+        &format!("/api/habits/{habit_id}/scheduled-spans"),
         json!({ "start_date": "2026-08-01", "end_date": "2026-08-07" }),
     );
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::CREATED);
 
     // Confirm it shows up in list-all.
-    let req = auth_req(Method::GET, "/api/habits/pauses");
+    let req = auth_req(Method::GET, "/api/habits/scheduled-spans");
     let res = app.clone().oneshot(req).await.unwrap();
-    let pauses: Vec<serde_json::Value> =
+    let spans: Vec<serde_json::Value> =
         serde_json::from_str(&body_str(res.into_body()).await).unwrap();
-    assert_eq!(pauses.len(), 1);
+    assert_eq!(spans.len(), 1);
 
     // Delete the habit.
     let req = auth_req(Method::DELETE, &format!("/api/habits/{habit_id}"));
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NO_CONTENT);
 
-    // list-all must now be empty — no orphaned pause rows.
-    let req = auth_req(Method::GET, "/api/habits/pauses");
+    // list-all must now be empty — no orphaned span rows.
+    let req = auth_req(Method::GET, "/api/habits/scheduled-spans");
     let res = app.clone().oneshot(req).await.unwrap();
-    let pauses: Vec<serde_json::Value> =
+    let spans: Vec<serde_json::Value> =
         serde_json::from_str(&body_str(res.into_body()).await).unwrap();
     assert!(
-        pauses.is_empty(),
-        "deleting a habit should remove its pause rows, but found {pauses:?}"
+        spans.is_empty(),
+        "deleting a habit should remove its span rows, but found {spans:?}"
     );
 }
 
@@ -2713,7 +2791,7 @@ async fn habit_period_clamps_today_start_to_midnight() {
 }
 
 #[tokio::test]
-async fn habit_period_pause_skips_occurrence() {
+async fn habit_period_scheduled_span_skips_occurrence() {
     let (state, pool) = setup().await;
     let app = build_router(state);
     let habit_id = create_weekly_period_habit(&app, "週次period休止").await;
@@ -2738,22 +2816,22 @@ async fn habit_period_pause_skips_occurrence() {
         .await
         .unwrap();
 
-    // Add a pause covering the first occurrence date.
+    // Add a span covering the first occurrence date.
     let req = auth_req_body(
         Method::POST,
-        &format!("/api/habits/{habit_id}/pauses"),
+        &format!("/api/habits/{habit_id}/scheduled-spans"),
         json!({ "start_date": first_date, "end_date": first_date }),
     );
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::CREATED);
 
-    // Re-sync; no task should carry the paused date in its title.
+    // Re-sync; no task should carry the skipped date in its title.
     let tasks = sync_habit_tasks(&app, &habit_id).await;
     for t in &tasks {
         let title = t["title"].as_str().unwrap();
         assert!(
             !title.contains(&format!("({first_date})")),
-            "paused occurrence should not generate a task: {title}"
+            "skipped occurrence should not generate a task: {title}"
         );
     }
 }

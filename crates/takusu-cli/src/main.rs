@@ -24,8 +24,8 @@ use takusu_local_lib::{
     token_cache::TokenCache,
 };
 use takusu_storage::{
-    CreateHabit, CreateHabitPause, CreateSkill, CreateTask, ScheduleEntry, TaskQuery, UpdateHabit,
-    UpdateSettings,
+    CreateHabit, CreateHabitScheduledSpan, CreateSkill, CreateTask, ScheduleEntry, TaskQuery,
+    UpdateHabit, UpdateSettings,
 };
 use takusu_util::{generate_root_token, parse_datetime_tz, parse_duration};
 
@@ -417,10 +417,11 @@ enum HabitCommands {
     #[command(visible_alias = "rm")]
     Delete { id: String },
 
-    /// Manage habit pause periods (#303)
-    Pause {
+    /// Manage habit scheduled spans (#303 / #503)
+    #[command(name = "scheduled-spans", visible_aliases = ["spans", "pause"])]
+    ScheduledSpans {
         #[command(subcommand)]
-        command: PauseCommands,
+        command: ScheduledSpanCommands,
     },
 
     /// Detect and offer to remove redundant step dependency edges (#355)
@@ -472,8 +473,8 @@ enum SkillCommands {
 }
 
 #[derive(Subcommand)]
-enum PauseCommands {
-    /// Add a pause period to a habit
+enum ScheduledSpanCommands {
+    /// Add a scheduled span to a habit
     Add {
         id: String,
         #[arg(long, help = "Start date (YYYY-MM-DD, inclusive)")]
@@ -483,12 +484,12 @@ enum PauseCommands {
         #[arg(long, help = "Optional reason (e.g. 休暇)")]
         reason: Option<String>,
     },
-    /// List pause periods for a habit
+    /// List scheduled spans for a habit
     #[command(visible_alias = "ls")]
     List { id: String },
-    /// Remove a pause period
+    /// Remove a scheduled span
     #[command(visible_alias = "rm")]
-    Remove { id: String, pause_id: String },
+    Remove { id: String, span_id: String },
 }
 
 #[derive(Subcommand)]
@@ -1086,17 +1087,25 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
                     );
                 }
             }
-            // Show pause periods (#303) if any.
-            let pauses = app.list_habit_pauses(&id).await.unwrap_or_default();
-            if !pauses.is_empty() {
-                println!("   pauses:");
-                for p in &pauses {
+            // Show scheduled spans (#303 / #503) if any.
+            let spans = app
+                .list_habit_scheduled_spans(&id)
+                .await
+                .unwrap_or_default();
+            if !spans.is_empty() {
+                let label = if detail.habit.active {
+                    "scheduled spans (pauses)"
+                } else {
+                    "scheduled spans (activation windows)"
+                };
+                println!("   {label}:");
+                for s in &spans {
                     println!(
                         "     {} {}..{} ({})",
-                        p.id,
-                        p.start_date,
-                        p.end_date,
-                        p.reason.as_deref().unwrap_or("")
+                        s.id,
+                        s.start_date,
+                        s.end_date,
+                        s.reason.as_deref().unwrap_or("")
                     );
                 }
             }
@@ -1260,7 +1269,9 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
             app.delete_habit(&id).await?;
             println!("Habit {id} deleted.");
         }
-        HabitCommands::Pause { command } => run_pause(mode, app, command).await?,
+        HabitCommands::ScheduledSpans { command } => {
+            run_scheduled_spans(mode, app, command).await?
+        }
         HabitCommands::StepsCheck { id } => {
             deps_check_steps(app, &id).await?;
         }
@@ -1431,51 +1442,51 @@ async fn read_skill_body(path: Option<String>) -> Result<Option<String>, AppErro
     }
 }
 
-async fn run_pause(
+async fn run_scheduled_spans(
     _mode: DisplayMode,
     app: &TakusuApp,
-    cmd: PauseCommands,
+    cmd: ScheduledSpanCommands,
 ) -> Result<(), AppError> {
     match cmd {
-        PauseCommands::Add {
+        ScheduledSpanCommands::Add {
             id,
             from,
             to,
             reason,
         } => {
-            let body = CreateHabitPause {
+            let body = CreateHabitScheduledSpan {
                 start_date: from,
                 end_date: to,
                 reason,
             };
-            let pause = app.create_habit_pause(&id, &body).await?;
+            let span = app.create_habit_scheduled_span(&id, &body).await?;
             println!(
-                "Pause added: {} {}..{} ({})",
-                pause.id,
-                pause.start_date,
-                pause.end_date,
-                pause.reason.as_deref().unwrap_or("")
+                "Scheduled span added: {} {}..{} ({})",
+                span.id,
+                span.start_date,
+                span.end_date,
+                span.reason.as_deref().unwrap_or("")
             );
         }
-        PauseCommands::List { id } => {
-            let pauses = app.list_habit_pauses(&id).await?;
-            if pauses.is_empty() {
-                println!("No pauses for habit {id}.");
+        ScheduledSpanCommands::List { id } => {
+            let spans = app.list_habit_scheduled_spans(&id).await?;
+            if spans.is_empty() {
+                println!("No scheduled spans for habit {id}.");
             } else {
-                for p in &pauses {
+                for s in &spans {
                     println!(
                         "{}\t{}\t{}\t{}",
-                        p.id,
-                        p.start_date,
-                        p.end_date,
-                        p.reason.as_deref().unwrap_or("")
+                        s.id,
+                        s.start_date,
+                        s.end_date,
+                        s.reason.as_deref().unwrap_or("")
                     );
                 }
             }
         }
-        PauseCommands::Remove { id, pause_id } => {
-            app.delete_habit_pause(&id, &pause_id).await?;
-            println!("Pause {pause_id} removed.");
+        ScheduledSpanCommands::Remove { id, span_id } => {
+            app.delete_habit_scheduled_span(&id, &span_id).await?;
+            println!("Scheduled span {span_id} removed.");
         }
     }
     Ok(())

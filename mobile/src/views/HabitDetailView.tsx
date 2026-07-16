@@ -26,7 +26,7 @@ import { showError, logError } from '@/src/api/errors';
 import { parseDepends, parseDependsOn } from '@/src/api/types';
 import type {
   HabitDetail,
-  HabitPauseRow,
+  HabitScheduledSpanRow,
   TaskRow,
   WindowMode,
   RedundantDependency,
@@ -58,7 +58,7 @@ export function HabitDetailView() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [habit, setHabit] = useState<HabitDetail | null>(null);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
-  const [pauses, setPauses] = useState<HabitPauseRow[]>([]);
+  const [spans, setSpans] = useState<HabitScheduledSpanRow[]>([]);
 
   // edit state
   const [editing, setEditing] = useState(false);
@@ -84,12 +84,13 @@ export function HabitDetailView() {
   const [saving, setSaving] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
   const [pickerField, setPickerField] = useState<'start' | 'end' | null>(null);
-  // Pause-add modal state
-  const [showPauseModal, setShowPauseModal] = useState(false);
-  const [pauseFrom, setPauseFrom] = useState<Date | null>(null);
-  const [pauseTo, setPauseTo] = useState<Date | null>(null);
-  const [pauseReason, setPauseReason] = useState('');
-  const [pausePicker, setPausePicker] = useState<'from' | 'to' | null>(null);
+  const [serverTz, setServerTz] = useState<string | undefined>(undefined);
+  // Span-add modal state
+  const [showSpanModal, setShowSpanModal] = useState(false);
+  const [spanFrom, setSpanFrom] = useState<Date | null>(null);
+  const [spanTo, setSpanTo] = useState<Date | null>(null);
+  const [spanReason, setSpanReason] = useState('');
+  const [spanPicker, setSpanPicker] = useState<'from' | 'to' | null>(null);
   // Ref mirror of `editing` so refresh() can skip overwriting unsaved edits
   // when called from menu actions (toggleActive) while editing.
   const editingRef = useRef(false);
@@ -108,8 +109,46 @@ export function HabitDetailView() {
     return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
   }
 
+  // Date → YYYY-MM-DD in the configured timezone (or device timezone).
+  // The server uses the same timezone for its scheduled span date keys.
+  function dateToYMD(d: Date): string {
+    return dateKey(d.toISOString(), serverTz);
+  }
+
+  function todayDateKey(): string {
+    return dateKey(new Date().toISOString(), serverTz);
+  }
+
+  function dateKey(iso: string, tz?: string): string {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso.slice(0, 10);
+    try {
+      const fmt = new Intl.DateTimeFormat('en-CA', {
+        timeZone: tz || undefined,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      });
+      return fmt.format(d);
+    } catch {
+      const y = d.getFullYear();
+      const m = (d.getMonth() + 1).toString().padStart(2, '0');
+      const day = d.getDate().toString().padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+  }
+
   const refresh = useCallback(async () => {
     if (!client || !id) return;
+    try {
+      const settings = await client.getSettings().catch((e) => {
+        logError('設定取得', e);
+        return null;
+      });
+      setServerTz(settings?.tz ?? undefined);
+    } catch {
+      // settings are optional for viewing; keep serverTz as undefined
+    }
     try {
       const h = await client.getHabit(id);
       setHabit(h);
@@ -151,13 +190,13 @@ export function HabitDetailView() {
       showError(e, 'Habitの取得に失敗');
       return;
     }
-    // Fetch pauses (always, even while editing — pause add/delete are
+    // Fetch scheduled spans (always, even while editing — span add/delete are
     // immediate actions outside the edit save flow).
     try {
-      setPauses(await client.listHabitPauses(id));
+      setSpans(await client.listHabitScheduledSpans(id));
     } catch (e) {
-      logError('休止期間の取得', e);
-      setPauses([]);
+      logError('スケジュール済み期間の取得', e);
+      setSpans([]);
     }
     try {
       const allTasks = await client.listTasks({ habit_id: id });
@@ -331,11 +370,13 @@ export function HabitDetailView() {
     // tasks will also be cascade-deleted. Fetch the task list first
     // so the confirmation is accurate and undo can restore them.
     let deletedTasks: TaskRow[];
-    let deletedPauses: HabitPauseRow[];
+    let deletedSpans: HabitScheduledSpanRow[];
     try {
-      [deletedTasks, deletedPauses] = await Promise.all([
+      [deletedTasks, deletedSpans] = await Promise.all([
         client.listTasks({ habit_id: habit.id }),
-        client.listHabitPauses(habit.id).catch(() => [] as HabitPauseRow[]),
+        client
+          .listHabitScheduledSpans(habit.id)
+          .catch(() => [] as HabitScheduledSpanRow[]),
       ]);
     } catch (e) {
       showError(e, 'ハビットのタスク取得に失敗');
@@ -417,9 +458,9 @@ export function HabitDetailView() {
               prev.steps.map(stepRowToDraft),
             );
           }
-          // Restore pauses (#303).
-          for (const p of deletedPauses) {
-            await client.createHabitPause(recreated.id, {
+          // Restore scheduled spans (#303 / #503).
+          for (const p of deletedSpans) {
+            await client.createHabitScheduledSpan(recreated.id, {
               start_date: p.start_date,
               end_date: p.end_date,
               reason: p.reason,
@@ -568,91 +609,95 @@ export function HabitDetailView() {
     await refresh();
   }
 
-  function openPauseModal() {
+  function openSpanModal() {
     setMenuVisible(false);
-    setPauseFrom(null);
-    setPauseTo(null);
-    setPauseReason('');
-    setShowPauseModal(true);
+    setSpanFrom(null);
+    setSpanTo(null);
+    setSpanReason('');
+    setShowSpanModal(true);
   }
 
-  function dateToYMD(d: Date): string {
-    return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
-  }
-
-  async function addPause() {
-    if (!client || !habit || !pauseFrom || !pauseTo) return;
-    if (pauseTo < pauseFrom) {
-      showError('終了日は開始日以降にしてください', '休止期間');
+  async function addSpan() {
+    if (!client || !habit || !spanFrom || !spanTo) return;
+    if (spanTo < spanFrom) {
+      showError(
+        '終了日は開始日以降にしてください',
+        habit.active ? '休止期間' : 'アクティブ期間',
+      );
       return;
     }
     const body = {
-      start_date: dateToYMD(pauseFrom),
-      end_date: dateToYMD(pauseTo),
-      reason: pauseReason.trim() || undefined,
+      start_date: dateToYMD(spanFrom),
+      end_date: dateToYMD(spanTo),
+      reason: spanReason.trim() || undefined,
     };
-    let created: HabitPauseRow;
+    let created: HabitScheduledSpanRow;
     try {
-      created = await client.createHabitPause(habit.id, body);
+      created = await client.createHabitScheduledSpan(habit.id, body);
     } catch (e) {
-      showError(e, '休止期間の追加に失敗');
+      showError(
+        e,
+        habit.active ? '休止期間の追加に失敗' : 'アクティブ期間の追加に失敗',
+      );
       return;
     }
-    setShowPauseModal(false);
-    let currentPauseId = created.id;
+    setShowSpanModal(false);
+    let currentSpanId = created.id;
     undoRedo.push({
-      description: `add pause: ${habit.title}`,
+      description: `add ${habit.active ? 'pause' : 'activation window'}: ${habit.title}`,
       undo: async () => {
-        await client.deleteHabitPause(habit.id, currentPauseId);
+        await client.deleteHabitScheduledSpan(habit.id, currentSpanId);
         await refresh();
       },
       redo: async () => {
-        const recreated = await client.createHabitPause(habit.id, body);
-        currentPauseId = recreated.id;
+        const recreated = await client.createHabitScheduledSpan(habit.id, body);
+        currentSpanId = recreated.id;
         await refresh();
       },
     });
     await refresh();
   }
 
-  async function deletePause(pauseId: string) {
+  async function deleteSpan(spanId: string) {
     if (!client || !habit) return;
-    const prev = pauses.find((p) => p.id === pauseId);
+    const prev = spans.find((p) => p.id === spanId);
     if (!prev) return;
     try {
-      await client.deleteHabitPause(habit.id, pauseId);
+      await client.deleteHabitScheduledSpan(habit.id, spanId);
     } catch (e) {
-      showError(e, '休止期間の削除に失敗');
+      showError(
+        e,
+        habit.active ? '休止期間の削除に失敗' : 'アクティブ期間の削除に失敗',
+      );
       return;
     }
-    let currentPauseId = pauseId;
+    let currentSpanId = spanId;
     undoRedo.push({
-      description: `delete pause: ${habit.title}`,
+      description: `delete ${habit.active ? 'pause' : 'activation window'}: ${habit.title}`,
       undo: async () => {
-        const recreated = await client.createHabitPause(habit.id, {
+        const recreated = await client.createHabitScheduledSpan(habit.id, {
           start_date: prev.start_date,
           end_date: prev.end_date,
           reason: prev.reason,
         });
-        currentPauseId = recreated.id;
+        currentSpanId = recreated.id;
         await refresh();
       },
       redo: async () => {
-        await client.deleteHabitPause(habit.id, currentPauseId);
+        await client.deleteHabitScheduledSpan(habit.id, currentSpanId);
         await refresh();
       },
     });
     await refresh();
   }
 
-  // Is today within a pause period? (for highlighting the active pause.)
-  function pauseIsActive(p: HabitPauseRow): boolean {
-    const today = new Date();
-    const todayStr = dateToYMD(today);
+  // Is today within a scheduled span? (for highlighting the active span.)
+  function spanIsActive(p: HabitScheduledSpanRow): boolean {
+    const todayStr = todayDateKey();
     return p.start_date <= todayStr && todayStr <= p.end_date;
   }
 
-  function formatPauseDate(s: string): string {
+  function formatSpanDate(s: string): string {
     // YYYY-MM-DD → M/D
     const [, m, d] = s.split('-').map((n) => parseInt(n, 10));
     return `${m}/${d}`;
@@ -670,6 +715,18 @@ export function HabitDetailView() {
 
   const hasSteps = stepDrafts.length > 0;
   const showSimpleInfo = !hasSteps || simpleInfoExpanded;
+
+  // Labels for scheduled spans depend on `habit.active` (#503):
+  // active habit → pause, disabled habit → activation window.
+  const spanLabel = habit.active ? '休止期間' : 'アクティブ期間 (scheduled)';
+  const spanAddLabel = habit.active ? '休止期間' : 'アクティブ期間';
+  const spanMenuTitle = habit.active
+    ? '休止期間を追加...'
+    : 'アクティブ期間を追加...';
+  const spanIcon = habit.active
+    ? 'pause-circle-outline'
+    : 'play-circle-outline';
+  const spanActiveColor = habit.active ? COLORS.red : BRAND_COLOR;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
@@ -757,9 +814,9 @@ export function HabitDetailView() {
                 }
               />
               <Menu.Item
-                onPress={openPauseModal}
-                title="休止期間を追加..."
-                leadingIcon="calendar-remove-outline"
+                onPress={openSpanModal}
+                title={spanMenuTitle}
+                leadingIcon={spanIcon}
               />
               <Menu.Item
                 onPress={deleteHabit}
@@ -816,39 +873,40 @@ export function HabitDetailView() {
           )}
         </View>
 
-        {/* Pause periods (#303) */}
+        {/* Scheduled spans (#303 / #503) */}
         <View style={styles.section}>
-          <Text style={[styles.label, { color: colors.gray }]}>休止期間</Text>
-          {pauses.length === 0 ? (
+          <Text style={[styles.label, { color: colors.gray }]}>
+            {spanLabel}
+          </Text>
+          {spans.length === 0 ? (
             <Text style={[styles.value, { color: colors.black }]}>(なし)</Text>
           ) : (
-            pauses.map((p) => (
+            spans.map((p) => (
               <View
                 key={p.id}
                 style={[
-                  styles.pauseRow,
+                  styles.spanRow,
                   {
-                    backgroundColor: pauseIsActive(p)
+                    backgroundColor: spanIsActive(p)
                       ? colors.surfaceTint
                       : colors.surface,
-                    borderColor: pauseIsActive(p)
-                      ? BRAND_COLOR
+                    borderColor: spanIsActive(p)
+                      ? spanActiveColor
                       : colors.separator,
                   },
                 ]}
               >
                 <Ionicons
-                  name="pause-circle-outline"
+                  name={spanIcon}
                   size={18}
-                  color={pauseIsActive(p) ? BRAND_COLOR : colors.gray}
+                  color={spanIsActive(p) ? spanActiveColor : colors.gray}
                 />
-                <Text style={[styles.pauseText, { color: colors.black }]}>
-                  {formatPauseDate(p.start_date)} 〜{' '}
-                  {formatPauseDate(p.end_date)}
+                <Text style={[styles.spanText, { color: colors.black }]}>
+                  {formatSpanDate(p.start_date)} 〜 {formatSpanDate(p.end_date)}
                   {p.reason ? `  ${p.reason}` : ''}
                 </Text>
                 <DeleteConfirmButton
-                  onConfirm={() => deletePause(p.id)}
+                  onConfirm={() => deleteSpan(p.id)}
                   size={34}
                   iconSize={18}
                   hitSlop={8}
@@ -857,11 +915,11 @@ export function HabitDetailView() {
             ))
           )}
           <Pressable
-            style={[styles.addPauseButton, { borderColor: BRAND_COLOR }]}
-            onPress={openPauseModal}
+            style={[styles.addSpanButton, { borderColor: BRAND_COLOR }]}
+            onPress={openSpanModal}
           >
             <Ionicons name="add" size={18} color={BRAND_COLOR} />
-            <Text style={styles.addPauseText}>休止期間を追加</Text>
+            <Text style={styles.addSpanText}>{spanAddLabel}を追加</Text>
           </Pressable>
         </View>
 
@@ -1409,20 +1467,20 @@ export function HabitDetailView() {
         onCancel={() => setPickerField(null)}
       />
 
-      {/* Pause-add modal (#303) */}
+      {/* Scheduled-span add modal (#303 / #503) */}
       <Modal
-        visible={showPauseModal}
+        visible={showSpanModal}
         transparent
         animationType="slide"
-        onRequestClose={() => setShowPauseModal(false)}
+        onRequestClose={() => setShowSpanModal(false)}
       >
         <Pressable
-          style={pauseStyles.overlay}
-          onPress={() => setShowPauseModal(false)}
+          style={spanStyles.overlay}
+          onPress={() => setShowSpanModal(false)}
         >
           <Pressable
             style={[
-              pauseStyles.sheet,
+              spanStyles.sheet,
               {
                 backgroundColor: colors.white,
                 paddingBottom: 24 + insets.bottom,
@@ -1430,84 +1488,84 @@ export function HabitDetailView() {
             ]}
             onPress={(e) => e.stopPropagation()}
           >
-            <View style={pauseStyles.header}>
-              <Text style={[pauseStyles.title, { color: colors.black }]}>
-                休止期間を追加
+            <View style={spanStyles.header}>
+              <Text style={[spanStyles.title, { color: colors.black }]}>
+                {spanAddLabel}を追加
               </Text>
-              <Pressable onPress={() => setShowPauseModal(false)}>
+              <Pressable onPress={() => setShowSpanModal(false)}>
                 <Ionicons name="close" size={24} color={colors.gray} />
               </Pressable>
             </View>
 
             <Pressable
-              style={[pauseStyles.fieldRow, { borderColor: colors.separator }]}
+              style={[spanStyles.fieldRow, { borderColor: colors.separator }]}
               onPress={() => {
                 haptic.select();
-                setPausePicker('from');
+                setSpanPicker('from');
               }}
             >
               <Ionicons name="calendar-outline" size={20} color={BRAND_COLOR} />
-              <Text style={[pauseStyles.fieldLabel, { color: colors.gray }]}>
+              <Text style={[spanStyles.fieldLabel, { color: colors.gray }]}>
                 開始日
               </Text>
-              <Text style={[pauseStyles.fieldValue, { color: colors.black }]}>
-                {pauseFrom ? dateToYMD(pauseFrom) : '選択…'}
+              <Text style={[spanStyles.fieldValue, { color: colors.black }]}>
+                {spanFrom ? dateToYMD(spanFrom) : '選択…'}
               </Text>
             </Pressable>
 
             <Pressable
-              style={[pauseStyles.fieldRow, { borderColor: colors.separator }]}
+              style={[spanStyles.fieldRow, { borderColor: colors.separator }]}
               onPress={() => {
                 haptic.select();
-                setPausePicker('to');
+                setSpanPicker('to');
               }}
             >
               <Ionicons name="calendar-outline" size={20} color={BRAND_COLOR} />
-              <Text style={[pauseStyles.fieldLabel, { color: colors.gray }]}>
+              <Text style={[spanStyles.fieldLabel, { color: colors.gray }]}>
                 終了日
               </Text>
-              <Text style={[pauseStyles.fieldValue, { color: colors.black }]}>
-                {pauseTo ? dateToYMD(pauseTo) : '選択…'}
+              <Text style={[spanStyles.fieldValue, { color: colors.black }]}>
+                {spanTo ? dateToYMD(spanTo) : '選択…'}
               </Text>
             </Pressable>
 
             <PaperTextInput
               mode="outlined"
               label="理由 (任意)"
-              value={pauseReason}
-              onChangeText={setPauseReason}
+              value={spanReason}
+              onChangeText={setSpanReason}
               outlineColor={colors.separator}
               activeOutlineColor={BRAND_COLOR}
               style={{ marginTop: 8 }}
             />
 
-            <View style={pauseStyles.actionRow}>
+            <View style={spanStyles.actionRow}>
               <Pressable
                 style={[
-                  pauseStyles.cancelButton,
+                  spanStyles.cancelButton,
                   { borderColor: colors.separator },
                 ]}
-                onPress={() => setShowPauseModal(false)}
+                onPress={() => setShowSpanModal(false)}
               >
                 <Text
-                  style={[pauseStyles.cancelText, { color: colors.grayDark }]}
+                  style={[spanStyles.cancelText, { color: colors.grayDark }]}
                 >
                   キャンセル
                 </Text>
               </Pressable>
               <Pressable
                 style={[
-                  pauseStyles.confirmButton,
+                  spanStyles.confirmButton,
                   { backgroundColor: BRAND_COLOR },
-                  (!pauseFrom || !pauseTo) && { opacity: 0.4 },
+                  (!spanFrom || !spanTo) && { opacity: 0.4 },
                 ]}
-                disabled={!pauseFrom || !pauseTo}
+                disabled={!spanFrom || !spanTo}
                 onPress={() => {
                   haptic.medium();
-                  addPause();
+                  addSpan();
                 }}
               >
-                <Text style={pauseStyles.confirmText}>追加</Text>
+                <Text style={spanStyles.confirmText}>追加</Text>
               </Pressable>
             </View>
           </Pressable>
@@ -1515,25 +1573,23 @@ export function HabitDetailView() {
       </Modal>
 
       <DateTimePickerModal
-        visible={pausePicker !== null}
+        visible={spanPicker !== null}
         mode="date"
-        label={pausePicker === 'from' ? '開始日' : '終了日'}
+        label={spanPicker === 'from' ? '開始日' : '終了日'}
         value={
-          pausePicker === 'from'
-            ? (pauseFrom ?? new Date())
-            : (pauseTo ?? pauseFrom ?? new Date())
+          spanPicker === 'from'
+            ? (spanFrom ?? new Date())
+            : (spanTo ?? spanFrom ?? new Date())
         }
-        minimumDate={
-          pausePicker === 'to' ? (pauseFrom ?? undefined) : undefined
-        }
+        minimumDate={spanPicker === 'to' ? (spanFrom ?? undefined) : undefined}
         onConfirm={(date) => {
           if (date) {
-            if (pausePicker === 'from') setPauseFrom(date);
-            else setPauseTo(date);
+            if (spanPicker === 'from') setSpanFrom(date);
+            else setSpanTo(date);
           }
-          setPausePicker(null);
+          setSpanPicker(null);
         }}
-        onCancel={() => setPausePicker(null)}
+        onCancel={() => setSpanPicker(null)}
       />
     </View>
   );
@@ -1693,7 +1749,7 @@ const styles = StyleSheet.create({
   sectionDimmed: {
     opacity: 0.45,
   },
-  pauseRow: {
+  spanRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -1703,11 +1759,11 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     marginTop: 4,
   },
-  pauseText: {
+  spanText: {
     flex: 1,
     fontSize: 14,
   },
-  addPauseButton: {
+  addSpanButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1718,7 +1774,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     marginTop: 6,
   },
-  addPauseText: {
+  addSpanText: {
     color: BRAND_COLOR,
     fontSize: 13,
     fontWeight: '500',
@@ -1753,7 +1809,7 @@ const styles = StyleSheet.create({
   },
 });
 
-const pauseStyles = StyleSheet.create({
+const spanStyles = StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.4)',

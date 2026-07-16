@@ -6,8 +6,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use takusu_storage::{
-    CreateHabit, CreateHabitPause, CreateSkill, CreateTask, GoogleCalEventRow,
-    GoogleCalSettingsRow, HabitPauseRow, HabitRow, HabitStepInput, HabitStepRow,
+    CreateHabit, CreateHabitScheduledSpan, CreateSkill, CreateTask, GoogleCalEventRow,
+    GoogleCalSettingsRow, HabitRow, HabitScheduledSpanRow, HabitStepInput, HabitStepRow,
     SaveScheduleRequest, ScheduleRow, SettingsRow, SkillRow, Storage, StorageError, TaskQuery,
     TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateSettings,
     UpdateSkill, UpdateTask, storage::StorageResult,
@@ -309,39 +309,46 @@ impl Storage for WorkersStorage {
         .await
     }
 
-    async fn list_habit_pauses(&self, habit_id: &str) -> StorageResult<Vec<HabitPauseRow>> {
+    async fn list_habit_scheduled_spans(
+        &self,
+        habit_id: &str,
+    ) -> StorageResult<Vec<HabitScheduledSpanRow>> {
         self.request(
             reqwest::Method::GET,
-            &format!("/api/habits/{}/pauses", url_encode(habit_id)),
+            &format!("/api/habits/{}/scheduled-spans", url_encode(habit_id)),
         )
         .await
     }
 
-    async fn list_all_habit_pauses(&self) -> StorageResult<Vec<HabitPauseRow>> {
-        self.request(reqwest::Method::GET, "/api/habits/pauses")
+    async fn list_all_habit_scheduled_spans(&self) -> StorageResult<Vec<HabitScheduledSpanRow>> {
+        self.request(reqwest::Method::GET, "/api/habits/scheduled-spans")
             .await
     }
 
-    async fn create_habit_pause(
+    async fn create_habit_scheduled_span(
         &self,
         habit_id: &str,
-        body: &CreateHabitPause,
-    ) -> StorageResult<HabitPauseRow> {
+        body: &CreateHabitScheduledSpan,
+    ) -> StorageResult<HabitScheduledSpanRow> {
         self.request_body(
             reqwest::Method::POST,
-            &format!("/api/habits/{}/pauses", url_encode(habit_id)),
+            &format!("/api/habits/{}/scheduled-spans", url_encode(habit_id)),
             body,
         )
         .await
     }
 
-    async fn delete_habit_pause(&self, habit_id: &str, pause_id: &str) -> StorageResult<()> {
+    async fn delete_habit_scheduled_span(
+        &self,
+        habit_id: &str,
+        span_id: &str,
+    ) -> StorageResult<()> {
         self.request_no_body(
             reqwest::Method::DELETE,
             &format!(
-                "/api/habits/{}/pauses/{}",
+                "/api/habits/{}/scheduled-spans/{}",
                 url_encode(habit_id),
-                url_encode(pause_id)
+                url_encode(span_id)
             ),
         )
         .await

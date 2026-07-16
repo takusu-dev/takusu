@@ -7,8 +7,8 @@ import type {
   HabitDetail,
   CreateHabit,
   UpdateHabit,
-  HabitPauseRow,
-  CreateHabitPause,
+  HabitScheduledSpanRow,
+  CreateHabitScheduledSpan,
   HabitStepRow,
   HabitStepInput,
   ScheduleRow,
@@ -168,24 +168,27 @@ export class TakusuClient {
     return this.request('DELETE', `/api/habits/${id}`);
   }
 
-  // ── Habit pauses (#303) ──
-  async listHabitPauses(id: string): Promise<HabitPauseRow[]> {
-    return this.request('GET', `/api/habits/${id}/pauses`);
+  // ── Habit scheduled spans (#303 / #503) ──
+  async listHabitScheduledSpans(id: string): Promise<HabitScheduledSpanRow[]> {
+    return this.request('GET', `/api/habits/${id}/scheduled-spans`);
   }
 
-  async listAllHabitPauses(): Promise<HabitPauseRow[]> {
-    return this.request('GET', '/api/habits/pauses');
+  async listAllHabitScheduledSpans(): Promise<HabitScheduledSpanRow[]> {
+    return this.request('GET', '/api/habits/scheduled-spans');
   }
 
-  async createHabitPause(
+  async createHabitScheduledSpan(
     id: string,
-    body: CreateHabitPause,
-  ): Promise<HabitPauseRow> {
-    return this.request('POST', `/api/habits/${id}/pauses`, body);
+    body: CreateHabitScheduledSpan,
+  ): Promise<HabitScheduledSpanRow> {
+    return this.request('POST', `/api/habits/${id}/scheduled-spans`, body);
   }
 
-  async deleteHabitPause(id: string, pauseId: string): Promise<void> {
-    return this.request('DELETE', `/api/habits/${id}/pauses/${pauseId}`);
+  async deleteHabitScheduledSpan(id: string, spanId: string): Promise<void> {
+    return this.request(
+      'DELETE',
+      `/api/habits/${id}/scheduled-spans/${spanId}`,
+    );
   }
 
   // ── Habit steps (#95) ──
