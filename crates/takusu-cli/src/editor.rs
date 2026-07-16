@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::io;
 use std::process::Command;
-use takusu_storage::{HabitRow, TaskRow, UpdateHabit, UpdateTask};
+use takusu_storage::{HabitRow, HabitStepInput, HabitStepRow, TaskRow, UpdateHabit, UpdateTask};
 
 pub fn format_task_for_editing(task: &TaskRow, all_tasks: &[TaskRow]) -> String {
     let depends_uuids: Vec<String> =
@@ -338,6 +338,51 @@ pub fn parse_edited_habit(content: &str) -> Result<UpdateHabit, String> {
     })
 }
 
+fn habit_step_row_to_input(step: &HabitStepRow) -> Result<HabitStepInput, String> {
+    Ok(HabitStepInput {
+        id: Some(step.id.clone()),
+        position: step.position,
+        title: step.title.clone(),
+        description: step.description.clone(),
+        start_time: step.start_time.clone(),
+        end_time: step.end_time.clone(),
+        avg_minutes: step.avg_minutes,
+        sigma_minutes: Some(step.sigma_minutes),
+        parallelizable: Some(step.parallelizable),
+        allows_parallel: Some(step.allows_parallel),
+        abandonability: Some(step.abandonability),
+        fixed: Some(step.fixed),
+        depends_on: serde_json::from_str(&step.depends_on)
+            .map_err(|e| format!("invalid depends_on JSON for step {}: {e}", step.id))?,
+    })
+}
+
+pub fn format_steps_for_editing(steps: &[HabitStepRow]) -> Result<String, String> {
+    let inputs: Vec<HabitStepInput> = steps
+        .iter()
+        .map(habit_step_row_to_input)
+        .collect::<Result<Vec<_>, _>>()?;
+    let json = serde_json::to_string_pretty(&inputs)
+        .map_err(|e| format!("failed to serialize steps: {e}"))?;
+    let mut output = String::from(
+        "// Edit habit steps. Lines starting with // are ignored.\n// Each element is a step object; omit or null 'id' to create a new step.\n",
+    );
+    output.push_str(&json);
+    Ok(output)
+}
+
+pub fn parse_edited_steps(content: &str) -> Result<Vec<HabitStepInput>, String> {
+    let json: String = content
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            !trimmed.is_empty() && !trimmed.starts_with("//")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    serde_json::from_str(&json).map_err(|e| format!("invalid steps JSON: {e}"))
+}
+
 pub fn open_editor(content: &str, suffix: &str) -> io::Result<String> {
     let dir = env::temp_dir();
     let path = dir.join(format!("takusu-edit-{suffix}.txt"));
@@ -457,5 +502,100 @@ mod tests {
         let err = parse_edited_habit(input).unwrap_err();
         assert!(err.contains("active"), "error: {err}");
         assert!(err.contains("maybe"), "error: {err}");
+    }
+
+    // ── Habit steps editor (#95) ───────────────────────────────────────
+
+    #[test]
+    fn parse_edited_steps_ignores_comments_and_empty_lines() {
+        let input = "// header\n[{\"position\": 1, \"title\": \"s\", \"start_time\": \"09:00\", \"end_time\": \"09:30\", \"avg_minutes\": 15}]\n// footer";
+        let steps = parse_edited_steps(input).unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].position, 1);
+        assert_eq!(steps[0].title, "s");
+    }
+
+    #[test]
+    fn parse_edited_steps_round_trips_id_and_optional_fields() {
+        let row = HabitStepRow {
+            id: "step-1".into(),
+            habit_id: "habit-1".into(),
+            position: 2,
+            title: "Prepare".into(),
+            description: Some("get ready".into()),
+            start_time: "09:00".into(),
+            end_time: "09:30".into(),
+            avg_minutes: 15,
+            sigma_minutes: 3,
+            parallelizable: false,
+            allows_parallel: true,
+            abandonability: 0.25,
+            fixed: true,
+            depends_on: "[\"step-0\"]".into(),
+            created_at: "2026-07-16T00:00:00Z".into(),
+        };
+        let formatted = format_steps_for_editing(&[row]).unwrap();
+        let parsed = parse_edited_steps(&formatted).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].id.as_deref(), Some("step-1"));
+        assert_eq!(parsed[0].position, 2);
+        assert_eq!(parsed[0].title, "Prepare");
+        assert_eq!(parsed[0].description.as_deref(), Some("get ready"));
+        assert_eq!(parsed[0].start_time, "09:00");
+        assert_eq!(parsed[0].end_time, "09:30");
+        assert_eq!(parsed[0].avg_minutes, 15);
+        assert_eq!(parsed[0].sigma_minutes, Some(3));
+        assert_eq!(parsed[0].parallelizable, Some(false));
+        assert_eq!(parsed[0].allows_parallel, Some(true));
+        assert_eq!(parsed[0].abandonability, Some(0.25));
+        assert_eq!(parsed[0].fixed, Some(true));
+        assert_eq!(parsed[0].depends_on, vec!["step-0"]);
+    }
+
+    #[test]
+    fn parse_edited_steps_preserves_zero_sigma() {
+        let row = HabitStepRow {
+            id: "step-0".into(),
+            habit_id: "habit-1".into(),
+            position: 1,
+            title: "No variance".into(),
+            description: None,
+            start_time: "09:00".into(),
+            end_time: "09:15".into(),
+            avg_minutes: 15,
+            sigma_minutes: 0,
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: false,
+            depends_on: "[]".into(),
+            created_at: "2026-07-16T00:00:00Z".into(),
+        };
+        let formatted = format_steps_for_editing(&[row]).unwrap();
+        let parsed = parse_edited_steps(&formatted).unwrap();
+        assert_eq!(parsed[0].sigma_minutes, Some(0));
+    }
+
+    #[test]
+    fn format_steps_for_editing_rejects_invalid_depends_on() {
+        let row = HabitStepRow {
+            id: "step-1".into(),
+            habit_id: "habit-1".into(),
+            position: 1,
+            title: "Bad".into(),
+            description: None,
+            start_time: "09:00".into(),
+            end_time: "09:15".into(),
+            avg_minutes: 15,
+            sigma_minutes: 0,
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: false,
+            depends_on: "not-json".into(),
+            created_at: "2026-07-16T00:00:00Z".into(),
+        };
+        let err = format_steps_for_editing(&[row]).unwrap_err();
+        assert!(err.contains("depends_on"), "error: {err}");
     }
 }
