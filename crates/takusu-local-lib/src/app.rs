@@ -8,10 +8,11 @@ use takusu_core::{
     NormalDist, Planner, Point, RescheduleRange, SleepConfig, Task as CoreTask, WorkloadConfig,
 };
 use takusu_storage::{
-    CreateHabit, CreateHabitPause, CreateSkill, CreateTask, GoogleCalEventRow, HabitDetail,
-    HabitPauseRow, HabitRow, HabitStepInput, HabitStepRow, SaveScheduleRequest, ScheduleEntry,
-    ScheduleRow, SettingsRow, SkillRow, Storage, TaskQuery, TaskRow, TokenCreateResponse, TokenRow,
-    UpdateGoogleCalSettings, UpdateHabit, UpdateSettings, UpdateSkill, UpdateTask,
+    CreateHabit, CreateHabitPause, CreateSkill, CreateTask, GoogleCalEventRow,
+    GoogleCalSettingsRow, HabitDetail, HabitPauseRow, HabitRow, HabitStepInput, HabitStepRow,
+    SaveScheduleRequest, ScheduleEntry, ScheduleRow, SettingsRow, SkillRow, Storage, TaskQuery,
+    TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateSettings,
+    UpdateSkill, UpdateTask,
 };
 
 use crate::error::AppError;
@@ -670,6 +671,19 @@ pub struct TakusuApp {
     pub storage: Arc<dyn Storage>,
     pub root_token: String,
     pub token_cache: Arc<TokenCache>,
+}
+
+/// Result of explicitly deleting every mapped Google Calendar event.
+#[derive(Debug, Clone, Serialize)]
+pub struct DeleteAllGcalResult {
+    pub deleted: usize,
+    pub failed: Vec<DeleteAllGcalFailure>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeleteAllGcalFailure {
+    pub task_id: String,
+    pub error: String,
 }
 
 impl TakusuApp {
@@ -1858,30 +1872,114 @@ impl TakusuApp {
             }
             None => {
                 tracing::info!("no active schedule, clearing google calendar events");
-                let mappings = self
-                    .storage
-                    .list_gcal_mappings()
+                let result = self
+                    .delete_all_gcal_events_with_settings(&settings)
                     .await
                     .map_err(|e| e.to_string())?;
-                if mappings.is_empty() {
-                    return Ok(());
+                tracing::info!(
+                    "deleted {} google calendar event(s), {} failure(s)",
+                    result.deleted,
+                    result.failed.len()
+                );
+                if !result.failed.is_empty() {
+                    let summary = result
+                        .failed
+                        .iter()
+                        .map(|f| format!("{}: {}", f.task_id, f.error))
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    return Err(format!(
+                        "google calendar delete all partially failed: {} event(s) could not be deleted: {summary}",
+                        result.failed.len()
+                    ));
                 }
-                let event_ids: Vec<(String, String)> = mappings
-                    .iter()
-                    .map(|m| (m.task_id.clone(), m.google_event_id.clone()))
-                    .collect();
-                client
-                    .delete_all(&event_ids)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                self.storage
-                    .clear_gcal_mappings()
-                    .await
-                    .map_err(|e| e.to_string())?;
-                tracing::info!("cleared {} google calendar events", event_ids.len());
                 Ok(())
             }
         }
+    }
+
+    /// Delete all events that are mapped to the local schedule on Google
+    /// Calendar, then remove the local mappings. This is useful when the
+    /// calendar has drifted or the user wants to clean up imported events
+    /// from the Google side (#598).
+    pub async fn delete_all_gcal_events(&self) -> Result<DeleteAllGcalResult, AppError> {
+        let settings = self
+            .storage
+            .get_gcal_settings()
+            .await
+            .map_err(storage_to_app)?;
+        self.delete_all_gcal_events_with_settings(&settings).await
+    }
+
+    /// Shared implementation used by the explicit delete command and the
+    /// "no active schedule" sync cleanup path.
+    async fn delete_all_gcal_events_with_settings(
+        &self,
+        settings: &GoogleCalSettingsRow,
+    ) -> Result<DeleteAllGcalResult, AppError> {
+        if settings.client_id.is_empty() {
+            return Err(AppError::BadRequest(
+                "google calendar client_id not configured".into(),
+            ));
+        }
+        if settings.client_secret.is_empty() {
+            return Err(AppError::BadRequest(
+                "google calendar client_secret not configured".into(),
+            ));
+        }
+        let refresh_token = settings
+            .refresh_token
+            .as_deref()
+            .filter(|t| !t.is_empty())
+            .ok_or_else(|| {
+                AppError::BadRequest("google calendar refresh token not configured".into())
+            })?;
+
+        let mappings = self
+            .storage
+            .list_gcal_mappings()
+            .await
+            .map_err(storage_to_app)?;
+        if mappings.is_empty() {
+            return Ok(DeleteAllGcalResult {
+                deleted: 0,
+                failed: vec![],
+            });
+        }
+
+        let client = google_cal::Client::new(
+            settings.client_id.clone(),
+            settings.client_secret.clone(),
+            refresh_token.to_string(),
+            settings.calendar_id.clone(),
+        )
+        .map_err(|e| AppError::Internal(format!("failed to create google calendar client: {e}")))?;
+
+        let task_event_pairs: Vec<(String, String)> = mappings
+            .iter()
+            .map(|m| (m.task_id.clone(), m.google_event_id.clone()))
+            .collect();
+
+        let result = client.delete_all(&task_event_pairs).await.map_err(|e| {
+            AppError::Internal(format!("failed to delete google calendar events: {e}"))
+        })?;
+
+        self.storage
+            .delete_gcal_mappings(&result.deleted)
+            .await
+            .map_err(storage_to_app)?;
+
+        Ok(DeleteAllGcalResult {
+            deleted: result.deleted.len(),
+            failed: result
+                .failed
+                .into_iter()
+                .map(|f| DeleteAllGcalFailure {
+                    task_id: f.task_id,
+                    error: f.error,
+                })
+                .collect(),
+        })
     }
 
     // ── Helpers ───────────────────────────────────────────

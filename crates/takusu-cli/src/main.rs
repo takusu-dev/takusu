@@ -582,6 +582,10 @@ enum SyncCommands {
 
     /// Manually trigger Google Calendar sync
     Trigger,
+
+    /// Delete all mapped Google Calendar events and clear local mappings
+    #[command(visible_alias = "cleanup")]
+    DeleteAll,
 }
 
 fn main() {
@@ -1573,6 +1577,16 @@ async fn run_sync(app: &TakusuApp, cmd: SyncCommands) -> Result<(), AppError> {
         SyncCommands::Trigger => {
             app.do_sync().await.map_err(AppError::Internal)?;
             println!("Sync triggered.");
+        }
+        SyncCommands::DeleteAll => {
+            let result = app.delete_all_gcal_events().await?;
+            println!("Deleted {} Google Calendar event(s).", result.deleted);
+            if !result.failed.is_empty() {
+                eprintln!("{} deletion(s) failed:", result.failed.len());
+                for f in &result.failed {
+                    eprintln!("  - {}: {}", f.task_id, f.error);
+                }
+            }
         }
     }
     Ok(())

@@ -711,6 +711,20 @@ impl Client {
         Ok(resp.json().await?)
     }
 
+    pub async fn delete_all_gcal_events(&self) -> Result<DeleteAllGcalResponse, ClientError> {
+        let resp = self
+            .request(reqwest::Method::POST, "/api/sync/delete-all")
+            .await
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
     // ── Settings ──
 
     pub async fn get_settings(&self) -> Result<SettingsResponse, ClientError> {
@@ -1197,6 +1211,18 @@ pub struct SyncSettingsResponse {
     pub client_id: String,
     pub has_client_secret: bool,
     pub has_refresh_token: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteAllGcalResponse {
+    pub deleted: usize,
+    pub failed: Vec<DeleteAllGcalFailure>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteAllGcalFailure {
+    pub task_id: String,
+    pub error: String,
 }
 
 #[derive(Debug, Serialize)]

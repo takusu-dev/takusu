@@ -297,6 +297,16 @@ export interface SyncTriggerResponse {
   status: string;
 }
 
+export interface DeleteAllGcalFailure {
+  task_id: string;
+  error: string;
+}
+
+export interface DeleteAllGcalResponse {
+  deleted: number;
+  failed: DeleteAllGcalFailure[];
+}
+
 export interface GoogleCalEventMapping {
   task_id: string;
   google_event_id: string;

@@ -84,6 +84,10 @@ pub fn router(state: AppState) -> Router {
         .route("/sync/oauth/url", post(handlers::sync::oauth_url))
         .route("/sync/oauth/callback", post(handlers::sync::oauth_callback))
         .route("/sync/trigger", post(handlers::sync::trigger_sync))
+        .route(
+            "/sync/delete-all",
+            post(handlers::sync::delete_all_gcal_events),
+        )
         .route("/sync/mappings", get(handlers::sync::list_mappings))
         .route("/settings", get(handlers::settings::get_settings))
         .route("/settings", put(handlers::settings::update_settings))

@@ -22,6 +22,7 @@ import type {
   GoogleCalSettings,
   UpdateGoogleCalSettings,
   SyncTriggerResponse,
+  DeleteAllGcalResponse,
   GoogleCalEventMapping,
   IcalImportResult,
   DependencyAnalysisResponse,
@@ -268,6 +269,10 @@ export class TakusuClient {
 
   async triggerSync(): Promise<SyncTriggerResponse> {
     return this.request('POST', '/api/sync/trigger');
+  }
+
+  async deleteAllGcalEvents(): Promise<DeleteAllGcalResponse> {
+    return this.request('POST', '/api/sync/delete-all');
   }
 
   async listGcalMappings(): Promise<GoogleCalEventMapping[]> {

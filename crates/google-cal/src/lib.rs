@@ -60,6 +60,12 @@ pub struct SyncResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteAllResult {
+    pub deleted: Vec<String>,
+    pub failed: Vec<SyncFailure>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncFailure {
     pub task_id: String,
     pub operation: String,
@@ -72,6 +78,8 @@ pub struct Client {
     client_secret: String,
     refresh_token: String,
     calendar_id: String,
+    token_url: String,
+    batch_url: String,
 }
 
 pub fn oauth_url(client_id: &str, redirect_uri: &str) -> String {
@@ -143,13 +151,36 @@ impl Client {
             client_secret,
             refresh_token,
             calendar_id,
+            token_url: GOOGLE_TOKEN_URL.to_string(),
+            batch_url: GOOGLE_BATCH_URL.to_string(),
+        })
+    }
+
+    #[cfg(test)]
+    fn with_urls(
+        http: reqwest::Client,
+        client_id: String,
+        client_secret: String,
+        refresh_token: String,
+        calendar_id: String,
+        token_url: String,
+        batch_url: String,
+    ) -> Result<Self> {
+        Ok(Self {
+            http,
+            client_id,
+            client_secret,
+            refresh_token,
+            calendar_id,
+            token_url,
+            batch_url,
         })
     }
 
     async fn refresh_access_token(&self) -> Result<String> {
         let resp = self
             .http
-            .post(GOOGLE_TOKEN_URL)
+            .post(&self.token_url)
             .form(&[
                 ("client_id", self.client_id.as_str()),
                 ("client_secret", self.client_secret.as_str()),
@@ -361,10 +392,13 @@ impl Client {
         })
     }
 
-    pub async fn delete_all(&self, event_ids: &[(String, String)]) -> Result<Vec<String>> {
+    pub async fn delete_all(
+        &self,
+        task_event_pairs: &[(String, String)],
+    ) -> Result<DeleteAllResult> {
         let token = self.refresh_access_token().await?;
 
-        let ops: Vec<BatchOp> = event_ids
+        let ops: Vec<BatchOp> = task_event_pairs
             .iter()
             .map(|(task_id, event_id)| BatchOp::Delete {
                 task_id: task_id.as_str(),
@@ -374,6 +408,7 @@ impl Client {
 
         let results = self.batch_execute(&token, &ops).await?;
         let mut deleted = Vec::new();
+        let mut failed = Vec::new();
         for (i, result) in results.iter().enumerate() {
             let idx = op_index_from_content_id(&result.content_id).unwrap_or(i);
             if let Some(BatchOp::Delete { task_id, .. }) = ops.get(idx) {
@@ -381,12 +416,21 @@ impl Client {
                 {
                     deleted.push(task_id.to_string());
                 } else {
-                    tracing::warn!("failed to delete event: {}", result.status);
+                    tracing::warn!(
+                        "failed to delete event for task {task_id}: {} {}",
+                        result.status,
+                        result.body
+                    );
+                    failed.push(SyncFailure {
+                        task_id: task_id.to_string(),
+                        operation: "delete".to_string(),
+                        error: format!("batch delete ({}): {}", result.status, result.body),
+                    });
                 }
             }
         }
 
-        Ok(deleted)
+        Ok(DeleteAllResult { deleted, failed })
     }
 
     async fn batch_execute(&self, token: &str, ops: &[BatchOp<'_>]) -> Result<Vec<BatchResult>> {
@@ -401,7 +445,7 @@ impl Client {
             let (boundary, body) = self.build_batch_body(chunk, start_idx)?;
             let resp = self
                 .http
-                .post(GOOGLE_BATCH_URL)
+                .post(&self.batch_url)
                 .bearer_auth(token)
                 .header(
                     "Content-Type",
@@ -699,5 +743,192 @@ mod tests {
             Some(4)
         );
         assert_eq!(op_index_from_content_id(""), None);
+    }
+
+    #[tokio::test]
+    async fn delete_all_returns_deleted_task_ids() {
+        let base_url = start_mock_google_server(vec![204, 204]).await;
+        let client = Client::with_urls(
+            reqwest::Client::new(),
+            "client".to_string(),
+            "secret".to_string(),
+            "refresh".to_string(),
+            "primary".to_string(),
+            format!("{base_url}/token"),
+            format!("{base_url}/batch"),
+        )
+        .unwrap();
+
+        let result = client
+            .delete_all(&[
+                ("t1".to_string(), "e1".to_string()),
+                ("t2".to_string(), "e2".to_string()),
+            ])
+            .await
+            .unwrap();
+
+        assert_eq!(result.deleted, vec!["t1", "t2"]);
+        assert!(result.failed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_all_reports_partial_failures() {
+        let base_url = start_mock_google_server(vec![204, 403]).await;
+        let client = Client::with_urls(
+            reqwest::Client::new(),
+            "client".to_string(),
+            "secret".to_string(),
+            "refresh".to_string(),
+            "primary".to_string(),
+            format!("{base_url}/token"),
+            format!("{base_url}/batch"),
+        )
+        .unwrap();
+
+        let result = client
+            .delete_all(&[
+                ("t1".to_string(), "e1".to_string()),
+                ("t2".to_string(), "e2".to_string()),
+            ])
+            .await
+            .unwrap();
+
+        assert_eq!(result.deleted, vec!["t1"]);
+        assert_eq!(result.failed.len(), 1);
+        assert_eq!(result.failed[0].task_id, "t2");
+    }
+
+    #[tokio::test]
+    async fn delete_all_treats_410_as_deleted() {
+        let base_url = start_mock_google_server(vec![410]).await;
+        let client = Client::with_urls(
+            reqwest::Client::new(),
+            "client".to_string(),
+            "secret".to_string(),
+            "refresh".to_string(),
+            "primary".to_string(),
+            format!("{base_url}/token"),
+            format!("{base_url}/batch"),
+        )
+        .unwrap();
+
+        let result = client
+            .delete_all(&[("t1".to_string(), "e1".to_string())])
+            .await
+            .unwrap();
+
+        assert_eq!(result.deleted, vec!["t1"]);
+        assert!(result.failed.is_empty());
+    }
+
+    fn build_batch_multipart_response(boundary: &str, statuses: &[u16]) -> String {
+        let mut body = String::new();
+        for (idx, status) in statuses.iter().enumerate() {
+            let reason = match *status {
+                200 => "OK",
+                204 => "No Content",
+                403 => "Forbidden",
+                410 => "Gone",
+                _ => "",
+            };
+            body.push_str("--");
+            body.push_str(boundary);
+            body.push_str("\r\n");
+            body.push_str("Content-Type: application/http\r\n");
+            body.push_str(&format!("Content-ID: response-item-{idx}\r\n"));
+            body.push_str("\r\n");
+            body.push_str(&format!("HTTP/1.1 {status} {reason}\r\n"));
+            body.push_str("\r\n");
+            body.push_str("\r\n");
+        }
+        body.push_str("--");
+        body.push_str(boundary);
+        body.push_str("--\r\n");
+        body
+    }
+
+    async fn start_mock_google_server(statuses: Vec<u16>) -> String {
+        use std::time::Duration;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let token_body = r#"{"access_token":"test_token","expires_in":3600}"#;
+        let token_response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{token_body}",
+            token_body.len()
+        )
+        .into_bytes();
+        let batch_body = build_batch_multipart_response("test_boundary", &statuses);
+        let batch_response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: multipart/mixed; boundary=test_boundary\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            batch_body.len(),
+            batch_body
+        )
+        .into_bytes();
+
+        tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let token = token_response.clone();
+                let batch = batch_response.clone();
+                tokio::spawn(async move {
+                    let headers = read_http_headers(&mut stream).await;
+                    let req = String::from_utf8_lossy(&headers);
+                    let content_length = parse_content_length(&headers);
+                    if content_length > 0 {
+                        let mut body = vec![0u8; content_length];
+                        let _ = stream.read_exact(&mut body).await;
+                    }
+                    let response: &[u8] = if req.starts_with("POST /token") {
+                        &token
+                    } else if req.starts_with("POST /batch") {
+                        &batch
+                    } else {
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    };
+                    let _ = stream.write_all(response).await;
+                    let _ = stream.flush().await;
+                });
+            }
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        format!("http://{addr}")
+    }
+
+    async fn read_http_headers(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
+        use tokio::io::AsyncReadExt;
+        let mut buf = Vec::new();
+        let mut byte = [0u8; 1];
+        loop {
+            match stream.read(&mut byte).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    buf.push(byte[0]);
+                    if buf.len() >= 4 && &buf[buf.len() - 4..] == b"\r\n\r\n" {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        buf
+    }
+
+    fn parse_content_length(headers: &[u8]) -> usize {
+        let text = String::from_utf8_lossy(headers).to_lowercase();
+        for line in text.lines() {
+            if line.starts_with("content-length:") {
+                return line
+                    .split(':')
+                    .nth(1)
+                    .and_then(|v| v.trim().parse().ok())
+                    .unwrap_or(0);
+            }
+        }
+        0
     }
 }

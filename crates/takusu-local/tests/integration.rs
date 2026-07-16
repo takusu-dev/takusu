@@ -3085,3 +3085,92 @@ async fn generate_schedule_does_not_duplicate_habit_entries() {
     let overlap = unique.intersection(&task_ids).count();
     assert!(overlap > 0, "habit tasks should appear in the schedule");
 }
+
+#[tokio::test]
+async fn delete_all_gcal_events_rejects_unconfigured_settings() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let req = auth_req(Method::POST, "/api/sync/delete-all");
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(
+        body["message"].as_str().unwrap().contains("client_id"),
+        "error should mention missing client_id: {body:?}"
+    );
+}
+
+#[tokio::test]
+async fn delete_all_gcal_events_rejects_missing_client_secret() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let settings_req = auth_req_body(
+        Method::PUT,
+        "/api/sync/settings",
+        json!({
+            "client_id": "fake-client-id",
+            "refresh_token": "fake-refresh-token"
+        }),
+    );
+    app.clone().oneshot(settings_req).await.unwrap();
+
+    let req = auth_req(Method::POST, "/api/sync/delete-all");
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(
+        body["message"].as_str().unwrap().contains("client_secret"),
+        "error should mention missing client_secret: {body:?}"
+    );
+}
+
+#[tokio::test]
+async fn delete_all_gcal_events_rejects_missing_refresh_token() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let settings_req = auth_req_body(
+        Method::PUT,
+        "/api/sync/settings",
+        json!({
+            "client_id": "fake-client-id",
+            "client_secret": "fake-secret"
+        }),
+    );
+    app.clone().oneshot(settings_req).await.unwrap();
+
+    let req = auth_req(Method::POST, "/api/sync/delete-all");
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(
+        body["message"].as_str().unwrap().contains("refresh token"),
+        "error should mention missing refresh_token: {body:?}"
+    );
+}
+
+#[tokio::test]
+async fn delete_all_gcal_events_returns_zero_when_no_mappings() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let settings_req = auth_req_body(
+        Method::PUT,
+        "/api/sync/settings",
+        json!({
+            "client_id": "fake-client-id",
+            "client_secret": "fake-secret",
+            "refresh_token": "fake-refresh-token"
+        }),
+    );
+    app.clone().oneshot(settings_req).await.unwrap();
+
+    let req = auth_req(Method::POST, "/api/sync/delete-all");
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(body["deleted"], 0);
+    assert!(body["failed"].as_array().unwrap().is_empty());
+}
