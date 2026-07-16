@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   PermissionsAndroid,
   Platform,
@@ -62,6 +63,25 @@ export function AgentView() {
   const [recording, setRecording] = useState(false);
   const [audioReady, setAudioReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [keyboardVisible, setKeyboardVisible] = useState(Keyboard.isVisible());
+  const [inputHeight, setInputHeight] = useState(44);
+
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent =
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, () =>
+      setKeyboardVisible(true),
+    );
+    const hideSub = Keyboard.addListener(hideEvent, () =>
+      setKeyboardVisible(false),
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const ensureSession = useCallback(async (): Promise<string> => {
     if (sessionId) return sessionId;
@@ -227,6 +247,7 @@ export function AgentView() {
     const value = text.trim();
     if (!value || busy) return;
     setText('');
+    setInputHeight(44);
     await sendText(value);
   }
 
@@ -296,7 +317,7 @@ export function AgentView() {
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.white }]}
-      behavior="padding"
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <View
         style={[
@@ -469,7 +490,7 @@ export function AgentView() {
           styles.composer,
           {
             borderTopColor: colors.separator,
-            paddingBottom: 12 + insets.bottom,
+            paddingBottom: 12 + (keyboardVisible ? 0 : insets.bottom),
           },
         ]}
       >
@@ -483,15 +504,23 @@ export function AgentView() {
         <TextInput
           style={[
             styles.input,
-            { color: colors.black, borderColor: colors.separator },
+            {
+              color: colors.black,
+              borderColor: colors.separator,
+              height: inputHeight,
+            },
           ]}
           value={text}
           onChangeText={setText}
           placeholder="メッセージ"
           placeholderTextColor={colors.gray}
           editable={!busy}
-          onSubmitEditing={send}
-          returnKeyType="send"
+          multiline
+          textAlignVertical="top"
+          onContentSizeChange={(e) => {
+            const h = e.nativeEvent.contentSize.height;
+            setInputHeight(Math.max(44, Math.min(120, h)));
+          }}
         />
         <Pressable
           disabled={busy || !text.trim()}
