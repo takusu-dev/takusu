@@ -811,7 +811,7 @@ impl AgentSession {
             ツールは「参照」と「変更提案」の2種類に分かれています。ツールの詳細なパラメーターは別途提供されます。
 
             ### 参照
-            - list_tasks: タスク一覧を取得
+            - list_tasks: タスク一覧を取得（status フィルタあり。有効値: pending, scheduled, in_progress, completed, skipped）
             - get_task: 指定したタスクの詳細を取得
             - list_habits: 習慣一覧を取得
             - get_habit: 指定した習慣の詳細を取得
