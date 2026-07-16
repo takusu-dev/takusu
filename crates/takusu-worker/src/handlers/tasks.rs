@@ -362,9 +362,17 @@ async fn resolve_task_id(database: &worker::D1Database, id: &str) -> Result<Stri
             .map(|t| t.id)
             .ok_or_else(|| WorkerError::NotFound(format!("task {id} not found")));
     }
-    // Full UUID
+    // Full UUID — verify it exists before accepting it.
     if id.contains('-') {
-        return Ok(id.to_string());
+        let stmt = database.prepare("SELECT id FROM tasks WHERE id = ?1");
+        let row: Option<IdRow> = stmt
+            .bind(&[JsValue::from_str(id)])?
+            .first(None)
+            .await
+            .map_err(WorkerError::Worker)?;
+        return row
+            .map(|r| r.id)
+            .ok_or_else(|| WorkerError::NotFound(format!("task {id} not found")));
     }
     // UUID prefix — fetch all and filter
     let stmt = database.prepare(select_tasks());
