@@ -1,15 +1,11 @@
 import type {
+  AgentTurnResult,
   ApprovalRequest,
   ApprovalResult,
-  ChangeReceipt,
+  TurnEvent,
 } from './agentTypes';
 
-export interface AgentTurnResult {
-  text: string;
-  changes: ChangeReceipt[];
-  schedule_dirty: boolean;
-  approval_request: ApprovalRequest | null;
-}
+export type { AgentTurnResult };
 
 export interface AgentCapabilities {
   audio_input: boolean;
@@ -80,6 +76,127 @@ export class AgentClient {
       `/api/agent/v1/sessions/${encodeURIComponent(sessionId)}/turns`,
       { version: 1, text, idempotency_key: idempotencyKey },
     );
+  }
+
+  runTurnStream(
+    sessionId: string,
+    text: string,
+    idempotencyKey: string,
+    onEvent: (event: TurnEvent) => void,
+  ): Promise<AgentTurnResult> {
+    return new Promise((resolve, reject) => {
+      const url = `${this.baseUrl}/api/agent/v1/sessions/${encodeURIComponent(sessionId)}/turns/stream`;
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      xhr.setRequestHeader('Authorization', `Bearer ${this.token}`);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.setRequestHeader('Accept', 'text/event-stream');
+
+      let buffer = '';
+      let lastResponseLength = 0;
+      let done = false;
+
+      const parseBlock = (block: string) => {
+        const dataLines: string[] = [];
+        for (const line of block.split('\n')) {
+          const trimmed = line.trimStart();
+          if (trimmed === '' || trimmed.startsWith(':')) {
+            continue;
+          }
+          if (trimmed.startsWith('data:')) {
+            const data = trimmed
+              .slice('data:'.length)
+              .trimStart()
+              .replace(/\r$/u, '');
+            dataLines.push(data);
+          }
+        }
+        if (dataLines.length === 0) {
+          return;
+        }
+        const payload = dataLines.join('\n');
+        if (payload === '[DONE]') {
+          return;
+        }
+        try {
+          const event = JSON.parse(payload) as TurnEvent;
+          if (done) {
+            return;
+          }
+          onEvent(event);
+          if (event.type === 'Done') {
+            done = true;
+            resolve(event.data);
+          }
+        } catch {
+          // Ignore malformed SSE data.
+        }
+      };
+
+      const flush = () => {
+        while (true) {
+          const lf = buffer.indexOf('\n\n');
+          const crlf = buffer.indexOf('\r\n\r\n');
+          let idx: number;
+          let delimLen: number;
+          if (lf === -1 && crlf === -1) {
+            break;
+          } else if (crlf === -1 || (lf !== -1 && lf < crlf)) {
+            idx = lf;
+            delimLen = 2;
+          } else {
+            idx = crlf;
+            delimLen = 4;
+          }
+          const block = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + delimLen);
+          parseBlock(block);
+        }
+      };
+
+      xhr.onprogress = () => {
+        if (xhr.status >= 400) {
+          return;
+        }
+        const response = xhr.responseText ?? '';
+        if (response.length > lastResponseLength) {
+          buffer += response.slice(lastResponseLength);
+          lastResponseLength = response.length;
+          flush();
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 400) {
+          reject(
+            new AgentApiError(xhr.status, xhr.responseText || 'request failed'),
+          );
+          return;
+        }
+        flush();
+        if (buffer.trim().length > 0) {
+          parseBlock(buffer);
+          buffer = '';
+        }
+        if (!done) {
+          reject(new Error('Stream ended without a Done event'));
+        }
+      };
+
+      xhr.onerror = () => {
+        reject(
+          new AgentApiError(xhr.status, xhr.responseText || 'network error'),
+        );
+      };
+
+      xhr.onabort = () => {
+        reject(new Error('Stream aborted'));
+      };
+
+      xhr.send(
+        JSON.stringify({ version: 1, text, idempotency_key: idempotencyKey }),
+      );
+    });
   }
 
   async getApproval(sessionId: string): Promise<ApprovalRequest | null> {

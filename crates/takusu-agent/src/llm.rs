@@ -1,6 +1,9 @@
+use std::collections::BTreeMap;
+use std::pin::Pin;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures_util::{Stream, StreamExt};
 use rand::random;
 use reqwest;
 use serde::{Deserialize, Serialize};
@@ -122,7 +125,7 @@ impl LlmError {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
@@ -174,6 +177,18 @@ pub struct LlmResponse {
 pub enum LlmResponseContent {
     Text(String),
     ToolCalls(Vec<ToolCall>),
+}
+
+/// A single chunk emitted by a streaming chat completion.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LlmStreamEvent {
+    Text(String),
+    Thinking(String),
+    ToolCall(ToolCall),
+    Done {
+        finish_reason: Option<FinishReason>,
+        prompt_tokens: Option<usize>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -261,6 +276,17 @@ impl Message {
 #[async_trait]
 pub trait LlmClient: Send + Sync {
     async fn chat(&self, messages: &[Message], tools: &[Value]) -> Result<LlmResponse, LlmError>;
+
+    async fn chat_stream(
+        &self,
+        _messages: &[Message],
+        _tools: &[Value],
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<LlmStreamEvent, LlmError>> + Send>>, LlmError>
+    {
+        Err(LlmError::Request(
+            "streaming not supported by this client".into(),
+        ))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -349,15 +375,22 @@ impl OpenAIClient {
         Ok(models)
     }
 
-    async fn chat_once(
+    async fn send_request(
         &self,
         messages: &[Message],
         tools: &[Value],
-    ) -> Result<LlmResponse, LlmError> {
+        stream: bool,
+    ) -> Result<reqwest::Response, LlmError> {
         let request = ChatCompletionRequest {
             model: self.model.clone(),
             messages: messages.iter().map(Message::to_openai).collect(),
             tools: tools.to_vec(),
+            stream: if stream { Some(true) } else { None },
+            stream_options: if stream {
+                Some(json!({"include_usage": true}))
+            } else {
+                None
+            },
         };
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
 
@@ -381,23 +414,23 @@ impl OpenAIClient {
             }
         })?;
 
-        self.parse_response(response).await
-    }
-
-    async fn parse_response(&self, response: reqwest::Response) -> Result<LlmResponse, LlmError> {
-        let status = response.status();
-        if !status.is_success() {
+        if !response.status().is_success() {
+            let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            let message = extract_error_message(&text);
-            if status == 429 {
-                return Err(LlmError::RateLimited);
-            }
-            return Err(LlmError::Http {
-                status: status.as_u16(),
-                message,
+            return Err(if status == 429 {
+                LlmError::RateLimited
+            } else {
+                LlmError::Http {
+                    status: status.as_u16(),
+                    message: extract_error_message(&text),
+                }
             });
         }
 
+        Ok(response)
+    }
+
+    async fn parse_response(&self, response: reqwest::Response) -> Result<LlmResponse, LlmError> {
         let body = response
             .json::<ChatCompletionResponse>()
             .await
@@ -445,9 +478,31 @@ impl LlmClient for OpenAIClient {
     async fn chat(&self, messages: &[Message], tools: &[Value]) -> Result<LlmResponse, LlmError> {
         let mut attempt = 0;
         loop {
-            let result = self.chat_once(messages, tools).await;
-            match result {
-                Ok(resp) => return Ok(resp),
+            let response = self.send_request(messages, tools, false).await;
+            match response {
+                Ok(resp) => return self.parse_response(resp).await,
+                Err(e) if e.is_retryable() && attempt < self.max_retries => {
+                    tokio::time::sleep(self.backoff(attempt)).await;
+                    attempt += 1;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    async fn chat_stream(
+        &self,
+        messages: &[Message],
+        tools: &[Value],
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<LlmStreamEvent, LlmError>> + Send>>, LlmError>
+    {
+        let mut attempt = 0;
+        loop {
+            let response = self.send_request(messages, tools, true).await;
+            match response {
+                Ok(resp) => {
+                    return Ok(Box::pin(parse_sse_stream(resp.bytes_stream())));
+                }
                 Err(e) if e.is_retryable() && attempt < self.max_retries => {
                     tokio::time::sleep(self.backoff(attempt)).await;
                     attempt += 1;
@@ -475,6 +530,10 @@ struct ChatCompletionRequest {
     messages: Vec<Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<Value>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -485,10 +544,13 @@ struct ChatCompletionResponse {
 
 #[derive(Deserialize, Debug)]
 struct Usage {
+    #[serde(default)]
     #[allow(dead_code)]
     prompt_tokens: u32,
+    #[serde(default)]
     #[allow(dead_code)]
     completion_tokens: u32,
+    #[serde(default)]
     #[allow(dead_code)]
     total_tokens: u32,
 }
@@ -546,6 +608,302 @@ fn extract_error_message(text: &str) -> String {
         .ok()
         .and_then(|r| r.error.map(|e| e.message))
         .unwrap_or_else(|| text.to_string())
+}
+
+#[derive(Deserialize, Debug)]
+struct ChatCompletionChunk {
+    #[serde(default)]
+    choices: Vec<ChunkChoice>,
+    usage: Option<Usage>,
+}
+
+#[derive(Deserialize, Debug)]
+struct ChunkChoice {
+    #[allow(dead_code)]
+    index: u32,
+    delta: ChunkDelta,
+    finish_reason: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Default)]
+struct ChunkDelta {
+    #[allow(dead_code)]
+    role: Option<String>,
+    content: Option<String>,
+    #[serde(rename = "reasoning_content")]
+    reasoning_content: Option<String>,
+    tool_calls: Option<Vec<ChunkToolCall>>,
+}
+
+#[derive(Deserialize, Debug, Default)]
+struct ChunkToolCall {
+    index: usize,
+    id: Option<String>,
+    #[serde(rename = "type")]
+    #[allow(dead_code)]
+    type_: Option<String>,
+    function: Option<ChunkToolCallFunction>,
+}
+
+#[derive(Deserialize, Debug, Default)]
+struct ChunkToolCallFunction {
+    name: Option<String>,
+    arguments: Option<String>,
+}
+
+#[derive(Debug, Default, Clone)]
+struct PartialToolCall {
+    id: Option<String>,
+    name: Option<String>,
+    arguments: String,
+}
+
+impl PartialToolCall {
+    fn into_tool_call(self) -> Option<ToolCall> {
+        let id = self.id?;
+        let name = self.name?;
+        let arguments = if self.arguments.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_str(&self.arguments).unwrap_or(Value::Null)
+        };
+        Some(ToolCall {
+            id,
+            name,
+            arguments,
+        })
+    }
+}
+
+fn drain_complete_sse_block(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
+    for i in 0..buffer.len().saturating_sub(1) {
+        let delim_len = if &buffer[i..i + 2] == b"\n\n" {
+            2
+        } else if &buffer[i..i + 2] == b"\r\n" && buffer.get(i + 2..i + 4) == Some(b"\r\n") {
+            4
+        } else {
+            continue;
+        };
+        let mut rest = buffer.split_off(i + delim_len);
+        std::mem::swap(buffer, &mut rest);
+        rest.truncate(i);
+        return Some(rest);
+    }
+    None
+}
+
+fn process_sse_block(
+    block: &str,
+    tool_calls: &mut BTreeMap<usize, PartialToolCall>,
+    pending_finish: &mut Option<FinishReason>,
+) -> Vec<Result<LlmStreamEvent, LlmError>> {
+    let mut data_lines = Vec::new();
+    for line in block.split('\n') {
+        let line = line.trim_start();
+        if line.is_empty() || line.starts_with(':') {
+            continue;
+        }
+        if let Some(data) = line.strip_prefix("data:") {
+            let data = data.trim_start_matches(' ').trim_end_matches('\r');
+            data_lines.push(data);
+        }
+    }
+    if data_lines.is_empty() {
+        return Vec::new();
+    }
+    let data = data_lines.join("\n");
+    if data == "[DONE]" {
+        return vec![Ok(LlmStreamEvent::Done {
+            finish_reason: pending_finish.take(),
+            prompt_tokens: None,
+        })];
+    }
+    let chunk: ChatCompletionChunk = match serde_json::from_str(&data) {
+        Ok(c) => c,
+        Err(e) => return vec![Err(LlmError::Parse(e.to_string()))],
+    };
+
+    let mut events = Vec::new();
+    let mut finished = false;
+    let mut finish_reason = None;
+
+    for choice in &chunk.choices {
+        if let Some(content) = choice.delta.content.as_ref()
+            && !content.is_empty()
+        {
+            events.push(Ok(LlmStreamEvent::Text(content.clone())));
+        }
+        if let Some(reasoning) = choice.delta.reasoning_content.as_ref()
+            && !reasoning.is_empty()
+        {
+            events.push(Ok(LlmStreamEvent::Thinking(reasoning.clone())));
+        }
+        if let Some(calls) = choice.delta.tool_calls.as_ref() {
+            for call in calls {
+                let entry = tool_calls.entry(call.index).or_default();
+                if let Some(id) = call.id.as_ref() {
+                    entry.id = Some(id.clone());
+                }
+                if let Some(function) = call.function.as_ref() {
+                    if let Some(name) = function.name.as_ref() {
+                        entry.name = Some(name.clone());
+                    }
+                    if let Some(args) = function.arguments.as_ref() {
+                        entry.arguments.push_str(args);
+                    }
+                }
+            }
+        }
+        if let Some(fr) = choice.finish_reason.as_deref() {
+            finished = true;
+            finish_reason = Some(FinishReason::from(fr));
+        }
+    }
+
+    if finished {
+        if !tool_calls.is_empty() {
+            for (_, partial) in std::mem::take(tool_calls) {
+                if let Some(tc) = partial.into_tool_call() {
+                    events.push(Ok(LlmStreamEvent::ToolCall(tc)));
+                }
+            }
+        }
+        let prompt_tokens = chunk.usage.as_ref().map(|u| u.prompt_tokens as usize);
+        if prompt_tokens.is_some() {
+            events.push(Ok(LlmStreamEvent::Done {
+                finish_reason,
+                prompt_tokens,
+            }));
+        } else {
+            *pending_finish = finish_reason;
+        }
+    } else if chunk.usage.is_some() && chunk.choices.is_empty() {
+        let prompt_tokens = chunk.usage.as_ref().map(|u| u.prompt_tokens as usize);
+        if let Some(finish_reason) = pending_finish.take() {
+            events.push(Ok(LlmStreamEvent::Done {
+                finish_reason: Some(finish_reason),
+                prompt_tokens,
+            }));
+        } else {
+            events.push(Ok(LlmStreamEvent::Done {
+                finish_reason: None,
+                prompt_tokens,
+            }));
+        }
+    }
+
+    events
+}
+
+fn parse_sse_stream<S, B, E>(
+    bytes_stream: S,
+) -> Pin<Box<dyn Stream<Item = Result<LlmStreamEvent, LlmError>> + Send>>
+where
+    S: Stream<Item = Result<B, E>> + Send + Unpin + 'static,
+    B: AsRef<[u8]> + Send,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    use std::collections::VecDeque;
+
+    Box::pin(futures_util::stream::unfold(
+        (
+            bytes_stream,
+            Vec::<u8>::new(),
+            BTreeMap::<usize, PartialToolCall>::new(),
+            VecDeque::<Result<LlmStreamEvent, LlmError>>::new(),
+            Option::<FinishReason>::None,
+        ),
+        async move |(mut stream, mut buffer, mut tool_calls, mut pending, mut pending_finish)| {
+            if let Some(event) = pending.pop_front() {
+                return Some((event, (stream, buffer, tool_calls, pending, pending_finish)));
+            }
+
+            loop {
+                while let Some(block) = drain_complete_sse_block(&mut buffer) {
+                    let block = match String::from_utf8(block) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            return Some((
+                                Err(LlmError::Parse("invalid UTF-8 in SSE data".into())),
+                                (stream, buffer, tool_calls, pending, pending_finish),
+                            ));
+                        }
+                    };
+                    pending.extend(process_sse_block(
+                        &block,
+                        &mut tool_calls,
+                        &mut pending_finish,
+                    ));
+                    if let Some(event) = pending.pop_front() {
+                        return Some((
+                            event,
+                            (stream, buffer, tool_calls, pending, pending_finish),
+                        ));
+                    }
+                }
+
+                match stream.next().await {
+                    Some(Ok(bytes)) => {
+                        buffer.extend_from_slice(bytes.as_ref());
+                    }
+                    Some(Err(e)) => {
+                        return Some((
+                            Err(LlmError::Request(e.to_string())),
+                            (stream, buffer, tool_calls, pending, pending_finish),
+                        ));
+                    }
+                    None => {
+                        // Stream ended; flush any final, undelimited block.
+                        if !buffer.is_empty() {
+                            let block = match String::from_utf8(std::mem::take(&mut buffer)) {
+                                Ok(s) => s,
+                                Err(_) => {
+                                    return Some((
+                                        Err(LlmError::Parse("invalid UTF-8 in SSE data".into())),
+                                        (stream, buffer, tool_calls, pending, pending_finish),
+                                    ));
+                                }
+                            };
+                            if !block.is_empty() {
+                                pending.extend(process_sse_block(
+                                    &block,
+                                    &mut tool_calls,
+                                    &mut pending_finish,
+                                ));
+                            }
+                        }
+
+                        if !tool_calls.is_empty() {
+                            for (_, partial) in std::mem::take(&mut tool_calls) {
+                                if let Some(tc) = partial.into_tool_call() {
+                                    pending.push_back(Ok(LlmStreamEvent::ToolCall(tc)));
+                                }
+                            }
+                            pending.push_back(Ok(LlmStreamEvent::Done {
+                                finish_reason: Some(FinishReason::ToolCalls),
+                                prompt_tokens: None,
+                            }));
+                        } else if let Some(finish_reason) = pending_finish.take() {
+                            pending.push_back(Ok(LlmStreamEvent::Done {
+                                finish_reason: Some(finish_reason),
+                                prompt_tokens: None,
+                            }));
+                        } else if pending.is_empty() {
+                            // Nothing to emit.
+                            return None;
+                        }
+                        if let Some(event) = pending.pop_front() {
+                            return Some((
+                                event,
+                                (stream, buffer, tool_calls, pending, pending_finish),
+                            ));
+                        }
+                        return None;
+                    }
+                }
+            }
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -644,6 +1002,100 @@ mod tests {
         let body: ChatCompletionResponse = serde_json::from_value(json).unwrap();
         let choice = body.choices.into_iter().next().unwrap();
         assert_eq!(choice.message.content.unwrap_or_default(), "");
+    }
+
+    #[tokio::test]
+    async fn parse_sse_stream_buffers_bytes_for_multibyte_utf8() {
+        let event = json!({
+            "choices": [{"index": 0, "delta": {"content": "こんにちは"}, "finish_reason": null}]
+        });
+        let payload = format!("data: {}\n\n", serde_json::to_string(&event).unwrap());
+        let bytes = payload.into_bytes();
+        // Split somewhere inside the multibyte UTF-8 sequence.
+        let split = bytes.len() / 2;
+        let chunks = vec![
+            Ok::<_, std::io::Error>(bytes[..split].to_vec()),
+            Ok(bytes[split..].to_vec()),
+        ];
+        let events = parse_sse_stream(futures_util::stream::iter(chunks))
+            .collect::<Vec<_>>()
+            .await;
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            Ok(LlmStreamEvent::Text(t)) if t == "こんにちは"
+        ));
+    }
+
+    #[tokio::test]
+    async fn parse_sse_stream_merges_usage_chunk_with_finish_reason() {
+        let text_chunk = json!({
+            "choices": [{"index": 0, "delta": {"content": "Hello"}, "finish_reason": "stop"}],
+            "usage": null
+        });
+        let usage_chunk = json!({
+            "choices": [],
+            "usage": {"prompt_tokens": 42}
+        });
+        let payload = format!(
+            "data: {}\r\n\r\ndata: {}\n\n",
+            serde_json::to_string(&text_chunk).unwrap(),
+            serde_json::to_string(&usage_chunk).unwrap()
+        );
+        let bytes = payload.into_bytes();
+        let stream = futures_util::stream::iter(vec![Ok::<_, std::io::Error>(bytes)]);
+        let events = parse_sse_stream(stream).collect::<Vec<_>>().await;
+        assert_eq!(events.len(), 2);
+        assert!(matches!(&events[0], Ok(LlmStreamEvent::Text(t)) if t == "Hello"));
+        assert!(matches!(
+            &events[1],
+            Ok(LlmStreamEvent::Done {
+                finish_reason: Some(FinishReason::Stop),
+                prompt_tokens: Some(42),
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn parse_sse_stream_emits_tool_call_then_done_with_usage() {
+        let tool_chunk = json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_1",
+                        "function": {"name": "echo", "arguments": "{\"message\":\"hi\"}"}
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+        let usage_chunk = json!({
+            "choices": [],
+            "usage": {"prompt_tokens": 7}
+        });
+        let payload = format!(
+            "data: {}\n\ndata: {}\n\n",
+            serde_json::to_string(&tool_chunk).unwrap(),
+            serde_json::to_string(&usage_chunk).unwrap()
+        );
+        let bytes = payload.into_bytes();
+        let stream = futures_util::stream::iter(vec![Ok::<_, std::io::Error>(bytes)]);
+        let events = parse_sse_stream(stream).collect::<Vec<_>>().await;
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            &events[0],
+            Ok(LlmStreamEvent::ToolCall(tc))
+                if tc.id == "call_1" && tc.name == "echo" && tc.arguments == json!({"message": "hi"})
+        ));
+        assert!(matches!(
+            &events[1],
+            Ok(LlmStreamEvent::Done {
+                finish_reason: Some(FinishReason::ToolCalls),
+                prompt_tokens: Some(7),
+            })
+        ));
     }
 
     #[tokio::test]

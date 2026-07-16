@@ -11,6 +11,7 @@ pub use tool::{
     ChangeReceipt, InferredField, ProposedChange, Tool, ToolError, ToolOutput, ToolRegistry,
 };
 
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -137,6 +138,25 @@ pub struct TurnResult {
     pub approval_request: Option<ApprovalRequest>,
 }
 
+/// Events emitted while a streaming turn is in progress.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", content = "data")]
+pub enum TurnEvent {
+    Thinking(String),
+    Text(String),
+    ToolCall {
+        name: String,
+        arguments: Value,
+    },
+    ToolResult {
+        name: String,
+        content: String,
+        is_error: bool,
+    },
+    Error(String),
+    Done(TurnResult),
+}
+
 /// Serialized work turn result. Holds the assistant response text, any change receipts produced
 /// by tool calls, and whether the schedule needs recomputation.
 pub struct AgentSession {
@@ -250,42 +270,141 @@ impl AgentSession {
                     )));
 
                     let is_truncated = response.finish_reason == Some(llm::FinishReason::Length);
-                    for call in calls {
-                        let msg = if is_truncated {
-                            llm::Message::ToolResult {
-                                call_id: call.id,
-                                content: format!(
-                                    "Tool call \"{}\" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.",
-                                    call.name
-                                ),
-                                is_error: true,
-                            }
-                        } else {
-                            match self.registry.call(&call.name, call.arguments.clone()).await {
-                                Ok(output) => {
-                                    if output.why.is_some() {
-                                        approval_why = output.why;
-                                    }
-                                    approval_warnings.extend(output.warnings);
-                                    proposed_changes.extend(output.proposed_changes);
-                                    inferred_fields.extend(output.inferred_fields);
-                                    changes.extend(output.changes);
-                                    schedule_dirty |= output.schedule_dirty;
-                                    llm::Message::ToolResult {
-                                        call_id: call.id,
-                                        content: output.content,
-                                        is_error: output.is_error,
-                                    }
-                                }
-                                Err(e) if e.is_recoverable() => llm::Message::ToolResult {
-                                    call_id: call.id,
-                                    content: e.to_string(),
-                                    is_error: true,
-                                },
-                                Err(e) => return Err(AgentError::Tool(e)),
-                            }
-                        };
-                        local.push(msg);
+                    let tool_results = self
+                        .execute_tool_calls(
+                            calls,
+                            is_truncated,
+                            &mut approval_why,
+                            &mut approval_warnings,
+                            &mut proposed_changes,
+                            &mut inferred_fields,
+                            &mut changes,
+                            &mut schedule_dirty,
+                            |_| {},
+                        )
+                        .await?;
+                    local.extend(tool_results);
+                }
+            }
+        }
+    }
+
+    /// Runs a single agent turn and emits progress events through `emit`.
+    pub async fn run_turn_stream<F>(
+        &self,
+        user_text: &str,
+        mut emit: F,
+    ) -> Result<TurnResult, AgentError>
+    where
+        F: FnMut(TurnEvent),
+    {
+        let _guard = self.turn_lock.lock().await;
+
+        let tools = self.registry.definitions();
+        let system = llm::Message::System(self.build_system_prompt().await);
+
+        let mut local = self.history.lock().unwrap().clone();
+        local.push(llm::Message::User(user_text.to_string()));
+
+        let mut changes = Vec::new();
+        let mut proposed_changes: Vec<ProposedChange> = Vec::new();
+        let mut inferred_fields: Vec<InferredField> = Vec::new();
+        let mut approval_why = None;
+        let mut approval_warnings = Vec::new();
+        let mut schedule_dirty = *self.schedule_dirty.lock().unwrap();
+        let mut tool_call_count = 0;
+
+        loop {
+            if tool_call_count >= self.config.llm.max_tool_calls {
+                self.replace_history(local, None, system.estimate_tokens());
+                return Err(AgentError::TooManyToolCalls);
+            }
+
+            let mut messages = vec![system.clone()];
+            messages.extend(local.clone());
+            let messages = self.trim_messages(messages);
+
+            let mut stream = self
+                .llm
+                .chat_stream(&messages, &tools)
+                .await
+                .map_err(AgentError::Llm)?;
+
+            let mut text = String::new();
+            let mut current_calls = Vec::new();
+
+            while let Some(event) = stream.next().await {
+                let event = event.map_err(AgentError::Llm)?;
+                match event {
+                    llm::LlmStreamEvent::Text(delta) => {
+                        text.push_str(&delta);
+                        emit(TurnEvent::Text(delta));
+                    }
+                    llm::LlmStreamEvent::Thinking(delta) => {
+                        emit(TurnEvent::Thinking(delta));
+                    }
+                    llm::LlmStreamEvent::ToolCall(call) => {
+                        tool_call_count += 1;
+                        if tool_call_count > self.config.llm.max_tool_calls {
+                            self.replace_history(local, None, system.estimate_tokens());
+                            return Err(AgentError::TooManyToolCalls);
+                        }
+                        current_calls.push(call);
+                    }
+                    llm::LlmStreamEvent::Done {
+                        finish_reason,
+                        prompt_tokens,
+                    } => {
+                        *self.last_prompt_tokens.lock().unwrap() = prompt_tokens;
+
+                        if current_calls.is_empty() {
+                            local.push(llm::Message::Assistant(llm::AssistantContent::Text(
+                                text.clone(),
+                            )));
+                            self.replace_history(local, prompt_tokens, system.estimate_tokens());
+                            let approval_request = self.make_approval_request(
+                                proposed_changes,
+                                inferred_fields,
+                                approval_why,
+                                approval_warnings,
+                            );
+                            *self.schedule_dirty.lock().unwrap() = schedule_dirty;
+                            return Ok(TurnResult {
+                                text,
+                                changes,
+                                schedule_dirty,
+                                approval_request,
+                            });
+                        }
+
+                        local.push(llm::Message::Assistant(llm::AssistantContent::ToolCalls(
+                            current_calls.clone(),
+                        )));
+
+                        let is_truncated = finish_reason == Some(llm::FinishReason::Length);
+                        let calls = std::mem::take(&mut current_calls);
+                        for call in &calls {
+                            emit(TurnEvent::ToolCall {
+                                name: call.name.clone(),
+                                arguments: call.arguments.clone(),
+                            });
+                        }
+                        let tool_results = self
+                            .execute_tool_calls(
+                                calls,
+                                is_truncated,
+                                &mut approval_why,
+                                &mut approval_warnings,
+                                &mut proposed_changes,
+                                &mut inferred_fields,
+                                &mut changes,
+                                &mut schedule_dirty,
+                                &mut emit,
+                            )
+                            .await?;
+                        local.extend(tool_results);
+
+                        break;
                     }
                 }
             }
@@ -316,6 +435,92 @@ impl AgentSession {
         };
         *self.pending_approval.lock().unwrap() = Some(request.clone());
         Some(request)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_tool_calls<F>(
+        &self,
+        calls: Vec<llm::ToolCall>,
+        is_truncated: bool,
+        approval_why: &mut Option<String>,
+        approval_warnings: &mut Vec<String>,
+        proposed_changes: &mut Vec<ProposedChange>,
+        inferred_fields: &mut Vec<InferredField>,
+        changes: &mut Vec<ChangeReceipt>,
+        schedule_dirty: &mut bool,
+        mut emit: F,
+    ) -> Result<Vec<llm::Message>, AgentError>
+    where
+        F: FnMut(TurnEvent),
+    {
+        let mut results = Vec::with_capacity(calls.len());
+        for call in calls {
+            let (msg, event) = if is_truncated {
+                let content = format!(
+                    "Tool call \"{}\" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.",
+                    call.name
+                );
+                (
+                    llm::Message::ToolResult {
+                        call_id: call.id,
+                        content: content.clone(),
+                        is_error: true,
+                    },
+                    Some(TurnEvent::ToolResult {
+                        name: call.name.clone(),
+                        content,
+                        is_error: true,
+                    }),
+                )
+            } else {
+                match self.registry.call(&call.name, call.arguments.clone()).await {
+                    Ok(output) => {
+                        if output.why.is_some() {
+                            *approval_why = output.why;
+                        }
+                        approval_warnings.extend(output.warnings);
+                        proposed_changes.extend(output.proposed_changes);
+                        inferred_fields.extend(output.inferred_fields);
+                        changes.extend(output.changes);
+                        *schedule_dirty |= output.schedule_dirty;
+                        let content = output.content.clone();
+                        (
+                            llm::Message::ToolResult {
+                                call_id: call.id,
+                                content: output.content,
+                                is_error: output.is_error,
+                            },
+                            Some(TurnEvent::ToolResult {
+                                name: call.name.clone(),
+                                content,
+                                is_error: output.is_error,
+                            }),
+                        )
+                    }
+                    Err(e) if e.is_recoverable() => {
+                        let content = e.to_string();
+                        (
+                            llm::Message::ToolResult {
+                                call_id: call.id,
+                                content: content.clone(),
+                                is_error: true,
+                            },
+                            Some(TurnEvent::ToolResult {
+                                name: call.name.clone(),
+                                content,
+                                is_error: true,
+                            }),
+                        )
+                    }
+                    Err(e) => return Err(AgentError::Tool(e)),
+                }
+            };
+            if let Some(event) = event {
+                emit(event);
+            }
+            results.push(msg);
+        }
+        Ok(results)
     }
 
     pub fn pending_approval(&self) -> Option<ApprovalRequest> {
@@ -846,6 +1051,7 @@ impl AgentSession {
 mod tests {
     use super::*;
     use serde_json::{Value, json};
+    use std::pin::Pin;
     use std::sync::Mutex;
 
     struct EchoTool {
@@ -929,6 +1135,168 @@ mod tests {
             let resp = self.responses.lock().unwrap().remove(0).clone();
             Ok(resp)
         }
+    }
+
+    struct MockStreamingLlm {
+        calls: Mutex<Vec<(Vec<llm::Message>, Vec<Value>)>>,
+        events: Mutex<Vec<Vec<llm::LlmStreamEvent>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl llm::LlmClient for MockStreamingLlm {
+        async fn chat(
+            &self,
+            _messages: &[llm::Message],
+            _tools: &[Value],
+        ) -> Result<llm::LlmResponse, llm::LlmError> {
+            Err(llm::LlmError::Request("chat not supported".into()))
+        }
+
+        async fn chat_stream(
+            &self,
+            messages: &[llm::Message],
+            tools: &[Value],
+        ) -> Result<
+            Pin<
+                Box<
+                    dyn futures_util::Stream<Item = Result<llm::LlmStreamEvent, llm::LlmError>>
+                        + Send,
+                >,
+            >,
+            llm::LlmError,
+        > {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((messages.to_vec(), tools.to_vec()));
+            let events = self.events.lock().unwrap().remove(0);
+            Ok(Box::pin(futures_util::stream::iter(
+                events.into_iter().map(Ok::<_, llm::LlmError>),
+            )))
+        }
+    }
+
+    #[tokio::test]
+    async fn run_turn_stream_emits_text_and_returns_result() {
+        let registry = ToolRegistry::new();
+        let mock = MockStreamingLlm {
+            calls: Mutex::new(Vec::new()),
+            events: Mutex::new(vec![vec![
+                llm::LlmStreamEvent::Text("今日は会議が2つあります".into()),
+                llm::LlmStreamEvent::Done {
+                    finish_reason: Some(llm::FinishReason::Stop),
+                    prompt_tokens: Some(10),
+                },
+            ]]),
+        };
+
+        let agent = AgentSession::new(AgentConfig::default(), registry, mock);
+        let mut emitted = Vec::new();
+        let result = agent
+            .run_turn_stream("schedule today", |event| emitted.push(event))
+            .await
+            .unwrap();
+
+        assert_eq!(result.text, "今日は会議が2つあります");
+        assert_eq!(emitted.len(), 1);
+        assert!(matches!(emitted[0], TurnEvent::Text(ref t) if t == "今日は会議が2つあります"));
+    }
+
+    #[tokio::test]
+    async fn run_turn_stream_executes_tool_and_emits_tool_calls_and_results() {
+        let calls = std::sync::Arc::new(Mutex::new(0));
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(EchoTool {
+            calls: calls.clone(),
+        }));
+
+        let mock = MockStreamingLlm {
+            calls: Mutex::new(Vec::new()),
+            events: Mutex::new(vec![
+                vec![
+                    llm::LlmStreamEvent::ToolCall(llm::ToolCall {
+                        id: "call_1".into(),
+                        name: "echo".into(),
+                        arguments: json!({"message": "hello"}),
+                    }),
+                    llm::LlmStreamEvent::Done {
+                        finish_reason: Some(llm::FinishReason::ToolCalls),
+                        prompt_tokens: None,
+                    },
+                ],
+                vec![
+                    llm::LlmStreamEvent::Text("done".into()),
+                    llm::LlmStreamEvent::Done {
+                        finish_reason: Some(llm::FinishReason::Stop),
+                        prompt_tokens: Some(5),
+                    },
+                ],
+            ]),
+        };
+
+        let agent = AgentSession::new(AgentConfig::default(), registry, mock);
+        let mut emitted = Vec::new();
+        let result = agent
+            .run_turn_stream("call echo", |event| emitted.push(event))
+            .await
+            .unwrap();
+
+        assert_eq!(result.text, "done");
+        assert_eq!(*calls.lock().unwrap(), 1);
+        assert!(
+            emitted
+                .iter()
+                .any(|e| matches!(e, TurnEvent::ToolCall { name, .. } if name == "echo"))
+        );
+        assert!(
+            emitted
+                .iter()
+                .any(|e| matches!(e, TurnEvent::ToolResult { name, .. } if name == "echo"))
+        );
+    }
+
+    #[tokio::test]
+    async fn run_turn_stream_respects_max_tool_calls() {
+        let mut cfg = AgentConfig::default();
+        cfg.llm.max_tool_calls = 1;
+
+        let calls = std::sync::Arc::new(Mutex::new(0));
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(EchoTool {
+            calls: calls.clone(),
+        }));
+
+        let mock = MockStreamingLlm {
+            calls: Mutex::new(Vec::new()),
+            events: Mutex::new(vec![
+                vec![
+                    llm::LlmStreamEvent::ToolCall(llm::ToolCall {
+                        id: "call_1".into(),
+                        name: "echo".into(),
+                        arguments: json!({"message": "hello"}),
+                    }),
+                    llm::LlmStreamEvent::Done {
+                        finish_reason: Some(llm::FinishReason::ToolCalls),
+                        prompt_tokens: None,
+                    },
+                ],
+                vec![
+                    llm::LlmStreamEvent::ToolCall(llm::ToolCall {
+                        id: "call_2".into(),
+                        name: "echo".into(),
+                        arguments: json!({"message": "again"}),
+                    }),
+                    llm::LlmStreamEvent::Done {
+                        finish_reason: Some(llm::FinishReason::ToolCalls),
+                        prompt_tokens: None,
+                    },
+                ],
+            ]),
+        };
+
+        let agent = AgentSession::new(cfg, registry, mock);
+        let result = agent.run_turn_stream("call echo twice", |_| {}).await;
+        assert!(matches!(result, Err(AgentError::TooManyToolCalls)));
     }
 
     #[tokio::test]

@@ -3860,6 +3860,7 @@ dependencies = [
  "axum",
  "clap",
  "config",
+ "futures-util",
  "jiff",
  "rand 0.10.1",
  "reqwest",
@@ -3870,6 +3871,7 @@ dependencies = [
  "takusu-util",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-stream",
  "toml 0.8.23",
  "uuid",
 ]
