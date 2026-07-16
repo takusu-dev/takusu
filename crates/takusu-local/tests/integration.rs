@@ -2993,3 +2993,95 @@ async fn habit_step_dependency_analysis_empty_when_no_deps() {
     let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
     assert!(body["redundant"].as_array().unwrap().is_empty());
 }
+
+// ── Schedule regression tests (#582) ─────────────────────────────────
+
+#[tokio::test]
+async fn generate_schedule_allows_task_depending_on_done_task() {
+    // A pending task whose dependency is already completed should still be
+    // schedulable; the completed dependency is treated as satisfied.
+    let (state, pool) = setup().await;
+    let app = build_router(state);
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('done', 'done-task', '2030-01-01T18:00:00Z', 30, 0, '[]', 0, 0, 0.5, 'completed')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status) VALUES ('pending', 'pending-task', '2030-01-01T18:00:00Z', 30, 0, '[\"done\"]', 0, 0, 0.5, 'pending')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let gen_req = auth_req_body(
+        Method::POST,
+        "/api/schedule/generate",
+        json!({ "sleep": "disabled" }),
+    );
+    let res = app.clone().oneshot(gen_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let schedule: Vec<serde_json::Value> =
+        serde_json::from_str(body["schedule"].as_str().unwrap()).unwrap();
+    let ids: Vec<&str> = schedule
+        .iter()
+        .map(|e| e["task_id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&"pending"), "pending task should be scheduled");
+    assert!(
+        !ids.contains(&"done"),
+        "completed dependency should not be in schedule"
+    );
+}
+
+#[tokio::test]
+async fn generate_schedule_does_not_duplicate_habit_entries() {
+    // Regenerating a schedule should not create duplicate entries for the same
+    // habit task (#582).
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let habit_id = create_daily_habit(&app, "朝のランニング").await;
+
+    let gen_req = || {
+        auth_req_body(
+            Method::POST,
+            "/api/schedule/generate",
+            json!({ "sleep": "disabled" }),
+        )
+    };
+    let res = app.clone().oneshot(gen_req()).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let res = app.clone().oneshot(gen_req()).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let schedule: Vec<serde_json::Value> =
+        serde_json::from_str(body["schedule"].as_str().unwrap()).unwrap();
+    let ids: Vec<&str> = schedule
+        .iter()
+        .map(|e| e["task_id"].as_str().unwrap())
+        .collect();
+    let unique: std::collections::HashSet<String> = ids.iter().map(|s| s.to_string()).collect();
+    assert_eq!(
+        ids.len(),
+        unique.len(),
+        "schedule should not contain duplicate task ids: {ids:?}"
+    );
+
+    // Sanity check: habit tasks are actually present in the schedule.
+    let list_req = auth_req(Method::GET, &format!("/api/tasks?habit_id={habit_id}"));
+    let res = app.clone().oneshot(list_req).await.unwrap();
+    let tasks: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let task_ids: std::collections::HashSet<String> = tasks
+        .iter()
+        .map(|t| t["id"].as_str().unwrap().to_string())
+        .collect();
+    let overlap = unique.intersection(&task_ids).count();
+    assert!(overlap > 0, "habit tasks should appear in the schedule");
+}
