@@ -25,6 +25,7 @@ interface TakusuServerModuleType extends NativeModule {
   clearLogs(): boolean;
   pushLog(line: string): boolean;
   startModelDownload(modelId: string): boolean;
+  isModelCached(modelId: string): Promise<boolean>;
 }
 
 const TakusuServerModule =

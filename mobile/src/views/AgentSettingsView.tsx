@@ -32,6 +32,23 @@ const MODEL_SIZES: Record<string, string> = {
   'sherpa-sense-voice-int8': '約160 MB',
 };
 
+const MODEL_NAMES: Record<string, string> = {
+  hush: 'Hushノイズ除去',
+  'sherpa-sense-voice-int8': 'SenseVoice音声認識',
+};
+
+function modelButtonLabel(
+  modelId: string,
+  cached: boolean,
+  downloading: boolean,
+): string {
+  const name = MODEL_NAMES[modelId] ?? modelId;
+  if (downloading) {
+    return `${name}を準備中`;
+  }
+  return cached ? `${name}は準備済み` : `${name}を準備`;
+}
+
 function normalizeLlmProvider(p: LlmProviderSettings): LlmProviderSettings {
   return {
     id: p.id,
@@ -85,6 +102,55 @@ export function AgentSettingsView() {
 
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [cachedModels, setCachedModels] = useState<Record<string, boolean>>({});
+  const [downloadingModels, setDownloadingModels] = useState<
+    Record<string, boolean>
+  >({});
+
+  useEffect(() => {
+    let cancelled = false;
+    async function checkCachedModels() {
+      const next: Record<string, boolean> = {};
+      for (const id of Object.keys(MODEL_SIZES)) {
+        try {
+          next[id] = await TakusuServerModule.isModelCached(id);
+        } catch (e) {
+          next[id] = false;
+          console.error('isModelCached failed:', e);
+        }
+      }
+      if (!cancelled) {
+        setCachedModels(next);
+      }
+    }
+    checkCachedModels();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const pending = Object.keys(downloadingModels).filter(
+      (id) => downloadingModels[id],
+    );
+    if (pending.length === 0) {
+      return;
+    }
+    const interval = setInterval(async () => {
+      for (const id of pending) {
+        try {
+          const cached = await TakusuServerModule.isModelCached(id);
+          if (cached) {
+            setCachedModels((prev) => ({ ...prev, [id]: true }));
+            setDownloadingModels((prev) => ({ ...prev, [id]: false }));
+          }
+        } catch (e) {
+          console.error('isModelCached polling failed:', e);
+        }
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [downloadingModels]);
 
   useEffect(() => {
     let cancelled = false;
@@ -310,6 +376,8 @@ export function AgentSettingsView() {
   function startModelDownload(modelId: string) {
     try {
       TakusuServerModule.startModelDownload(modelId);
+      setDownloadingModels((prev) => ({ ...prev, [modelId]: true }));
+      setCachedModels((prev) => ({ ...prev, [modelId]: false }));
       Alert.alert(
         'ダウンロード開始',
         'バックグラウンドで音声モデルを準備します。通知で進捗を確認できます',
@@ -320,6 +388,10 @@ export function AgentSettingsView() {
   }
 
   function promptModelDownload(modelId: string) {
+    if (cachedModels[modelId]) {
+      Alert.alert('準備済み', 'このモデルはすでに準備されています');
+      return;
+    }
     const size = MODEL_SIZES[modelId];
     const message = size
       ? `${size}のデータをダウンロードします。よろしいですか？`
@@ -407,15 +479,32 @@ export function AgentSettingsView() {
       <Text style={[styles.heading, { color: colors.black }]}>音声モデル</Text>
       <Pressable
         onPress={() => promptModelDownload('hush')}
+        disabled={cachedModels['hush'] || downloadingModels['hush']}
         style={styles.secondary}
       >
-        <Text style={{ color: colors.black }}>Hushノイズ除去を準備</Text>
+        <Text style={{ color: colors.black }}>
+          {modelButtonLabel(
+            'hush',
+            cachedModels['hush'] ?? false,
+            downloadingModels['hush'] ?? false,
+          )}
+        </Text>
       </Pressable>
       <Pressable
         onPress={() => promptModelDownload('sherpa-sense-voice-int8')}
+        disabled={
+          cachedModels['sherpa-sense-voice-int8'] ||
+          downloadingModels['sherpa-sense-voice-int8']
+        }
         style={styles.secondary}
       >
-        <Text style={{ color: colors.black }}>SenseVoice音声認識を準備</Text>
+        <Text style={{ color: colors.black }}>
+          {modelButtonLabel(
+            'sherpa-sense-voice-int8',
+            cachedModels['sherpa-sense-voice-int8'] ?? false,
+            downloadingModels['sherpa-sense-voice-int8'] ?? false,
+          )}
+        </Text>
       </Pressable>
 
       <Text style={[styles.heading, { color: colors.black }]}>

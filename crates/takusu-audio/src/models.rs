@@ -135,6 +135,13 @@ impl ModelCache {
         Ok(Self::new(dir))
     }
 
+    /// Check whether a model is already present and complete in the cache.
+    pub fn is_cached(&self, id: &str) -> Result<bool, ModelError> {
+        let spec = ModelRegistry::find(id).ok_or(ModelError::UnknownModel(id.to_string()))?;
+        let model_dir = self.cache_dir.join(spec.id);
+        Ok(model_dir.is_dir() && has_expected_files(&model_dir, spec.expected_files))
+    }
+
     /// Ensure a model is available, downloading it if necessary.
     ///
     /// Returns the path to the extracted model directory.
