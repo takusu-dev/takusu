@@ -46,7 +46,7 @@ pub fn solve(planner: &Planner) -> Plan {
         .unwrap_or_else(|| Plan { schedules: vec![] })
 }
 
-/// pinned が空の場合は solve (sa_lns) に委譲する。
+/// 範囲外のタスク ID は無視し、有効な pinned が空の場合は solve (sa_lns) に委譲する。
 /// sa_lns と sa_lns_partial は pinned_ids のフィルタリング以外は同一アルゴリズムのため、
 /// 空 pinned の場合はオーバーヘッドを避けてフル SA にフォールバック。
 pub fn solve_partial(planner: &Planner, pinned: &[(Point, Point, usize)]) -> Plan {
@@ -54,11 +54,27 @@ pub fn solve_partial(planner: &Planner, pinned: &[(Point, Point, usize)]) -> Pla
         return solve(planner);
     }
 
+    let valid_pinned: Vec<_> = pinned
+        .iter()
+        .filter(|(_, _, id)| *id < planner.tasks.len())
+        .copied()
+        .collect();
+
+    if valid_pinned.is_empty() {
+        return solve(planner);
+    }
+
     let num_chains = rayon::current_num_threads().clamp(1, MAX_CHAINS);
 
     (0..num_chains)
         .into_par_iter()
-        .map(|seed| sa_lns_partial(planner, pinned, &mut StdRng::seed_from_u64(seed as u64)))
+        .map(|seed| {
+            sa_lns_partial(
+                planner,
+                &valid_pinned,
+                &mut StdRng::seed_from_u64(seed as u64),
+            )
+        })
         .max_by(|a, b| {
             evaluate(planner, a, 0.0, 1.0)
                 .partial_cmp(&evaluate(planner, b, 0.0, 1.0))
@@ -122,6 +138,16 @@ mod tests {
         let plan_full = solve(&planner);
         let plan_partial = solve_partial(&planner, &[]);
         assert_eq!(plan_full.schedules.len(), plan_partial.schedules.len());
+    }
+
+    #[test]
+    fn solve_partial_ignores_out_of_range_pinned_ids() {
+        let planner = make_planner(3);
+        let plan = solve(&planner);
+        let mut pinned: Vec<_> = plan.schedules.get(0..1).unwrap_or(&[]).to_vec();
+        pinned.push((Point(0), Point(1), 99));
+        let partial = solve_partial(&planner, &pinned);
+        assert!(!partial.schedules.iter().any(|(_, _, id)| *id == 99));
     }
 
     #[test]
