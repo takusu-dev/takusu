@@ -285,7 +285,7 @@ enum TaskCommands {
     Status { id: String, status: String },
 
     /// Detect and offer to remove redundant (composite) dependency edges (#355)
-    #[command(visible_alias = "deps-check")]
+    #[command(visible_alias = "deps")]
     DepsCheck,
 }
 
