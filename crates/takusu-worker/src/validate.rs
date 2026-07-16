@@ -105,12 +105,23 @@ mod date_strings {
     }
 }
 
-/// Reject negative `avg_minutes` / `sigma_minutes`, which would wrap to a
-/// huge `u64` slot count in the planner and break the schedule (#269).
+/// Reject negative or unrealistically large `avg_minutes` / `sigma_minutes`,
+/// which would wrap to a huge `u64` slot count in the planner and break the
+/// schedule (#269, #604).
 pub(crate) fn validate_minutes(avg: i64, sigma: Option<i64>) -> Result<(), WorkerError> {
+    // Roughly one year in minutes.  This keeps the converted slot count well
+    // within the range where `duration_score`, `total_avg`, and timestamp
+    // arithmetic cannot overflow, while still allowing long-running tasks.
+    const MAX_MINUTES: i64 = 60 * 24 * 365;
+
     if avg < 0 {
         return Err(WorkerError::BadRequest(format!(
             "avg_minutes must be >= 0 (got {avg})"
+        )));
+    }
+    if avg > MAX_MINUTES {
+        return Err(WorkerError::BadRequest(format!(
+            "avg_minutes must be at most {MAX_MINUTES} (got {avg})"
         )));
     }
     if let Some(s) = sigma
@@ -118,6 +129,13 @@ pub(crate) fn validate_minutes(avg: i64, sigma: Option<i64>) -> Result<(), Worke
     {
         return Err(WorkerError::BadRequest(format!(
             "sigma_minutes must be >= 0 (got {s})"
+        )));
+    }
+    if let Some(s) = sigma
+        && s > MAX_MINUTES
+    {
+        return Err(WorkerError::BadRequest(format!(
+            "sigma_minutes must be at most {MAX_MINUTES} (got {s})"
         )));
     }
     Ok(())
@@ -292,6 +310,20 @@ mod tests {
     fn minutes_reject_negative_sigma() {
         assert!(validate_minutes(10, Some(-1)).is_err());
         assert!(validate_minutes(10, Some(0)).is_ok());
+    }
+
+    #[test]
+    fn minutes_reject_excessive_avg() {
+        let max_minutes = 60 * 24 * 365;
+        assert!(validate_minutes(max_minutes, None).is_ok());
+        assert!(validate_minutes(max_minutes + 1, None).is_err());
+    }
+
+    #[test]
+    fn minutes_reject_excessive_sigma() {
+        let max_minutes = 60 * 24 * 365;
+        assert!(validate_minutes(10, Some(max_minutes)).is_ok());
+        assert!(validate_minutes(10, Some(max_minutes + 1)).is_err());
     }
 
     #[test]

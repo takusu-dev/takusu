@@ -88,12 +88,23 @@ fn parse_fixed_offset_timezone(s: &str) -> Option<jiff::tz::TimeZone> {
     Some(jiff::tz::TimeZone::fixed(offset))
 }
 
-/// Reject negative `avg_minutes` / `sigma_minutes`, which would wrap to a
-/// huge `u64` slot count in the planner and break the schedule (#269).
+/// Reject negative or unrealistically large `avg_minutes` / `sigma_minutes`,
+/// which would wrap to a huge `u64` slot count in the planner and break the
+/// schedule (#269, #604).
 fn validate_minutes(avg: i64, sigma: Option<i64>) -> Result<(), AppError> {
+    // Roughly one year in minutes.  This keeps the converted slot count well
+    // within the range where `duration_score`, `total_avg`, and timestamp
+    // arithmetic cannot overflow, while still allowing long-running tasks.
+    const MAX_MINUTES: i64 = 60 * 24 * 365;
+
     if avg < 0 {
         return Err(AppError::BadRequest(format!(
             "avg_minutes must be >= 0 (got {avg})"
+        )));
+    }
+    if avg > MAX_MINUTES {
+        return Err(AppError::BadRequest(format!(
+            "avg_minutes must be at most {MAX_MINUTES} (got {avg})"
         )));
     }
     if let Some(s) = sigma
@@ -101,6 +112,13 @@ fn validate_minutes(avg: i64, sigma: Option<i64>) -> Result<(), AppError> {
     {
         return Err(AppError::BadRequest(format!(
             "sigma_minutes must be >= 0 (got {s})"
+        )));
+    }
+    if let Some(s) = sigma
+        && s > MAX_MINUTES
+    {
+        return Err(AppError::BadRequest(format!(
+            "sigma_minutes must be at most {MAX_MINUTES} (got {s})"
         )));
     }
     Ok(())
@@ -2715,5 +2733,33 @@ mod tests {
         // Pure date string (no time) → first 10 chars as before.
         let d = iso_to_local_date("2026-07-06", &tz);
         assert_eq!(d, "2026-07-06");
+    }
+
+    // ── validate_minutes bounds (#604) ────────────────────────────────
+
+    #[test]
+    fn minutes_reject_negative_avg() {
+        assert!(validate_minutes(-1, None).is_err());
+        assert!(validate_minutes(0, None).is_ok());
+    }
+
+    #[test]
+    fn minutes_reject_negative_sigma() {
+        assert!(validate_minutes(10, Some(-1)).is_err());
+        assert!(validate_minutes(10, Some(0)).is_ok());
+    }
+
+    #[test]
+    fn minutes_reject_excessive_avg() {
+        let max_minutes = 60 * 24 * 365;
+        assert!(validate_minutes(max_minutes, None).is_ok());
+        assert!(validate_minutes(max_minutes + 1, None).is_err());
+    }
+
+    #[test]
+    fn minutes_reject_excessive_sigma() {
+        let max_minutes = 60 * 24 * 365;
+        assert!(validate_minutes(10, Some(max_minutes)).is_ok());
+        assert!(validate_minutes(10, Some(max_minutes + 1)).is_err());
     }
 }
