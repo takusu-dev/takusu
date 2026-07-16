@@ -32,19 +32,23 @@ pub trait Storage: Send + Sync + 'static {
     async fn replace_habit(&self, id: &str, body: &CreateHabit) -> StorageResult<HabitRow>;
     async fn delete_habit(&self, id: &str) -> StorageResult<()>;
 
-    // ── Habit pauses (#303) ───────────────────────────────
-    /// List pause periods for a single habit.
-    async fn list_habit_pauses(&self, habit_id: &str) -> StorageResult<Vec<HabitPauseRow>>;
-    /// List pause periods for all habits (used by sync_habit_tasks).
-    async fn list_all_habit_pauses(&self) -> StorageResult<Vec<HabitPauseRow>>;
-    /// Create a pause period for a habit.
-    async fn create_habit_pause(
+    // ── Habit scheduled spans (#303 / #503) ─────────────────
+    /// List scheduled spans for a single habit.
+    async fn list_habit_scheduled_spans(
         &self,
         habit_id: &str,
-        body: &CreateHabitPause,
-    ) -> StorageResult<HabitPauseRow>;
-    /// Delete a pause period by its id.
-    async fn delete_habit_pause(&self, habit_id: &str, pause_id: &str) -> StorageResult<()>;
+    ) -> StorageResult<Vec<HabitScheduledSpanRow>>;
+    /// List scheduled spans for all habits (used by sync_habit_tasks).
+    async fn list_all_habit_scheduled_spans(&self) -> StorageResult<Vec<HabitScheduledSpanRow>>;
+    /// Create a scheduled span for a habit.
+    async fn create_habit_scheduled_span(
+        &self,
+        habit_id: &str,
+        body: &CreateHabitScheduledSpan,
+    ) -> StorageResult<HabitScheduledSpanRow>;
+    /// Delete a scheduled span by its id.
+    async fn delete_habit_scheduled_span(&self, habit_id: &str, span_id: &str)
+    -> StorageResult<()>;
 
     // ── Habit steps (#95) ─────────────────────────────────
     /// List steps for a single habit, ordered by position.

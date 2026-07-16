@@ -13,7 +13,8 @@ use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 use takusu_local_lib::storage_workers::WorkersStorage;
 use takusu_storage::{
-    CreateTask, Storage, TaskQuery, TaskRow, TokenCreateResponse, TokenRow, UpdateTask,
+    CreateHabit, CreateHabitScheduledSpan, CreateTask, HabitRow, HabitScheduledSpanRow, Storage,
+    TaskQuery, TaskRow, TokenCreateResponse, TokenRow, UpdateHabit, UpdateTask,
 };
 use tokio::net::TcpListener;
 
@@ -42,6 +43,7 @@ async fn setup_mock_db() -> SqlitePool {
         include_str!("../../takusu-local-lib/migrations/008_fixed.sql"),
         include_str!("../../takusu-local-lib/migrations/009_habit_display_id.sql"),
         include_str!("../../takusu-local-lib/migrations/010_habit_pauses.sql"),
+        "ALTER TABLE habit_pauses RENAME TO habit_scheduled_spans; DROP INDEX IF EXISTS idx_habit_pauses_habit; CREATE INDEX IF NOT EXISTS idx_habit_scheduled_spans_habit ON habit_scheduled_spans(habit_id);",
         include_str!("../../takusu-local-lib/migrations/011_habit_steps.sql"),
         include_str!("../../takusu-local-lib/migrations/012_window_mode.sql"),
         include_str!("../../takusu-local-lib/migrations/013_habit_task_display_id.sql"),
@@ -55,6 +57,25 @@ async fn setup_mock_db() -> SqlitePool {
 fn mock_router(state: MockState) -> Router {
     Router::new()
         .route("/api/auth/verify", get(verify))
+        // Habits + scheduled spans: literal segments before parameterized routes
+        // so `scheduled-spans` / `steps` are not treated as a habit id.
+        .route("/api/habits", get(list_habits).post(create_habit))
+        .route(
+            "/api/habits/scheduled-spans",
+            get(list_all_habit_scheduled_spans),
+        )
+        .route(
+            "/api/habits/{id}",
+            get(get_habit).patch(update_habit).delete(delete_habit),
+        )
+        .route(
+            "/api/habits/{id}/scheduled-spans",
+            get(list_habit_scheduled_spans).post(create_habit_scheduled_span),
+        )
+        .route(
+            "/api/habits/{id}/scheduled-spans/{span_id}",
+            delete(delete_habit_scheduled_span),
+        )
         .route("/api/tasks", get(list_tasks).post(create_task))
         .route(
             "/api/tasks/{id}",
@@ -368,6 +389,240 @@ async fn revoke_token(
     .execute(&state.pool)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if result.rows_affected() == 0 {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Resolve a habit reference (`h<N>`, full UUID, or UUID prefix) to its full
+/// UUID, mirroring the local storage helper.
+async fn resolve_habit_id(pool: &SqlitePool, id: &str) -> Result<String, StatusCode> {
+    if let Some(rest) = id.strip_prefix(['h', 'H'])
+        && let Ok(num) = rest.parse::<i64>()
+    {
+        return sqlx::query_scalar::<_, String>("SELECT id FROM habits WHERE display_id = ?")
+            .bind(num)
+            .fetch_optional(pool)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND);
+    }
+    if id.contains('-') {
+        let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM habits WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if exists {
+            return Ok(id.to_string());
+        }
+    }
+    let matches: Vec<String> = sqlx::query_scalar("SELECT id FROM habits WHERE id LIKE ? || '%'")
+        .bind(id)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    match matches.len() {
+        0 => Err(StatusCode::NOT_FOUND),
+        1 => Ok(matches.into_iter().next().unwrap()),
+        _ => Err(StatusCode::BAD_REQUEST),
+    }
+}
+
+async fn list_habits(State(state): State<MockState>) -> Json<Vec<HabitRow>> {
+    let rows: Vec<HabitRow> = sqlx::query_as::<_, HabitRow>(
+        "SELECT id, display_id, title, description, recurrence, start_time, end_time, \
+         avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, \
+         active, fixed, window_mode, created_at, updated_at \
+         FROM habits ORDER BY display_id, created_at DESC",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    Json(rows)
+}
+
+async fn get_habit(
+    State(state): State<MockState>,
+    Path(id): Path<String>,
+) -> Result<Json<HabitRow>, StatusCode> {
+    let full = resolve_habit_id(&state.pool, &id).await?;
+    let row: Option<HabitRow> = sqlx::query_as::<_, HabitRow>(
+        "SELECT id, display_id, title, description, recurrence, start_time, end_time, \
+         avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, \
+         active, fixed, window_mode, created_at, updated_at \
+         FROM habits WHERE id = ?",
+    )
+    .bind(&full)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    row.map(Json).ok_or(StatusCode::NOT_FOUND)
+}
+
+async fn create_habit(
+    State(state): State<MockState>,
+    Json(body): Json<CreateHabit>,
+) -> Result<(StatusCode, Json<HabitRow>), StatusCode> {
+    let id = uuid::Uuid::now_v7().to_string();
+    let sigma = body.sigma_minutes.unwrap_or((body.avg_minutes / 5).max(1));
+    let parallelizable = body.parallelizable.unwrap_or(false);
+    let allows_parallel = body.allows_parallel.unwrap_or(false);
+    let abandonability = body.abandonability.unwrap_or(0.5);
+    let fixed = body.fixed.unwrap_or(false);
+    let window_mode = body.window_mode.as_deref().unwrap_or("day");
+    sqlx::query(
+        "INSERT INTO habits (id, title, description, recurrence, start_time, end_time, \
+         avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, \
+         active, fixed, window_mode, display_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
+         (SELECT COALESCE(MAX(display_id), 0) + 1 FROM habits))",
+    )
+    .bind(&id)
+    .bind(&body.title)
+    .bind(&body.description)
+    .bind(&body.recurrence)
+    .bind(&body.start_time)
+    .bind(&body.end_time)
+    .bind(body.avg_minutes)
+    .bind(sigma)
+    .bind(parallelizable)
+    .bind(allows_parallel)
+    .bind(abandonability)
+    .bind(true)
+    .bind(fixed)
+    .bind(window_mode)
+    .execute(&state.pool)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    get_habit(State(state.clone()), Path(id.clone()))
+        .await
+        .map(|row| (StatusCode::CREATED, row))
+}
+
+async fn update_habit(
+    State(state): State<MockState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateHabit>,
+) -> Result<Json<HabitRow>, StatusCode> {
+    let full = resolve_habit_id(&state.pool, &id).await?;
+    sqlx::query(
+        "UPDATE habits SET \
+         title=COALESCE(?1,title), description=COALESCE(?2,description), \
+         recurrence=COALESCE(?3,recurrence), start_time=COALESCE(?4,start_time), \
+         end_time=COALESCE(?5,end_time), avg_minutes=COALESCE(?6,avg_minutes), \
+         sigma_minutes=COALESCE(?7,sigma_minutes), \
+         parallelizable=COALESCE(?8,parallelizable), \
+         allows_parallel=COALESCE(?9,allows_parallel), \
+         abandonability=COALESCE(?10,abandonability), active=COALESCE(?11,active), \
+         fixed=COALESCE(?12,fixed), window_mode=COALESCE(?13,window_mode), \
+         updated_at=datetime('now') WHERE id=?14",
+    )
+    .bind(body.title.as_deref())
+    .bind(body.description.as_deref())
+    .bind(body.recurrence.as_deref())
+    .bind(body.start_time.as_deref())
+    .bind(body.end_time.as_deref())
+    .bind(body.avg_minutes)
+    .bind(body.sigma_minutes)
+    .bind(body.parallelizable)
+    .bind(body.allows_parallel)
+    .bind(body.abandonability)
+    .bind(body.active)
+    .bind(body.fixed)
+    .bind(body.window_mode.as_deref())
+    .bind(&full)
+    .execute(&state.pool)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    get_habit(State(state), Path(full)).await
+}
+
+async fn delete_habit(
+    State(state): State<MockState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    let full = resolve_habit_id(&state.pool, &id).await?;
+    let result = sqlx::query("DELETE FROM habits WHERE id = ?")
+        .bind(&full)
+        .execute(&state.pool)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if result.rows_affected() == 0 {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_all_habit_scheduled_spans(
+    State(state): State<MockState>,
+) -> Json<Vec<HabitScheduledSpanRow>> {
+    let rows: Vec<HabitScheduledSpanRow> = sqlx::query_as::<_, HabitScheduledSpanRow>(
+        "SELECT * FROM habit_scheduled_spans ORDER BY habit_id, start_date, created_at",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    Json(rows)
+}
+
+async fn list_habit_scheduled_spans(
+    State(state): State<MockState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<HabitScheduledSpanRow>>, StatusCode> {
+    let full = resolve_habit_id(&state.pool, &id).await?;
+    let rows: Vec<HabitScheduledSpanRow> = sqlx::query_as::<_, HabitScheduledSpanRow>(
+        "SELECT * FROM habit_scheduled_spans WHERE habit_id = ? ORDER BY start_date, created_at",
+    )
+    .bind(&full)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(rows))
+}
+
+async fn create_habit_scheduled_span(
+    State(state): State<MockState>,
+    Path(id): Path<String>,
+    Json(body): Json<CreateHabitScheduledSpan>,
+) -> Result<(StatusCode, Json<HabitScheduledSpanRow>), StatusCode> {
+    let full = resolve_habit_id(&state.pool, &id).await?;
+    let span_id = uuid::Uuid::now_v7().to_string();
+    sqlx::query(
+        "INSERT INTO habit_scheduled_spans \
+         (id, habit_id, start_date, end_date, reason, created_at) \
+         VALUES (?, ?, ?, ?, ?, datetime('now'))",
+    )
+    .bind(&span_id)
+    .bind(&full)
+    .bind(&body.start_date)
+    .bind(&body.end_date)
+    .bind(&body.reason)
+    .execute(&state.pool)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let row: HabitScheduledSpanRow = sqlx::query_as::<_, HabitScheduledSpanRow>(
+        "SELECT * FROM habit_scheduled_spans WHERE id = ?",
+    )
+    .bind(&span_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok((StatusCode::CREATED, Json(row)))
+}
+
+async fn delete_habit_scheduled_span(
+    State(state): State<MockState>,
+    Path((id, span_id)): Path<(String, String)>,
+) -> Result<StatusCode, StatusCode> {
+    let full = resolve_habit_id(&state.pool, &id).await?;
+    let result = sqlx::query("DELETE FROM habit_scheduled_spans WHERE id = ? AND habit_id = ?")
+        .bind(&span_id)
+        .bind(&full)
+        .execute(&state.pool)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if result.rows_affected() == 0 {
         return Err(StatusCode::NOT_FOUND);
     }

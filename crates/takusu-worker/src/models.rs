@@ -203,9 +203,13 @@ pub struct UpdateHabit {
     pub window_mode: Option<String>,
 }
 
-/// A pause period that suppresses task generation for a habit (#303).
+/// A scheduled span for a habit (#303 / #503).
+///
+/// Effect depends on `habits.active`:
+/// - active habit: span dates suppress task generation (a pause).
+/// - disabled habit: span dates enable task generation (an activation window).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HabitPauseRow {
+pub struct HabitScheduledSpanRow {
     pub id: String,
     pub habit_id: String,
     pub start_date: String,
@@ -215,7 +219,7 @@ pub struct HabitPauseRow {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct CreateHabitPause {
+pub struct CreateHabitScheduledSpan {
     pub start_date: String,
     pub end_date: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

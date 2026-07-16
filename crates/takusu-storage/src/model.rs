@@ -226,11 +226,16 @@ pub struct UpdateHabit {
     pub window_mode: Option<String>,
 }
 
-/// A pause period that suppresses task generation for a habit (#303).
+/// A scheduled span for a habit (#503).
+///
+/// Its effect depends on `habits.active`:
+/// - `active = true`: the span suppresses task generation (a pause).
+/// - `active = false`: the span enables task generation (an activation window).
+///
 /// `start_date` / `end_date` are inclusive `YYYY-MM-DD` strings in the
 /// user's local timezone.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct HabitPauseRow {
+pub struct HabitScheduledSpanRow {
     pub id: String,
     pub habit_id: String,
     pub start_date: String,
@@ -240,7 +245,7 @@ pub struct HabitPauseRow {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct CreateHabitPause {
+pub struct CreateHabitScheduledSpan {
     pub start_date: String,
     pub end_date: String,
     #[serde(skip_serializing_if = "Option::is_none")]

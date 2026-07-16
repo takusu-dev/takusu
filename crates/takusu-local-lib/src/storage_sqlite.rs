@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 use takusu_storage::{
-    CreateHabit, CreateHabitPause, CreateSkill, CreateTask, GoogleCalEventRow,
-    GoogleCalSettingsRow, HabitPauseRow, HabitRow, HabitStepInput, HabitStepRow,
+    CreateHabit, CreateHabitScheduledSpan, CreateSkill, CreateTask, GoogleCalEventRow,
+    GoogleCalSettingsRow, HabitRow, HabitScheduledSpanRow, HabitStepInput, HabitStepRow,
     SaveScheduleRequest, ScheduleRow, SettingsRow, SkillRow, Storage, StorageError, TaskQuery,
     TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateSettings,
     UpdateSkill, UpdateTask, storage::StorageResult,
@@ -191,9 +191,36 @@ impl SqliteStorage {
         // Backfill + index + sequence table (idempotent statements).
         sqlx::raw_sql(MIGRATION_009_BACKFILL).execute(&pool).await?;
 
-        // Migration 010 creates the habit_pauses table (idempotent — uses
+        // Migration 010 creates the legacy habit_pauses table (idempotent — uses
         // IF NOT EXISTS for both the table and the index).
         sqlx::raw_sql(MIGRATION_010).execute(&pool).await?;
+
+        // Rename the legacy habit_pauses table to habit_scheduled_spans (#503).
+        // This runs once per database and is idempotent: it only acts when the
+        // old table exists and the new one does not.
+        let has_old_habit_pauses: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='habit_pauses'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        let has_new_habit_scheduled_spans: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='habit_scheduled_spans'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        if has_old_habit_pauses && !has_new_habit_scheduled_spans {
+            sqlx::query("ALTER TABLE habit_pauses RENAME TO habit_scheduled_spans")
+                .execute(&pool)
+                .await?;
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS idx_habit_scheduled_spans_habit ON habit_scheduled_spans(habit_id)",
+            )
+            .execute(&pool)
+            .await?;
+            sqlx::query("DROP INDEX IF EXISTS idx_habit_pauses_habit")
+                .execute(&pool)
+                .await?;
+        }
 
         // Migration 011 creates the habit_steps table (idempotent) and adds
         // tasks.habit_step_id (not idempotent — guarded by a column check).
@@ -674,9 +701,9 @@ impl Storage for SqliteStorage {
             .execute(&mut *tx)
             .await
             .map_err(map_err)?;
-        // habit_pauses: same reason as above — FK cascade does not fire
+        // habit_scheduled_spans: same reason as above — FK cascade does not fire
         // without PRAGMA foreign_keys = ON, so delete explicitly (#303).
-        sqlx::query("DELETE FROM habit_pauses WHERE habit_id = ?")
+        sqlx::query("DELETE FROM habit_scheduled_spans WHERE habit_id = ?")
             .bind(&full)
             .execute(&mut *tx)
             .await
@@ -704,10 +731,13 @@ impl Storage for SqliteStorage {
         Ok(())
     }
 
-    async fn list_habit_pauses(&self, habit_id: &str) -> StorageResult<Vec<HabitPauseRow>> {
+    async fn list_habit_scheduled_spans(
+        &self,
+        habit_id: &str,
+    ) -> StorageResult<Vec<HabitScheduledSpanRow>> {
         let full = resolve_habit_id(&self.pool, habit_id).await?;
-        sqlx::query_as::<_, HabitPauseRow>(
-            "SELECT * FROM habit_pauses WHERE habit_id = ? ORDER BY start_date ASC, created_at ASC",
+        sqlx::query_as::<_, HabitScheduledSpanRow>(
+            "SELECT * FROM habit_scheduled_spans WHERE habit_id = ? ORDER BY start_date ASC, created_at ASC",
         )
         .bind(&full)
         .fetch_all(&self.pool)
@@ -715,26 +745,26 @@ impl Storage for SqliteStorage {
         .map_err(map_err)
     }
 
-    async fn list_all_habit_pauses(&self) -> StorageResult<Vec<HabitPauseRow>> {
-        sqlx::query_as::<_, HabitPauseRow>(
-            "SELECT * FROM habit_pauses ORDER BY habit_id, start_date ASC, created_at ASC",
+    async fn list_all_habit_scheduled_spans(&self) -> StorageResult<Vec<HabitScheduledSpanRow>> {
+        sqlx::query_as::<_, HabitScheduledSpanRow>(
+            "SELECT * FROM habit_scheduled_spans ORDER BY habit_id, start_date ASC, created_at ASC",
         )
         .fetch_all(&self.pool)
         .await
         .map_err(map_err)
     }
 
-    async fn create_habit_pause(
+    async fn create_habit_scheduled_span(
         &self,
         habit_id: &str,
-        body: &CreateHabitPause,
-    ) -> StorageResult<HabitPauseRow> {
-        validate_pause_dates(&body.start_date, &body.end_date)?;
+        body: &CreateHabitScheduledSpan,
+    ) -> StorageResult<HabitScheduledSpanRow> {
+        validate_scheduled_span_dates(&body.start_date, &body.end_date)?;
         let full = resolve_habit_id(&self.pool, habit_id).await?;
         let id = uuid::Uuid::now_v7().to_string();
         let now = jiff::Timestamp::now().to_string();
         sqlx::query(
-            "INSERT INTO habit_pauses (id, habit_id, start_date, end_date, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO habit_scheduled_spans (id, habit_id, start_date, end_date, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&full)
@@ -745,24 +775,30 @@ impl Storage for SqliteStorage {
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
-        sqlx::query_as::<_, HabitPauseRow>("SELECT * FROM habit_pauses WHERE id = ?")
-            .bind(&id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_err)
+        sqlx::query_as::<_, HabitScheduledSpanRow>(
+            "SELECT * FROM habit_scheduled_spans WHERE id = ?",
+        )
+        .bind(&id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_err)
     }
 
-    async fn delete_habit_pause(&self, habit_id: &str, pause_id: &str) -> StorageResult<()> {
+    async fn delete_habit_scheduled_span(
+        &self,
+        habit_id: &str,
+        span_id: &str,
+    ) -> StorageResult<()> {
         let full = resolve_habit_id(&self.pool, habit_id).await?;
-        let result = sqlx::query("DELETE FROM habit_pauses WHERE id = ? AND habit_id = ?")
-            .bind(pause_id)
+        let result = sqlx::query("DELETE FROM habit_scheduled_spans WHERE id = ? AND habit_id = ?")
+            .bind(span_id)
             .bind(&full)
             .execute(&self.pool)
             .await
             .map_err(map_err)?;
         if result.rows_affected() == 0 {
             return Err(StorageError::NotFound(format!(
-                "pause {pause_id} not found for habit {habit_id}"
+                "scheduled span {span_id} not found for habit {habit_id}"
             )));
         }
         Ok(())
@@ -1311,8 +1347,8 @@ async fn resolve_depends(pool: &SqlitePool, deps: Option<&[String]>) -> StorageR
 }
 
 /// Validate that `start` and `end` are real `YYYY-MM-DD` calendar dates and
-/// that `start <= end`. Mirrors the worker-side `validate_pause_dates`.
-fn validate_pause_dates(start: &str, end: &str) -> Result<(), StorageError> {
+/// that `start <= end`. Mirrors the worker-side `validate_scheduled_span_dates`.
+fn validate_scheduled_span_dates(start: &str, end: &str) -> Result<(), StorageError> {
     let s = parse_calendar_date(start)
         .ok_or_else(|| StorageError::BadRequest(format!("invalid start_date: {start}")))?;
     let e = parse_calendar_date(end)

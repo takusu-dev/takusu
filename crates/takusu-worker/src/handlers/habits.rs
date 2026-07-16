@@ -7,11 +7,11 @@ use crate::handlers::auth::db;
 use crate::handlers::d1::safe_all;
 use crate::handlers::tokens::{json_created, json_ok, parse_json};
 use crate::models::{
-    CreateHabit, CreateHabitPause, HabitDetail, HabitPauseRow, HabitRow, HabitStepInput,
-    HabitStepRow, UpdateHabit,
+    CreateHabit, CreateHabitScheduledSpan, HabitDetail, HabitRow, HabitScheduledSpanRow,
+    HabitStepInput, HabitStepRow, UpdateHabit,
 };
 use crate::validate::{
-    validate_minutes, validate_pause_dates, validate_recurrence, validate_steps,
+    validate_minutes, validate_recurrence, validate_scheduled_span_dates, validate_steps,
     validate_window_mode,
 };
 
@@ -227,14 +227,14 @@ pub async fn delete(_req: worker::Request, env: Env, id: &str) -> Result<Respons
     // enforces FKs so the ON DELETE CASCADE would handle it, but the
     // explicit delete is harmless and keeps parity with the sqlite
     // path (which does not enable PRAGMA foreign_keys).
-    // habit_pauses follows the same rationale (#303).
+    // habit_scheduled_spans follows the same rationale (#303).
     let stmts = vec![
         database.prepare("DELETE FROM google_cal_events WHERE task_id IN (SELECT id FROM tasks WHERE habit_id = ?1)").bind(&[JsValue::from_str(&full)])?,
         database
             .prepare("DELETE FROM tasks WHERE habit_id = ?1")
             .bind(&[JsValue::from_str(&full)])?,
         database
-            .prepare("DELETE FROM habit_pauses WHERE habit_id = ?1")
+            .prepare("DELETE FROM habit_scheduled_spans WHERE habit_id = ?1")
             .bind(&[JsValue::from_str(&full)])?,
         database
             .prepare("DELETE FROM habit_steps WHERE habit_id = ?1")
@@ -306,11 +306,11 @@ struct DisplayIdRow {
     display_id: i64,
 }
 
-// ── Habit pauses (#303) ────────────────────────────────────────────────
+// ── Habit scheduled spans (#303 / #503) ────────────────────────────────
 
-const PAUSE_COLS: &str = "id, habit_id, start_date, end_date, reason, created_at";
+const SCHEDULED_SPAN_COLS: &str = "id, habit_id, start_date, end_date, reason, created_at";
 
-pub async fn list_pauses(
+pub async fn list_scheduled_spans(
     _req: worker::Request,
     env: Env,
     id: &str,
@@ -318,36 +318,40 @@ pub async fn list_pauses(
     let database = db(&env)?;
     let full = resolve_habit_id(&database, id).await?;
     let stmt = database.prepare(format!(
-        "SELECT {PAUSE_COLS} FROM habit_pauses WHERE habit_id = ?1 ORDER BY start_date ASC, created_at ASC"
+        "SELECT {SCHEDULED_SPAN_COLS} FROM habit_scheduled_spans WHERE habit_id = ?1 ORDER BY start_date ASC, created_at ASC"
     ));
-    let rows: Vec<HabitPauseRow> = safe_all(&stmt.bind(&[JsValue::from_str(&full)])?).await?;
+    let rows: Vec<HabitScheduledSpanRow> =
+        safe_all(&stmt.bind(&[JsValue::from_str(&full)])?).await?;
     json_ok(&rows)
 }
 
-pub async fn list_all_pauses(_req: worker::Request, env: Env) -> Result<Response, WorkerError> {
+pub async fn list_all_scheduled_spans(
+    _req: worker::Request,
+    env: Env,
+) -> Result<Response, WorkerError> {
     let database = db(&env)?;
     let stmt = database.prepare(format!(
-        "SELECT {PAUSE_COLS} FROM habit_pauses ORDER BY habit_id, start_date ASC, created_at ASC"
+        "SELECT {SCHEDULED_SPAN_COLS} FROM habit_scheduled_spans ORDER BY habit_id, start_date ASC, created_at ASC"
     ));
-    let rows: Vec<HabitPauseRow> = safe_all(&stmt).await?;
+    let rows: Vec<HabitScheduledSpanRow> = safe_all(&stmt).await?;
     json_ok(&rows)
 }
 
-pub async fn create_pause(
+pub async fn create_scheduled_span(
     mut req: worker::Request,
     env: Env,
     id: &str,
 ) -> Result<Response, WorkerError> {
-    let body: CreateHabitPause = parse_json(&mut req).await?;
-    validate_pause_dates(&body.start_date, &body.end_date)?;
+    let body: CreateHabitScheduledSpan = parse_json(&mut req).await?;
+    validate_scheduled_span_dates(&body.start_date, &body.end_date)?;
     let database = db(&env)?;
     let full = resolve_habit_id(&database, id).await?;
-    let pause_id = uuid::Uuid::now_v7().to_string();
+    let span_id = uuid::Uuid::now_v7().to_string();
     let stmt = database.prepare(
-        "INSERT INTO habit_pauses (id, habit_id, start_date, end_date, reason, created_at) VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
+        "INSERT INTO habit_scheduled_spans (id, habit_id, start_date, end_date, reason, created_at) VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
     );
     stmt.bind(&[
-        JsValue::from_str(&pause_id),
+        JsValue::from_str(&span_id),
         JsValue::from_str(&full),
         JsValue::from_str(&body.start_date),
         JsValue::from_str(&body.end_date),
@@ -359,21 +363,22 @@ pub async fn create_pause(
     .run()
     .await
     .map_err(WorkerError::Worker)?;
-    let row = select_one_pause(&database, &pause_id).await?;
+    let row = select_one_scheduled_span(&database, &span_id).await?;
     json_created(&row)
 }
 
-pub async fn delete_pause(
+pub async fn delete_scheduled_span(
     _req: worker::Request,
     env: Env,
     id: &str,
-    pause_id: &str,
+    span_id: &str,
 ) -> Result<Response, WorkerError> {
     let database = db(&env)?;
     let full = resolve_habit_id(&database, id).await?;
-    let stmt = database.prepare("DELETE FROM habit_pauses WHERE id = ?1 AND habit_id = ?2");
+    let stmt =
+        database.prepare("DELETE FROM habit_scheduled_spans WHERE id = ?1 AND habit_id = ?2");
     let result = stmt
-        .bind(&[JsValue::from_str(pause_id), JsValue::from_str(&full)])?
+        .bind(&[JsValue::from_str(span_id), JsValue::from_str(&full)])?
         .run()
         .await
         .map_err(WorkerError::Worker)?;
@@ -384,25 +389,25 @@ pub async fn delete_pause(
         .unwrap_or(0);
     if affected == 0 {
         return Err(WorkerError::NotFound(format!(
-            "pause {pause_id} not found for habit {id}"
+            "scheduled span {span_id} not found for habit {id}"
         )));
     }
     Ok(Response::empty()?)
 }
 
-async fn select_one_pause(
+async fn select_one_scheduled_span(
     database: &worker::D1Database,
-    pause_id: &str,
-) -> Result<HabitPauseRow, WorkerError> {
+    span_id: &str,
+) -> Result<HabitScheduledSpanRow, WorkerError> {
     let stmt = database.prepare(format!(
-        "SELECT {PAUSE_COLS} FROM habit_pauses WHERE id = ?1"
+        "SELECT {SCHEDULED_SPAN_COLS} FROM habit_scheduled_spans WHERE id = ?1"
     ));
-    let row: Option<HabitPauseRow> = stmt
-        .bind(&[JsValue::from_str(pause_id)])?
+    let row: Option<HabitScheduledSpanRow> = stmt
+        .bind(&[JsValue::from_str(span_id)])?
         .first(None)
         .await
         .map_err(WorkerError::Worker)?;
-    row.ok_or_else(|| WorkerError::Internal("inserted pause not found".into()))
+    row.ok_or_else(|| WorkerError::Internal("inserted scheduled span not found".into()))
 }
 
 // ── Habit steps (#95) ────────────────────────────────────────────────────

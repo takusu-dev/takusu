@@ -1,8 +1,11 @@
--- Habit pause periods (#303).
--- A pause suppresses task generation for a habit during a (start_date,
--- end_date) range (inclusive, user-tz local YYYY-MM-DD). Multiple pauses
--- per habit are allowed. Pauses are independent of the habit's `active`
--- flag — an inactive habit generates nothing regardless of pauses.
+-- Legacy habit pause periods (#303).
+-- This migration creates the original `habit_pauses` table. The table is
+-- renamed to `habit_scheduled_spans` by migration `016` (#503).
+--
+-- Semantics after rename depend on `habits.active`:
+-- - `active = true`: span dates suppress task generation (a pause).
+-- - `active = false`: only span dates enable task generation (an activation
+--   window); dates outside the span generate nothing.
 CREATE TABLE IF NOT EXISTS habit_pauses (
     id         TEXT PRIMARY KEY,
     habit_id   TEXT NOT NULL REFERENCES habits(id) ON DELETE CASCADE,

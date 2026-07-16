@@ -121,12 +121,14 @@ export interface UpdateHabit {
   window_mode?: string;
 }
 
-// ── Habit pauses (#303) ──
-// A pause period suppresses task generation for a habit.
+// ── Habit scheduled spans (#303 / #503) ──
+// Effect depends on `habits.active`:
+// - active habit: span dates suppress task generation (a pause).
+// - disabled habit: span dates enable task generation (an activation window).
 // start_date / end_date are inclusive 'YYYY-MM-DD' strings in the user's
 // local timezone.
 
-export interface HabitPauseRow {
+export interface HabitScheduledSpanRow {
   id: string;
   habit_id: string;
   start_date: string;
@@ -135,7 +137,7 @@ export interface HabitPauseRow {
   created_at: string;
 }
 
-export interface CreateHabitPause {
+export interface CreateHabitScheduledSpan {
   start_date: string;
   end_date: string;
   reason?: string;

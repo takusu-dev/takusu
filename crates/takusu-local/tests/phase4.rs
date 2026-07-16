@@ -21,10 +21,11 @@ use takusu_local_lib::app::TakusuApp;
 use takusu_local_lib::storage_workers::WorkersStorage;
 use takusu_local_lib::token_cache::TokenCache;
 use takusu_storage::{
-    CreateHabit, CreateHabitPause, CreateTask, GoogleCalEventRow, GoogleCalSettingsRow,
-    HabitPauseRow, HabitRow, HabitStepInput, HabitStepRow, SaveScheduleRequest, ScheduleRow,
-    SettingsRow, Storage, StorageError, TaskQuery, TaskRow, TokenCreateResponse, TokenRow,
-    UpdateGoogleCalSettings, UpdateHabit, UpdateSettings, UpdateTask, storage::StorageResult,
+    CreateHabit, CreateHabitScheduledSpan, CreateTask, GoogleCalEventRow, GoogleCalSettingsRow,
+    HabitRow, HabitScheduledSpanRow, HabitStepInput, HabitStepRow, SaveScheduleRequest,
+    ScheduleRow, SettingsRow, Storage, StorageError, TaskQuery, TaskRow, TokenCreateResponse,
+    TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateSettings, UpdateTask,
+    storage::StorageResult,
 };
 use tokio::net::TcpListener;
 use tower::ServiceExt;
@@ -112,20 +113,23 @@ impl Storage for CountingStorage {
     async fn delete_habit(&self, _id: &str) -> StorageResult<()> {
         Ok(())
     }
-    async fn list_habit_pauses(&self, _id: &str) -> StorageResult<Vec<HabitPauseRow>> {
-        Ok(vec![])
-    }
-    async fn list_all_habit_pauses(&self) -> StorageResult<Vec<HabitPauseRow>> {
-        Ok(vec![])
-    }
-    async fn create_habit_pause(
+    async fn list_habit_scheduled_spans(
         &self,
         _id: &str,
-        _b: &CreateHabitPause,
-    ) -> StorageResult<HabitPauseRow> {
+    ) -> StorageResult<Vec<HabitScheduledSpanRow>> {
+        Ok(vec![])
+    }
+    async fn list_all_habit_scheduled_spans(&self) -> StorageResult<Vec<HabitScheduledSpanRow>> {
+        Ok(vec![])
+    }
+    async fn create_habit_scheduled_span(
+        &self,
+        _id: &str,
+        _b: &CreateHabitScheduledSpan,
+    ) -> StorageResult<HabitScheduledSpanRow> {
         Err(StorageError::Internal("n/a".into()))
     }
-    async fn delete_habit_pause(&self, _id: &str, _pause_id: &str) -> StorageResult<()> {
+    async fn delete_habit_scheduled_span(&self, _id: &str, _span_id: &str) -> StorageResult<()> {
         Ok(())
     }
     async fn list_habit_steps(&self, _id: &str) -> StorageResult<Vec<HabitStepRow>> {

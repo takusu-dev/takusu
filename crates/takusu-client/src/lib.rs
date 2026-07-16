@@ -319,43 +319,54 @@ impl Client {
         Ok(())
     }
 
-    // ── Habit pauses (#303) ──
+    // ── Habit scheduled spans (#303 / #503) ──
 
-    pub async fn list_habit_pauses(&self, id: &str) -> Result<Vec<HabitPauseRow>, ClientError> {
-        let resp = self
-            .request(reqwest::Method::GET, &format!("/api/habits/{id}/pauses"))
-            .await
-            .send()
-            .await?;
-        let status = resp.status().as_u16();
-        if status >= 400 {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(ClientError::Api { status, body });
-        }
-        Ok(resp.json().await?)
-    }
-
-    pub async fn list_all_habit_pauses(&self) -> Result<Vec<HabitPauseRow>, ClientError> {
-        let resp = self
-            .request(reqwest::Method::GET, "/api/habits/pauses")
-            .await
-            .send()
-            .await?;
-        let status = resp.status().as_u16();
-        if status >= 400 {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(ClientError::Api { status, body });
-        }
-        Ok(resp.json().await?)
-    }
-
-    pub async fn create_habit_pause(
+    pub async fn list_habit_scheduled_spans(
         &self,
         id: &str,
-        body: &CreateHabitPause,
-    ) -> Result<HabitPauseRow, ClientError> {
+    ) -> Result<Vec<HabitScheduledSpanRow>, ClientError> {
         let resp = self
-            .request(reqwest::Method::POST, &format!("/api/habits/{id}/pauses"))
+            .request(
+                reqwest::Method::GET,
+                &format!("/api/habits/{id}/scheduled-spans"),
+            )
+            .await
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn list_all_habit_scheduled_spans(
+        &self,
+    ) -> Result<Vec<HabitScheduledSpanRow>, ClientError> {
+        let resp = self
+            .request(reqwest::Method::GET, "/api/habits/scheduled-spans")
+            .await
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn create_habit_scheduled_span(
+        &self,
+        id: &str,
+        body: &CreateHabitScheduledSpan,
+    ) -> Result<HabitScheduledSpanRow, ClientError> {
+        let resp = self
+            .request(
+                reqwest::Method::POST,
+                &format!("/api/habits/{id}/scheduled-spans"),
+            )
             .await
             .json(body)
             .send()
@@ -368,11 +379,15 @@ impl Client {
         Ok(resp.json().await?)
     }
 
-    pub async fn delete_habit_pause(&self, id: &str, pause_id: &str) -> Result<(), ClientError> {
+    pub async fn delete_habit_scheduled_span(
+        &self,
+        id: &str,
+        span_id: &str,
+    ) -> Result<(), ClientError> {
         let resp = self
             .request(
                 reqwest::Method::DELETE,
-                &format!("/api/habits/{id}/pauses/{pause_id}"),
+                &format!("/api/habits/{id}/scheduled-spans/{span_id}"),
             )
             .await
             .send()
@@ -1020,9 +1035,13 @@ pub struct UpdateHabit {
     pub window_mode: Option<String>,
 }
 
-/// A pause period that suppresses task generation for a habit (#303).
+/// A scheduled span for a habit (#303 / #503).
+///
+/// Effect depends on `habits.active`:
+/// - active habit: span dates suppress task generation (a pause).
+/// - disabled habit: span dates enable task generation (an activation window).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HabitPauseRow {
+pub struct HabitScheduledSpanRow {
     pub id: String,
     pub habit_id: String,
     pub start_date: String,
@@ -1032,7 +1051,7 @@ pub struct HabitPauseRow {
 }
 
 #[derive(Debug, Serialize)]
-pub struct CreateHabitPause {
+pub struct CreateHabitScheduledSpan {
     pub start_date: String,
     pub end_date: String,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -2,8 +2,8 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use takusu_storage::{
-    CreateHabit, CreateHabitPause, HabitDetail, HabitPauseRow, HabitRow, HabitStepInput,
-    HabitStepRow, UpdateHabit,
+    CreateHabit, CreateHabitScheduledSpan, HabitDetail, HabitRow, HabitScheduledSpanRow,
+    HabitStepInput, HabitStepRow, UpdateHabit,
 };
 
 use crate::error::HttpError;
@@ -56,41 +56,41 @@ pub async fn delete_habit(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ── Habit pauses (#303) ────────────────────────────────────────────────
+// ── Habit scheduled spans (#303 / #503) ────────────────────────────────
 
-pub async fn list_habit_pauses(
+pub async fn list_habit_scheduled_spans(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<Vec<HabitPauseRow>>, HttpError> {
-    let pauses = state.app.list_habit_pauses(&id).await?;
-    Ok(Json(pauses))
+) -> Result<Json<Vec<HabitScheduledSpanRow>>, HttpError> {
+    let spans = state.app.list_habit_scheduled_spans(&id).await?;
+    Ok(Json(spans))
 }
 
-pub async fn list_all_habit_pauses(
+pub async fn list_all_habit_scheduled_spans(
     State(state): State<AppState>,
-) -> Result<Json<Vec<HabitPauseRow>>, HttpError> {
-    let pauses = state
+) -> Result<Json<Vec<HabitScheduledSpanRow>>, HttpError> {
+    let spans = state
         .app
-        .list_all_habit_pauses()
+        .list_all_habit_scheduled_spans()
         .await
         .map_err(HttpError::from)?;
-    Ok(Json(pauses))
+    Ok(Json(spans))
 }
 
-pub async fn create_habit_pause(
+pub async fn create_habit_scheduled_span(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(body): Json<CreateHabitPause>,
-) -> Result<(StatusCode, Json<HabitPauseRow>), HttpError> {
-    let pause = state.app.create_habit_pause(&id, &body).await?;
-    Ok((StatusCode::CREATED, Json(pause)))
+    Json(body): Json<CreateHabitScheduledSpan>,
+) -> Result<(StatusCode, Json<HabitScheduledSpanRow>), HttpError> {
+    let span = state.app.create_habit_scheduled_span(&id, &body).await?;
+    Ok((StatusCode::CREATED, Json(span)))
 }
 
-pub async fn delete_habit_pause(
+pub async fn delete_habit_scheduled_span(
     State(state): State<AppState>,
-    Path((id, pause_id)): Path<(String, String)>,
+    Path((id, span_id)): Path<(String, String)>,
 ) -> Result<StatusCode, HttpError> {
-    state.app.delete_habit_pause(&id, &pause_id).await?;
+    state.app.delete_habit_scheduled_span(&id, &span_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

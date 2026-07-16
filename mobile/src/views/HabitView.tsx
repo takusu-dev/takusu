@@ -18,7 +18,7 @@ import type { TakusuClient } from '@/src/api/client';
 import { showError, logError } from '@/src/api/errors';
 import { parseDepends } from '@/src/api/types';
 import type {
-  HabitPauseRow,
+  HabitScheduledSpanRow,
   HabitRow,
   HabitStepRow,
   TaskRow,
@@ -32,6 +32,32 @@ import { undoRedo } from '@/src/api/undoRedo';
 import { parseRule, summarizeRule } from '@/src/api/rrule';
 import { stepRowToDraft, saveHabitSteps } from '@/src/utils/habitSteps';
 
+/// Convert a UTC ISO timestamp to a YYYY-MM-DD string in the configured
+/// timezone (or the device timezone if none is provided). Matches the server
+/// side `sync_habit_tasks` date keys so active span checks are consistent.
+function dateKey(iso: string, tz?: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso.slice(0, 10);
+  try {
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz || undefined,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    return fmt.format(d);
+  } catch {
+    const y = d.getFullYear();
+    const m = (d.getMonth() + 1).toString().padStart(2, '0');
+    const day = d.getDate().toString().padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+}
+
+function todayDateKey(tz?: string): string {
+  return dateKey(new Date().toISOString(), tz);
+}
+
 interface HabitViewProps {
   client: TakusuClient | null;
 }
@@ -43,25 +69,30 @@ export function HabitView({ client }: HabitViewProps) {
   const [habits, setHabits] = useState<HabitRow[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  // Badge data: step counts per habit id, and active pause per habit id.
+  // Badge data: step counts per habit id, and active scheduled span per habit id.
   const [stepCounts, setStepCounts] = useState<Map<string, number>>(new Map());
-  const [activePauses, setActivePauses] = useState<Map<string, HabitPauseRow>>(
-    new Map(),
-  );
+  const [activeSpans, setActiveSpans] = useState<
+    Map<string, HabitScheduledSpanRow>
+  >(new Map());
+  const [spanHabits, setSpanHabits] = useState<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
     if (!client) return;
     setRefreshing(true);
     try {
-      const [habitsData, allSteps, allPauses] = await Promise.all([
+      const [habitsData, allSteps, allSpans, settings] = await Promise.all([
         client.listHabits(),
         client.listAllHabitSteps().catch((e) => {
           logError('ステップ一覧取得', e);
           return [];
         }),
-        client.listAllHabitPauses().catch((e) => {
-          logError('休止期間一覧取得', e);
+        client.listAllHabitScheduledSpans().catch((e) => {
+          logError('スケジュール済み期間一覧取得', e);
           return [];
+        }),
+        client.getSettings().catch((e) => {
+          logError('設定取得', e);
+          return null;
         }),
       ]);
       setHabits(habitsData);
@@ -71,20 +102,22 @@ export function HabitView({ client }: HabitViewProps) {
         counts.set(s.habit_id, (counts.get(s.habit_id) ?? 0) + 1);
       }
       setStepCounts(counts);
-      // Build active-pause map: a pause whose [start, end] contains today.
-      const today = new Date();
-      const todayStr = `${today.getFullYear()}-${(today.getMonth() + 1).toString().padStart(2, '0')}-${today.getDate().toString().padStart(2, '0')}`;
-      const active = new Map<string, HabitPauseRow>();
-      for (const p of allPauses) {
-        if (p.start_date <= todayStr && todayStr <= p.end_date) {
-          // Keep the latest-ending active pause if multiple.
-          const prev = active.get(p.habit_id);
-          if (!prev || p.end_date > prev.end_date) {
-            active.set(p.habit_id, p);
+      // Build active-span map: a span whose [start, end] contains today.
+      const todayStr = todayDateKey(settings?.tz ?? undefined);
+      const active = new Map<string, HabitScheduledSpanRow>();
+      const spanHabitsSet = new Set<string>();
+      for (const s of allSpans) {
+        spanHabitsSet.add(s.habit_id);
+        if (s.start_date <= todayStr && todayStr <= s.end_date) {
+          // Keep the latest-ending active span if multiple.
+          const prev = active.get(s.habit_id);
+          if (!prev || s.end_date > prev.end_date) {
+            active.set(s.habit_id, s);
           }
         }
       }
-      setActivePauses(active);
+      setActiveSpans(active);
+      setSpanHabits(spanHabitsSet);
     } catch (e) {
       showError(e, 'Habit一覧の取得に失敗');
     } finally {
@@ -105,9 +138,9 @@ export function HabitView({ client }: HabitViewProps) {
     // so undo can restore them alongside the recreated habits.
     let tasksPerHabit: TaskRow[][];
     let stepsPerHabit: HabitStepRow[][];
-    let pausesPerHabit: HabitPauseRow[][];
+    let spansPerHabit: HabitScheduledSpanRow[][];
     try {
-      [tasksPerHabit, stepsPerHabit, pausesPerHabit] = await Promise.all([
+      [tasksPerHabit, stepsPerHabit, spansPerHabit] = await Promise.all([
         Promise.all(toDelete.map((h) => client!.listTasks({ habit_id: h.id }))),
         Promise.all(
           toDelete.map((h) =>
@@ -116,7 +149,9 @@ export function HabitView({ client }: HabitViewProps) {
         ),
         Promise.all(
           toDelete.map((h) =>
-            client!.listHabitPauses(h.id).catch(() => [] as HabitPauseRow[]),
+            client!
+              .listHabitScheduledSpans(h.id)
+              .catch(() => [] as HabitScheduledSpanRow[]),
           ),
         ),
       ]);
@@ -152,7 +187,7 @@ export function HabitView({ client }: HabitViewProps) {
     const deleted: HabitRow[] = [];
     const deletedTasksPerHabit: TaskRow[][] = [];
     const deletedStepsPerHabit: HabitStepRow[][] = [];
-    const deletedPausesPerHabit: HabitPauseRow[][] = [];
+    const deletedSpansPerHabit: HabitScheduledSpanRow[][] = [];
     let failed = 0;
     for (let i = 0; i < toDelete.length; i++) {
       const h = toDelete[i];
@@ -161,7 +196,7 @@ export function HabitView({ client }: HabitViewProps) {
         deleted.push(h);
         deletedTasksPerHabit.push(tasksPerHabit[i] ?? []);
         deletedStepsPerHabit.push(stepsPerHabit[i] ?? []);
-        deletedPausesPerHabit.push(pausesPerHabit[i] ?? []);
+        deletedSpansPerHabit.push(spansPerHabit[i] ?? []);
       } catch (e) {
         failed++;
         logError(`ハビット削除 (${h.id})`, e);
@@ -231,13 +266,13 @@ export function HabitView({ client }: HabitViewProps) {
               steps.map(stepRowToDraft),
             );
           }
-          // Restore pauses (#303).
-          const pauses = deletedPausesPerHabit[i] ?? [];
-          for (const p of pauses) {
-            await client.createHabitPause(recreated.id, {
-              start_date: p.start_date,
-              end_date: p.end_date,
-              reason: p.reason,
+          // Restore scheduled spans (#303 / #503).
+          const spans = deletedSpansPerHabit[i] ?? [];
+          for (const s of spans) {
+            await client.createHabitScheduledSpan(recreated.id, {
+              start_date: s.start_date,
+              end_date: s.end_date,
+              reason: s.reason,
             });
           }
           currentIds[i] = recreated.id;
@@ -359,7 +394,7 @@ export function HabitView({ client }: HabitViewProps) {
                 borderColor: colors.separator,
               },
               selected.has(h.id) && styles.habitCardSelected,
-              activePauses.has(h.id) && styles.habitCardPaused,
+              h.active && activeSpans.has(h.id) && styles.habitCardPaused,
             ]}
             onPress={() => {
               if (selected.size > 0) {
@@ -380,8 +415,14 @@ export function HabitView({ client }: HabitViewProps) {
                 style={[
                   styles.habitTitle,
                   {
-                    color: h.active ? colors.black : colors.gray,
-                    textDecorationLine: h.active ? 'none' : 'line-through',
+                    color:
+                      h.active || activeSpans.has(h.id)
+                        ? colors.black
+                        : colors.gray,
+                    textDecorationLine:
+                      h.active || activeSpans.has(h.id)
+                        ? 'none'
+                        : 'line-through',
                   },
                 ]}
               >
@@ -422,21 +463,50 @@ export function HabitView({ client }: HabitViewProps) {
                     </Text>
                   </View>
                 )}
-                {activePauses.has(h.id) && (
+                {((h.active && activeSpans.has(h.id)) ||
+                  (!h.active && spanHabits.has(h.id))) && (
                   <View
                     style={[
                       styles.chip,
                       { backgroundColor: colors.surfaceTint },
                     ]}
                   >
-                    <Ionicons
-                      name="pause-circle"
-                      size={11}
-                      color={COLORS.red}
-                    />
-                    <Text style={[styles.chipText, { color: COLORS.red }]}>
-                      ⏸ 〜{formatPauseShort(activePauses.get(h.id)!.end_date)}
-                    </Text>
+                    {(() => {
+                      const span = activeSpans.get(h.id);
+                      if (h.active) {
+                        return (
+                          <>
+                            <Ionicons
+                              name="pause-circle"
+                              size={11}
+                              color={COLORS.red}
+                            />
+                            <Text
+                              style={[styles.chipText, { color: COLORS.red }]}
+                            >
+                              ⏸ 〜{formatSpanShort(span!.end_date)}
+                            </Text>
+                          </>
+                        );
+                      }
+                      // disabled habit with scheduled span(s)
+                      return (
+                        <>
+                          <Ionicons
+                            name="play-circle"
+                            size={11}
+                            color={BRAND_COLOR}
+                          />
+                          <Text
+                            style={[styles.chipText, { color: BRAND_COLOR }]}
+                          >
+                            {span
+                              ? `▶ scheduled 〜${formatSpanShort(span.end_date)}`
+                              : 'scheduled'}
+                          </Text>
+                        </>
+                      );
+                    })()}
                   </View>
                 )}
               </View>
@@ -498,7 +568,7 @@ export function HabitView({ client }: HabitViewProps) {
 }
 
 // YYYY-MM-DD → M/D
-function formatPauseShort(s: string): string {
+function formatSpanShort(s: string): string {
   const [, m, d] = s.split('-').map((n) => parseInt(n, 10));
   return `${m}/${d}`;
 }
