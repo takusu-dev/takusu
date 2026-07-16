@@ -12,11 +12,16 @@ import {
 } from '@/src/notifications/settings';
 import { DEFAULT_MAX_HISTORY } from './undoRedo';
 
+export const AGENT_SESSION_HISTORY_DEFAULT = 4;
+export const AGENT_SESSION_HISTORY_MIN = 3;
+export const AGENT_SESSION_HISTORY_MAX = 5;
+
 const KEYS = {
   workersUrl: 'takusu.workersUrl',
   workersToken: 'takusu.workersToken',
   darkMode: 'takusu.darkMode',
   undoSteps: 'takusu.undoSteps',
+  agentSessionHistoryCount: 'takusu.agent.sessionHistoryCount',
   llmProviders: 'takusu.agent.llmProviders',
   activeLlmProvider: 'takusu.agent.activeLlmProvider',
   ttsProviders: 'takusu.agent.ttsProviders',
@@ -49,6 +54,7 @@ export interface PersistedSettings {
   workersToken: string;
   darkMode: boolean;
   undoSteps: number;
+  agentSessionHistoryCount: number;
   notifications: NotificationSettings;
   llmProviders: LlmProviderSettings[];
   activeLlmProvider: string | null;
@@ -62,6 +68,7 @@ export async function loadSettings(): Promise<PersistedSettings> {
     workersToken,
     darkModeStr,
     undoStepsStr,
+    agentSessionHistoryCountStr,
     notifications,
     llmProvidersStr,
     activeLlmProvider,
@@ -72,6 +79,7 @@ export async function loadSettings(): Promise<PersistedSettings> {
     SecureStore.getItemAsync(KEYS.workersToken),
     AsyncStorage.getItem(KEYS.darkMode),
     AsyncStorage.getItem(KEYS.undoSteps),
+    AsyncStorage.getItem(KEYS.agentSessionHistoryCount),
     loadNotificationSettings(),
     AsyncStorage.getItem(KEYS.llmProviders),
     AsyncStorage.getItem(KEYS.activeLlmProvider),
@@ -79,6 +87,9 @@ export async function loadSettings(): Promise<PersistedSettings> {
     AsyncStorage.getItem(KEYS.activeTtsProvider),
   ]);
   const parsedUndoSteps = undoStepsStr ? parseInt(undoStepsStr, 10) : NaN;
+  const parsedSessionCount = agentSessionHistoryCountStr
+    ? parseInt(agentSessionHistoryCountStr, 10)
+    : NaN;
   return {
     workersUrl: workersUrl ?? '',
     workersToken: workersToken ?? '',
@@ -87,6 +98,12 @@ export async function loadSettings(): Promise<PersistedSettings> {
       Number.isFinite(parsedUndoSteps) && parsedUndoSteps > 0
         ? parsedUndoSteps
         : DEFAULT_MAX_HISTORY,
+    agentSessionHistoryCount:
+      Number.isFinite(parsedSessionCount) &&
+      parsedSessionCount >= AGENT_SESSION_HISTORY_MIN &&
+      parsedSessionCount <= AGENT_SESSION_HISTORY_MAX
+        ? parsedSessionCount
+        : AGENT_SESSION_HISTORY_DEFAULT,
     notifications,
     llmProviders: parseJsonArray<LlmProviderSettings>(llmProvidersStr),
     activeLlmProvider: activeLlmProvider ?? null,
@@ -163,6 +180,16 @@ export async function saveDarkMode(enabled: boolean): Promise<void> {
 
 export async function saveUndoSteps(steps: number): Promise<void> {
   await AsyncStorage.setItem(KEYS.undoSteps, String(steps));
+}
+
+export async function saveAgentSessionHistoryCount(
+  count: number,
+): Promise<void> {
+  const clamped = Math.max(
+    AGENT_SESSION_HISTORY_MIN,
+    Math.min(AGENT_SESSION_HISTORY_MAX, count),
+  );
+  await AsyncStorage.setItem(KEYS.agentSessionHistoryCount, String(clamped));
 }
 
 export { saveNotificationSettings, DEFAULT_NOTIFICATION_SETTINGS };
