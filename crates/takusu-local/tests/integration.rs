@@ -19,17 +19,11 @@ async fn setup() -> (AppState, SqlitePool) {
         db: "sqlite::memory:".into(),
         ..Default::default()
     };
-    let storage = SqliteStorage::init(&cfg, ROOT_TOKEN.to_string())
-        .await
-        .unwrap();
+    let storage = SqliteStorage::init(&cfg).await.unwrap();
     let pool = storage.pool().clone();
     let token_cache = Arc::new(TokenCache::with_default_ttl());
-    let app = Arc::new(TakusuApp::new(
-        Arc::new(storage),
-        ROOT_TOKEN.to_string(),
-        token_cache,
-    ));
-    let state = AppState::new(app);
+    let app = Arc::new(TakusuApp::new(Arc::new(storage), token_cache));
+    let state = AppState::new(app, ROOT_TOKEN);
     (state, pool)
 }
 

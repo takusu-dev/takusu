@@ -19,9 +19,14 @@ pub async fn auth_middleware(
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or(HttpError(AppError::Unauthorized))?;
 
+    if !state.root_token.is_empty() && token == state.root_token {
+        let token = token.to_string();
+        req.extensions_mut().insert(token);
+        return Ok(next.run(req).await);
+    }
+
     let valid = takusu_local_lib::auth::verify_token_with_cache(
         token,
-        &state.app.root_token,
         state.app.storage.as_ref(),
         &state.app.token_cache,
     )

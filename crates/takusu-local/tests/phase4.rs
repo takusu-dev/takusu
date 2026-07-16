@@ -46,8 +46,8 @@ impl Counters {
 
 fn make_state(storage: Arc<dyn Storage>) -> AppState {
     let token_cache = Arc::new(TokenCache::with_default_ttl());
-    let app = Arc::new(TakusuApp::new(storage, ROOT_TOKEN.to_string(), token_cache));
-    AppState::new(app)
+    let app = Arc::new(TakusuApp::new(storage, token_cache));
+    AppState::new(app, ROOT_TOKEN)
 }
 
 fn req(method: Method, uri: &str, token: Option<&str>) -> Request<axum::body::Body> {

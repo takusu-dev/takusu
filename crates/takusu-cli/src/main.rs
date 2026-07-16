@@ -724,10 +724,6 @@ fn main() {
             .ok()
             .filter(|s| !s.is_empty());
 
-        let root_token = env_root
-            .clone()
-            .or_else(|| cfg.root_token.clone())
-            .unwrap_or_default();
         let workers_token = env_workers
             .clone()
             .or_else(|| cfg.workers_token.clone())
@@ -753,11 +749,7 @@ fn main() {
                 Arc::new(WorkersStorage::new_with(url, workers_token))
             }
             StorageKind::Sqlite => {
-                if root_token.is_empty() {
-                    eprintln!("Error: TAKUSU_ROOT_TOKEN is required for the sqlite backend");
-                    process::exit(1);
-                }
-                let storage = SqliteStorage::init(&local_cfg, root_token.clone())
+                let storage = SqliteStorage::init(&local_cfg)
                     .await
                     .unwrap_or_else(|e| {
                         eprintln!("Error initializing sqlite storage: {e}");
@@ -768,7 +760,7 @@ fn main() {
         };
 
         let token_cache = Arc::new(TokenCache::with_default_ttl());
-        let app = TakusuApp::new(storage, root_token, token_cache);
+        let app = TakusuApp::new(storage, token_cache);
 
         let tz = jiff::tz::TimeZone::get(&tz_str).unwrap_or_else(|_| {
             eprintln!("Error: invalid timezone '{tz_str}' (e.g. Asia/Tokyo)");
@@ -1296,16 +1288,13 @@ async fn run_skill(mode: DisplayMode, app: &TakusuApp, cmd: SkillCommands) -> Re
             let body = read_skill_body(body).await?;
             let body = body.ok_or_else(|| AppError::BadRequest("body is required".into()))?;
             let created = app
-                .create_skill(
-                    &CreateSkill {
-                        slug,
-                        name,
-                        description,
-                        body,
-                        built_in: None,
-                    },
-                    &app.root_token,
-                )
+                .create_skill(&CreateSkill {
+                    slug,
+                    name,
+                    description,
+                    body,
+                    built_in: None,
+                })
                 .await?;
             match mode {
                 DisplayMode::Rich => display_rich::display_skill_detail(&created),
