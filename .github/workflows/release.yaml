@@ -116,45 +116,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: easimon/maximize-build-space@fc881a613ad2a34aca9c9624518214ebc21dfc0c # master 2025/3/10
+      - uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
         with:
-          # The Expo/Gradle/React-Native build runs in the workspace on the
-          # root filesystem, so it needs plenty of free space there. On these
-          # runners /mnt lives on the same /dev/root filesystem, so the action
-          # creates both LVM PVs on root: the final free space left on / ends
-          # up being temp-reserve-mb (the second PV eats into root-reserve-mb).
-          # So temp-reserve-mb governs / free space and must stay < root-reserve-mb
-          # (otherwise the second PV is zero-sized and fallocate fails). This
-          # leaves ~30G free on / for the build; /nix gets the rest (~58G).
-          root-reserve-mb: 35840
-          swap-size-mb: 1024
-          temp-reserve-mb: 30720
-          # Mount the maximized volume at /nix (not just /nix/store) so the Nix
-          # build directory can live on the big mount too (see build-dir below).
-          build-mount-path: "/nix"
-          remove-dotnet: true
-          remove-android: true
-          remove-haskell: true
-          remove-codeql: true
-          remove-docker-images: true
+          # easimon/maximize-build-space is flaky on current GitHub-hosted
+          # runners because the LVM setup can receive an invalid size and fail
+          # with "fallocate: invalid length value specified". free-disk-space
+          # only removes pre-installed software, which is enough now that
+          # runners provide a single large root filesystem.
+          tool-cache: true
 
       - name: Install Nix
         uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
         with:
-          # By default Nix builds in the daemon's TMPDIR on the small root
-          # partition, so unpacking the Android NDK (~several GB) overflows
-          # root-reserve-mb and fails with "write error (disk full?)". Point
-          # build-dir at the large /nix mount instead.
+          # Keep Nix build temporary files under /nix/tmp so they are colocated
+          # with the Nix store instead of the daemon's default TMPDIR.
           extra_nix_config: |
             build-dir = /nix/tmp
 
-      - name: Create Nix build directory on the large mount
+      - name: Create Nix build directory
         run: sudo install -d -m 1777 /nix/tmp
 
       # The binary-cache action hardcodes /tmp/binary-cache as its cache
-      # directory, but /tmp lives on the small root partition. Symlink it
-      # to the large /nix mount so the multi-GB .so closure fits.
-      - name: Symlink binary cache to large mount
+      # directory. Symlink it to /nix/tmp so the multi-GB .so closure stays on
+      # the same filesystem as the Nix store.
+      - name: Symlink binary cache to /nix/tmp
         run: |
           mkdir -p /nix/tmp/binary-cache
           ln -sfn /nix/tmp/binary-cache /tmp/binary-cache
