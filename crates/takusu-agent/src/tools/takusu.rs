@@ -112,6 +112,22 @@ fn strip_leading_hash(reference: &str) -> &str {
     reference.strip_prefix('#').unwrap_or(reference)
 }
 
+/// Normalize a task status string to the canonical backend value.
+/// Handles common LLM/user synonyms such as "done" -> "completed".
+fn normalize_status(status: &str) -> String {
+    let lower = status.trim().to_lowercase();
+    match lower.as_str() {
+        "done" | "complete" | "completed" => "completed".to_string(),
+        "todo" | "to-do" | "to_do" | "pending" => "pending".to_string(),
+        "in-progress" | "in_progress" | "inprogress" | "doing" | "in progress" => {
+            "in_progress".to_string()
+        }
+        "skip" | "skipped" => "skipped".to_string(),
+        "planned" | "scheduled" => "scheduled".to_string(),
+        _ => lower,
+    }
+}
+
 /// Normalize an array of task references by stripping leading `#` characters.
 fn normalize_reference_array(
     args: &mut serde_json::Map<String, Value>,
@@ -352,7 +368,11 @@ impl Tool for ListTasks {
         json!({
             "type": "object",
             "properties": {
-                "status": {"type": "string", "description": "Task status filter."},
+                "status": {
+                    "type": "string",
+                    "enum": ["pending", "scheduled", "in_progress", "completed", "skipped"],
+                    "description": "Task status filter. Use 'completed' for done tasks."
+                },
                 "from": {"type": "string", "description": "Start of range; interpreted in server timezone."},
                 "until": {"type": "string", "description": "End of range; interpreted in server timezone."},
                 "habit_id": {"type": "string", "description": "Habit reference such as h1."},
@@ -374,7 +394,7 @@ impl Tool for ListTasks {
         };
         let tz = server_timezone(&self.client).await?;
         let query = TaskQuery {
-            status: optional_string(&args, "status")?,
+            status: optional_string(&args, "status")?.map(|s| normalize_status(&s)),
             from: normalize_datetime(optional_string(&args, "from")?, &tz, "from")?,
             until: normalize_datetime(optional_string(&args, "until")?, &tz, "until")?,
             habit_id: habit.as_ref().map(|habit| habit.habit.id.clone()),
@@ -780,7 +800,11 @@ impl MutationKind {
                     "parallelizable": {"type": "boolean"},
                     "allows_parallel": {"type": "boolean"},
                     "abandonability": {"type": "number"},
-                    "status": {"type": "string"},
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "scheduled", "in_progress", "completed", "skipped"],
+                        "description": "New task status. 'completed' means done."
+                    },
                     "inferred_fields": {"type": "array"},
                 }),
             ),
@@ -1030,6 +1054,9 @@ fn normalize_mutation_args(
         MutationKind::CreateTask | MutationKind::UpdateTask => {
             normalize_mutation_field(args, "start_at", tz)?;
             normalize_mutation_field(args, "end_at", tz)?;
+            if let Some(status) = args.get("status").and_then(Value::as_str) {
+                args.insert("status".into(), Value::String(normalize_status(status)));
+            }
         }
         MutationKind::Reschedule => {
             normalize_mutation_field(args, "from", tz)?;
@@ -1363,5 +1390,54 @@ mod tests {
         assert_eq!(display_args["depends"], json!(["#1", "h2#3"]));
         assert_eq!(execution_args["task_ref"], "42");
         assert_eq!(execution_args["depends"], json!(["1", "h2#3"]));
+    }
+
+    #[test]
+    fn normalize_status_maps_common_synonyms() {
+        assert_eq!(normalize_status("done"), "completed");
+        assert_eq!(normalize_status("Done"), "completed");
+        assert_eq!(normalize_status("  DONE  "), "completed");
+        assert_eq!(normalize_status("complete"), "completed");
+        assert_eq!(normalize_status("in-progress"), "in_progress");
+        assert_eq!(normalize_status("in progress"), "in_progress");
+        assert_eq!(normalize_status("todo"), "pending");
+        assert_eq!(normalize_status("skip"), "skipped");
+        assert_eq!(normalize_status("completed"), "completed");
+        assert_eq!(normalize_status("pending"), "pending");
+    }
+
+    #[test]
+    fn normalize_mutation_args_normalizes_status_for_update_task() {
+        let tz = jiff::tz::TimeZone::get("UTC").unwrap();
+        let mut args = serde_json::Map::new();
+        args.insert("status".to_string(), Value::String("done".to_string()));
+
+        normalize_mutation_args(MutationKind::UpdateTask, &mut args, &tz).unwrap();
+
+        assert_eq!(args["status"], "completed");
+    }
+
+    #[test]
+    fn list_tasks_status_schema_has_enum() {
+        let tool = ListTasks {
+            client: Client::new("http://localhost", ""),
+        };
+        let schema = tool.parameters_schema();
+        let values: Vec<String> =
+            serde_json::from_value(schema["properties"]["status"]["enum"].clone()).unwrap();
+        assert!(values.contains(&"completed".to_string()));
+        assert!(values.contains(&"pending".to_string()));
+    }
+
+    #[test]
+    fn update_task_status_schema_has_enum() {
+        let tool = MutationTool {
+            client: Client::new("http://localhost", ""),
+            kind: MutationKind::UpdateTask,
+        };
+        let schema = tool.parameters_schema();
+        let values: Vec<String> =
+            serde_json::from_value(schema["properties"]["status"]["enum"].clone()).unwrap();
+        assert!(values.contains(&"completed".to_string()));
     }
 }
