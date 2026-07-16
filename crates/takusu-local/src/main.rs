@@ -42,9 +42,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let storage: Arc<dyn Storage> = match cfg.storage_kind() {
             #[cfg(feature = "sqlite")]
             StorageKind::Sqlite => {
-                let root_token = env_root.clone().ok_or("TAKUSU_ROOT_TOKEN is required for the sqlite backend")?;
+                if env_root.is_none() {
+                    return Err("TAKUSU_ROOT_TOKEN is required for the sqlite backend".into());
+                }
                 tracing::info!("storage backend: sqlite ({})", cfg.db_url());
-                Arc::new(SqliteStorage::init(&cfg, root_token).await?)
+                Arc::new(SqliteStorage::init(&cfg).await?)
             }
             #[allow(unreachable_patterns)]
             _ => {
@@ -70,9 +72,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         let root_token = env_root.unwrap_or_default();
+        if root_token.is_empty() {
+            tracing::warn!(
+                "TAKUSU_ROOT_TOKEN is not set; built-in skill creation and root-only operations are unavailable"
+            );
+        }
         let token_cache = Arc::new(TokenCache::with_default_ttl());
-        let app = Arc::new(TakusuApp::new(storage, root_token, token_cache));
-        let state = AppState::new(app);
+        let app = Arc::new(TakusuApp::new(storage, token_cache));
+        let state = AppState::new(app, root_token);
         let bind_addr = cfg.bind_addr().to_string();
         let app_router = router(state);
 

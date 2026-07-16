@@ -102,14 +102,10 @@ WHERE (SELECT COUNT(*) FROM habit_display_id_seq) = 0;
 
 pub struct SqliteStorage {
     pool: SqlitePool,
-    root_token: String,
 }
 
 impl SqliteStorage {
-    pub async fn init(
-        cfg: &LocalConfig,
-        root_token: String,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn init(cfg: &LocalConfig) -> Result<Self, Box<dyn std::error::Error>> {
         let url = ensure_create_mode(cfg.db_url());
 
         if let Some(path) = extract_db_path(&url)
@@ -250,7 +246,7 @@ impl SqliteStorage {
         // Migration 015 creates the skills table (idempotent).
         sqlx::raw_sql(MIGRATION_015).execute(&pool).await?;
 
-        Ok(Self { pool, root_token })
+        Ok(Self { pool })
     }
 
     pub fn pool(&self) -> &SqlitePool {
@@ -282,16 +278,9 @@ fn map_err(e: sqlx::Error) -> StorageError {
 
 #[async_trait]
 impl Storage for SqliteStorage {
-    /// root_token は生の値で比較 (環境変数で保持)。
     /// DB 内のトークンは SHA-256 でハッシュ化して保存、比較は hash vs hash。
-    /// hash_token(token) は SHA-256 のため衝突耐性があり、
-    /// hash == hash(root_token) は token == root_token と等価だが、
-    /// ルートトークンが何らかの理由で SHA-256 hex で渡される場合に備えて残している。
     async fn verify_token(&self, token: &str) -> StorageResult<bool> {
         let hash = crate::auth::hash_token(token);
-        if token == self.root_token || hash == crate::auth::hash_token(&self.root_token) {
-            return Ok(true);
-        }
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM tokens WHERE token_hash = ? AND revoked_at IS NULL",
         )

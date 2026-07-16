@@ -141,8 +141,8 @@ impl TakusuServer {
             root_token.clone(),
         ));
         let token_cache = Arc::new(TokenCache::with_default_ttl());
-        let app = Arc::new(TakusuApp::new(storage, root_token.clone(), token_cache));
-        let state = AppState::new(app);
+        let app = Arc::new(TakusuApp::new(storage, token_cache));
+        let state = AppState::new(app, root_token.clone());
 
         // Agent sessions run in the same process as the planner server. The
         // factory creates a fresh session for each authenticated Mobile

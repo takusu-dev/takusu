@@ -5,13 +5,18 @@ use takusu_storage::{CreateSkill, SkillRow, UpdateSkill};
 
 use crate::error::HttpError;
 use crate::state::AppState;
+use takusu_local_lib::error::AppError;
 
 pub async fn create_skill(
     State(state): State<AppState>,
     Extension(token): Extension<String>,
     Json(body): Json<CreateSkill>,
 ) -> Result<(StatusCode, Json<SkillRow>), HttpError> {
-    let skill = state.app.create_skill(&body, &token).await?;
+    let is_root = !state.root_token.is_empty() && token == state.root_token;
+    if body.built_in == Some(true) && !is_root {
+        return Err(AppError::Unauthorized.into());
+    }
+    let skill = state.app.create_skill(&body).await?;
     Ok((StatusCode::CREATED, Json(skill)))
 }
 

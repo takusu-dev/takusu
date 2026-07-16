@@ -669,7 +669,6 @@ fn default_settings_row() -> SettingsRow {
 
 pub struct TakusuApp {
     pub storage: Arc<dyn Storage>,
-    pub root_token: String,
     pub token_cache: Arc<TokenCache>,
 }
 
@@ -687,14 +686,9 @@ pub struct DeleteAllGcalFailure {
 }
 
 impl TakusuApp {
-    pub fn new(
-        storage: Arc<dyn Storage>,
-        root_token: String,
-        token_cache: Arc<TokenCache>,
-    ) -> Self {
+    pub fn new(storage: Arc<dyn Storage>, token_cache: Arc<TokenCache>) -> Self {
         Self {
             storage,
-            root_token,
             token_cache,
         }
     }
@@ -731,15 +725,8 @@ impl TakusuApp {
 
     // ── Skills ────────────────────────────────────────────
 
-    pub async fn create_skill(
-        &self,
-        body: &CreateSkill,
-        token: &str,
-    ) -> Result<SkillRow, AppError> {
+    pub async fn create_skill(&self, body: &CreateSkill) -> Result<SkillRow, AppError> {
         validate_skill(body)?;
-        if body.built_in == Some(true) && token != self.root_token {
-            return Err(AppError::Unauthorized);
-        }
         if let Ok(existing) = self.storage.get_skill(&body.slug).await {
             if existing.built_in {
                 return Err(AppError::Conflict {

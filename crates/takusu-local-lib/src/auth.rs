@@ -11,14 +11,9 @@ pub fn hash_token(token: &str) -> String {
 
 pub async fn verify_token_with_cache(
     token: &str,
-    root_token: &str,
     storage: &dyn takusu_storage::Storage,
     token_cache: &TokenCache,
 ) -> Result<bool, takusu_storage::StorageError> {
-    if token == root_token {
-        return Ok(true);
-    }
-
     match token_cache.get(token) {
         Some(TokenState::Valid) => return Ok(true),
         Some(TokenState::Invalid) => return Ok(false),
@@ -297,28 +292,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn verify_token_with_cache_root_token_short_circuits() {
-        let (storage, calls) = MockStorage::new(&["real-token"]);
-        let cache = TokenCache::new(std::time::Duration::from_secs(60));
-        // Root token matches → true without touching storage.
-        let ok = verify_token_with_cache("root", "root", &storage, &cache)
-            .await
-            .unwrap();
-        assert!(ok);
-        assert_eq!(calls.load(Ordering::SeqCst), 0);
-    }
-
-    #[tokio::test]
     async fn verify_token_with_cache_caches_valid_answer() {
         let (storage, calls) = MockStorage::new(&["real-token"]);
         let cache = TokenCache::new(std::time::Duration::from_secs(60));
-        let ok1 = verify_token_with_cache("real-token", "root", &storage, &cache)
+        let ok1 = verify_token_with_cache("real-token", &storage, &cache)
             .await
             .unwrap();
         assert!(ok1);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         // Second call should hit the cache, not storage.
-        let ok2 = verify_token_with_cache("real-token", "root", &storage, &cache)
+        let ok2 = verify_token_with_cache("real-token", &storage, &cache)
             .await
             .unwrap();
         assert!(ok2);
@@ -329,13 +312,13 @@ mod tests {
     async fn verify_token_with_cache_caches_invalid_answer() {
         let (storage, calls) = MockStorage::new(&[]);
         let cache = TokenCache::new(std::time::Duration::from_secs(60));
-        let ok1 = verify_token_with_cache("bogus", "root", &storage, &cache)
+        let ok1 = verify_token_with_cache("bogus", &storage, &cache)
             .await
             .unwrap();
         assert!(!ok1);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         // Cached Invalid → no second storage hit.
-        let ok2 = verify_token_with_cache("bogus", "root", &storage, &cache)
+        let ok2 = verify_token_with_cache("bogus", &storage, &cache)
             .await
             .unwrap();
         assert!(!ok2);
