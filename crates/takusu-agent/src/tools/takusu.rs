@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use takusu_client::{Client, HabitDetail, SchedulePreviewRequest, TaskQuery};
+use takusu_client::{
+    Client, HabitDetail, HabitRow, HabitStepRow, SchedulePreviewRequest, TaskQuery, TaskRow,
+};
 use takusu_util::parse_datetime_tz;
 
 use crate::{Tool, ToolError, ToolOutput, ToolRegistry};
@@ -93,44 +95,150 @@ async fn server_timezone(client: &Client) -> Result<jiff::tz::TimeZone, ToolErro
     jiff::tz::TimeZone::get(&settings.tz).map_err(|error| ToolError::Other(Box::new(error)))
 }
 
-async fn normalize_datetime(
-    client: &Client,
+fn normalize_datetime(
     value: Option<String>,
+    tz: &jiff::tz::TimeZone,
     name: &str,
 ) -> Result<Option<String>, ToolError> {
     let Some(value) = value else { return Ok(None) };
-    let timezone = server_timezone(client).await?;
-    parse_datetime_tz(&value, &timezone)
+    parse_datetime_tz(&value, tz)
         .map(Some)
         .map_err(|error| ToolError::InvalidArgs(format!("invalid {name}: {error}")))
 }
 
-fn task_json(task: &takusu_client::TaskRow, habit_display_ids: &HashMap<String, i64>) -> Value {
-    let reference = task
-        .habit_id
+/// Strip a leading `#` from a user-supplied task reference.
+/// Keeps habit-scoped references such as `h1#5` and raw UUIDs intact.
+fn strip_leading_hash(reference: &str) -> &str {
+    reference.strip_prefix('#').unwrap_or(reference)
+}
+
+/// Normalize an array of task references by stripping leading `#` characters.
+fn normalize_reference_array(
+    args: &mut serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<(), ToolError> {
+    if let Some(Value::Array(values)) = args.get_mut(key) {
+        for value in values.iter_mut() {
+            match value.as_str() {
+                Some(reference) => {
+                    *value = Value::String(strip_leading_hash(reference.trim()).to_string());
+                }
+                None => {
+                    return Err(ToolError::InvalidArgs(format!(
+                        "{key} must contain only strings"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct TaskRef {
+    display_id: i64,
+    reference: String,
+    title: String,
+}
+
+#[derive(Debug, Clone)]
+struct TaskContext {
+    task_refs: HashMap<String, TaskRef>,
+    habit_display_ids: HashMap<String, i64>,
+}
+
+impl TaskContext {
+    fn new(tasks: &[TaskRow], habits: &[HabitRow]) -> Self {
+        let habit_display_ids: HashMap<String, i64> = habits
+            .iter()
+            .map(|habit| (habit.id.clone(), habit.display_id))
+            .collect();
+        let task_refs: HashMap<String, TaskRef> = tasks
+            .iter()
+            .map(|task| {
+                let reference = task_reference(task, &habit_display_ids);
+                (
+                    task.id.clone(),
+                    TaskRef {
+                        display_id: task.display_id,
+                        reference,
+                        title: task.title.clone(),
+                    },
+                )
+            })
+            .collect();
+        Self {
+            task_refs,
+            habit_display_ids,
+        }
+    }
+
+    fn ref_by_id(&self, id: &str) -> Option<&TaskRef> {
+        self.task_refs.get(id)
+    }
+
+    fn reference(&self, task: &TaskRow) -> String {
+        self.task_refs
+            .get(&task.id)
+            .map(|task_ref| task_ref.reference.clone())
+            .unwrap_or_else(|| task_reference(task, &self.habit_display_ids))
+    }
+
+    fn depends(&self, task: &TaskRow) -> Vec<String> {
+        serde_json::from_str::<Vec<String>>(&task.depends)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|id| self.task_refs.get(&id).map(|r| r.reference.clone()))
+            .collect()
+    }
+}
+
+fn task_reference(task: &TaskRow, habit_display_ids: &HashMap<String, i64>) -> String {
+    task.habit_id
         .as_ref()
         .and_then(|habit_id| habit_display_ids.get(habit_id))
         .map(|habit_display_id| format!("h{habit_display_id}#{}", task.display_id))
-        .unwrap_or_else(|| format!("#{}", task.display_id));
+        .unwrap_or_else(|| format!("#{}", task.display_id))
+}
+
+fn task_json(task: &TaskRow, ctx: &TaskContext) -> Value {
     json!({
         "display_id": task.display_id,
-        "reference": reference,
-        "habit_id": task.habit_id,
+        "reference": ctx.reference(task),
         "title": task.title,
         "description": task.description,
         "start_at": task.start_at,
         "end_at": task.end_at,
         "avg_minutes": task.avg_minutes,
         "sigma_minutes": task.sigma_minutes,
-        "depends": task.depends,
+        "depends": ctx.depends(task),
         "parallelizable": task.parallelizable,
         "allows_parallel": task.allows_parallel,
         "abandonability": task.abandonability,
         "status": task.status,
         "fixed": task.fixed,
-        "habit_step_id": task.habit_step_id,
         "created_at": task.created_at,
         "updated_at": task.updated_at,
+    })
+}
+
+fn habit_summary_json(habit: &HabitRow) -> Value {
+    json!({
+        "display_id": habit.display_id,
+        "reference": format!("h{}", habit.display_id),
+        "title": habit.title,
+        "description": habit.description,
+        "recurrence": habit.recurrence,
+        "start_time": habit.start_time,
+        "end_time": habit.end_time,
+        "avg_minutes": habit.avg_minutes,
+        "sigma_minutes": habit.sigma_minutes,
+        "parallelizable": habit.parallelizable,
+        "allows_parallel": habit.allows_parallel,
+        "abandonability": habit.abandonability,
+        "active": habit.active,
+        "fixed": habit.fixed,
+        "window_mode": habit.window_mode,
     })
 }
 
@@ -151,8 +259,81 @@ fn habit_json(habit: &HabitDetail) -> Value {
         "active": habit.habit.active,
         "fixed": habit.habit.fixed,
         "window_mode": habit.habit.window_mode,
-        "steps": habit.steps,
+        "steps": habit.steps.iter().map(step_json).collect::<Vec<_>>(),
     })
+}
+
+fn step_json(step: &HabitStepRow) -> Value {
+    json!({
+        "position": step.position,
+        "title": step.title,
+        "description": step.description,
+        "start_time": step.start_time,
+        "end_time": step.end_time,
+        "avg_minutes": step.avg_minutes,
+        "sigma_minutes": step.sigma_minutes,
+        "parallelizable": step.parallelizable,
+        "allows_parallel": step.allows_parallel,
+        "abandonability": step.abandonability,
+        "fixed": step.fixed,
+    })
+}
+
+fn schedule_entry_value(entry: &Value, ctx: &TaskContext) -> Value {
+    let task_id = entry.get("task_id").and_then(Value::as_str).unwrap_or("");
+    let (reference, display_id, title) = match ctx.ref_by_id(task_id) {
+        Some(r) => (
+            Value::String(r.reference.clone()),
+            json!(r.display_id),
+            Value::String(r.title.clone()),
+        ),
+        None => (
+            Value::String("unknown".into()),
+            Value::Null,
+            Value::String("unknown task".into()),
+        ),
+    };
+    json!({
+        "reference": reference,
+        "display_id": display_id,
+        "title": title,
+        "start_at": entry.get("start_at").cloned().unwrap_or(Value::Null),
+        "end_at": entry.get("end_at").cloned().unwrap_or(Value::Null),
+    })
+}
+
+fn reference_value(id: &str, ctx: &TaskContext) -> Value {
+    ctx.ref_by_id(id)
+        .map(|r| Value::String(r.reference.clone()))
+        .unwrap_or_else(|| Value::String("unknown".into()))
+}
+
+fn transform_preview(preview: Value, ctx: &TaskContext) -> Value {
+    let mut out = preview.as_object().cloned().unwrap_or_default();
+
+    if let Some(Value::Array(entries)) = out.get("entries").cloned() {
+        let transformed = entries
+            .iter()
+            .map(|entry| schedule_entry_value(entry, ctx))
+            .collect::<Vec<_>>();
+        out.insert("entries".into(), Value::Array(transformed));
+    }
+
+    for key in ["unscheduled_task_ids", "displaced_task_ids"] {
+        if let Some(Value::Array(ids)) = out.get(key).cloned() {
+            let transformed = ids
+                .iter()
+                .map(|id| {
+                    id.as_str()
+                        .map(|s| reference_value(s, ctx))
+                        .unwrap_or_else(|| Value::String("unknown".into()))
+                })
+                .collect::<Vec<_>>();
+            out.insert(key.into(), Value::Array(transformed));
+        }
+    }
+
+    Value::Object(out)
 }
 
 struct ListTasks {
@@ -168,12 +349,16 @@ impl Tool for ListTasks {
         "List tasks, optionally filtered by status, time range, or habit."
     }
     fn parameters_schema(&self) -> Value {
-        json!({"type":"object","properties":{
-            "status":{"type":"string","description":"Task status filter."},
-            "from":{"type":"string","description":"Start of range; interpreted in server timezone."},
-            "until":{"type":"string","description":"End of range; interpreted in server timezone."},
-            "habit_id":{"type":"string","description":"Habit reference such as h1."}
-        },"additionalProperties":false})
+        json!({
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "description": "Task status filter."},
+                "from": {"type": "string", "description": "Start of range; interpreted in server timezone."},
+                "until": {"type": "string", "description": "End of range; interpreted in server timezone."},
+                "habit_id": {"type": "string", "description": "Habit reference such as h1."},
+            },
+            "additionalProperties": false,
+        })
     }
     async fn call(&self, args: Value) -> Result<ToolOutput, ToolError> {
         let args = object(args)?;
@@ -187,28 +372,29 @@ impl Tool for ListTasks {
             ),
             None => None,
         };
+        let tz = server_timezone(&self.client).await?;
         let query = TaskQuery {
             status: optional_string(&args, "status")?,
-            from: normalize_datetime(&self.client, optional_string(&args, "from")?, "from").await?,
-            until: normalize_datetime(&self.client, optional_string(&args, "until")?, "until")
-                .await?,
+            from: normalize_datetime(optional_string(&args, "from")?, &tz, "from")?,
+            until: normalize_datetime(optional_string(&args, "until")?, &tz, "until")?,
             habit_id: habit.as_ref().map(|habit| habit.habit.id.clone()),
         };
-        let tasks = self.client.list_tasks(&query).await.map_err(client_error)?;
-        let habit_display_ids = match habit {
-            Some(habit) => HashMap::from([(habit.habit.id, habit.habit.display_id)]),
-            None => self
-                .client
-                .list_habits()
-                .await
-                .map_err(client_error)?
-                .into_iter()
-                .map(|habit| (habit.id, habit.display_id))
-                .collect(),
-        };
+
+        let default_query = TaskQuery::default();
+        let c1 = self.client.clone();
+        let c2 = self.client.clone();
+        let c3 = self.client.clone();
+        let (tasks, all_tasks, habits) = tokio::try_join!(
+            async { c1.list_tasks(&query).await },
+            async { c2.list_tasks(&default_query).await },
+            async { c3.list_habits().await },
+        )
+        .map_err(client_error)?;
+
+        let ctx = TaskContext::new(&all_tasks, &habits);
         let content = tasks
             .iter()
-            .map(|task| task_json(task, &habit_display_ids))
+            .map(|task| task_json(task, &ctx))
             .collect::<Vec<_>>();
         Ok(ToolOutput {
             content: serde_json::to_string(&content).unwrap(),
@@ -230,34 +416,32 @@ impl Tool for GetTask {
         "Get one task by global #display_id or habit-scoped h<habit_display_id>#<task_display_id>."
     }
     fn parameters_schema(&self) -> Value {
-        json!({"type":"object","properties":{"task_ref":{"type":"string","description":"#42 or h1#5"}},"required":["task_ref"],"additionalProperties":false})
+        json!({
+            "type": "object",
+            "properties": {
+                "task_ref": {"type": "string", "description": "#42 or h1#5"},
+            },
+            "required": ["task_ref"],
+            "additionalProperties": false,
+        })
     }
     async fn call(&self, args: Value) -> Result<ToolOutput, ToolError> {
         let task_ref = required_string(&object(args)?, "task_ref")?;
-        if let Some(stripped) = task_ref.strip_prefix('#') {
-            return self.get(stripped.to_string()).await;
-        }
-        self.get(task_ref).await
-    }
-}
+        let task_ref = strip_leading_hash(&task_ref).to_string();
 
-impl GetTask {
-    async fn get(&self, task_ref: String) -> Result<ToolOutput, ToolError> {
-        let habit_display_id = task_ref
-            .strip_prefix(['h', 'H'])
-            .and_then(|value| value.split_once('#'))
-            .and_then(|(habit, _)| habit.parse::<i64>().ok());
-        let task = self
-            .client
-            .get_task(&task_ref)
-            .await
-            .map_err(client_error)?;
-        let reference = match (task.habit_id.as_ref(), habit_display_id) {
-            (Some(_), Some(habit_display_id)) => format!("h{habit_display_id}#{}", task.display_id),
-            _ => format!("#{}", task.display_id),
-        };
-        let mut result = task_json(&task, &HashMap::new());
-        result["reference"] = Value::String(reference);
+        let default_query = TaskQuery::default();
+        let c1 = self.client.clone();
+        let c2 = self.client.clone();
+        let c3 = self.client.clone();
+        let (task, all_tasks, habits) = tokio::try_join!(
+            async { c1.get_task(&task_ref).await },
+            async { c2.list_tasks(&default_query).await },
+            async { c3.list_habits().await },
+        )
+        .map_err(client_error)?;
+
+        let ctx = TaskContext::new(&all_tasks, &habits);
+        let result = task_json(&task, &ctx);
         Ok(ToolOutput {
             content: serde_json::to_string(&result).unwrap(),
             ..Default::default()
@@ -278,13 +462,18 @@ impl Tool for ListHabits {
         "List all habits."
     }
     fn parameters_schema(&self) -> Value {
-        json!({"type":"object","properties":{},"additionalProperties":false})
+        json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false,
+        })
     }
     async fn call(&self, args: Value) -> Result<ToolOutput, ToolError> {
         let _ = object(args)?;
         let habits = self.client.list_habits().await.map_err(client_error)?;
+        let content = habits.iter().map(habit_summary_json).collect::<Vec<_>>();
         Ok(ToolOutput {
-            content: serde_json::to_string(&habits).unwrap(),
+            content: serde_json::to_string(&content).unwrap(),
             ..Default::default()
         })
     }
@@ -303,7 +492,14 @@ impl Tool for GetHabit {
         "Get one habit by h<display_id>."
     }
     fn parameters_schema(&self) -> Value {
-        json!({"type":"object","properties":{"habit_ref":{"type":"string","description":"Habit reference such as h1"}},"required":["habit_ref"],"additionalProperties":false})
+        json!({
+            "type": "object",
+            "properties": {
+                "habit_ref": {"type": "string", "description": "Habit reference such as h1"},
+            },
+            "required": ["habit_ref"],
+            "additionalProperties": false,
+        })
     }
     async fn call(&self, args: Value) -> Result<ToolOutput, ToolError> {
         let habit_ref = required_string(&object(args)?, "habit_ref")?;
@@ -332,14 +528,48 @@ impl Tool for GetSchedule {
         "Get the current generated schedule with absolute timestamps."
     }
     fn parameters_schema(&self) -> Value {
-        json!({"type":"object","properties":{},"additionalProperties":false})
+        json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false,
+        })
     }
     async fn call(&self, args: Value) -> Result<ToolOutput, ToolError> {
         let _ = object(args)?;
-        let schedule = self.client.get_schedule().await.map_err(client_error)?;
+
+        let default_query = TaskQuery::default();
+        let c1 = self.client.clone();
+        let c2 = self.client.clone();
+        let c3 = self.client.clone();
+        let (schedule, tasks, habits) = tokio::try_join!(
+            async { c1.get_schedule().await },
+            async { c2.list_tasks(&default_query).await },
+            async { c3.list_habits().await },
+        )
+        .map_err(client_error)?;
+
+        let ctx = TaskContext::new(&tasks, &habits);
         let entries: Value = serde_json::from_str(&schedule.schedule)
             .map_err(|error| ToolError::Other(Box::new(error)))?;
-        Ok(ToolOutput { content: serde_json::to_string(&json!({"id": schedule.id, "created_at": schedule.created_at, "updated_at": schedule.updated_at, "entries": entries})).unwrap(), ..Default::default() })
+        let entries = match entries {
+            Value::Array(entries) => entries,
+            _ => Vec::new(),
+        };
+        let entries = entries
+            .iter()
+            .map(|entry| schedule_entry_value(entry, &ctx))
+            .collect::<Vec<_>>();
+
+        Ok(ToolOutput {
+            content: serde_json::to_string(&json!({
+                "id": schedule.id,
+                "created_at": schedule.created_at,
+                "updated_at": schedule.updated_at,
+                "entries": entries,
+            }))
+            .unwrap(),
+            ..Default::default()
+        })
     }
 }
 
@@ -356,7 +586,11 @@ impl Tool for GetSettings {
         "Get server timezone and sleep/work settings."
     }
     fn parameters_schema(&self) -> Value {
-        json!({"type":"object","properties":{},"additionalProperties":false})
+        json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false,
+        })
     }
     async fn call(&self, args: Value) -> Result<ToolOutput, ToolError> {
         let _ = object(args)?;
@@ -381,21 +615,48 @@ impl Tool for PreviewScheduleTool {
         "Preview a schedule without replacing the active schedule; reports moved, unscheduled, and sleep impact."
     }
     fn parameters_schema(&self) -> Value {
-        json!({"type":"object","properties":{"mode":{"type":"string"},"from":{"type":"string"},"until":{"type":"string"},"task_ids":{"type":"array","items":{"type":"string"}},"pinned":{"type":"array","items":{"type":"string"}},"sleep":{"type":"string"}},"additionalProperties":false})
+        json!({
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string"},
+                "from": {"type": "string", "description": "Start of range; interpreted in server timezone."},
+                "until": {"type": "string", "description": "End of range; interpreted in server timezone."},
+                "task_ids": {"type": "array", "items": {"type": "string"}},
+                "pinned": {"type": "array", "items": {"type": "string"}},
+                "sleep": {"type": "string"},
+            },
+            "additionalProperties": false,
+        })
     }
     async fn call(&self, args: Value) -> Result<ToolOutput, ToolError> {
         let mut args = object(args)?;
         args.entry("mode")
             .or_insert_with(|| Value::String("full".into()));
+
+        let tz = server_timezone(&self.client).await?;
+        normalize_mutation_field(&mut args, "from", &tz)?;
+        normalize_mutation_field(&mut args, "until", &tz)?;
+        normalize_reference_array(&mut args, "task_ids")?;
+        normalize_reference_array(&mut args, "pinned")?;
+
         let request: SchedulePreviewRequest = serde_json::from_value(Value::Object(args))
             .map_err(|error| ToolError::InvalidArgs(error.to_string()))?;
-        let preview = self
-            .client
-            .preview_schedule(&request)
-            .await
-            .map_err(client_error)?;
+
+        let default_query = TaskQuery::default();
+        let c1 = self.client.clone();
+        let c2 = self.client.clone();
+        let c3 = self.client.clone();
+        let req = request;
+        let (preview, tasks, habits) = tokio::try_join!(
+            async { c1.preview_schedule(&req).await },
+            async { c2.list_tasks(&default_query).await },
+            async { c3.list_habits().await },
+        )
+        .map_err(client_error)?;
+
+        let ctx = TaskContext::new(&tasks, &habits);
         Ok(ToolOutput {
-            content: preview.to_string(),
+            content: serde_json::to_string(&transform_preview(preview, &ctx)).unwrap(),
             ..Default::default()
         })
     }
@@ -492,14 +753,43 @@ impl MutationKind {
             Self::CreateTask => (
                 json!(["title", "end_at", "avg_minutes"]),
                 json!({
-                    "title":{"type":"string"},"description":{"type":"string"},"start_at":{"type":"string"},"end_at":{"type":"string"},"avg_minutes":{"type":"integer"},"sigma_minutes":{"type":"integer"},"depends":{"type":"array","items":{"type":"string"}},"parallelizable":{"type":"boolean"},"allows_parallel":{"type":"boolean"},"abandonability":{"type":"number"},"inferred_fields":{"type":"array"}
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                    "start_at": {"type": "string", "description": "Start time; interpreted in server timezone if no offset is given."},
+                    "end_at": {"type": "string", "description": "Deadline; interpreted in server timezone if no offset is given."},
+                    "avg_minutes": {"type": "integer"},
+                    "sigma_minutes": {"type": "integer"},
+                    "depends": {"type": "array", "items": {"type": "string"}},
+                    "parallelizable": {"type": "boolean"},
+                    "allows_parallel": {"type": "boolean"},
+                    "abandonability": {"type": "number"},
+                    "inferred_fields": {"type": "array"},
                 }),
             ),
             Self::UpdateTask => (
                 json!(["task_ref"]),
-                json!({"task_ref":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},"start_at":{"type":"string"},"end_at":{"type":"string"},"avg_minutes":{"type":"integer"},"sigma_minutes":{"type":"integer"},"depends":{"type":"array","items":{"type":"string"}},"parallelizable":{"type":"boolean"},"allows_parallel":{"type":"boolean"},"abandonability":{"type":"number"},"status":{"type":"string"},"inferred_fields":{"type":"array"}}),
+                json!({
+                    "task_ref": {"type": "string"},
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                    "start_at": {"type": "string", "description": "Start time; interpreted in server timezone if no offset is given."},
+                    "end_at": {"type": "string", "description": "Deadline; interpreted in server timezone if no offset is given."},
+                    "avg_minutes": {"type": "integer"},
+                    "sigma_minutes": {"type": "integer"},
+                    "depends": {"type": "array", "items": {"type": "string"}},
+                    "parallelizable": {"type": "boolean"},
+                    "allows_parallel": {"type": "boolean"},
+                    "abandonability": {"type": "number"},
+                    "status": {"type": "string"},
+                    "inferred_fields": {"type": "array"},
+                }),
             ),
-            Self::DeleteTask => (json!(["task_ref"]), json!({"task_ref":{"type":"string"}})),
+            Self::DeleteTask => (
+                json!(["task_ref"]),
+                json!({
+                    "task_ref": {"type": "string"},
+                }),
+            ),
             Self::CreateHabit => (
                 json!([
                     "title",
@@ -508,30 +798,79 @@ impl MutationKind {
                     "end_time",
                     "avg_minutes"
                 ]),
-                json!({"title":{"type":"string"},"description":{"type":"string"},"recurrence":{"type":"string"},"start_time":{"type":"string"},"end_time":{"type":"string"},"avg_minutes":{"type":"integer"},"sigma_minutes":{"type":"integer"},"parallelizable":{"type":"boolean"},"allows_parallel":{"type":"boolean"},"abandonability":{"type":"number"},"inferred_fields":{"type":"array"}}),
+                json!({
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                    "recurrence": {"type": "string"},
+                    "start_time": {"type": "string", "description": "Time of day (HH:MM)."},
+                    "end_time": {"type": "string", "description": "Time of day (HH:MM)."},
+                    "avg_minutes": {"type": "integer"},
+                    "sigma_minutes": {"type": "integer"},
+                    "parallelizable": {"type": "boolean"},
+                    "allows_parallel": {"type": "boolean"},
+                    "abandonability": {"type": "number"},
+                    "inferred_fields": {"type": "array"},
+                }),
             ),
             Self::UpdateHabit => (
                 json!(["habit_ref"]),
-                json!({"habit_ref":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},"recurrence":{"type":"string"},"start_time":{"type":"string"},"end_time":{"type":"string"},"avg_minutes":{"type":"integer"},"sigma_minutes":{"type":"integer"},"parallelizable":{"type":"boolean"},"allows_parallel":{"type":"boolean"},"abandonability":{"type":"number"},"active":{"type":"boolean"},"inferred_fields":{"type":"array"}}),
+                json!({
+                    "habit_ref": {"type": "string"},
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                    "recurrence": {"type": "string"},
+                    "start_time": {"type": "string", "description": "Time of day (HH:MM)."},
+                    "end_time": {"type": "string", "description": "Time of day (HH:MM)."},
+                    "avg_minutes": {"type": "integer"},
+                    "sigma_minutes": {"type": "integer"},
+                    "parallelizable": {"type": "boolean"},
+                    "allows_parallel": {"type": "boolean"},
+                    "abandonability": {"type": "number"},
+                    "active": {"type": "boolean"},
+                    "inferred_fields": {"type": "array"},
+                }),
             ),
-            Self::DeleteHabit => (json!(["habit_ref"]), json!({"habit_ref":{"type":"string"}})),
+            Self::DeleteHabit => (
+                json!(["habit_ref"]),
+                json!({
+                    "habit_ref": {"type": "string"},
+                }),
+            ),
             Self::GenerateSchedule => (
                 json!([]),
-                json!({"task_ids":{"type":"array","items":{"type":"string"}},"sleep":{"type":"string"}}),
+                json!({
+                    "task_ids": {"type": "array", "items": {"type": "string"}},
+                    "sleep": {"type": "string"},
+                }),
             ),
             Self::Reschedule => (
                 json!(["mode"]),
-                json!({"mode":{"type":"string"},"from":{"type":"string"},"until":{"type":"string"},"task_ids":{"type":"array","items":{"type":"string"}},"pinned":{"type":"array","items":{"type":"string"}},"sleep":{"type":"string"}}),
+                json!({
+                    "mode": {"type": "string"},
+                    "from": {"type": "string", "description": "Start of range; interpreted in server timezone if no offset is given."},
+                    "until": {"type": "string", "description": "End of range; interpreted in server timezone if no offset is given."},
+                    "task_ids": {"type": "array", "items": {"type": "string"}},
+                    "pinned": {"type": "array", "items": {"type": "string"}},
+                    "sleep": {"type": "string"},
+                }),
             ),
         };
         let properties = properties.as_object().cloned().unwrap_or_default();
         let mut properties = serde_json::Map::from_iter(properties);
-        properties.insert("why".into(), json!({"type":"string","description":"Short user-facing reason for the proposed change."}));
+        properties.insert(
+            "why".into(),
+            json!({"type": "string", "description": "Short user-facing reason for the proposed change."}),
+        );
         properties.insert(
             "warnings".into(),
-            json!({"type":"array","items":{"type":"string"}}),
+            json!({"type": "array", "items": {"type": "string"}}),
         );
-        json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})
+        json!({
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": false,
+        })
     }
 }
 
@@ -554,19 +893,31 @@ impl Tool for MutationTool {
 
     async fn call(&self, args: Value) -> Result<ToolOutput, ToolError> {
         let mut args = object(args)?;
-        validate_mutation(&self.client, self.kind, &args).await?;
+        validate_mutation(self.kind, &args)?;
+
+        let tz = server_timezone(&self.client).await?;
+        normalize_mutation_args(self.kind, &mut args, &tz)?;
+
+        let mut execution_args = args.clone();
+        normalize_execution_references(self.kind, &mut execution_args)?;
+
         let (before, observed_updated_at) = match self.kind {
             MutationKind::UpdateTask | MutationKind::DeleteTask => {
-                let reference = required_string(&args, "task_ref")?;
-                let task = self
-                    .client
-                    .get_task(&reference)
-                    .await
-                    .map_err(client_error)?;
-                (
-                    Some(task_json(&task, &HashMap::new())),
-                    Some(task.updated_at),
+                let lookup = required_string(&execution_args, "task_ref")?;
+
+                let default_query = TaskQuery::default();
+                let c1 = self.client.clone();
+                let c2 = self.client.clone();
+                let c3 = self.client.clone();
+                let (task, all_tasks, habits) = tokio::try_join!(
+                    async { c1.get_task(&lookup).await },
+                    async { c2.list_tasks(&default_query).await },
+                    async { c3.list_habits().await },
                 )
+                .map_err(client_error)?;
+
+                let ctx = TaskContext::new(&all_tasks, &habits);
+                (Some(task_json(&task, &ctx)), Some(task.updated_at))
             }
             MutationKind::UpdateHabit | MutationKind::DeleteHabit => {
                 let reference = required_string(&args, "habit_ref")?;
@@ -579,6 +930,39 @@ impl Tool for MutationTool {
             }
             _ => (None, None),
         };
+
+        if matches!(
+            self.kind,
+            MutationKind::GenerateSchedule | MutationKind::Reschedule
+        ) {
+            let mut preview_args = execution_args.clone();
+            if matches!(self.kind, MutationKind::GenerateSchedule) {
+                preview_args.insert("mode".into(), Value::String("full".into()));
+            }
+            let request: SchedulePreviewRequest =
+                serde_json::from_value(Value::Object(preview_args))
+                    .map_err(|error| ToolError::InvalidArgs(error.to_string()))?;
+
+            let default_query = TaskQuery::default();
+            let c1 = self.client.clone();
+            let c2 = self.client.clone();
+            let c3 = self.client.clone();
+            let req = request;
+            let (preview, all_tasks, habits) = tokio::try_join!(
+                async { c1.preview_schedule(&req).await },
+                async { c2.list_tasks(&default_query).await },
+                async { c3.list_habits().await },
+            )
+            .map_err(client_error)?;
+
+            let ctx = TaskContext::new(&all_tasks, &habits);
+            let entries = preview.get("entries").cloned().ok_or_else(|| {
+                ToolError::InvalidArgs("schedule preview did not return entries".into())
+            })?;
+            execution_args.insert("_preview_entries".into(), entries);
+            args.insert("_preview".into(), transform_preview(preview, &ctx));
+        }
+
         let target = args
             .get("task_ref")
             .or_else(|| args.get("habit_ref"))
@@ -591,28 +975,6 @@ impl Tool for MutationTool {
             .unwrap_or_else(|| json!([]));
         let inferred_fields = serde_json::from_value::<Vec<crate::InferredField>>(inferred_fields)
             .map_err(|error| ToolError::InvalidArgs(format!("invalid inferred_fields: {error}")))?;
-        if matches!(
-            self.kind,
-            MutationKind::GenerateSchedule | MutationKind::Reschedule
-        ) {
-            let mut preview_args = args.clone();
-            if matches!(self.kind, MutationKind::GenerateSchedule) {
-                preview_args.insert("mode".into(), Value::String("full".into()));
-            }
-            let request: SchedulePreviewRequest =
-                serde_json::from_value(Value::Object(preview_args))
-                    .map_err(|error| ToolError::InvalidArgs(error.to_string()))?;
-            let preview = self
-                .client
-                .preview_schedule(&request)
-                .await
-                .map_err(client_error)?;
-            let entries = preview.get("entries").cloned().ok_or_else(|| {
-                ToolError::InvalidArgs("schedule preview did not return entries".into())
-            })?;
-            args.insert("_preview_entries".into(), entries);
-            args.insert("_preview".into(), preview);
-        }
         let why = optional_string(&args, "why")?;
         let warnings = args
             .get("warnings")
@@ -630,8 +992,8 @@ impl Tool for MutationTool {
             target_label: format!("{} {target}", self.kind.target_type()),
             description: format!("{} ({target})", self.kind.description()),
             before,
-            after: Some(Value::Object(args.clone())),
-            arguments: Some(Value::Object(args)),
+            after: Some(Value::Object(args)),
+            arguments: Some(Value::Object(execution_args)),
             observed_updated_at,
         };
         Ok(ToolOutput {
@@ -646,8 +1008,82 @@ impl Tool for MutationTool {
     }
 }
 
-async fn validate_mutation(
-    client: &Client,
+fn normalize_mutation_field(
+    args: &mut serde_json::Map<String, Value>,
+    name: &str,
+    tz: &jiff::tz::TimeZone,
+) -> Result<(), ToolError> {
+    if let Some(value) = optional_string(args, name)? {
+        let normalized = parse_datetime_tz(&value, tz)
+            .map_err(|error| ToolError::InvalidArgs(format!("invalid {name}: {error}")))?;
+        args.insert(name.into(), Value::String(normalized));
+    }
+    Ok(())
+}
+
+fn normalize_mutation_args(
+    kind: MutationKind,
+    args: &mut serde_json::Map<String, Value>,
+    tz: &jiff::tz::TimeZone,
+) -> Result<(), ToolError> {
+    match kind {
+        MutationKind::CreateTask | MutationKind::UpdateTask => {
+            normalize_mutation_field(args, "start_at", tz)?;
+            normalize_mutation_field(args, "end_at", tz)?;
+        }
+        MutationKind::Reschedule => {
+            normalize_mutation_field(args, "from", tz)?;
+            normalize_mutation_field(args, "until", tz)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Strip a leading `#` from a single string reference field for backend execution.
+fn normalize_task_ref(
+    args: &mut serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<(), ToolError> {
+    if let Some(value) = optional_string(args, key)? {
+        args.insert(
+            key.to_string(),
+            Value::String(strip_leading_hash(&value).to_string()),
+        );
+    }
+    Ok(())
+}
+
+/// Strip leading `#` characters from reference fields used for backend execution.
+/// Display-facing `args` keep the original user input so approval diffs stay clean.
+fn normalize_execution_references(
+    kind: MutationKind,
+    args: &mut serde_json::Map<String, Value>,
+) -> Result<(), ToolError> {
+    match kind {
+        MutationKind::CreateTask => {
+            normalize_reference_array(args, "depends")?;
+        }
+        MutationKind::UpdateTask => {
+            normalize_task_ref(args, "task_ref")?;
+            normalize_reference_array(args, "depends")?;
+        }
+        MutationKind::DeleteTask => {
+            normalize_task_ref(args, "task_ref")?;
+        }
+        MutationKind::GenerateSchedule => {
+            normalize_reference_array(args, "task_ids")?;
+        }
+        MutationKind::Reschedule => {
+            normalize_reference_array(args, "task_ids")?;
+            normalize_reference_array(args, "pinned")?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_mutation(
     kind: MutationKind,
     args: &serde_json::Map<String, Value>,
 ) -> Result<(), ToolError> {
@@ -658,13 +1094,7 @@ async fn validate_mutation(
             required_i64(args, "avg_minutes")?;
         }
         MutationKind::UpdateTask | MutationKind::DeleteTask => {
-            let reference = required_string(args, "task_ref")?;
-            if reference.starts_with('#')
-                || reference.starts_with('h')
-                || reference.starts_with('H')
-            {
-                client.get_task(&reference).await.map_err(client_error)?;
-            }
+            required_string(args, "task_ref")?;
         }
         MutationKind::CreateHabit => {
             required_string(args, "title")?;
@@ -688,6 +1118,82 @@ async fn validate_mutation(
 mod tests {
     use super::*;
 
+    fn task_row(
+        id: &str,
+        display_id: i64,
+        title: &str,
+        habit_id: Option<&str>,
+        depends: &[&str],
+    ) -> TaskRow {
+        TaskRow {
+            id: id.to_string(),
+            display_id,
+            title: title.to_string(),
+            description: None,
+            start_at: None,
+            end_at: "2025-06-05T10:00:00Z".to_string(),
+            avg_minutes: 30,
+            sigma_minutes: 5,
+            depends: serde_json::to_string(
+                &depends.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            )
+            .unwrap(),
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            status: "pending".to_string(),
+            habit_id: habit_id.map(|s| s.to_string()),
+            ical_uid: None,
+            user_edited: false,
+            fixed: false,
+            habit_step_id: None,
+            created_at: "2025-06-01T00:00:00Z".to_string(),
+            updated_at: "2025-06-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn habit_row(id: &str, display_id: i64, title: &str) -> HabitRow {
+        HabitRow {
+            id: id.to_string(),
+            display_id,
+            title: title.to_string(),
+            description: None,
+            recurrence: "FREQ=DAILY".to_string(),
+            start_time: "08:00".to_string(),
+            end_time: "09:00".to_string(),
+            avg_minutes: 60,
+            sigma_minutes: 10,
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            active: true,
+            fixed: false,
+            window_mode: "day".to_string(),
+            created_at: "2025-06-01T00:00:00Z".to_string(),
+            updated_at: "2025-06-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn step_row(id: &str, habit_id: &str, position: i64, title: &str) -> HabitStepRow {
+        HabitStepRow {
+            id: id.to_string(),
+            habit_id: habit_id.to_string(),
+            position,
+            title: title.to_string(),
+            description: None,
+            start_time: "08:00".to_string(),
+            end_time: "09:00".to_string(),
+            avg_minutes: 30,
+            sigma_minutes: 5,
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: false,
+            depends_on: "[]".to_string(),
+            created_at: "2025-06-01T00:00:00Z".to_string(),
+        }
+    }
+
     #[test]
     fn task_reference_schema_requires_scoped_reference() {
         let tool = GetTask {
@@ -699,8 +1205,163 @@ mod tests {
     }
 
     #[test]
-    fn task_reference_parser_accepts_global_and_scoped_forms() {
-        assert_eq!("#42".trim_start_matches('#'), "42");
-        assert!("h1#5".starts_with('h'));
+    fn task_reference_uses_global_or_habit_scoped_display_id() {
+        let habit_id = "habit-uuid";
+        let mut habit_map = HashMap::new();
+        habit_map.insert(habit_id.to_string(), 7);
+
+        let standalone = task_row("task-1", 42, "standalone", None, &[]);
+        assert_eq!(task_reference(&standalone, &HashMap::new()), "#42");
+
+        let habit_task = task_row("task-2", 3, "habit task", Some(habit_id), &[]);
+        assert_eq!(task_reference(&habit_task, &habit_map), "h7#3");
+    }
+
+    #[test]
+    fn task_json_hides_internal_uuids_and_uses_references() {
+        let habit = habit_row("habit-uuid", 7, "habit");
+        let dep = task_row("dep-uuid", 5, "dep", None, &[]);
+        let task = task_row("task-uuid", 3, "task", Some("habit-uuid"), &["dep-uuid"]);
+        let ctx = TaskContext::new(&[task.clone(), dep.clone()], &[habit]);
+
+        let value = task_json(&task, &ctx);
+        assert!(value.get("id").is_none());
+        assert!(value.get("habit_id").is_none());
+        assert!(value.get("habit_step_id").is_none());
+        assert_eq!(value["display_id"], 3);
+        assert_eq!(value["reference"], "h7#3");
+        assert_eq!(value["depends"], json!(["#5"]));
+    }
+
+    #[test]
+    fn habit_json_hides_internal_uuids() {
+        let habit = habit_row("habit-uuid", 7, "habit");
+        let step = step_row("step-uuid", "habit-uuid", 1, "step");
+        let detail = HabitDetail {
+            habit,
+            steps: vec![step],
+        };
+
+        let value = habit_json(&detail);
+        assert!(value.get("id").is_none());
+        assert_eq!(value["display_id"], 7);
+        assert_eq!(value["reference"], "h7");
+
+        let steps = value["steps"].as_array().unwrap();
+        assert_eq!(steps.len(), 1);
+        assert!(steps[0].get("id").is_none());
+        assert!(steps[0].get("habit_id").is_none());
+    }
+
+    #[test]
+    fn schedule_entry_value_includes_title_display_id_and_reference() {
+        let task = task_row("task-uuid", 3, "task title", Some("habit-uuid"), &[]);
+        let habit = habit_row("habit-uuid", 7, "habit");
+        let ctx = TaskContext::new(&[task], &[habit]);
+
+        let entry = json!({
+            "task_id": "task-uuid",
+            "start_at": "2025-06-05T10:00:00Z",
+            "end_at": "2025-06-05T11:00:00Z",
+        });
+        let value = schedule_entry_value(&entry, &ctx);
+
+        assert!(value.get("task_id").is_none());
+        assert_eq!(value["reference"], "h7#3");
+        assert_eq!(value["display_id"], 3);
+        assert_eq!(value["title"], "task title");
+        assert_eq!(value["start_at"], "2025-06-05T10:00:00Z");
+        assert_eq!(value["end_at"], "2025-06-05T11:00:00Z");
+    }
+
+    #[test]
+    fn transform_preview_replaces_internal_task_ids_with_references() {
+        let task = task_row("task-uuid", 3, "task", Some("habit-uuid"), &[]);
+        let habit = habit_row("habit-uuid", 7, "habit");
+        let ctx = TaskContext::new(&[task], &[habit]);
+
+        let preview = json!({
+            "entries": [{
+                "task_id": "task-uuid",
+                "start_at": "2025-06-05T10:00:00Z",
+                "end_at": "2025-06-05T11:00:00Z",
+            }],
+            "unscheduled_task_ids": ["task-uuid"],
+            "displaced_task_ids": ["task-uuid"],
+        });
+        let out = transform_preview(preview, &ctx);
+
+        let entries = out["entries"].as_array().unwrap();
+        assert_eq!(entries[0]["reference"], "h7#3");
+        assert_eq!(out["unscheduled_task_ids"], json!(["h7#3"]));
+        assert_eq!(out["displaced_task_ids"], json!(["h7#3"]));
+    }
+
+    #[test]
+    fn normalize_mutation_field_interprets_naive_datetime_in_server_timezone() {
+        let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+        let mut args = serde_json::Map::new();
+        args.insert(
+            "end_at".to_string(),
+            Value::String("2025-06-05T14:00".to_string()),
+        );
+
+        normalize_mutation_field(&mut args, "end_at", &tz).unwrap();
+
+        // 2025-06-05 14:00 JST == 2025-06-05 05:00 UTC
+        assert!(
+            args["end_at"]
+                .as_str()
+                .unwrap()
+                .starts_with("2025-06-05T05:00:00")
+        );
+        assert!(args["end_at"].as_str().unwrap().ends_with('Z'));
+    }
+
+    #[test]
+    fn strip_leading_hash_removes_only_leading_hash() {
+        assert_eq!(strip_leading_hash("#42"), "42");
+        assert_eq!(strip_leading_hash("42"), "42");
+        assert_eq!(strip_leading_hash("h1#5"), "h1#5");
+        assert_eq!(strip_leading_hash("#h1#5"), "h1#5");
+        assert_eq!(strip_leading_hash("uuid-like-string"), "uuid-like-string");
+    }
+
+    #[test]
+    fn normalize_reference_array_trims_and_strips_leading_hash() {
+        let mut args = serde_json::Map::new();
+        args.insert(
+            "depends".to_string(),
+            json!(["#5", " h1#3", "#42 ", "  uuid  "]),
+        );
+        normalize_reference_array(&mut args, "depends").unwrap();
+
+        assert_eq!(args["depends"], json!(["5", "h1#3", "42", "uuid"]));
+    }
+
+    #[test]
+    fn normalize_reference_array_rejects_non_string_entries() {
+        let mut args = serde_json::Map::new();
+        args.insert("task_ids".to_string(), json!(["#5", 42]));
+
+        assert!(normalize_reference_array(&mut args, "task_ids").is_err());
+    }
+
+    #[test]
+    fn normalize_execution_references_strips_hashes_for_backend() {
+        let tz = jiff::tz::TimeZone::get("UTC").unwrap();
+        let mut display_args = serde_json::Map::new();
+        display_args.insert("task_ref".to_string(), Value::String("#42".to_string()));
+        display_args.insert("depends".to_string(), json!(["#1", "h2#3"]));
+
+        normalize_mutation_args(MutationKind::UpdateTask, &mut display_args, &tz).unwrap();
+
+        let mut execution_args = display_args.clone();
+        normalize_execution_references(MutationKind::UpdateTask, &mut execution_args).unwrap();
+
+        assert_eq!(display_args["task_ref"], "#42");
+        assert_eq!(display_args["depends"], json!(["#1", "h2#3"]));
+        assert_eq!(execution_args["task_ref"], "42");
+        assert_eq!(execution_args["depends"], json!(["1", "h2#3"]));
     }
 }
