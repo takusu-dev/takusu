@@ -424,8 +424,13 @@ enum HabitCommands {
     },
 
     /// Detect and offer to remove redundant step dependency edges (#355)
-    #[command(visible_alias = "steps-check")]
     StepsCheck { id: String },
+
+    /// Manage habit steps (#95)
+    Steps {
+        #[command(subcommand)]
+        command: StepsCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -484,6 +489,23 @@ enum PauseCommands {
     /// Remove a pause period
     #[command(visible_alias = "rm")]
     Remove { id: String, pause_id: String },
+}
+
+#[derive(Subcommand)]
+enum StepsCommands {
+    /// List steps for a habit
+    #[command(visible_alias = "ls")]
+    List { id: String },
+
+    /// Edit steps for a habit in $EDITOR (JSON array)
+    Edit { id: String },
+
+    /// Replace steps from a JSON file or stdin ("-"; // comments ignored)
+    Set {
+        id: String,
+        #[arg(help = "JSON file path or '-' for stdin (// comments are ignored)")]
+        file: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1242,8 +1264,64 @@ async fn run_habit(mode: DisplayMode, app: &TakusuApp, cmd: HabitCommands) -> Re
         HabitCommands::StepsCheck { id } => {
             deps_check_steps(app, &id).await?;
         }
+        HabitCommands::Steps { command } => run_habit_steps(mode, app, command).await?,
     }
     Ok(())
+}
+
+async fn run_habit_steps(
+    mode: DisplayMode,
+    app: &TakusuApp,
+    cmd: StepsCommands,
+) -> Result<(), AppError> {
+    match cmd {
+        StepsCommands::List { id } => {
+            let steps = app.list_habit_steps(&id).await?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_habit_steps(&steps),
+                DisplayMode::Simple => display_simple::display_habit_steps(&steps),
+            }
+        }
+        StepsCommands::Edit { id } => {
+            let steps = app.list_habit_steps(&id).await?;
+            let original =
+                editor::format_steps_for_editing(&steps).map_err(AppError::BadRequest)?;
+            let suffix = format!("{}", uuid::Uuid::now_v7());
+            let edited = editor::open_editor(&original, &suffix)
+                .map_err(|e| AppError::BadRequest(e.to_string()))?;
+            let inputs = editor::parse_edited_steps(&edited).map_err(AppError::BadRequest)?;
+            let replaced = app.replace_habit_steps(&id, &inputs).await?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_habit_steps(&replaced),
+                DisplayMode::Simple => display_simple::display_habit_steps(&replaced),
+            }
+        }
+        StepsCommands::Set { id, file } => {
+            let content = read_steps_file(&file).await?;
+            let inputs = editor::parse_edited_steps(&content).map_err(AppError::BadRequest)?;
+            let replaced = app.replace_habit_steps(&id, &inputs).await?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_habit_steps(&replaced),
+                DisplayMode::Simple => display_simple::display_habit_steps(&replaced),
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn read_steps_file(path: &str) -> Result<String, AppError> {
+    match path {
+        "-" => {
+            let mut buf = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .map_err(|e| AppError::BadRequest(format!("failed to read stdin: {e}")))?;
+            Ok(buf)
+        }
+        path => tokio::fs::read_to_string(path)
+            .await
+            .map_err(|e| AppError::BadRequest(format!("failed to read {path}: {e}"))),
+    }
 }
 
 async fn run_skill(mode: DisplayMode, app: &TakusuApp, cmd: SkillCommands) -> Result<(), AppError> {

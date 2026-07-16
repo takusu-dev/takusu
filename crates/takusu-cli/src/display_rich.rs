@@ -1,7 +1,7 @@
 use comfy_table::{Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 use jiff::Timestamp;
 use takusu_habit::{RecurrenceRule, summarize};
-use takusu_storage::{HabitRow, ScheduleEntry, SkillRow, TaskRow, TokenRow};
+use takusu_storage::{HabitRow, HabitStepRow, ScheduleEntry, SkillRow, TaskRow, TokenRow};
 
 /// Parse a recurrence JSON string into a human-readable summary.
 /// Falls back to the raw string if parsing fails.
@@ -182,6 +182,51 @@ pub fn display_habit_detail(habit: &HabitRow) {
     if habit.window_mode == "period" {
         println!("\nWindow: period (schedulable anywhere until next occurrence)");
     }
+}
+
+pub fn display_habit_steps(steps: &[HabitStepRow]) {
+    if steps.is_empty() {
+        println!("No steps found.");
+        return;
+    }
+
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_header(vec![
+            Cell::new("ID").fg(Color::Cyan),
+            Cell::new("Pos").fg(Color::Cyan),
+            Cell::new("Title").fg(Color::Cyan),
+            Cell::new("Time").fg(Color::Cyan),
+            Cell::new("Avg (min)").fg(Color::Cyan),
+            Cell::new("σ (min)").fg(Color::Cyan),
+            Cell::new("Parallel").fg(Color::Cyan),
+            Cell::new("Abandon").fg(Color::Cyan),
+            Cell::new("Depends").fg(Color::Cyan),
+        ]);
+
+    for s in steps {
+        let deps: Vec<String> = serde_json::from_str(&s.depends_on).unwrap_or_default();
+        let deps_str = deps.join(",");
+        let id_short: String = s.id.chars().take(8).collect();
+        table.add_row(vec![
+            Cell::new(id_short),
+            Cell::new(s.position),
+            Cell::new(&s.title),
+            Cell::new(format!("{}–{}", s.start_time, s.end_time)),
+            Cell::new(s.avg_minutes),
+            Cell::new(s.sigma_minutes),
+            Cell::new(if s.parallelizable { "✓" } else { "✗" }),
+            Cell::new(format!("{:.1}", s.abandonability)),
+            Cell::new(if deps_str.is_empty() {
+                "-".into()
+            } else {
+                deps_str
+            }),
+        ]);
+    }
+    println!("{table}");
 }
 
 pub fn display_tasks(

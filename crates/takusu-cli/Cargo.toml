@@ -19,6 +19,7 @@ takusu-local-lib = { workspace = true, features = ["sqlite"] }
 takusu-util = { workspace = true }
 takusu-storage = { workspace = true }
 takusu-habit = { workspace = true }
+uuid = { workspace = true }
 toml = "0.8"
 toml_edit = "0.22"
 

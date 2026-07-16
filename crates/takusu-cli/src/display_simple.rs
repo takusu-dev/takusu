@@ -1,5 +1,5 @@
 use jiff::Timestamp;
-use takusu_storage::{HabitRow, ScheduleEntry, SkillRow, TaskRow, TokenRow};
+use takusu_storage::{HabitRow, HabitStepRow, ScheduleEntry, SkillRow, TaskRow, TokenRow};
 
 /// Build the display label for a task ID.
 /// Habit-generated tasks show `h{habit_display_id}#{task_display_id}` (#305);
@@ -219,6 +219,31 @@ pub fn display_habit_detail(habit: &HabitRow) {
         println!("   {desc}");
     }
     println!();
+}
+
+pub fn display_habit_steps(steps: &[HabitStepRow]) {
+    if steps.is_empty() {
+        println!("  (no steps)");
+        return;
+    }
+
+    for s in steps {
+        let deps: Vec<String> = serde_json::from_str(&s.depends_on).unwrap_or_default();
+        let deps_str = if deps.is_empty() {
+            String::new()
+        } else {
+            format!(" ← {}", deps.join(","))
+        };
+        println!(
+            "  {} [{}] {} ({}–{}, {}min){}",
+            s.id, s.position, s.title, s.start_time, s.end_time, s.avg_minutes, deps_str
+        );
+        if let Some(ref desc) = s.description
+            && !desc.is_empty()
+        {
+            println!("     {desc}");
+        }
+    }
 }
 
 pub fn display_skills(skills: &[SkillRow]) {
