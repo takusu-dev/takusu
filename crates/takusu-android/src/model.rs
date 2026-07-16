@@ -7,6 +7,17 @@ use takusu_audio::{DownloadProgress, DownloadStage, ModelCache};
 
 use crate::TakusuError;
 
+/// Check whether a bundled local audio model is already downloaded and complete.
+#[uniffi::export]
+pub fn is_model_cached(cache_dir: String, model_id: String) -> Result<bool, TakusuError> {
+    let cache = ModelCache::new(&cache_dir);
+    cache
+        .is_cached(&model_id)
+        .map_err(|error| TakusuError::Model {
+            detail: error.to_string(),
+        })
+}
+
 /// Download a bundled local audio model and write progress atomically to a
 /// small status file so Android WorkManager can render progress while the
 /// blocking archive extraction runs on its worker thread.

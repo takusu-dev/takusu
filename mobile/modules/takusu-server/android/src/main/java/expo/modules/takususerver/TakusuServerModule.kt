@@ -5,10 +5,12 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.records.Field
 import expo.modules.kotlin.records.Record
+import java.io.File
 import uniffi.takusu_android.ServerStatus
 import uniffi.takusu_android.TakusuServer
 import uniffi.takusu_android.clearLogs
 import uniffi.takusu_android.getLogs
+import uniffi.takusu_android.isModelCached
 import uniffi.takusu_android.pushLog
 
 class StartOptions : Record {
@@ -34,6 +36,14 @@ class TakusuServerModule : Module() {
                         ?: throw CodedException("ERR_NO_CONTEXT", "Android context is unavailable", null)
                 ModelDownloadWorker.enqueue(context, modelId)
                 true
+            }
+
+            AsyncFunction("isModelCached") { modelId: String ->
+                val context =
+                    appContext.reactContext
+                        ?: throw CodedException("ERR_NO_CONTEXT", "Android context is unavailable", null)
+                val modelRoot = File(context.noBackupFilesDir, "takusu/models")
+                isModelCached(modelRoot.absolutePath, modelId)
             }
 
             Function("start") { options: StartOptions ->
