@@ -483,20 +483,26 @@ fn iso_to_point(iso: &str, tz: &jiff::tz::TimeZone) -> Result<Point, AppError> {
     Ok(Point::from_timestamp(ts, 5))
 }
 
-fn point_to_iso(slot: i64) -> String {
-    let secs = slot * 5 * 60;
-    let ts = Timestamp::from_second(secs).unwrap_or_else(|_| Timestamp::now());
-    ts.to_string()
+fn point_to_iso(slot: i64) -> Result<String, AppError> {
+    let secs = slot
+        .checked_mul(5 * 60)
+        .ok_or_else(|| AppError::Internal("timestamp overflow".into()))?;
+    let ts = Timestamp::from_second(secs)
+        .map_err(|e| AppError::Internal(format!("invalid timestamp: {e}")))?;
+    Ok(ts.to_string())
 }
 
 /// Point スロット値 → ローカルタイムゾーンの日付文字列 (YYYY-MM-DD)。
 /// `point_to_iso` は UTC タイムスタンプを返すため、JST など UTC より東の
 /// タイムゾーンで午前 0 時〜 9 时のタスクが前日として扱われてしまう。
 /// `sync_habit_tasks` の日付キーはローカル日付で一貫させる必要がある。
-fn point_to_local_date(slot: i64, tz: &jiff::tz::TimeZone) -> String {
-    let secs = slot * 5 * 60;
-    let ts = Timestamp::from_second(secs).unwrap_or_else(|_| Timestamp::now());
-    ts.to_zoned(tz.clone()).date().to_string()
+fn point_to_local_date(slot: i64, tz: &jiff::tz::TimeZone) -> Result<String, AppError> {
+    let secs = slot
+        .checked_mul(5 * 60)
+        .ok_or_else(|| AppError::Internal("timestamp overflow".into()))?;
+    let ts = Timestamp::from_second(secs)
+        .map_err(|e| AppError::Internal(format!("invalid timestamp: {e}")))?;
+    Ok(ts.to_zoned(tz.clone()).date().to_string())
 }
 
 /// ISO 文字列 → ローカルタイムゾーンの日付文字列 (YYYY-MM-DD)。
@@ -1292,7 +1298,7 @@ impl TakusuApp {
         }
 
         let plan = planner.plan();
-        let mut entries = self.plan_to_entries(&plan, &id_map);
+        let mut entries = self.plan_to_entries(&plan, &id_map)?;
         // #354: in_progress タスクは planner の対象外だが、save_schedule が
         // スケジュール全体を上書きするため、進行中タスクのスケジュール情報が
         // 消えてしまう。前回スケジュールから in_progress タスクのエントリを
@@ -1397,7 +1403,7 @@ impl TakusuApp {
                 )));
             }
         };
-        let entries = self.plan_to_entries(&plan, &id_map);
+        let entries = self.plan_to_entries(&plan, &id_map)?;
         let scheduled = entries
             .iter()
             .map(|entry| entry.task_id.clone())
@@ -1521,7 +1527,7 @@ impl TakusuApp {
             }
         };
 
-        let mut final_entries = self.plan_to_entries(&plan, &id_map);
+        let mut final_entries = self.plan_to_entries(&plan, &id_map)?;
         // #354: in_progress タスクは planner の対象外なので、再スケジュール時も
         // 進行中タスクのエントリが消えないよう前回スケジュールから引き継ぐ。
         final_entries = self
@@ -1583,8 +1589,8 @@ impl TakusuApp {
         let new_end = Point(new_start_point.0 + duration);
         let new_entry = ScheduleEntry {
             task_id: full_task_id.clone(),
-            start_at: point_to_iso(new_start_point.0),
-            end_at: point_to_iso(new_end.0),
+            start_at: point_to_iso(new_start_point.0)?,
+            end_at: point_to_iso(new_end.0)?,
         };
 
         // move_entry は deadline 超過のみチェックする。
@@ -1617,8 +1623,8 @@ impl TakusuApp {
 
         Ok(MoveEntryOutput {
             task_id: task_row.id,
-            start_at: point_to_iso(new_start_point.0),
-            end_at: point_to_iso(new_end.0),
+            start_at: point_to_iso(new_start_point.0)?,
+            end_at: point_to_iso(new_end.0)?,
             warnings,
         })
     }
@@ -2132,7 +2138,7 @@ impl TakusuApp {
                 // start). 365 days covers even yearly habits; for count-
                 // limited rules the generator stops early anyway.
                 let until_lookahead = Point(until.0 + 365 * 288);
-                let today_str = point_to_local_date(from.0, tz);
+                let today_str = point_to_local_date(from.0, tz)?;
                 let rule: takusu_habit::RecurrenceRule = serde_json::from_str(&row.recurrence)
                     .map_err(|e| AppError::BadRequest(format!("invalid recurrence: {e}")))?;
                 let occs: Vec<(String, Point)> = store
@@ -2140,9 +2146,9 @@ impl TakusuApp {
                     .into_iter()
                     .map(|gt| {
                         let sp = gt.task.start.unwrap_or(Point(0));
-                        (point_to_local_date(sp.0, tz), sp)
+                        Ok((point_to_local_date(sp.0, tz)?, sp))
                     })
-                    .collect();
+                    .collect::<Result<Vec<_>, AppError>>()?;
 
                 for (i, (date, occ_start)) in occs.iter().enumerate() {
                     // Only generate tasks for occurrences within the sync
@@ -2232,7 +2238,7 @@ impl TakusuApp {
             } else {
                 for gt in store.generate(from, until) {
                     let start_point = gt.task.start.unwrap_or(Point(0));
-                    let date = point_to_local_date(start_point.0, tz);
+                    let date = point_to_local_date(start_point.0, tz)?;
                     let in_span = spans.is_some_and(|spans| {
                         spans.iter().any(|&i| {
                             let s = &all_spans[i];
@@ -2334,8 +2340,8 @@ impl TakusuApp {
                     // ユーザーが habit 由来タスクを編集していない場合は、
                     // habit の現在値で全フィールドを上書きする。
                     let update = UpdateTask {
-                        start_at: core_task.start.map(|p| point_to_iso(p.0)),
-                        end_at: Some(point_to_iso(core_task.end.0)),
+                        start_at: core_task.start.map(|p| point_to_iso(p.0)).transpose()?,
+                        end_at: Some(point_to_iso(core_task.end.0)?),
                         title: Some(title),
                         description: habit_desc.clone(),
                         avg_minutes: Some(core_task.cost_estimate.avg as i64 * 5),
@@ -2372,8 +2378,8 @@ impl TakusuApp {
             } else {
                 let create = CreateTask {
                     title,
-                    start_at: core_task.start.map(|p| point_to_iso(p.0)),
-                    end_at: point_to_iso(core_task.end.0),
+                    start_at: core_task.start.map(|p| point_to_iso(p.0)).transpose()?,
+                    end_at: point_to_iso(core_task.end.0)?,
                     avg_minutes: core_task.cost_estimate.avg as i64 * 5,
                     sigma_minutes: Some(core_task.cost_estimate.sigma as i64 * 5),
                     depends: Some(vec![]),
@@ -2611,13 +2617,19 @@ impl TakusuApp {
         Ok((planner, id_map, id_to_idx))
     }
 
-    fn plan_to_entries(&self, plan: &takusu_core::Plan, id_map: &[String]) -> Vec<ScheduleEntry> {
+    fn plan_to_entries(
+        &self,
+        plan: &takusu_core::Plan,
+        id_map: &[String],
+    ) -> Result<Vec<ScheduleEntry>, AppError> {
         plan.schedules
             .iter()
-            .map(|(s, e, idx)| ScheduleEntry {
-                task_id: id_map.get(*idx).cloned().unwrap_or_default(),
-                start_at: point_to_iso(s.0),
-                end_at: point_to_iso(e.0),
+            .map(|(s, e, idx)| {
+                Ok(ScheduleEntry {
+                    task_id: id_map.get(*idx).cloned().unwrap_or_default(),
+                    start_at: point_to_iso(s.0)?,
+                    end_at: point_to_iso(e.0)?,
+                })
             })
             .collect()
     }
@@ -2781,5 +2793,20 @@ mod tests {
         let max_minutes = 60 * 24 * 365;
         assert!(validate_minutes(10, Some(max_minutes)).is_ok());
         assert!(validate_minutes(10, Some(max_minutes + 1)).is_err());
+    }
+
+    // ── point_to_iso / point_to_local_date overflow (#608) ─────────────
+
+    #[test]
+    fn point_to_iso_overflow_returns_err() {
+        assert!(point_to_iso(i64::MAX).is_err());
+        assert!(point_to_iso(i64::MIN).is_err());
+    }
+
+    #[test]
+    fn point_to_local_date_overflow_returns_err() {
+        let tz = jiff::tz::TimeZone::UTC;
+        assert!(point_to_local_date(i64::MAX, &tz).is_err());
+        assert!(point_to_local_date(i64::MIN, &tz).is_err());
     }
 }
