@@ -123,6 +123,7 @@ export function SkillEditView() {
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: 'text/*',
+        copyToCacheDirectory: true,
       });
       if (result.canceled || result.assets.length === 0) return;
       const asset = result.assets[0];
@@ -131,7 +132,7 @@ export function SkillEditView() {
         Alert.alert('エラー', 'ファイルは64KB以下にしてください');
         return;
       }
-      const text = await FileSystem.readAsStringAsync(asset.uri);
+      const text = await new FileSystem.File(asset.uri).text();
       if (utf8ByteLength(text) > 64 * 1024) {
         Alert.alert('エラー', 'ファイルは64KB以下にしてください');
         return;
