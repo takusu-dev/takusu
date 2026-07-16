@@ -1005,12 +1005,10 @@ impl TakusuApp {
     }
 
     async fn task_exists_by_ical_uid(&self, uid: &str) -> Result<bool, AppError> {
-        let tasks = self
-            .storage
-            .list_tasks(&TaskQuery::default())
+        self.storage
+            .task_exists_by_ical_uid(uid)
             .await
-            .map_err(storage_to_app)?;
-        Ok(tasks.iter().any(|t| t.ical_uid.as_deref() == Some(uid)))
+            .map_err(storage_to_app)
     }
 
     // ── Habits ────────────────────────────────────────────

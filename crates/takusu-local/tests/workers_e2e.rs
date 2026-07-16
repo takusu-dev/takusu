@@ -114,6 +114,9 @@ async fn list_tasks(
     if q.habit_id.is_some() {
         sql.push_str(" AND habit_id = ?");
     }
+    if q.ical_uid.is_some() {
+        sql.push_str(" AND ical_uid = ?");
+    }
     sql.push_str(" ORDER BY created_at DESC");
     let mut query = sqlx::query_as::<_, TaskRow>(sqlx::AssertSqlSafe(sql.as_str()));
     if let Some(s) = &q.status {
@@ -127,6 +130,9 @@ async fn list_tasks(
     }
     if let Some(h) = &q.habit_id {
         query = query.bind(h);
+    }
+    if let Some(u) = &q.ical_uid {
+        query = query.bind(u);
     }
     let rows = query.fetch_all(&state.pool).await.unwrap_or_default();
     Json(rows)

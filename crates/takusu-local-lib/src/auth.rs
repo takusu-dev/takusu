@@ -97,6 +97,12 @@ mod tests {
         ) -> Result<Vec<TaskRow>, takusu_storage::StorageError> {
             unimplemented()
         }
+        async fn task_exists_by_ical_uid(
+            &self,
+            _: &str,
+        ) -> Result<bool, takusu_storage::StorageError> {
+            unimplemented()
+        }
         async fn get_task(&self, _: &str) -> Result<TaskRow, takusu_storage::StorageError> {
             unimplemented()
         }

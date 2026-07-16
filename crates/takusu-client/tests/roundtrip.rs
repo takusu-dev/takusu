@@ -186,6 +186,7 @@ fn task_query_default_is_empty() {
     assert!(tq.from.is_none());
     assert!(tq.until.is_none());
     assert!(tq.habit_id.is_none());
+    assert!(tq.ical_uid.is_none());
 }
 
 #[test]
