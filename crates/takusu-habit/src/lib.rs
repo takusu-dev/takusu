@@ -209,6 +209,16 @@ mod tests {
     }
 
     #[test]
+    fn point_date_roundtrip_fixed_offset() {
+        let tz = jiff::tz::TimeZone::fixed(jiff::tz::offset(9));
+        let t = TimeOfDay::new(14, 30).unwrap();
+        let d = date(2025, 6, 15);
+        let pt = point_at(d, &t, &tz);
+        let back = date_at(pt, &tz);
+        assert_eq!(back, d);
+    }
+
+    #[test]
     fn days_in_month_feb_leap() {
         assert_eq!(generator::days_in_month(date(2024, 2, 1)), 29);
         assert_eq!(generator::days_in_month(date(2023, 2, 1)), 28);
