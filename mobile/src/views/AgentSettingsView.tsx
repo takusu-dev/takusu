@@ -6,17 +6,22 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useColors, BRAND_COLOR } from '@/src/theme';
 import { useServer } from '@/src/api/ServerProvider';
 import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
 import {
+  AGENT_SESSION_HISTORY_DEFAULT,
+  AGENT_SESSION_HISTORY_MAX,
+  AGENT_SESSION_HISTORY_MIN,
   deleteAgentApiKey,
   loadAgentApiKey,
   loadSettings,
   saveAgentApiKey,
   saveAgentProviders,
+  saveAgentSessionHistoryCount,
   type LlmProviderSettings,
   type TtsProviderSettings,
 } from '@/src/api/settingsStore';
@@ -91,6 +96,10 @@ export function AgentSettingsView() {
   const [ttsProviders, setTtsProviders] = useState<TtsProviderSettings[]>([]);
   const [activeTts, setActiveTts] = useState<string | null>(null);
 
+  const [sessionHistoryCount, setSessionHistoryCount] = useState(
+    AGENT_SESSION_HISTORY_DEFAULT,
+  );
+
   const [editingLlm, setEditingLlm] = useState<LlmProviderSettings | null>(
     null,
   );
@@ -161,6 +170,7 @@ export function AgentSettingsView() {
         setActiveLlm(settings.activeLlmProvider || null);
         setTtsProviders(settings.ttsProviders);
         setActiveTts(settings.activeTtsProvider || null);
+        setSessionHistoryCount(settings.agentSessionHistoryCount);
       })
       .catch((e) => {
         Alert.alert('読み込み失敗', e instanceof Error ? e.message : String(e));
@@ -570,6 +580,50 @@ export function AgentSettingsView() {
         />
       )}
 
+      <Text style={[styles.heading, { color: colors.black }]}>
+        セッション履歴
+      </Text>
+      <View style={[styles.row, { borderColor: colors.separator }]}>
+        <Text style={{ flex: 1, color: colors.black }}>
+          保持するセッション数（{AGENT_SESSION_HISTORY_MIN}-
+          {AGENT_SESSION_HISTORY_MAX}）
+        </Text>
+        <TextInput
+          style={[
+            styles.countInput,
+            { color: colors.black, borderColor: colors.separator },
+          ]}
+          value={String(sessionHistoryCount)}
+          onChangeText={(value) => {
+            if (value === '') {
+              setSessionHistoryCount(AGENT_SESSION_HISTORY_DEFAULT);
+              return;
+            }
+            const parsed = Number(value);
+            if (Number.isInteger(parsed)) {
+              setSessionHistoryCount(
+                Math.max(
+                  AGENT_SESSION_HISTORY_MIN,
+                  Math.min(AGENT_SESSION_HISTORY_MAX, parsed),
+                ),
+              );
+            }
+          }}
+          onBlur={async () => {
+            try {
+              await saveAgentSessionHistoryCount(sessionHistoryCount);
+            } catch (e) {
+              Alert.alert(
+                '保存失敗',
+                e instanceof Error ? e.message : String(e),
+              );
+            }
+          }}
+          keyboardType="number-pad"
+          maxLength={1}
+        />
+      </View>
+
       <Pressable onPress={removeAll} style={styles.remove}>
         <Text style={styles.removeText}>Provider設定をすべて削除</Text>
       </Pressable>
@@ -619,4 +673,11 @@ const styles = StyleSheet.create({
   },
   remove: { alignItems: 'center', padding: 12, marginTop: 8 },
   removeText: { color: '#B33A3A' },
+  countInput: {
+    width: 48,
+    height: 36,
+    borderWidth: 1,
+    borderRadius: 8,
+    textAlign: 'center',
+  },
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -11,11 +11,20 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Reanimated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import Markdown, {
   MarkdownIt,
   type ASTNode,
@@ -25,33 +34,29 @@ import Markdown, {
 import { DEFAULT_PORT, useServer } from '@/src/api/ServerProvider';
 import { markdownToSpeech } from '@/src/utils/markdownToSpeech';
 import TakusuAudioModule from '../../modules/takusu-server/src/TakusuAudioModule';
-import { loadAgentApiKey, loadSettings } from '@/src/api/settingsStore';
+import {
+  AGENT_SESSION_HISTORY_DEFAULT,
+  loadAgentApiKey,
+  loadSettings,
+} from '@/src/api/settingsStore';
 import { AgentClient, AgentApiError } from '@/src/api/agentClient';
 import type { ApprovalRequest, TurnEvent } from '@/src/api/agentTypes';
+import {
+  deleteSessionSnapshot,
+  loadSessionHistory,
+  loadSessionSnapshot,
+  type AgentSessionSnapshot,
+  type Message,
+  saveSessionHistory,
+  saveSessionSnapshot,
+} from '@/src/api/agentSessionStore';
 import { BRAND_COLOR, COLORS, useColors } from '@/src/theme';
-
-interface ToolCallItem {
-  name: string;
-  arguments?: unknown;
-  result?: string;
-  isError?: boolean;
-}
-
-interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  text: string;
-  thinking?: string;
-  toolCalls?: ToolCallItem[];
-  state?: 'thinking' | 'tool_call' | 'answering' | 'done';
-  collapsed?: boolean;
-}
-
-const SESSION_KEY = 'takusu.agent.sessionId';
 
 function newId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
+
+const SWIPE_THRESHOLD = 40;
 
 export function AgentView() {
   const router = useRouter();
@@ -86,14 +91,20 @@ export function AgentView() {
     [colors.gray],
   );
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const { workersToken, ready } = useServer();
   const client = useMemo(
     () => new AgentClient(`http://127.0.0.1:${DEFAULT_PORT}`, workersToken),
     [workersToken],
   );
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState('');
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionIds, setSessionIds] = useState<string[]>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [sessionHistoryCount, setSessionHistoryCount] = useState(
+    AGENT_SESSION_HISTORY_DEFAULT,
+  );
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [busy, setBusy] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -101,6 +112,31 @@ export function AgentView() {
   const [error, setError] = useState<string | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(Keyboard.isVisible());
   const [inputHeight, setInputHeight] = useState(44);
+  const [historyReady, setHistoryReady] = useState(false);
+  const [isSwitching, setIsSwitching] = useState(false);
+
+  const sessionIdsRef = useRef<string[]>([]);
+  const activeIndexRef = useRef(0);
+  const sessionIdRef = useRef<string | null>(null);
+  const sessionHistoryCountRef = useRef(AGENT_SESSION_HISTORY_DEFAULT);
+  const isSwitchingRef = useRef(false);
+  const viewOffset = useSharedValue(0);
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: viewOffset.value }],
+  }));
+
+  useEffect(() => {
+    sessionIdsRef.current = sessionIds;
+  }, [sessionIds]);
+  useEffect(() => {
+    activeIndexRef.current = activeIndex;
+  }, [activeIndex]);
+  useEffect(() => {
+    sessionHistoryCountRef.current = sessionHistoryCount;
+  }, [sessionHistoryCount]);
+  useEffect(() => {
+    isSwitchingRef.current = isSwitching;
+  }, [isSwitching]);
 
   useEffect(() => {
     const showEvent =
@@ -119,30 +155,193 @@ export function AgentView() {
     };
   }, []);
 
-  const ensureSession = useCallback(async (): Promise<string> => {
-    if (sessionId) return sessionId;
-    const stored = await AsyncStorage.getItem(SESSION_KEY);
-    if (stored) {
-      try {
-        const pending = await client.getApproval(stored);
-        setSessionId(stored);
-        setApproval(pending);
-        return stored;
-      } catch {
-        await AsyncStorage.removeItem(SESSION_KEY);
+  async function activateSessionId(id: string, isNew = false) {
+    let ids = sessionIdsRef.current;
+    const existingIndex = ids.indexOf(id);
+    if (isNew && existingIndex !== -1) {
+      ids = ids.filter((s) => s !== id);
+    }
+    if (existingIndex === -1 || isNew) {
+      ids = [...ids, id];
+      const max = sessionHistoryCountRef.current;
+      if (ids.length > max) {
+        const removed = ids.shift()!;
+        await deleteSessionSnapshot(removed);
       }
     }
+    const index = ids.indexOf(id);
+    const snapshot = await loadSessionSnapshot(id);
+    setMessages(snapshot?.messages ?? []);
+    setApproval(snapshot?.approval ?? null);
+    sessionIdRef.current = id;
+    setText('');
+    setSessionIds(ids);
+    sessionIdsRef.current = ids;
+    setActiveIndex(index);
+    activeIndexRef.current = index;
+    await saveSessionHistory({ ids, activeIndex: index });
+  }
+
+  function trimSessionIds(
+    ids: string[],
+    max: number,
+    activeId: string | null,
+  ): { ids: string[]; index: number; removed: string[] } {
+    if (ids.length <= max) {
+      return {
+        ids,
+        index: activeId ? ids.indexOf(activeId) : ids.length - 1,
+        removed: [],
+      };
+    }
+    if (!activeId || ids.indexOf(activeId) === -1) {
+      const trimmed = ids.slice(-max);
+      return {
+        ids: trimmed,
+        index: trimmed.length - 1,
+        removed: ids.slice(0, -max),
+      };
+    }
+    const keep = new Set<string>();
+    keep.add(activeId);
+    let i = ids.length - 1;
+    while (keep.size < max && i >= 0) {
+      keep.add(ids[i]);
+      i--;
+    }
+    const trimmed = ids.filter((id) => keep.has(id));
+    return {
+      ids: trimmed,
+      index: trimmed.indexOf(activeId),
+      removed: ids.filter((id) => !keep.has(id)),
+    };
+  }
+
+  async function ensureSession(): Promise<string> {
+    if (sessionIdRef.current) return sessionIdRef.current;
     const created = await client.createSession();
-    await AsyncStorage.setItem(SESSION_KEY, created);
-    setSessionId(created);
+    await activateSessionId(created, true);
     return created;
-  }, [client, sessionId]);
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    async function init() {
+      try {
+        const [history, settings] = await Promise.all([
+          loadSessionHistory(),
+          loadSettings(),
+        ]);
+        if (cancelled) return;
+
+        const count = settings.agentSessionHistoryCount;
+        setSessionHistoryCount(count);
+        sessionHistoryCountRef.current = count;
+
+        let ids = history.ids;
+        let index = history.activeIndex;
+        if (!Array.isArray(ids)) ids = [];
+        if (index < 0 || index >= ids.length) {
+          index = Math.max(0, ids.length - 1);
+        }
+
+        const activeId = ids[index] ?? null;
+        const {
+          ids: trimmed,
+          index: trimmedIndex,
+          removed,
+        } = trimSessionIds(ids, count, activeId);
+        if (removed.length > 0) {
+          await Promise.all(
+            removed.map((id) => deleteSessionSnapshot(id)),
+          ).catch(() => {});
+        }
+
+        sessionIdsRef.current = trimmed;
+        setSessionIds(trimmed);
+        setActiveIndex(trimmedIndex);
+        activeIndexRef.current = trimmedIndex;
+
+        if (trimmed.length === 0) {
+          const created = await client.createSession();
+          await activateSessionId(created, true);
+        } else {
+          const newActiveId = trimmed[trimmedIndex];
+          await activateSessionId(newActiveId, false);
+          try {
+            const pending = await client.getApproval(newActiveId);
+            setApproval(pending);
+          } catch (e) {
+            if (e instanceof AgentApiError && e.status === 404) {
+              const created = await client.createSession();
+              const newIds = [...trimmed];
+              newIds[trimmedIndex] = created;
+              sessionIdsRef.current = newIds;
+              setSessionIds(newIds);
+              await deleteSessionSnapshot(newActiveId);
+              await activateSessionId(created, false);
+            } else {
+              throw e;
+            }
+          }
+        }
+
+        if (!cancelled) setHistoryReady(true);
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
+      }
+    }
+
+    if (ready && workersToken) init();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [client, ready, workersToken]);
+
+  useEffect(() => {
+    if (!historyReady) return;
+    const max = sessionHistoryCountRef.current;
+    const activeId = sessionIdRef.current;
+    const currentIds = sessionIdsRef.current;
+    const {
+      ids: trimmed,
+      index,
+      removed,
+    } = trimSessionIds(currentIds, max, activeId);
+    if (removed.length === 0) return;
+    Promise.all(removed.map((id) => deleteSessionSnapshot(id)))
+      .catch(() => {})
+      .finally(async () => {
+        sessionIdsRef.current = trimmed;
+        setSessionIds(trimmed);
+        if (index !== activeIndexRef.current) {
+          setActiveIndex(index);
+          activeIndexRef.current = index;
+        }
+        await saveSessionHistory({
+          ids: trimmed,
+          activeIndex: activeIndexRef.current,
+        }).catch(() => {});
+      });
+  }, [sessionHistoryCount, historyReady]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadSettings()
+        .then((settings) => {
+          const count = settings.agentSessionHistoryCount;
+          setSessionHistoryCount(count);
+          sessionHistoryCountRef.current = count;
+        })
+        .catch(() => {});
+    }, []),
+  );
 
   useEffect(() => {
     if (!ready || !workersToken) return;
-    ensureSession().catch((e: unknown) =>
-      setError(e instanceof Error ? e.message : String(e)),
-    );
     loadSettings()
       .then(async (settings) => {
         const provider = settings.ttsProviders.find(
@@ -165,10 +364,18 @@ export function AgentView() {
           `音声モデルを準備してください: ${e instanceof Error ? e.message : String(e)}`,
         );
       });
-  }, [ensureSession, ready, workersToken]);
+  }, [ready, workersToken]);
+
+  useEffect(() => {
+    if (!sessionIdRef.current || busy) return;
+    saveSessionSnapshot(sessionIdRef.current, { messages, approval }).catch(
+      () => {},
+    );
+  }, [messages, approval, busy]);
 
   async function sendText(value: string) {
-    if (!value.trim() || busy) return;
+    if (!value.trim() || busy || isSwitchingRef.current || !historyReady)
+      return;
     setError(null);
     setMessages((current) => [
       ...current,
@@ -275,9 +482,19 @@ export function AgentView() {
         );
       }
       if (e instanceof AgentApiError && e.status === 404) {
-        await AsyncStorage.removeItem(SESSION_KEY);
-        setSessionId(null);
-        setApproval(null);
+        const lostId = sessionIdRef.current;
+        if (lostId) {
+          await deleteSessionSnapshot(lostId);
+        }
+        const remaining = sessionIdsRef.current.filter((s) => s !== lostId);
+        sessionIdsRef.current = remaining;
+        setSessionIds(remaining);
+        try {
+          const created = await client.createSession();
+          await activateSessionId(created, true);
+        } catch {
+          sessionIdRef.current = null;
+        }
         setError('Agentセッションが終了しました。もう一度送信してください');
       } else {
         setError(message);
@@ -289,7 +506,7 @@ export function AgentView() {
 
   async function send() {
     const value = text.trim();
-    if (!value || busy) return;
+    if (!value || busy || isSwitchingRef.current || !historyReady) return;
     setText('');
     setInputHeight(44);
     await sendText(value);
@@ -302,7 +519,7 @@ export function AgentView() {
   }
 
   async function toggleRecording() {
-    if (busy) return;
+    if (busy || isSwitchingRef.current || !historyReady) return;
     setError(null);
     try {
       if (!recording) {
@@ -330,12 +547,13 @@ export function AgentView() {
   }
 
   async function resolve(approve: boolean) {
-    if (!sessionId || !approval || busy) return;
+    if (!sessionIdRef.current || !approval || busy || isSwitchingRef.current)
+      return;
     setBusy(true);
     setError(null);
     try {
       const result = await client.resolveApproval(
-        sessionId,
+        sessionIdRef.current,
         approval.id,
         approve,
         newId('approval'),
@@ -358,231 +576,461 @@ export function AgentView() {
     }
   }
 
+  function resetSwitchState() {
+    setIsSwitching(false);
+    isSwitchingRef.current = false;
+  }
+
+  function finishSessionSwitch(
+    nextId: string,
+    nextIndex: number,
+    direction: number,
+    snapshot: AgentSessionSnapshot,
+  ) {
+    try {
+      sessionIdRef.current = nextId;
+      setActiveIndex(nextIndex);
+      activeIndexRef.current = nextIndex;
+      setText('');
+      viewOffset.value = direction * width;
+      setMessages(snapshot.messages);
+      setApproval(snapshot.approval);
+      saveSessionHistory({
+        ids: sessionIdsRef.current,
+        activeIndex: nextIndex,
+      }).catch(() => {});
+      viewOffset.value = withSpring(0, { damping: 20, stiffness: 200 });
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+      viewOffset.value = withSpring(0, { damping: 20, stiffness: 200 });
+    } finally {
+      resetSwitchState();
+    }
+  }
+
+  async function switchSession(delta: number) {
+    if (isSwitchingRef.current || busy || !historyReady) return;
+    const nextIndex = activeIndexRef.current + delta;
+    if (nextIndex < 0 || nextIndex >= sessionIdsRef.current.length) return;
+    const nextId = sessionIdsRef.current[nextIndex];
+    const currentId = sessionIdRef.current;
+    try {
+      if (currentId) {
+        await saveSessionSnapshot(currentId, { messages, approval }).catch(
+          () => {},
+        );
+      }
+      const snapshot = (await loadSessionSnapshot(nextId)) ?? {
+        messages: [],
+        approval: null,
+      };
+      setActiveIndex(nextIndex);
+      activeIndexRef.current = nextIndex;
+      isSwitchingRef.current = true;
+      setIsSwitching(true);
+      const direction = delta;
+      viewOffset.value = withTiming(
+        -direction * width,
+        { duration: 120 },
+        (finished) => {
+          'worklet';
+          if (finished) {
+            runOnJS(finishSessionSwitch)(
+              nextId,
+              nextIndex,
+              direction,
+              snapshot,
+            );
+          } else {
+            runOnJS(resetSwitchState)();
+          }
+        },
+      );
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+      resetViewOffset();
+      resetSwitchState();
+    }
+  }
+
+  async function startNewSession() {
+    if (isSwitchingRef.current || busy || !historyReady) return;
+    setError(null);
+    const currentId = sessionIdRef.current;
+    try {
+      const created = await client.createSession();
+      if (currentId) {
+        await saveSessionSnapshot(currentId, { messages, approval }).catch(
+          () => {},
+        );
+      }
+      let ids = [...sessionIdsRef.current, created];
+      const max = sessionHistoryCountRef.current;
+      const removed: string[] = [];
+      while (ids.length > max) {
+        removed.push(ids.shift()!);
+      }
+      const nextIndex = ids.length - 1;
+      await Promise.all(removed.map((id) => deleteSessionSnapshot(id))).catch(
+        () => {},
+      );
+      sessionIdsRef.current = ids;
+      setSessionIds(ids);
+      setActiveIndex(nextIndex);
+      activeIndexRef.current = nextIndex;
+      const snapshot = (await loadSessionSnapshot(created)) ?? {
+        messages: [],
+        approval: null,
+      };
+      isSwitchingRef.current = true;
+      setIsSwitching(true);
+      const direction = 1;
+      viewOffset.value = withTiming(
+        -direction * width,
+        { duration: 120 },
+        (finished) => {
+          'worklet';
+          if (finished) {
+            runOnJS(finishSessionSwitch)(
+              created,
+              nextIndex,
+              direction,
+              snapshot,
+            );
+          } else {
+            runOnJS(resetSwitchState)();
+          }
+        },
+      );
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+      resetViewOffset();
+      resetSwitchState();
+    }
+  }
+
+  function resetViewOffset() {
+    viewOffset.value = withSpring(0, { damping: 20, stiffness: 200 });
+  }
+
+  const switcherGesture = Gesture.Pan()
+    .minDistance(20)
+    .onEnd((e) => {
+      if (e.translationX > SWIPE_THRESHOLD) {
+        runOnJS(switchSession)(-1);
+      } else if (e.translationX < -SWIPE_THRESHOLD) {
+        runOnJS(switchSession)(1);
+      }
+    });
+
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.white }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View
-        style={[
-          styles.header,
-          {
-            borderBottomColor: colors.separator,
-            paddingTop: 8 + insets.top,
-          },
-        ]}
-      >
-        <Pressable onPress={() => router.back()} style={styles.back}>
-          <Text style={[styles.backText, { color: BRAND_COLOR }]}>‹</Text>
-        </Pressable>
-        <Text style={[styles.title, { color: colors.black }]}>Agent</Text>
-        <View style={styles.headerSpace} />
-      </View>
-      <FlatList
-        style={styles.messages}
-        contentContainerStyle={styles.messageContent}
-        data={messages}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => {
-          if (item.role === 'user') {
+      <Reanimated.View style={[styles.container, animatedStyle]}>
+        <View
+          style={[
+            styles.header,
+            {
+              borderBottomColor: colors.separator,
+              paddingTop: 8 + insets.top,
+            },
+          ]}
+        >
+          <Pressable onPress={() => router.back()} style={styles.back}>
+            <Text style={[styles.backText, { color: BRAND_COLOR }]}>‹</Text>
+          </Pressable>
+          <Text style={[styles.title, { color: colors.black }]}>Agent</Text>
+          <Pressable
+            disabled={busy || isSwitching || !historyReady}
+            onPress={startNewSession}
+            style={styles.newSession}
+          >
+            <Ionicons
+              name="add"
+              size={28}
+              color={
+                busy || isSwitching || !historyReady ? colors.gray : BRAND_COLOR
+              }
+            />
+          </Pressable>
+        </View>
+        <FlatList
+          style={styles.messages}
+          contentContainerStyle={styles.messageContent}
+          data={messages}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => {
+            if (item.role === 'user') {
+              return (
+                <View
+                  style={[
+                    styles.bubble,
+                    styles.userBubble,
+                    { backgroundColor: BRAND_COLOR },
+                  ]}
+                >
+                  <Text style={{ color: COLORS.white }}>{item.text}</Text>
+                </View>
+              );
+            }
+            const hasContext =
+              (item.thinking && item.thinking.length > 0) ||
+              (item.toolCalls && item.toolCalls.length > 0);
             return (
               <View
                 style={[
                   styles.bubble,
-                  styles.userBubble,
-                  { backgroundColor: BRAND_COLOR },
+                  styles.assistantBubble,
+                  { backgroundColor: colors.separator },
                 ]}
               >
-                <Text style={{ color: COLORS.white }}>{item.text}</Text>
+                {hasContext && (
+                  <Pressable
+                    onPress={() => toggleCollapsed(item.id)}
+                    style={styles.contextHeader}
+                  >
+                    <Text
+                      style={[
+                        styles.contextHeaderText,
+                        { color: colors.black },
+                      ]}
+                    >
+                      {item.collapsed ? '▶ ' : '▼ '}
+                      {item.thinking && item.thinking.length > 0
+                        ? '考え中'
+                        : ''}
+                      {item.thinking &&
+                      item.toolCalls &&
+                      item.toolCalls.length > 0
+                        ? ' / '
+                        : ''}
+                      {item.toolCalls && item.toolCalls.length > 0
+                        ? `ツール (${item.toolCalls.length})`
+                        : ''}
+                    </Text>
+                  </Pressable>
+                )}
+                {!item.collapsed && hasContext && (
+                  <View style={styles.contextBody}>
+                    {item.thinking && item.thinking.length > 0 && (
+                      <Text
+                        style={[styles.thinkingText, { color: colors.gray }]}
+                      >
+                        {item.thinking}
+                      </Text>
+                    )}
+                    {item.toolCalls?.map((call, index) => (
+                      <View key={index} style={styles.toolCall}>
+                        <Text
+                          style={{ color: colors.black, fontWeight: '700' }}
+                        >
+                          {call.name}
+                        </Text>
+                        {call.arguments !== undefined && (
+                          <Text
+                            style={[styles.toolArgs, { color: colors.gray }]}
+                          >
+                            {JSON.stringify(call.arguments, null, 2)}
+                          </Text>
+                        )}
+                        {call.result !== undefined && (
+                          <Text
+                            style={{
+                              color: call.isError ? '#B33A3A' : '#2E7D32',
+                            }}
+                          >
+                            {call.isError
+                              ? `エラー: ${call.result}`
+                              : call.result}
+                          </Text>
+                        )}
+                      </View>
+                    ))}
+                  </View>
+                )}
+                {item.text.length > 0 && (
+                  <View style={{ marginTop: hasContext ? 8 : 0 }}>
+                    {item.state === 'done' || item.state === undefined ? (
+                      <Markdown
+                        style={markdownStyles}
+                        markdownit={markdownIt}
+                        rules={markdownRules}
+                      >
+                        {item.text}
+                      </Markdown>
+                    ) : (
+                      <Text style={{ color: colors.black }}>{item.text}</Text>
+                    )}
+                  </View>
+                )}
+                {item.state !== 'done' && item.text.length === 0 && (
+                  <ActivityIndicator color={BRAND_COLOR} />
+                )}
               </View>
             );
+          }}
+          ListEmptyComponent={
+            <Text style={[styles.empty, { color: colors.gray }]}>
+              何を予定しますか？
+            </Text>
           }
-          const hasContext =
-            (item.thinking && item.thinking.length > 0) ||
-            (item.toolCalls && item.toolCalls.length > 0);
-          return (
-            <View
-              style={[
-                styles.bubble,
-                styles.assistantBubble,
-                { backgroundColor: colors.separator },
-              ]}
-            >
-              {hasContext && (
-                <Pressable
-                  onPress={() => toggleCollapsed(item.id)}
-                  style={styles.contextHeader}
-                >
-                  <Text
-                    style={[styles.contextHeaderText, { color: colors.black }]}
-                  >
-                    {item.collapsed ? '▶ ' : '▼ '}
-                    {item.thinking && item.thinking.length > 0 ? '考え中' : ''}
-                    {item.thinking &&
-                    item.toolCalls &&
-                    item.toolCalls.length > 0
-                      ? ' / '
-                      : ''}
-                    {item.toolCalls && item.toolCalls.length > 0
-                      ? `ツール (${item.toolCalls.length})`
-                      : ''}
-                  </Text>
-                </Pressable>
-              )}
-              {!item.collapsed && hasContext && (
-                <View style={styles.contextBody}>
-                  {item.thinking && item.thinking.length > 0 && (
-                    <Text style={[styles.thinkingText, { color: colors.gray }]}>
-                      {item.thinking}
-                    </Text>
-                  )}
-                  {item.toolCalls?.map((call, index) => (
-                    <View key={index} style={styles.toolCall}>
-                      <Text style={{ color: colors.black, fontWeight: '700' }}>
-                        {call.name}
-                      </Text>
-                      {call.arguments !== undefined && (
-                        <Text style={[styles.toolArgs, { color: colors.gray }]}>
-                          {JSON.stringify(call.arguments, null, 2)}
-                        </Text>
-                      )}
-                      {call.result !== undefined && (
-                        <Text
-                          style={{
-                            color: call.isError ? '#B33A3A' : '#2E7D32',
-                          }}
-                        >
-                          {call.isError
-                            ? `エラー: ${call.result}`
-                            : call.result}
-                        </Text>
-                      )}
-                    </View>
-                  ))}
-                </View>
-              )}
-              {item.text.length > 0 && (
-                <View style={{ marginTop: hasContext ? 8 : 0 }}>
-                  {item.state === 'done' || item.state === undefined ? (
-                    <Markdown
-                      style={markdownStyles}
-                      markdownit={markdownIt}
-                      rules={markdownRules}
-                    >
-                      {item.text}
-                    </Markdown>
-                  ) : (
-                    <Text style={{ color: colors.black }}>{item.text}</Text>
-                  )}
-                </View>
-              )}
-              {item.state !== 'done' && item.text.length === 0 && (
-                <ActivityIndicator color={BRAND_COLOR} />
-              )}
+        />
+        {approval && (
+          <View style={[styles.approval, { borderColor: colors.separator }]}>
+            <Text style={[styles.approvalTitle, { color: colors.black }]}>
+              確認が必要です
+            </Text>
+            <Text style={{ color: colors.black }}>{approval.why}</Text>
+            {approval.changes.map((change, index) => (
+              <Text
+                key={`${change.operation}-${index}`}
+                style={{ color: colors.black }}
+              >
+                ・{change.description}
+              </Text>
+            ))}
+            {approval.warnings.map((warning) => (
+              <Text key={warning} style={{ color: '#A65B00' }}>
+                注意: {warning}
+              </Text>
+            ))}
+            <View style={styles.approvalActions}>
+              <Pressable
+                disabled={busy || isSwitching}
+                onPress={() => resolve(false)}
+                style={styles.deny}
+              >
+                <Text style={styles.denyText}>拒否</Text>
+              </Pressable>
+              <Pressable
+                disabled={busy || isSwitching}
+                onPress={() => resolve(true)}
+                style={styles.approve}
+              >
+                {busy ? (
+                  <ActivityIndicator color={COLORS.white} />
+                ) : (
+                  <Text style={styles.approveText}>承認</Text>
+                )}
+              </Pressable>
             </View>
-          );
-        }}
-        ListEmptyComponent={
-          <Text style={[styles.empty, { color: colors.gray }]}>
-            何を予定しますか？
-          </Text>
-        }
-      />
-      {approval && (
-        <View style={[styles.approval, { borderColor: colors.separator }]}>
-          <Text style={[styles.approvalTitle, { color: colors.black }]}>
-            確認が必要です
-          </Text>
-          <Text style={{ color: colors.black }}>{approval.why}</Text>
-          {approval.changes.map((change, index) => (
-            <Text
-              key={`${change.operation}-${index}`}
-              style={{ color: colors.black }}
-            >
-              ・{change.description}
-            </Text>
-          ))}
-          {approval.warnings.map((warning) => (
-            <Text key={warning} style={{ color: '#A65B00' }}>
-              注意: {warning}
-            </Text>
-          ))}
-          <View style={styles.approvalActions}>
+          </View>
+        )}
+        {error && (
+          <Pressable onPress={() => Alert.alert('Agentエラー', error)}>
+            <Text style={styles.error}>{error}</Text>
+          </Pressable>
+        )}
+        <GestureDetector gesture={switcherGesture}>
+          <View
+            style={[
+              styles.switcher,
+              {
+                borderTopColor: colors.separator,
+                paddingBottom: 8,
+              },
+            ]}
+          >
             <Pressable
-              disabled={busy}
-              onPress={() => resolve(false)}
-              style={styles.deny}
+              disabled={activeIndex === 0 || isSwitching || busy}
+              onPress={() => switchSession(-1)}
+              style={styles.switcherButton}
             >
-              <Text style={styles.denyText}>拒否</Text>
+              <Ionicons
+                name="chevron-back"
+                size={20}
+                color={
+                  activeIndex > 0 && !isSwitching && !busy
+                    ? colors.black
+                    : colors.gray
+                }
+              />
             </Pressable>
+            <View style={styles.dots}>
+              {sessionIds.map((id, i) => (
+                <View
+                  key={id}
+                  style={[
+                    styles.dot,
+                    {
+                      backgroundColor:
+                        i === activeIndex ? BRAND_COLOR : colors.grayLight,
+                    },
+                  ]}
+                />
+              ))}
+            </View>
             <Pressable
-              disabled={busy}
-              onPress={() => resolve(true)}
-              style={styles.approve}
+              disabled={
+                activeIndex >= sessionIds.length - 1 || isSwitching || busy
+              }
+              onPress={() => switchSession(1)}
+              style={styles.switcherButton}
             >
-              {busy ? (
-                <ActivityIndicator color={COLORS.white} />
-              ) : (
-                <Text style={styles.approveText}>承認</Text>
-              )}
+              <Ionicons
+                name="chevron-forward"
+                size={20}
+                color={
+                  activeIndex < sessionIds.length - 1 && !isSwitching && !busy
+                    ? colors.black
+                    : colors.gray
+                }
+              />
             </Pressable>
           </View>
-        </View>
-      )}
-      {error && (
-        <Pressable onPress={() => Alert.alert('Agentエラー', error)}>
-          <Text style={styles.error}>{error}</Text>
-        </Pressable>
-      )}
-      <View
-        style={[
-          styles.composer,
-          {
-            borderTopColor: colors.separator,
-            paddingBottom: 12 + (keyboardVisible ? 0 : insets.bottom),
-          },
-        ]}
-      >
-        <Pressable
-          disabled={busy}
-          onPress={toggleRecording}
-          style={[styles.record, recording && styles.recording]}
-        >
-          <Text style={styles.recordText}>{recording ? '停止' : '録音'}</Text>
-        </Pressable>
-        <TextInput
+        </GestureDetector>
+        <View
           style={[
-            styles.input,
+            styles.composer,
             {
-              color: colors.black,
-              borderColor: colors.separator,
-              height: inputHeight,
+              borderTopColor: colors.separator,
+              paddingBottom: 12 + (keyboardVisible ? 0 : insets.bottom),
             },
           ]}
-          value={text}
-          onChangeText={setText}
-          placeholder="メッセージ"
-          placeholderTextColor={colors.gray}
-          editable={!busy}
-          multiline
-          textAlignVertical="top"
-          onContentSizeChange={(e) => {
-            const h = e.nativeEvent.contentSize.height;
-            setInputHeight(Math.max(44, Math.min(120, h)));
-          }}
-        />
-        <Pressable
-          disabled={busy || !text.trim()}
-          onPress={send}
-          style={styles.send}
         >
-          {busy ? (
-            <ActivityIndicator color={COLORS.white} />
-          ) : (
-            <Text style={styles.sendText}>送信</Text>
-          )}
-        </Pressable>
-      </View>
+          <Pressable
+            disabled={busy || isSwitching || !historyReady}
+            onPress={toggleRecording}
+            style={[styles.record, recording && styles.recording]}
+          >
+            <Text style={styles.recordText}>{recording ? '停止' : '録音'}</Text>
+          </Pressable>
+          <TextInput
+            style={[
+              styles.input,
+              {
+                color: colors.black,
+                borderColor: colors.separator,
+                height: inputHeight,
+              },
+            ]}
+            value={text}
+            onChangeText={setText}
+            placeholder="メッセージ"
+            placeholderTextColor={colors.gray}
+            editable={!busy && !isSwitching && historyReady}
+            multiline
+            textAlignVertical="top"
+            onContentSizeChange={(e) => {
+              const h = e.nativeEvent.contentSize.height;
+              setInputHeight(Math.max(44, Math.min(120, h)));
+            }}
+          />
+          <Pressable
+            disabled={busy || isSwitching || !historyReady || !text.trim()}
+            onPress={send}
+            style={styles.send}
+          >
+            {busy ? (
+              <ActivityIndicator color={COLORS.white} />
+            ) : (
+              <Text style={styles.sendText}>送信</Text>
+            )}
+          </Pressable>
+        </View>
+      </Reanimated.View>
     </KeyboardAvoidingView>
   );
 }
@@ -598,7 +1046,7 @@ const styles = StyleSheet.create({
   back: { width: 56, alignItems: 'center' },
   backText: { fontSize: 40, lineHeight: 40 },
   title: { flex: 1, fontSize: 20, fontWeight: '700' },
-  headerSpace: { width: 56 },
+  newSession: { width: 56, alignItems: 'center', justifyContent: 'center' },
   messages: { flex: 1 },
   messageContent: {
     padding: 16,
@@ -648,6 +1096,22 @@ const styles = StyleSheet.create({
   },
   approveText: { color: COLORS.white, fontWeight: '700' },
   error: { color: '#B33A3A', paddingHorizontal: 16, paddingBottom: 8 },
+  switcher: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    borderTopWidth: 1,
+  },
+  switcherButton: {
+    width: 56,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dots: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  dot: { width: 8, height: 8, borderRadius: 4 },
   composer: {
     flexDirection: 'row',
     gap: 8,
