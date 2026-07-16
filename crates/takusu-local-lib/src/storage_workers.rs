@@ -81,6 +81,25 @@ impl WorkersStorage {
         map_response(resp).await
     }
 
+    async fn request_body_empty<B: Serialize>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: &B,
+    ) -> StorageResult<()> {
+        let url = format!("{}{}", self.base_url, path);
+        let resp = self
+            .send_with_retry(|| {
+                self.http
+                    .request(method.clone(), &url)
+                    .bearer_auth(&self.token)
+                    .json(body)
+                    .build()
+            })
+            .await?;
+        map_empty(resp).await
+    }
+
     async fn request_no_body(&self, method: reqwest::Method, path: &str) -> StorageResult<()> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self
@@ -439,12 +458,12 @@ impl Storage for WorkersStorage {
                 "google_event_id": e
             })).collect::<Vec<_>>()
         });
-        self.request_body(reqwest::Method::POST, "/api/sync/mappings", &body)
+        self.request_body_empty(reqwest::Method::POST, "/api/sync/mappings", &body)
             .await
     }
 
     async fn delete_gcal_mappings(&self, task_ids: &[String]) -> StorageResult<()> {
-        self.request_body(
+        self.request_body_empty(
             reqwest::Method::DELETE,
             "/api/sync/mappings",
             &json!({ "task_ids": task_ids }),
