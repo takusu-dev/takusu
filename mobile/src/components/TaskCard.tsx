@@ -326,13 +326,12 @@ function TaskCardImpl({
             <View style={styles.meta}>
               {deps.length > 0 && (
                 <Text style={[styles.metaText, { color: colors.gray }]}>
-                  ↳ {deps.length} deps
+                  ↳ {deps.length}
                 </Text>
               )}
               {(dependentCount ?? 0) > 0 && (
                 <Text style={[styles.metaText, { color: colors.gray }]}>
-                  ↗ {dependentCount}{' '}
-                  {dependentCount === 1 ? 'dependent' : 'dependents'}
+                  ↗ {dependentCount}
                 </Text>
               )}
               {task.avg_minutes > 0 && (
