@@ -1,5 +1,6 @@
 package expo.modules.takususerver
 
+import android.media.AudioAttributes
 import android.media.MediaPlayer
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.modules.Module
@@ -82,6 +83,13 @@ class TakusuAudioModule : Module() {
                 player?.release()
                 player =
                     MediaPlayer().also { mediaPlayer ->
+                        mediaPlayer.setAudioAttributes(
+                            AudioAttributes
+                                .Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                                .build(),
+                        )
                         mediaPlayer.setDataSource(file.absolutePath)
                         mediaPlayer.setOnCompletionListener { it.release() }
                         mediaPlayer.prepare()
