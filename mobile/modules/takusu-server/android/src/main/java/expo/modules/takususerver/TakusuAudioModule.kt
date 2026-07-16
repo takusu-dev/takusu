@@ -32,10 +32,12 @@ class TakusuAudioModule : Module() {
             Name("TakusuAudio")
 
             AsyncFunction("configure") { options: AudioOptions ->
+                val context =
+                    appContext.reactContext
+                        ?: throw CodedException("ERR_AUDIO_CONFIG", "React context is not available", null)
                 val modelDir =
                     options.modelDir.ifEmpty {
-                        appContext.reactContext?.noBackupFilesDir?.absolutePath
-                            ?: throw CodedException("ERR_AUDIO_CONFIG", "React context is not available", null)
+                        File(context.noBackupFilesDir, "takusu/models").absolutePath
                     }
                 audio =
                     try {
