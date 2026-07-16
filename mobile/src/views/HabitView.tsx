@@ -606,10 +606,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
     gap: 4,
-    borderWidth: 1,
+    borderWidth: 2,
   },
   habitCardSelected: {
-    borderWidth: 2,
     borderColor: BRAND_COLOR,
   },
   habitHeader: {
