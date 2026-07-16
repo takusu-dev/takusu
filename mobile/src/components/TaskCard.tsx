@@ -521,8 +521,12 @@ function ParallelGroupCardImpl({
     <View
       style={[groupStyles.container, selected && { borderColor: BRAND_COLOR }]}
     >
-      <View style={[groupStyles.rail, { backgroundColor: hostBgColor }]} />
-      <View style={[groupStyles.outline, { backgroundColor: outlineColor }]} />
+      <View
+        style={[
+          groupStyles.rail,
+          { backgroundColor: hostBgColor, borderRightColor: outlineColor },
+        ]}
+      />
       <View style={groupStyles.cards}>
         <TaskCard
           task={host}
@@ -569,7 +573,10 @@ const groupStyles = StyleSheet.create({
   container: {
     marginHorizontal: 12,
     marginVertical: 4,
-    borderRadius: 12,
+    borderTopLeftRadius: 6,
+    borderTopRightRadius: 12,
+    borderBottomLeftRadius: 6,
+    borderBottomRightRadius: 12,
     overflow: 'hidden',
     borderWidth: 2,
     borderColor: 'transparent',
@@ -581,16 +588,12 @@ const groupStyles = StyleSheet.create({
     left: 0,
     top: 0,
     bottom: 0,
-    width: RAIL_WIDTH,
-    borderTopLeftRadius: 12,
-    borderBottomLeftRadius: 12,
-  },
-  outline: {
-    position: 'absolute',
-    left: RAIL_WIDTH,
-    top: 0,
-    bottom: 0,
-    width: OUTLINE_WIDTH,
+    width: INDENT_WIDTH,
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 4,
+    borderBottomLeftRadius: 4,
+    borderBottomRightRadius: 4,
+    borderRightWidth: OUTLINE_WIDTH,
   },
   cards: {
     flexDirection: 'column',
