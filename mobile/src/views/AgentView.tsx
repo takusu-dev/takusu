@@ -15,7 +15,14 @@ import {
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Markdown, {
+  MarkdownIt,
+  type ASTNode,
+  type MarkdownStyles,
+  type RenderRules,
+} from 'react-native-markdown-renderer';
 import { DEFAULT_PORT, useServer } from '@/src/api/ServerProvider';
+import { markdownToSpeech } from '@/src/utils/markdownToSpeech';
 import TakusuAudioModule from '../../modules/takusu-server/src/TakusuAudioModule';
 import { loadAgentApiKey, loadSettings } from '@/src/api/settingsStore';
 import { AgentClient, AgentApiError } from '@/src/api/agentClient';
@@ -48,6 +55,35 @@ function newId(prefix: string): string {
 export function AgentView() {
   const router = useRouter();
   const colors = useColors();
+  const markdownStyles = useMemo<Partial<MarkdownStyles>>(
+    () => ({
+      text: { color: colors.black },
+      link: { color: BRAND_COLOR },
+      codeBlock: {
+        backgroundColor: colors.separator,
+        padding: 8,
+        borderRadius: 8,
+      },
+      codeInline: {
+        backgroundColor: colors.separator,
+        paddingHorizontal: 4,
+        paddingVertical: 2,
+        borderRadius: 4,
+      },
+    }),
+    [colors],
+  );
+  const markdownIt = useMemo(() => new MarkdownIt({ typographer: false }), []);
+  const markdownRules = useMemo<RenderRules>(
+    () => ({
+      image: (node: ASTNode) => (
+        <Text key={node.key} style={{ color: colors.gray }}>
+          {node.content}
+        </Text>
+      ),
+    }),
+    [colors.gray],
+  );
   const insets = useSafeAreaInsets();
   const { workersToken, ready } = useServer();
   const client = useMemo(
@@ -196,8 +232,16 @@ export function AgentView() {
         },
       );
       setApproval(result.approval_request);
-      if (audioReady && result.text.trim()) {
-        await TakusuAudioModule.synthesizeAndPlay(result.text);
+      const ttsText = markdownToSpeech(result.text);
+      if (audioReady && ttsText.trim()) {
+        try {
+          await TakusuAudioModule.synthesizeAndPlay(ttsText);
+        } catch (ttsError: unknown) {
+          const ttsMessage =
+            ttsError instanceof Error ? ttsError.message : String(ttsError);
+          console.error('TTS failed:', ttsMessage);
+          setError(`音声読み上げに失敗しました: ${ttsMessage}`);
+        }
       }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
@@ -397,14 +441,19 @@ export function AgentView() {
                 </View>
               )}
               {item.text.length > 0 && (
-                <Text
-                  style={{
-                    color: colors.black,
-                    marginTop: hasContext ? 8 : 0,
-                  }}
-                >
-                  {item.text}
-                </Text>
+                <View style={{ marginTop: hasContext ? 8 : 0 }}>
+                  {item.state === 'done' || item.state === undefined ? (
+                    <Markdown
+                      style={markdownStyles}
+                      markdownit={markdownIt}
+                      rules={markdownRules}
+                    >
+                      {item.text}
+                    </Markdown>
+                  ) : (
+                    <Text style={{ color: colors.black }}>{item.text}</Text>
+                  )}
+                </View>
               )}
               {item.state !== 'done' && item.text.length === 0 && (
                 <ActivityIndicator color={BRAND_COLOR} />
