@@ -1,7 +1,7 @@
 use axum::Json;
 use axum::extract::State;
 use serde::Deserialize;
-use takusu_local_lib::app::GoogleCalSettingsOutput;
+use takusu_local_lib::app::{DeleteAllGcalResult, GoogleCalSettingsOutput};
 use takusu_local_lib::error::AppError;
 use takusu_storage::{GoogleCalEventRow, UpdateGoogleCalSettings};
 
@@ -68,4 +68,11 @@ pub async fn list_mappings(
 ) -> Result<Json<Vec<GoogleCalEventRow>>, HttpError> {
     let rows = state.app.list_gcal_mappings().await?;
     Ok(Json(rows))
+}
+
+pub async fn delete_all_gcal_events(
+    State(state): State<AppState>,
+) -> Result<Json<DeleteAllGcalResult>, HttpError> {
+    let result = state.app.delete_all_gcal_events().await?;
+    Ok(Json(result))
 }

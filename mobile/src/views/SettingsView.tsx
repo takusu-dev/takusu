@@ -267,6 +267,7 @@ export function SettingsDetailView({
   const [gcalRefreshToken, setGcalRefreshToken] = useState('');
   const [gcalLoading, setGcalLoading] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
+  const [deleteAllLoading, setDeleteAllLoading] = useState(false);
 
   // Health check state (info tab)
   const [localHealthLoading, setLocalHealthLoading] = useState(false);
@@ -569,6 +570,41 @@ export function SettingsDetailView({
     } finally {
       setSyncLoading(false);
     }
+  }
+
+  async function deleteAllGcalEvents() {
+    if (!client) return;
+    Alert.alert(
+      'Google Calendarイベントを削除',
+      'マッピングされているGoogle Calendar側のイベントをすべて削除します。よろしいですか？',
+      [
+        { text: 'キャンセル', style: 'cancel' },
+        {
+          text: '削除',
+          style: 'destructive',
+          onPress: async () => {
+            setDeleteAllLoading(true);
+            try {
+              const res = await client.deleteAllGcalEvents();
+              const failed = res.failed.length;
+              Alert.alert(
+                failed > 0 ? '削除完了（一部失敗）' : '削除完了',
+                `${res.deleted}件のイベントを削除しました${
+                  failed > 0 ? `\n${failed}件の削除に失敗しました` : ''
+                }`,
+              );
+            } catch (e) {
+              Alert.alert(
+                'エラー',
+                `削除に失敗: ${e instanceof Error ? e.message : String(e)}`,
+              );
+            } finally {
+              setDeleteAllLoading(false);
+            }
+          },
+        },
+      ],
+    );
   }
 
   // ── Health checks (info tab) ──
@@ -1485,6 +1521,27 @@ export function SettingsDetailView({
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
                   <Text style={styles.actionButtonText}>手動同期</Text>
+                )}
+              </Pressable>
+
+              <Pressable
+                style={[styles.actionButton, { backgroundColor: '#D32F2F' }]}
+                onPress={() => {
+                  haptic.medium();
+                  deleteAllGcalEvents();
+                }}
+                disabled={
+                  deleteAllLoading ||
+                  gcalLoading ||
+                  !gcalSettings?.has_refresh_token
+                }
+              >
+                {deleteAllLoading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.actionButtonText}>
+                    Google Calendarイベントを全削除
+                  </Text>
                 )}
               </Pressable>
             </>
