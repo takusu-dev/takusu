@@ -398,6 +398,7 @@ impl Tool for ListTasks {
             from: normalize_datetime(optional_string(&args, "from")?, &tz, "from")?,
             until: normalize_datetime(optional_string(&args, "until")?, &tz, "until")?,
             habit_id: habit.as_ref().map(|habit| habit.habit.id.clone()),
+            ical_uid: None,
         };
 
         let default_query = TaskQuery::default();

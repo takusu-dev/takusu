@@ -13,6 +13,7 @@ pub struct TaskQueryParams {
     pub from: Option<String>,
     pub until: Option<String>,
     pub habit_id: Option<String>,
+    pub ical_uid: Option<String>,
 }
 
 pub async fn create_task(
@@ -32,6 +33,7 @@ pub async fn list_tasks(
         from: query.from,
         until: query.until,
         habit_id: query.habit_id,
+        ical_uid: query.ical_uid,
     };
     let tasks = state.app.list_tasks(&q).await?;
     Ok(Json(tasks))

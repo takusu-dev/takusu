@@ -313,12 +313,26 @@ impl Storage for SqliteStorage {
             sql.push_str(" AND habit_id = ?");
             bindings.push(v.clone());
         }
+        if let Some(ref v) = query.ical_uid {
+            sql.push_str(" AND ical_uid = ?");
+            bindings.push(v.clone());
+        }
         sql.push_str(" ORDER BY created_at DESC");
         let mut q = sqlx::query_as::<_, TaskRow>(sqlx::AssertSqlSafe(sql.as_str()));
         for b in &bindings {
             q = q.bind(b);
         }
         q.fetch_all(&self.pool).await.map_err(map_err)
+    }
+
+    async fn task_exists_by_ical_uid(&self, uid: &str) -> StorageResult<bool> {
+        let exists: Option<i64> =
+            sqlx::query_scalar("SELECT 1 FROM tasks WHERE ical_uid = ? LIMIT 1")
+                .bind(uid)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_err)?;
+        Ok(exists.is_some())
     }
 
     async fn get_task(&self, id: &str) -> StorageResult<TaskRow> {

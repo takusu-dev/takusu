@@ -216,11 +216,24 @@ impl Storage for WorkersStorage {
         if let Some(h) = &q.habit_id {
             parts.push(format!("habit_id={}", url_encode(h)));
         }
+        if let Some(u) = &q.ical_uid {
+            parts.push(format!("ical_uid={}", url_encode(u)));
+        }
         if !parts.is_empty() {
             path.push('?');
             path.push_str(&parts.join("&"));
         }
         self.request(reqwest::Method::GET, &path).await
+    }
+
+    async fn task_exists_by_ical_uid(&self, uid: &str) -> StorageResult<bool> {
+        let tasks = self
+            .list_tasks(&TaskQuery {
+                ical_uid: Some(uid.to_string()),
+                ..Default::default()
+            })
+            .await?;
+        Ok(!tasks.is_empty())
     }
 
     async fn get_task(&self, id: &str) -> StorageResult<TaskRow> {

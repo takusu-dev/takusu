@@ -41,6 +41,10 @@ pub async fn list(req: Request, env: Env) -> Result<Response, WorkerError> {
                 sql.push_str(" AND habit_id = ?");
                 bindings.push(JsValue::from_str(&v));
             }
+            "ical_uid" => {
+                sql.push_str(" AND ical_uid = ?");
+                bindings.push(JsValue::from_str(&v));
+            }
             _ => continue,
         }
     }

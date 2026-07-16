@@ -76,6 +76,9 @@ impl Storage for CountingStorage {
     async fn list_tasks(&self, _q: &TaskQuery) -> StorageResult<Vec<TaskRow>> {
         Ok(vec![])
     }
+    async fn task_exists_by_ical_uid(&self, _uid: &str) -> StorageResult<bool> {
+        Ok(false)
+    }
     async fn get_task(&self, _id: &str) -> StorageResult<TaskRow> {
         Err(StorageError::NotFound("n/a".into()))
     }

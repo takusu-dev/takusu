@@ -102,24 +102,28 @@ impl Client {
     // ── Task ──
 
     pub async fn list_tasks(&self, query: &TaskQuery) -> Result<Vec<TaskRow>, ClientError> {
-        let mut url = format!("{}/api/tasks", self.base_url);
-        let mut sep = '?';
+        let url = format!("{}/api/tasks", self.base_url);
+        let mut req = self.http.get(&url).bearer_auth(&self.token);
+        let mut params: Vec<(&str, &str)> = Vec::new();
         if let Some(ref s) = query.status {
-            url.push_str(&format!("{sep}status={s}"));
-            sep = '&';
+            params.push(("status", s));
         }
         if let Some(ref v) = query.from {
-            url.push_str(&format!("{sep}from={v}"));
-            sep = '&';
+            params.push(("from", v));
         }
         if let Some(ref v) = query.until {
-            url.push_str(&format!("{sep}until={v}"));
-            sep = '&';
+            params.push(("until", v));
         }
         if let Some(ref v) = query.habit_id {
-            url.push_str(&format!("{sep}habit_id={v}"));
+            params.push(("habit_id", v));
         }
-        let resp = self.http.get(&url).bearer_auth(&self.token).send().await?;
+        if let Some(ref v) = query.ical_uid {
+            params.push(("ical_uid", v));
+        }
+        if !params.is_empty() {
+            req = req.query(&params);
+        }
+        let resp = req.send().await?;
         let status = resp.status().as_u16();
         if status >= 400 {
             let body = resp.text().await.unwrap_or_default();
@@ -936,6 +940,7 @@ pub struct TaskQuery {
     pub from: Option<String>,
     pub until: Option<String>,
     pub habit_id: Option<String>,
+    pub ical_uid: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

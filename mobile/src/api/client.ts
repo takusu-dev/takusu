@@ -94,6 +94,8 @@ export class TakusuClient {
     if (query?.until) params.push(`until=${encodeURIComponent(query.until)}`);
     if (query?.habit_id)
       params.push(`habit_id=${encodeURIComponent(query.habit_id)}`);
+    if (query?.ical_uid)
+      params.push(`ical_uid=${encodeURIComponent(query.ical_uid)}`);
     const qs = params.join('&');
     return this.request('GET', `/api/tasks${qs ? `?${qs}` : ''}`);
   }

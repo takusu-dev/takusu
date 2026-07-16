@@ -164,6 +164,8 @@ enum TaskCommands {
         until: Option<String>,
         #[arg(long)]
         habit_id: Option<String>,
+        #[arg(long)]
+        ical_uid: Option<String>,
     },
 
     /// Show task detail
@@ -845,12 +847,14 @@ async fn run_task(
             from,
             until,
             habit_id,
+            ical_uid,
         } => {
             let query = TaskQuery {
                 status,
                 from: from.map(|s| parse_dt(&s, tz)).transpose()?,
                 until: until.map(|s| parse_dt(&s, tz)).transpose()?,
                 habit_id,
+                ical_uid,
             };
             let tasks = app.list_tasks(&query).await?;
             match mode {

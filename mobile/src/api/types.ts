@@ -67,6 +67,7 @@ export interface TaskQuery {
   from?: string;
   until?: string;
   habit_id?: string;
+  ical_uid?: string;
 }
 
 export interface HabitRow {

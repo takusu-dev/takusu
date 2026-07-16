@@ -22,6 +22,9 @@ pub trait Storage: Send + Sync + 'static {
     async fn replace_task(&self, id: &str, body: &CreateTask) -> StorageResult<TaskRow>;
     async fn delete_task(&self, id: &str) -> StorageResult<()>;
 
+    /// Check whether a task with the given iCal UID already exists.
+    async fn task_exists_by_ical_uid(&self, uid: &str) -> StorageResult<bool>;
+
     async fn list_habits(&self) -> StorageResult<Vec<HabitRow>>;
     async fn get_habit(&self, id: &str) -> StorageResult<HabitRow>;
     async fn create_habit(&self, body: &CreateHabit) -> StorageResult<HabitRow>;

@@ -138,6 +138,7 @@ pub struct TaskQuery {
     pub from: Option<String>,
     pub until: Option<String>,
     pub habit_id: Option<String>,
+    pub ical_uid: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
