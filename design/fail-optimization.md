@@ -24,6 +24,24 @@ This file records optimization experiments that did not improve all benchmarks, 
 
 ---
 
+## 2026-07-18: `mimalloc` 0.1.50 global allocator
+
+### Change
+
+- Added `mimalloc = "0.1.50"` as an optional global allocator alongside `jemalloc`.
+
+### Result
+
+- `mimalloc` improved release `score_check` and `profile` slightly, but did not show significant change on the `realworld` 7d/30d Criterion benches.
+- Its debug build regressed `score_check` compared to the system allocator.
+- It complicated the feature matrix and `--all-features` handling.
+
+### Status
+
+- Removed. Only `jemalloc` is kept as an optional/default allocator for `takusu-core`.
+
+---
+
 ## 2026-07-17: Reuse evaluate scratch buffers + inline union calculation
 
 ### Change
