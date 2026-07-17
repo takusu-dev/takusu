@@ -39,7 +39,10 @@ jobs:
 
   lint:
     needs: changes
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -58,7 +61,10 @@ jobs:
       - run: nix develop .#rust --command bash -c "cargo clippy --all-targets --all-features -- -D warnings"
   test:
     needs: changes
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     env:
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
@@ -82,12 +88,9 @@ jobs:
   codspeed:
     needs: changes
     if: |
-      github.event_name == 'workflow_dispatch' || (
-        needs.changes.outputs.rust == 'true' && (
-          github.event_name == 'pull_request' ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/main')
-        )
-      )
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -118,7 +121,10 @@ jobs:
 
   android-build:
     needs: changes
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -154,7 +160,10 @@ jobs:
 
   expo-check:
     needs: changes
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.mobile == 'true'
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      needs.changes.outputs.mobile == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -185,7 +194,10 @@ jobs:
 
   kotlin-check:
     needs: changes
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.kotlin == 'true'
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      needs.changes.outputs.kotlin == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
