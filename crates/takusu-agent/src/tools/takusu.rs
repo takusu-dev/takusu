@@ -74,6 +74,14 @@ fn optional_string(
     }
 }
 
+fn summary_string(args: &serde_json::Map<String, Value>, name: &str) -> Option<String> {
+    args.get(name)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn client_error(error: takusu_client::ClientError) -> ToolError {
     match error {
         takusu_client::ClientError::Api {
@@ -769,6 +777,48 @@ impl MutationKind {
         }
     }
 
+    fn change_summary(self, args: &serde_json::Map<String, Value>) -> (String, String) {
+        let title = summary_string(args, "title");
+        let task_ref = summary_string(args, "task_ref");
+        let habit_ref = summary_string(args, "habit_ref");
+        match self {
+            Self::CreateTask => {
+                let t = title.unwrap_or_else(|| "(名称未設定)".to_owned());
+                (t.clone(), format!("タスク「{t}」を作成"))
+            }
+            Self::UpdateTask => {
+                let r = task_ref.unwrap_or_else(|| "(参照不明)".to_owned());
+                let description = title.map_or_else(
+                    || format!("タスク{r}を更新"),
+                    |t| format!("タスク{r}（{t}）を更新"),
+                );
+                (r, description)
+            }
+            Self::DeleteTask => {
+                let r = task_ref.unwrap_or_else(|| "(参照不明)".to_owned());
+                (r.clone(), format!("タスク{r}を削除"))
+            }
+            Self::CreateHabit => {
+                let t = title.unwrap_or_else(|| "(名称未設定)".to_owned());
+                (t.clone(), format!("習慣「{t}」を作成"))
+            }
+            Self::UpdateHabit => {
+                let r = habit_ref.unwrap_or_else(|| "(参照不明)".to_owned());
+                let description = title.map_or_else(
+                    || format!("習慣{r}を更新"),
+                    |t| format!("習慣{r}（{t}）を更新"),
+                );
+                (r, description)
+            }
+            Self::DeleteHabit => {
+                let r = habit_ref.unwrap_or_else(|| "(参照不明)".to_owned());
+                (r.clone(), format!("習慣{r}を削除"))
+            }
+            Self::GenerateSchedule => (String::new(), "スケジュールを生成".to_owned()),
+            Self::Reschedule => (String::new(), "スケジュールを再調整".to_owned()),
+        }
+    }
+
     fn schema(self) -> Value {
         let (required, properties) = match self {
             Self::CreateTask => (
@@ -988,12 +1038,7 @@ impl Tool for MutationTool {
             args.insert("_preview".into(), transform_preview(preview, &ctx));
         }
 
-        let target = args
-            .get("task_ref")
-            .or_else(|| args.get("habit_ref"))
-            .and_then(Value::as_str)
-            .unwrap_or("schedule")
-            .to_owned();
+        let (target, description) = self.kind.change_summary(&args);
         let inferred_fields = args
             .get("inferred_fields")
             .cloned()
@@ -1012,10 +1057,16 @@ impl Tool for MutationTool {
                     .collect()
             })
             .unwrap_or_default();
+        let target_type = self.kind.target_type();
+        let target_label = if target.is_empty() {
+            target_type.to_owned()
+        } else {
+            format!("{target_type} {target}")
+        };
         let proposal = crate::ProposedChange {
             operation: self.kind.operation().to_owned(),
-            target_label: format!("{} {target}", self.kind.target_type()),
-            description: format!("{} ({target})", self.kind.description()),
+            target_label,
+            description,
             before,
             after: Some(Value::Object(args)),
             arguments: Some(Value::Object(execution_args)),
@@ -1440,5 +1491,74 @@ mod tests {
         let values: Vec<String> =
             serde_json::from_value(schema["properties"]["status"]["enum"].clone()).unwrap();
         assert!(values.contains(&"completed".to_string()));
+    }
+
+    #[test]
+    fn change_summary_covers_all_kinds_and_fallbacks() {
+        fn args(pairs: &[(&str, &str)]) -> serde_json::Map<String, Value> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), Value::String(v.to_string())))
+                .collect()
+        }
+
+        assert_eq!(
+            MutationKind::CreateTask.change_summary(&args(&[("title", "演習30題追加")])),
+            (
+                "演習30題追加".to_owned(),
+                "タスク「演習30題追加」を作成".to_owned()
+            ),
+        );
+        assert_eq!(
+            MutationKind::UpdateTask
+                .change_summary(&args(&[("task_ref", "#42"), ("title", "予習")])),
+            ("#42".to_owned(), "タスク#42（予習）を更新".to_owned()),
+        );
+        assert_eq!(
+            MutationKind::UpdateTask.change_summary(&args(&[("task_ref", "#42")])),
+            ("#42".to_owned(), "タスク#42を更新".to_owned()),
+        );
+        assert_eq!(
+            MutationKind::DeleteTask.change_summary(&args(&[("task_ref", "#7")])),
+            ("#7".to_owned(), "タスク#7を削除".to_owned()),
+        );
+        assert_eq!(
+            MutationKind::CreateHabit.change_summary(&args(&[("title", "毎朝ジョギング")])),
+            (
+                "毎朝ジョギング".to_owned(),
+                "習慣「毎朝ジョギング」を作成".to_owned()
+            ),
+        );
+        assert_eq!(
+            MutationKind::UpdateHabit
+                .change_summary(&args(&[("habit_ref", "h3"), ("title", "夜ジョギング")])),
+            ("h3".to_owned(), "習慣h3（夜ジョギング）を更新".to_owned()),
+        );
+        assert_eq!(
+            MutationKind::DeleteHabit.change_summary(&args(&[("habit_ref", "h1")])),
+            ("h1".to_owned(), "習慣h1を削除".to_owned()),
+        );
+        assert_eq!(
+            MutationKind::GenerateSchedule.change_summary(&serde_json::Map::new()),
+            (String::new(), "スケジュールを生成".to_owned()),
+        );
+        assert_eq!(
+            MutationKind::Reschedule.change_summary(&serde_json::Map::new()),
+            (String::new(), "スケジュールを再調整".to_owned()),
+        );
+
+        let mut blank_title = serde_json::Map::new();
+        blank_title.insert("title".to_string(), Value::String("   ".to_string()));
+        assert_eq!(
+            MutationKind::CreateTask.change_summary(&blank_title),
+            (
+                "(名称未設定)".to_owned(),
+                "タスク「(名称未設定)」を作成".to_owned()
+            ),
+        );
+        assert_eq!(
+            MutationKind::UpdateTask.change_summary(&serde_json::Map::new()),
+            ("(参照不明)".to_owned(), "タスク(参照不明)を更新".to_owned()),
+        );
     }
 }
