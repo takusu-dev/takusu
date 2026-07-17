@@ -57,3 +57,28 @@ This file records stable baseline numbers for `takusu-core` performance work.
   - `plan realworld habits (30d)`: `749.92 ms`
   - `plan_partial realworld habits (14d, 5 pinned)`: `241.08 ms`
   - `plan_in_range realworld habits (14d, days 2-7)`: `84.368 ms`
+
+## 2026-07-18: with `jemalloc` feature (`--features jemalloc`)
+
+- `cargo run -p takusu-core --example score_check` (debug, `CFLAGS='-O2 -U_FORTIFY_SOURCE'`):
+  - score `-1844.372500`
+  - total `1.534s`
+  - mean `15.343852 µs`
+- `cargo run -p takusu-core --example score_check --release`:
+  - score `-1844.372500`
+  - total `0.126s`
+  - mean `1.261039 µs`
+- `time ./target/release/examples/profile` (20 full `plan()` calls):
+  - real `~2.06s` (three runs: 2.135s, 2.000s, 2.036s)
+- `cargo bench -p takusu-core --bench realworld --features jemalloc`:
+  - `plan realworld habits (7d)`: `27.430 ms`
+  - `plan realworld habits (30d)`: `474.38 ms`
+  - `plan_partial realworld habits (14d, 5 pinned)`: `148.36 ms`
+  - `plan_in_range realworld habits (14d, days 2-7)`: `53.667 ms`
+
+### Notes
+
+- `jemalloc` (via `tikv-jemallocator` 0.6.0) is the fastest alternative allocator on this x86_64 Linux machine.
+- `mimalloc` 0.1.50 was also tested: it improved release `score_check` and `profile`, but its debug build regressed `score_check` and the `realworld` 7d/30d benches showed no significant change.
+- In this Nix dev shell with glibc 2.42, `tikv-jemalloc-sys` needs `CFLAGS='-O2 -U_FORTIFY_SOURCE'` to build in debug/test profiles. Release builds do not require the workaround.
+- arm64 build/behavior still needs verification (see issue #673).
