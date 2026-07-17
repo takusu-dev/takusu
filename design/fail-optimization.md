@@ -6,6 +6,24 @@ This file records optimization experiments that did not improve all benchmarks, 
 
 ---
 
+## 2026-07-18: `jemallocator` 0.5.4 fails to build on glibc 2.42
+
+### Change
+
+- Tried adding `jemallocator = "0.5.4"` as an optional global allocator for `takusu-core`.
+
+### Result
+
+- `jemalloc-sys` fails to compile with glibc 2.42 in this Nix dev shell.
+  Error: `returning 'char *' from a function with return type 'int' makes integer from pointer without a cast` in `src/malloc_io.c`.
+- The `tikv-jemallocator` 0.6.0 fork builds and performs best, so the experiment was switched to that crate.
+
+### Status
+
+- `jemallocator` (original crate) was not kept. `tikv-jemallocator` was adopted instead.
+
+---
+
 ## 2026-07-17: Reuse evaluate scratch buffers + inline union calculation
 
 ### Change

@@ -49,6 +49,17 @@ mod solver;
 use jiff::Timestamp;
 use thiserror::Error;
 
+#[cfg(all(feature = "mimalloc", not(feature = "jemalloc")))]
+#[global_allocator]
+static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(all(feature = "jemalloc", not(feature = "mimalloc")))]
+#[global_allocator]
+static JEMALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+#[cfg(all(feature = "mimalloc", feature = "jemalloc"))]
+compile_error!("only one of `mimalloc` and `jemalloc` features can be enabled at a time");
+
 // ── Point ────────────────────────────────────────────────────────────
 
 /// 離散時間点。1単位 = 5分。
