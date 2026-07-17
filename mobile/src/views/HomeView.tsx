@@ -47,6 +47,7 @@ import {
   dismissInProgressNotification,
   dismissTaskNotifications,
   cancelScheduledTaskNotifications,
+  cancelScheduledStartNotifications,
 } from '@/src/notifications';
 import type { HabitRow } from '@/src/api/types';
 
@@ -766,6 +767,13 @@ export function HomeView() {
         logError('通知のキャンセル', e),
       );
     }
+    // Cancel pending start-time reminders when the task becomes in_progress
+    // so an already-started task does not get a "タスク開始時間" notification.
+    if (newStatus === 'in_progress') {
+      cancelScheduledStartNotifications(task.id).catch((e) =>
+        logError('通知のキャンセル', e),
+      );
+    }
     // Post in-progress notification when starting via swipe (#312)
     if (newStatus === 'in_progress' && notifications.inProgress) {
       postInProgressNotification(task).catch((e) => logError('通知の投稿', e));
@@ -784,6 +792,12 @@ export function HomeView() {
             logError('通知の投稿', e),
           );
         }
+        // If undoing back to in_progress, cancel any pending start reminders.
+        if (prevStatus === 'in_progress') {
+          cancelScheduledStartNotifications(task.id).catch((e) =>
+            logError('通知のキャンセル', e),
+          );
+        }
         await refresh();
       },
       redo: async () => {
@@ -796,6 +810,12 @@ export function HomeView() {
         if (prevStatus === 'in_progress' && newStatus === 'completed') {
           dismissInProgressNotification(task.id).catch((e) =>
             logError('通知の消去', e),
+          );
+        }
+        // If redoing into in_progress, cancel any pending start reminders.
+        if (newStatus === 'in_progress') {
+          cancelScheduledStartNotifications(task.id).catch((e) =>
+            logError('通知のキャンセル', e),
           );
         }
         await refresh();
@@ -1067,6 +1087,7 @@ export function HomeView() {
     if (toUpdate.length === 0) return;
     const prevStatuses = new Map(toUpdate.map((t) => [t.id, t.status]));
     const changed: TaskRow[] = [];
+    const startedIds: string[] = [];
     let failed = 0;
     for (const task of toUpdate) {
       if (task.status === newStatus) continue;
@@ -1082,10 +1103,20 @@ export function HomeView() {
             logError('通知の消去', e),
           );
         }
+        if (newStatus === 'in_progress') {
+          startedIds.push(task.id);
+        }
       } catch (e) {
         failed++;
         logError(`ステータス変更 (${task.title})`, e);
       }
+    }
+    // Cancel pending start-time reminders for all tasks moved to in_progress
+    // in one pass, instead of fetching scheduled notifications per task (#648).
+    if (startedIds.length > 0) {
+      cancelScheduledStartNotifications(startedIds).catch((e) =>
+        logError('通知のキャンセル', e),
+      );
     }
     if (failed > 0) {
       showError(
@@ -1103,15 +1134,33 @@ export function HomeView() {
           ? `set status ${newStatus}: ${changed[0].title}`
           : `set status ${newStatus} on ${changed.length} tasks`,
       undo: async () => {
+        const inProgressIds: string[] = [];
         for (const t of changed) {
           const prev = prevStatuses.get(t.id)!;
           await client.updateTask(t.id, { status: prev });
+          if (prev === 'in_progress') {
+            inProgressIds.push(t.id);
+          }
+        }
+        if (inProgressIds.length > 0) {
+          cancelScheduledStartNotifications(inProgressIds).catch((e) =>
+            logError('通知のキャンセル', e),
+          );
         }
         await refresh();
       },
       redo: async () => {
+        const inProgressIds: string[] = [];
         for (const t of changed) {
           await client.updateTask(t.id, { status: newStatus });
+          if (newStatus === 'in_progress') {
+            inProgressIds.push(t.id);
+          }
+        }
+        if (inProgressIds.length > 0) {
+          cancelScheduledStartNotifications(inProgressIds).catch((e) =>
+            logError('通知のキャンセル', e),
+          );
         }
         await refresh();
       },
@@ -1473,6 +1522,11 @@ export function HomeView() {
                   // Dismiss any delivered start reminder notifications (#257)
                   dismissTaskNotifications(next.id).catch((e) =>
                     logError('通知の消去', e),
+                  );
+                  // Cancel pending start-time reminders so the started task
+                  // does not get a "タスク開始時間" notification later (#648).
+                  cancelScheduledStartNotifications(next.id).catch((e) =>
+                    logError('通知のキャンセル', e),
                   );
                   // Post in-progress notification with DONE/CANCEL actions
                   if (notifications.inProgress) {
