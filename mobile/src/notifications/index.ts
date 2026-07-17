@@ -30,4 +30,5 @@ export {
   dismissInProgressNotification,
   dismissTaskNotifications,
   cancelScheduledTaskNotifications,
+  cancelScheduledStartNotifications,
 } from './scheduler';

@@ -23,6 +23,7 @@ import {
   dismissInProgressNotification,
   dismissTaskNotifications,
   cancelScheduledTaskNotifications,
+  cancelScheduledStartNotifications,
   postInProgressNotification,
   postResultNotification,
 } from '@/src/notifications';
@@ -92,6 +93,14 @@ function handleActionResponse(
         // Dismiss the start reminder notification (#257)
         dismissTaskNotifications(taskId).catch((err) =>
           console.warn('Notification action: dismiss failed', err),
+        );
+        // Cancel any pending start-time reminders so an in-progress task
+        // does not get a "タスク開始時間" notification later (#648).
+        cancelScheduledStartNotifications(taskId).catch((err) =>
+          console.warn(
+            'Notification action: cancel start reminders failed',
+            err,
+          ),
         );
         // Post in-progress notification with DONE/CANCEL actions
         if (inProgressNotifEnabled) {

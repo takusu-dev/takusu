@@ -365,6 +365,26 @@ export async function cancelScheduledTaskNotifications(
   }
 }
 
+// Cancel pending start-time notifications for one or more tasks.
+// Pre-start reminders and start-overdue reminders are tagged with
+// CATEGORY_TASK_START; when a task becomes in_progress, these should not fire.
+export async function cancelScheduledStartNotifications(
+  taskId: string | string[],
+): Promise<void> {
+  const ids = new Set(Array.isArray(taskId) ? taskId : [taskId]);
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  for (const n of scheduled) {
+    const id = n.content.data?.taskId;
+    if (
+      typeof id === 'string' &&
+      ids.has(id) &&
+      n.content.categoryIdentifier === CATEGORY_TASK_START
+    ) {
+      await Notifications.cancelScheduledNotificationAsync(n.identifier);
+    }
+  }
+}
+
 // Wrapper that accepts raw schedule JSON (convenience for HomeView)
 export async function rescheduleFromRaw(
   tasks: TaskRow[],

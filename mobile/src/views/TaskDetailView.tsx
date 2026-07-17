@@ -50,6 +50,7 @@ import {
   dismissInProgressNotification,
   dismissTaskNotifications,
   cancelScheduledTaskNotifications,
+  cancelScheduledStartNotifications,
 } from '@/src/notifications';
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -344,6 +345,11 @@ export function TaskDetailView() {
     if (newStatus === 'in_progress') {
       // Dismiss any delivered start reminder notifications (#257)
       dismissTaskNotifications(task.id).catch((e) => logError('通知の消去', e));
+      // Cancel pending start-time reminders so an in-progress task does not
+      // get a "タスク開始時間" notification later (#648).
+      cancelScheduledStartNotifications(task.id).catch((e) =>
+        logError('通知のキャンセル', e),
+      );
       if (notifications.inProgress) {
         postInProgressNotification({ ...task, status: newStatus }).catch((e) =>
           logError('通知の投稿', e),
@@ -368,10 +374,23 @@ export function TaskDetailView() {
       description: `status → ${STATUS_LABELS[newStatus]}: ${task.title}`,
       undo: async () => {
         await client.updateTask(task.id, { status: prevStatus });
+        // If undoing back to in_progress, make sure no start-time reminders
+        // remain scheduled.
+        if (prevStatus === 'in_progress') {
+          cancelScheduledStartNotifications(task.id).catch((e) =>
+            logError('通知のキャンセル', e),
+          );
+        }
         await refresh();
       },
       redo: async () => {
         await client.updateTask(task.id, { status: newStatus });
+        // If redoing into in_progress, cancel any pending start reminders.
+        if (newStatus === 'in_progress') {
+          cancelScheduledStartNotifications(task.id).catch((e) =>
+            logError('通知のキャンセル', e),
+          );
+        }
         await refresh();
       },
     });
