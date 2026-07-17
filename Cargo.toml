@@ -59,3 +59,11 @@ opt-level = 3
 
 [profile.test.package."tikv-jemalloc-sys"]
 opt-level = 3
+
+[profile.release]
+# Compile the entire crate as one unit.
+codegen-units = 1
+# Do a second optimization pass over the entire program, including dependencies.
+lto = "thin"
+# Maximum speed optimizations (default release opt-level).
+opt-level = 3
