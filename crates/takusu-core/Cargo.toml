@@ -14,7 +14,13 @@ rayon.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [[bench]]
 name = "plan"
+harness = false
+
+[[bench]]
+name = "realworld"
 harness = false

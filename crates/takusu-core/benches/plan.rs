@@ -5,6 +5,17 @@ use std::hint::black_box;
 use takusu_core::{NormalDist, Planner, Point, SleepConfig, Task};
 
 fn generate_tasks(rng: &mut impl Rng, count: usize) -> Planner {
+    generate_tasks_with(rng, count, 0.2, 0.2, false, 2)
+}
+
+fn generate_tasks_with(
+    rng: &mut impl Rng,
+    count: usize,
+    parallelizable_prob: f64,
+    allows_parallel_prob: f64,
+    fixed: bool,
+    max_deps: usize,
+) -> Planner {
     let mut planner = Planner::new(Point(0), SleepConfig::disabled());
 
     for i in 0..count {
@@ -15,7 +26,7 @@ fn generate_tasks(rng: &mut impl Rng, count: usize) -> Planner {
 
         let mut depends = Vec::new();
         if i >= 2 {
-            let dep_count = rng.random_range(0..=2).min(i);
+            let dep_count = rng.random_range(0..=max_deps).min(i);
             let mut possible: Vec<usize> = (0..i).collect();
             for _ in 0..dep_count {
                 if possible.is_empty() {
@@ -33,10 +44,10 @@ fn generate_tasks(rng: &mut impl Rng, count: usize) -> Planner {
                 end: Point(deadline_slot as i64),
                 cost_estimate: NormalDist::new(avg as u64, sigma as u64),
                 depends,
-                parallelizable: rng.random_bool(0.2),
-                allows_parallel: rng.random_bool(0.2),
+                parallelizable: rng.random_bool(parallelizable_prob),
+                allows_parallel: rng.random_bool(allows_parallel_prob),
                 abandonability: rng.random::<f64>(),
-                fixed: false,
+                fixed,
                 habit_group: None,
             })
             .unwrap();
@@ -156,12 +167,84 @@ fn bench_plan_range_25(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_plan_200(c: &mut Criterion) {
+    let mut rng = StdRng::seed_from_u64(45);
+    let planner = generate_tasks(&mut rng, 200);
+
+    let mut group = c.benchmark_group("plan");
+    group.sample_size(10);
+
+    group.bench_function("plan 200 tasks", |b| {
+        b.iter(|| {
+            let plan = planner.plan();
+            black_box(plan);
+        })
+    });
+
+    group.finish();
+}
+
+fn bench_plan_many_parallel(c: &mut Criterion) {
+    let mut rng = StdRng::seed_from_u64(46);
+    let planner = generate_tasks_with(&mut rng, 100, 0.9, 0.1, false, 2);
+
+    let mut group = c.benchmark_group("plan");
+    group.sample_size(10);
+
+    group.bench_function("plan 100 mostly-parallel tasks", |b| {
+        b.iter(|| {
+            let plan = planner.plan();
+            black_box(plan);
+        })
+    });
+
+    group.finish();
+}
+
+fn bench_plan_many_fixed(c: &mut Criterion) {
+    let mut rng = StdRng::seed_from_u64(47);
+    let planner = generate_tasks_with(&mut rng, 100, 0.2, 0.2, true, 2);
+
+    let mut group = c.benchmark_group("plan");
+    group.sample_size(10);
+
+    group.bench_function("plan 100 fixed tasks", |b| {
+        b.iter(|| {
+            let plan = planner.plan();
+            black_box(plan);
+        })
+    });
+
+    group.finish();
+}
+
+fn bench_plan_many_dependencies(c: &mut Criterion) {
+    let mut rng = StdRng::seed_from_u64(48);
+    let planner = generate_tasks_with(&mut rng, 100, 0.2, 0.2, false, 8);
+
+    let mut group = c.benchmark_group("plan");
+    group.sample_size(10);
+
+    group.bench_function("plan 100 tasks with many dependencies", |b| {
+        b.iter(|| {
+            let plan = planner.plan();
+            black_box(plan);
+        })
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_plan_25,
     bench_plan_partial_25,
     bench_plan_50,
     bench_plan_100,
+    bench_plan_200,
+    bench_plan_many_parallel,
+    bench_plan_many_fixed,
+    bench_plan_many_dependencies,
     bench_evaluate,
     bench_plan_range_25,
 );

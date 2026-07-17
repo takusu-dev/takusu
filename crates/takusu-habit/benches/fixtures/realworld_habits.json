@@ -1,0 +1,108 @@
+{
+  "timezone": "Asia/Tokyo",
+  "sleep_start": "22:00",
+  "sleep_end": "06:00",
+  "start_date": "2026-07-17",
+  "start_time": "00:00",
+  "horizon_days": 14,
+  "habits": [
+    {
+      "id": "h1",
+      "recurrence": {
+        "freq": "daily",
+        "interval": 1,
+        "by_day": [
+          { "n": null, "weekday": "mon" },
+          { "n": null, "weekday": "tue" },
+          { "n": null, "weekday": "wed" },
+          { "n": null, "weekday": "thu" },
+          { "n": null, "weekday": "fri" }
+        ],
+        "by_month": [],
+        "by_month_day": [],
+        "count": null,
+        "exdates": []
+      },
+      "start_time": "08:40",
+      "duration_avg_minutes": 470,
+      "duration_sigma_minutes": 15,
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.2,
+      "fixed": false,
+      "steps": [
+        {
+          "start_time": "07:10",
+          "end_time": "08:30",
+          "avg_minutes": 80,
+          "sigma_minutes": 0,
+          "parallelizable": false,
+          "allows_parallel": true,
+          "abandonability": 0.2,
+          "fixed": true,
+          "depends": []
+        },
+        {
+          "start_time": "08:40",
+          "end_time": "16:30",
+          "avg_minutes": 470,
+          "sigma_minutes": 0,
+          "parallelizable": false,
+          "allows_parallel": false,
+          "abandonability": 0.2,
+          "fixed": true,
+          "depends": [0]
+        }
+      ]
+    },
+    {
+      "id": "h3",
+      "recurrence": {
+        "freq": "daily",
+        "interval": 1,
+        "by_day": [
+          { "n": null, "weekday": "mon" },
+          { "n": null, "weekday": "tue" },
+          { "n": null, "weekday": "wed" },
+          { "n": null, "weekday": "thu" },
+          { "n": null, "weekday": "fri" }
+        ],
+        "by_month": [],
+        "by_month_day": [],
+        "count": null,
+        "exdates": []
+      },
+      "start_time": "07:30",
+      "duration_avg_minutes": 10,
+      "duration_sigma_minutes": 2,
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.2,
+      "fixed": false,
+      "steps": []
+    },
+    {
+      "id": "h4",
+      "recurrence": {
+        "freq": "daily",
+        "interval": 1,
+        "by_day": [
+          { "n": null, "weekday": "sat" },
+          { "n": null, "weekday": "sun" }
+        ],
+        "by_month": [],
+        "by_month_day": [],
+        "count": null,
+        "exdates": []
+      },
+      "start_time": "09:00",
+      "duration_avg_minutes": 15,
+      "duration_sigma_minutes": 3,
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.2,
+      "fixed": false,
+      "steps": []
+    }
+  ]
+}
