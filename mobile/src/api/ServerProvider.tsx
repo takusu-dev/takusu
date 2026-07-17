@@ -7,7 +7,7 @@ import {
   useMemo,
   type ReactNode,
 } from 'react';
-import { Platform } from 'react-native';
+import { Appearance, Platform } from 'react-native';
 import { TakusuClient } from './client';
 import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
 import TakusuWidgetModule from '../../modules/takusu-widget/src/TakusuWidgetModule';
@@ -16,12 +16,13 @@ import {
   loadAgentApiKey,
   saveWorkersUrl,
   saveWorkersToken,
-  saveDarkMode,
+  saveTheme,
   saveUndoSteps,
   saveNotificationSettings,
   type PersistedSettings,
   type NotificationSettings,
 } from './settingsStore';
+import { APP_THEMES, type AppTheme } from '@/src/theme';
 import { undoRedo, DEFAULT_MAX_HISTORY } from './undoRedo';
 
 interface ServerState {
@@ -30,7 +31,7 @@ interface ServerState {
   client: TakusuClient | null;
   workersUrl: string;
   workersToken: string;
-  darkMode: boolean;
+  theme: AppTheme;
   undoSteps: number;
   notifications: NotificationSettings;
   restarting: boolean;
@@ -40,7 +41,7 @@ interface ServerContextValue extends ServerState {
   restartServer: (url?: string, token?: string) => Promise<void>;
   setWorkersUrl: (url: string) => Promise<void>;
   setWorkersToken: (token: string) => Promise<void>;
-  setDarkMode: (enabled: boolean) => Promise<void>;
+  setTheme: (theme: AppTheme) => Promise<void>;
   setUndoSteps: (steps: number) => Promise<void>;
   setNotifications: (settings: NotificationSettings) => Promise<void>;
 }
@@ -51,19 +52,23 @@ const ServerContext = createContext<ServerContextValue>({
   client: null,
   workersUrl: '',
   workersToken: '',
-  darkMode: false,
+  theme: 'light',
   undoSteps: DEFAULT_MAX_HISTORY,
   notifications: {} as NotificationSettings,
   restarting: false,
   restartServer: async () => {},
   setWorkersUrl: async () => {},
   setWorkersToken: async () => {},
-  setDarkMode: async () => {},
+  setTheme: async () => {},
   setUndoSteps: async () => {},
   setNotifications: async () => {},
 });
 
 export const DEFAULT_PORT = 3838;
+
+function systemInitialTheme(): AppTheme {
+  return Appearance.getColorScheme() === 'dark' ? 'dark' : 'light';
+}
 
 export function ServerProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<ServerState>({
@@ -72,7 +77,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     client: null,
     workersUrl: '',
     workersToken: '',
-    darkMode: false,
+    theme: systemInitialTheme(),
     undoSteps: DEFAULT_MAX_HISTORY,
     notifications: {} as NotificationSettings,
     restarting: false,
@@ -198,9 +203,10 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({ ...prev, workersToken: token }));
   }, []);
 
-  const setDarkMode = useCallback(async (enabled: boolean) => {
-    await saveDarkMode(enabled);
-    setState((prev) => ({ ...prev, darkMode: enabled }));
+  const setTheme = useCallback(async (newTheme: AppTheme) => {
+    if (!APP_THEMES.includes(newTheme)) return;
+    await saveTheme(newTheme);
+    setState((prev) => ({ ...prev, theme: newTheme }));
   }, []);
 
   const setUndoSteps = useCallback(async (steps: number) => {
@@ -231,7 +237,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
         ...prev,
         workersUrl: settings.workersUrl,
         workersToken: settings.workersToken,
-        darkMode: settings.darkMode,
+        theme: settings.theme,
         undoSteps: settings.undoSteps,
         notifications: settings.notifications,
       }));
@@ -285,7 +291,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       restartServer,
       setWorkersUrl,
       setWorkersToken,
-      setDarkMode,
+      setTheme,
       setUndoSteps,
       setNotifications,
     }),
@@ -294,7 +300,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       restartServer,
       setWorkersUrl,
       setWorkersToken,
-      setDarkMode,
+      setTheme,
       setUndoSteps,
       setNotifications,
     ],

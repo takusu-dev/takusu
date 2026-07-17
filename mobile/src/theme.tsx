@@ -6,67 +6,100 @@ export const BRAND_COLOR = '#7261A3';
 export const BRAND_COLOR_LIGHT = '#9B8BC4';
 export const BRAND_COLOR_DARK = '#5A4A85';
 
+export const APP_THEMES = ['light', 'dark', 'catppuccin'] as const;
+export type AppTheme = (typeof APP_THEMES)[number];
+
 // abandonability → background color mapping for task cards
 // 0.0 = must do (red — important), 1.0 = can abandon (calm brand-tinted)
 // Palette is tuned to the purple brand color; the lowest band is clearly red
 // to signal importance (Issue #188).
 export function abandonabilityColor(abandonability: number): string {
-  if (abandonability >= 0.75) return '#EDE6F4'; // light brand purple — calm
+  if (abandonability >= 0.75) return '#EDE6F5'; // light brand purple — calm
   if (abandonability >= 0.5) return '#F0EDE8'; // warm neutral
   if (abandonability >= 0.25) return '#F5E5D5'; // warm amber — caution
   return '#F2C8C8'; // clear red/pink — must do
 }
 
-// Dark-theme variant: dimmer, lower-saturation tints on a dark surface
+// Dark-theme variant (retuned purple palette).
 export function abandonabilityColorDark(abandonability: number): string {
-  if (abandonability >= 0.75) return '#2D2638'; // muted brand purple
-  if (abandonability >= 0.5) return '#2A2A2E'; // neutral dark
-  if (abandonability >= 0.25) return '#322A22'; // warm dark
-  return '#3A1E1E'; // dark red — must do
+  if (abandonability >= 0.75) return '#3D3048'; // muted brand purple
+  if (abandonability >= 0.5) return '#3A3A3E'; // neutral dark
+  if (abandonability >= 0.25) return '#423A32'; // warm dark
+  return '#4A2E2E'; // dark red — must do
 }
 
-// Theme-aware helper: picks the light or dark palette based on `dark`.
+// Catppuccin Macchiato variant (issue #388).
+export function abandonabilityColorCatppuccin(abandonability: number): string {
+  if (abandonability >= 0.75) return '#494D64'; // surface1 — calm
+  if (abandonability >= 0.5) return '#363A4F'; // surface0 — neutral
+  if (abandonability >= 0.25) return '#6B645D'; // warm dark
+  return '#6A495A'; // dark red — must do
+}
+
+// Theme-aware helper: picks the palette for the active theme.
 export function abandonabilityColorFor(
   abandonability: number,
-  dark: boolean,
+  theme: AppTheme,
 ): string {
-  return dark
-    ? abandonabilityColorDark(abandonability)
-    : abandonabilityColor(abandonability);
+  switch (theme) {
+    case 'dark':
+      return abandonabilityColorDark(abandonability);
+    case 'catppuccin':
+      return abandonabilityColorCatppuccin(abandonability);
+    default:
+      return abandonabilityColor(abandonability);
+  }
 }
 
 // ── Habit-based color palette (issue #309) ──
-// 8 distinct pastel tints for light mode, dimmer tints for dark mode.
+// 8 distinct pastel tints for light mode, dimmer tints for dark mode,
+// and Catppuccin Macchiato tinted backgrounds.
 // A task with a habit_id uses the habit's display_id to pick a color, so
 // all tasks from the same habit share a recognizable tint. Low-abandon
 // (must-do) tasks keep the red abandonability color regardless of habit.
 const HABIT_COLORS_LIGHT: readonly string[] = [
-  '#E6F0FA', // soft blue
-  '#E8F5E9', // soft green
-  '#FDECEC', // soft pink
-  '#FFF4E5', // soft orange
-  '#F3E8FA', // soft purple
-  '#E0F7FA', // soft cyan
-  '#F5F0E1', // soft beige
-  '#E8F0E8', // soft sage
+  '#D6E4F5', // soft blue
+  '#D6F0EA', // soft mint
+  '#D6F2D6', // soft green
+  '#F2F0D6', // soft yellow
+  '#F2E0D6', // soft orange
+  '#F2D6D6', // soft red
+  '#F2D6E6', // soft pink
+  '#E6D6F2', // soft lavender
 ];
 
 const HABIT_COLORS_DARK: readonly string[] = [
-  '#1E2A38',
-  '#1E2E22',
-  '#321E22',
-  '#322A1E',
-  '#2A1E32',
-  '#1E2E32',
-  '#322E1E',
-  '#1E2A24',
+  '#2E3746', // muted blue
+  '#2E4640', // muted mint
+  '#2E4632', // muted green
+  '#46402E', // muted yellow
+  '#463A32', // muted orange
+  '#46322E', // muted red
+  '#462E3A', // muted pink
+  '#3A2E46', // muted lavender
+];
+
+const HABIT_COLORS_CATPPUCCIN: readonly string[] = [
+  '#48567B', // macchiato blue
+  '#48646C', // macchiato teal
+  '#52665A', // macchiato green
+  '#6B645D', // macchiato yellow
+  '#6D5552', // macchiato peach
+  '#6A495A', // macchiato red
+  '#6D5C76', // macchiato pink
+  '#5D517C', // macchiato mauve
 ];
 
 export const HABIT_PALETTE_SIZE = 8;
 
 // Pick a habit color from the palette by habit display_id.
-export function habitColorFor(habitDisplayId: number, dark: boolean): string {
-  const palette = dark ? HABIT_COLORS_DARK : HABIT_COLORS_LIGHT;
+export function habitColorFor(habitDisplayId: number, theme: AppTheme): string {
+  const palette =
+    theme === 'dark'
+      ? HABIT_COLORS_DARK
+      : theme === 'catppuccin'
+        ? HABIT_COLORS_CATPPUCCIN
+        : HABIT_COLORS_LIGHT;
   const idx =
     ((habitDisplayId % HABIT_PALETTE_SIZE) + HABIT_PALETTE_SIZE) %
     HABIT_PALETTE_SIZE;
@@ -81,53 +114,74 @@ export function taskCardColor(
   abandonability: number,
   habitId: string | undefined,
   habitDisplayId: number | undefined,
-  dark: boolean,
+  theme: AppTheme,
 ): string {
   if (abandonability < 0.25) {
-    return abandonabilityColorFor(abandonability, dark);
+    return abandonabilityColorFor(abandonability, theme);
   }
   if (habitId && habitDisplayId !== undefined) {
-    return habitColorFor(habitDisplayId, dark);
+    return habitColorFor(habitDisplayId, theme);
   }
-  return abandonabilityColorFor(abandonability, dark);
+  return abandonabilityColorFor(abandonability, theme);
 }
 
 export const ABANDON_STEPS = [0.0, 0.25, 0.5, 0.75, 1.0] as const;
 
 // Light theme colors (default, backward-compatible export)
+// Neutral scale is tinted slightly toward the brand purple to keep the
+// whole UI coherent while keeping white/black semantics intact.
 export const COLORS = {
   brand: BRAND_COLOR,
   brandLight: BRAND_COLOR_LIGHT,
   brandDark: BRAND_COLOR_DARK,
   white: '#FFFFFF',
-  black: '#000000',
-  gray: '#888888',
-  grayLight: '#CCCCCC',
-  grayDark: '#444444',
-  separator: '#E0E0E0',
-  done: '#AAAAAA',
-  red: '#E07070',
-  green: '#70B070',
+  black: '#1C1824',
+  gray: '#6C6578',
+  grayLight: '#C9C3D5',
+  grayDark: '#4A4358',
+  separator: '#E5DDEE',
+  done: '#A29CA8',
+  red: '#C06B6B',
+  green: '#5A8F6E',
   surface: '#FFFFFF',
-  surfaceTint: '#F8F5FC', // brand-tinted surface (dep items, etc.)
+  surfaceTint: '#F3EEF7', // brand-tinted surface (dep items, etc.)
 } as const;
 
-// Dark theme colors
+// Dark theme colors (retuned purple palette).
 export const DARK_COLORS = {
   brand: BRAND_COLOR,
   brandLight: BRAND_COLOR_LIGHT,
   brandDark: BRAND_COLOR_DARK,
-  white: '#1A1A2E', // dark background
-  black: '#E0E0E0', // light text
-  gray: '#888888',
-  grayLight: '#444444',
-  grayDark: '#AAAAAA',
-  separator: '#333333',
-  done: '#555555',
-  red: '#E07070',
-  green: '#70B070',
-  surface: '#2A2A45', // elevated surface (buttons, cards) — lighter than bg
-  surfaceTint: '#2A2438', // brand-tinted dark surface
+  white: '#15131C', // dark background
+  black: '#F0ECF5', // light text
+  gray: '#A9A3B4',
+  grayLight: '#7E7789',
+  grayDark: '#3A3548',
+  separator: '#363049',
+  done: '#5A5466',
+  red: '#D67A7A',
+  green: '#6AA67E',
+  surface: '#1E1B27', // elevated surface (buttons, cards) — lighter than bg
+  surfaceTint: '#272236', // brand-tinted dark surface
+} as const;
+
+// Catppuccin Macchiato theme colors (issue #388).
+// Official palette: https://github.com/catppuccin/palette/blob/main/palette.json
+export const CATPPUCCIN_COLORS = {
+  brand: BRAND_COLOR,
+  brandLight: BRAND_COLOR_LIGHT,
+  brandDark: BRAND_COLOR_DARK,
+  white: '#24273A', // base background
+  black: '#CAD3F5', // text
+  gray: '#8087A2',
+  grayLight: '#939AB7',
+  grayDark: '#494D64',
+  separator: '#494D64',
+  done: '#6E738D',
+  red: '#ED8796',
+  green: '#A6DA95',
+  surface: '#363A4F', // elevated surface
+  surfaceTint: '#494D64',
 } as const;
 
 export type ColorSet = {
@@ -147,27 +201,52 @@ export type ColorSet = {
   surfaceTint: string;
 };
 
+function colorsForTheme(theme: AppTheme): ColorSet {
+  switch (theme) {
+    case 'dark':
+      return DARK_COLORS;
+    case 'catppuccin':
+      return CATPPUCCIN_COLORS;
+    default:
+      return COLORS;
+  }
+}
+
+function themeFromProps(props: { theme?: AppTheme; dark?: boolean }): AppTheme {
+  if (props.theme) return props.theme;
+  if (props.dark === true) return 'dark';
+  return 'light';
+}
+
 // ── Theme Context ──
 
 interface ThemeContextValue {
+  theme: AppTheme;
   dark: boolean;
   colors: ColorSet;
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
+  theme: 'light',
   dark: false,
   colors: COLORS,
 });
 
 export function ThemeProvider({
+  theme,
   dark,
   children,
 }: {
-  dark: boolean;
+  theme?: AppTheme;
+  dark?: boolean;
   children: ReactNode;
 }) {
-  const colors = dark ? DARK_COLORS : COLORS;
-  const value = useMemo(() => ({ dark, colors }), [dark, colors]);
+  const activeTheme = themeFromProps({ theme, dark });
+  const colors = colorsForTheme(activeTheme);
+  const value = useMemo(
+    () => ({ theme: activeTheme, dark: activeTheme !== 'light', colors }),
+    [activeTheme, colors],
+  );
   return (
     <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
   );

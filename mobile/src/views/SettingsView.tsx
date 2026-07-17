@@ -31,7 +31,7 @@ import * as Clipboard from 'expo-clipboard';
 import Constants from 'expo-constants';
 import { useServer } from '@/src/api/ServerProvider';
 import type { GoogleCalSettings, SettingsRow } from '@/src/api/types';
-import { useColors, BRAND_COLOR } from '@/src/theme';
+import { useColors, BRAND_COLOR, APP_THEMES } from '@/src/theme';
 import {
   formatTime,
   minutesToTime,
@@ -199,8 +199,8 @@ export function SettingsDetailView({
   const router = useRouter();
   const {
     client,
-    darkMode,
-    setDarkMode,
+    theme,
+    setTheme,
     undoSteps,
     setUndoSteps,
     workersUrl: savedUrl,
@@ -750,16 +750,42 @@ export function SettingsDetailView({
             <>
               <View style={styles.settingRow}>
                 <Text style={[styles.settingLabel, { color: colors.black }]}>
-                  ダークモード
+                  テーマ
                 </Text>
-                <Switch
-                  value={darkMode}
-                  onValueChange={(v) => {
-                    haptic.select();
-                    setDarkMode(v);
-                  }}
-                  trackColor={{ true: BRAND_COLOR }}
-                />
+                <View style={styles.themeSelector}>
+                  {APP_THEMES.map((t) => (
+                    <Pressable
+                      key={t}
+                      onPress={() => {
+                        haptic.select();
+                        setTheme(t);
+                      }}
+                      style={[
+                        styles.themeButton,
+                        {
+                          backgroundColor:
+                            theme === t ? BRAND_COLOR : colors.surface,
+                          borderColor: colors.separator,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.themeButtonText,
+                          {
+                            color: theme === t ? '#FFFFFF' : colors.black,
+                          },
+                        ]}
+                      >
+                        {t === 'light'
+                          ? 'Light'
+                          : t === 'dark'
+                            ? 'Dark'
+                            : 'Catppuccin'}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
               </View>
 
               <View style={styles.field}>
@@ -1827,5 +1853,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'monospace',
     paddingHorizontal: 4,
+  },
+  themeSelector: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  themeButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    minWidth: 80,
+    alignItems: 'center',
+  },
+  themeButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

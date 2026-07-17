@@ -90,7 +90,7 @@ function TaskCardImpl({
   // Track which direction the haptic last fired for (0=none, 1=right, -1=left)
   // so reversing swipe direction mid-gesture re-fires the haptic (#313).
   const hapticFiredDir = useSharedValue(0);
-  const { dark, colors } = useTheme();
+  const { theme, colors } = useTheme();
   // #393: two-step delete — swipe left reveals a delete button instead of
   // deleting immediately. When revealed, tapping the card snaps it back.
   // Use a SharedValue for the UI-thread worklet logic (avoids stale React
@@ -187,7 +187,7 @@ function TaskCardImpl({
     task.abandonability,
     task.habit_id,
     habitDisplayId,
-    dark,
+    theme,
   );
   const deps = parseDepends(task.depends);
 
@@ -505,7 +505,7 @@ function ParallelGroupCardImpl({
   habitDisplayIdMap,
   dependentCountMap,
 }: ParallelGroupCardProps) {
-  const { dark } = useTheme();
+  const { theme, dark } = useTheme();
   const hostHabitDisplayId = host.habit_id
     ? habitDisplayIdMap?.get(host.habit_id)
     : undefined;
@@ -513,7 +513,7 @@ function ParallelGroupCardImpl({
     host.abandonability,
     host.habit_id,
     hostHabitDisplayId,
-    dark,
+    theme,
   );
   const outlineColor = dark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
 

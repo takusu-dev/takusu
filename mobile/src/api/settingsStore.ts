@@ -1,9 +1,10 @@
 // Persistent settings store.
 // Sensitive values (Workers URL, token) use expo-secure-store.
-// Non-sensitive values (darkMode, notification settings) use AsyncStorage.
+// Non-sensitive values (theme, notification settings) use AsyncStorage.
 
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { type AppTheme, APP_THEMES } from '@/src/theme';
 import {
   type NotificationSettings,
   DEFAULT_NOTIFICATION_SETTINGS,
@@ -19,7 +20,7 @@ export const AGENT_SESSION_HISTORY_MAX = 5;
 const KEYS = {
   workersUrl: 'takusu.workersUrl',
   workersToken: 'takusu.workersToken',
-  darkMode: 'takusu.darkMode',
+  theme: 'takusu.theme',
   undoSteps: 'takusu.undoSteps',
   agentSessionHistoryCount: 'takusu.agent.sessionHistoryCount',
   llmProviders: 'takusu.agent.llmProviders',
@@ -52,7 +53,7 @@ export interface TtsProviderSettings {
 export interface PersistedSettings {
   workersUrl: string;
   workersToken: string;
-  darkMode: boolean;
+  theme: AppTheme;
   undoSteps: number;
   agentSessionHistoryCount: number;
   notifications: NotificationSettings;
@@ -62,10 +63,17 @@ export interface PersistedSettings {
   activeTtsProvider: string | null;
 }
 
+function isValidTheme(value: string | null): value is AppTheme {
+  return value !== null && APP_THEMES.includes(value as AppTheme);
+}
+
+const LEGACY_DARK_MODE_KEY = 'takusu.darkMode';
+
 export async function loadSettings(): Promise<PersistedSettings> {
   const [
     workersUrl,
     workersToken,
+    themeStr,
     darkModeStr,
     undoStepsStr,
     agentSessionHistoryCountStr,
@@ -77,7 +85,8 @@ export async function loadSettings(): Promise<PersistedSettings> {
   ] = await Promise.all([
     SecureStore.getItemAsync(KEYS.workersUrl),
     SecureStore.getItemAsync(KEYS.workersToken),
-    AsyncStorage.getItem(KEYS.darkMode),
+    AsyncStorage.getItem(KEYS.theme),
+    AsyncStorage.getItem(LEGACY_DARK_MODE_KEY),
     AsyncStorage.getItem(KEYS.undoSteps),
     AsyncStorage.getItem(KEYS.agentSessionHistoryCount),
     loadNotificationSettings(),
@@ -90,10 +99,24 @@ export async function loadSettings(): Promise<PersistedSettings> {
   const parsedSessionCount = agentSessionHistoryCountStr
     ? parseInt(agentSessionHistoryCountStr, 10)
     : NaN;
+
+  let theme: AppTheme;
+  if (isValidTheme(themeStr)) {
+    theme = themeStr;
+  } else if (darkModeStr !== null) {
+    // Migrate legacy darkMode boolean to theme string.
+    theme = darkModeStr === 'true' ? 'dark' : 'light';
+    saveTheme(theme).catch(() => {
+      // ignore migration write failures
+    });
+  } else {
+    theme = 'light';
+  }
+
   return {
     workersUrl: workersUrl ?? '',
     workersToken: workersToken ?? '',
-    darkMode: darkModeStr === 'true',
+    theme,
     undoSteps:
       Number.isFinite(parsedUndoSteps) && parsedUndoSteps > 0
         ? parsedUndoSteps
@@ -174,8 +197,8 @@ export async function saveWorkersToken(token: string): Promise<void> {
   await SecureStore.setItemAsync(KEYS.workersToken, token);
 }
 
-export async function saveDarkMode(enabled: boolean): Promise<void> {
-  await AsyncStorage.setItem(KEYS.darkMode, enabled ? 'true' : 'false');
+export async function saveTheme(theme: AppTheme): Promise<void> {
+  await AsyncStorage.setItem(KEYS.theme, theme);
 }
 
 export async function saveUndoSteps(steps: number): Promise<void> {

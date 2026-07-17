@@ -33,7 +33,7 @@ interface GraphViewProps {
 }
 
 export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
-  const { dark, colors } = useTheme();
+  const { theme, colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [editMode, setEditMode] = useState(false);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
@@ -91,7 +91,7 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
       const color = isDone
         ? '#aaa'
         : habitDisplayId !== undefined
-          ? habitColorFor(habitDisplayId, dark)
+          ? habitColorFor(habitDisplayId, theme)
           : BRAND_COLOR;
       nodes.push({
         id: task.id,
@@ -118,7 +118,7 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
 
     setGraphNodes(nodes);
     setGraphEdges(edges);
-  }, [client, dark]);
+  }, [client, theme]);
 
   useEffect(() => {
     refresh();
