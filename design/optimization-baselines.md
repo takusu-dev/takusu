@@ -78,7 +78,7 @@ This file records stable baseline numbers for `takusu-core` performance work.
 
 ### Notes
 
-- `jemalloc` (via `tikv-jemallocator` 0.6.0) is the fastest alternative allocator on this x86_64 Linux machine.
-- `mimalloc` 0.1.50 was also tested: it improved release `score_check` and `profile`, but its debug build regressed `score_check` and the `realworld` 7d/30d benches showed no significant change.
-- In this Nix dev shell with glibc 2.42, `tikv-jemalloc-sys` needs `CFLAGS='-O2 -U_FORTIFY_SOURCE'` to build in debug/test profiles. Release builds do not require the workaround.
-- arm64 build/behavior still needs verification (see issue #673).
+- `jemalloc` (via `tikv-jemallocator` 0.6.0) is now the **default** global allocator for `takusu-core`.
+- `mimalloc` 0.1.50 remains available as an opt-in feature (`--no-default-features --features mimalloc`).
+- A workspace `Cargo.toml` profile override (`[profile.dev|test.package."tikv-jemalloc-sys"] opt-level = 3`) fixes the `_FORTIFY_SOURCE` warnings-as-errors in Nix dev shells with newer glibc.
+- arm64 build verified: `cargo ndk -t aarch64-linux-android check -p takusu-core` succeeds with the default `jemalloc` feature.

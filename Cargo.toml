@@ -50,3 +50,12 @@ tokio-tungstenite = "0.29"
 futures-util = "0.3"
 petgraph = { version = "0.8", default-features = false }
 toml = "0.8"
+
+[profile.dev.package."tikv-jemalloc-sys"]
+# Build the C jemalloc sources with optimizations even in dev/test. This avoids
+# `_FORTIFY_SOURCE` warnings-as-errors in Nix dev shells with newer glibc, and
+# does not meaningfully slow down incremental Rust builds.
+opt-level = 3
+
+[profile.test.package."tikv-jemalloc-sys"]
+opt-level = 3

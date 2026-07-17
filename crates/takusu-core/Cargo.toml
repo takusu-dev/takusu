@@ -28,5 +28,6 @@ name = "realworld"
 harness = false
 
 [features]
+default = ["jemalloc"]
 mimalloc = ["dep:mimalloc"]
 jemalloc = ["dep:tikv-jemallocator"]
