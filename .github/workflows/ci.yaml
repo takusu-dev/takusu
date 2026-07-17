@@ -96,6 +96,18 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        bench:
+          - package: takusu-core
+            name: plan
+          - package: takusu-core
+            name: realworld
+          - package: takusu-habit
+            name: habit
+          - package: takusu-ical
+            name: parse
     steps:
       - uses: actions/checkout@v4
 
@@ -111,14 +123,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build benchmarks
-        run: nix develop .#rust --command bash -c 'cargo codspeed build'
+      - name: Build benchmark
+        run: nix develop .#rust --command bash -c 'cargo codspeed build -p ${{ matrix.bench.package }} --bench ${{ matrix.bench.name }}'
 
-      - name: Run benchmarks
+      - name: Run benchmark
         uses: CodSpeedHQ/action@v4
         with:
           mode: simulation
-          run: nix develop .#rust --command bash -c 'cargo codspeed run'
+          run: nix develop .#rust --command bash -c 'cargo codspeed run -p ${{ matrix.bench.package }} --bench ${{ matrix.bench.name }}'
 
   android-build:
     needs: changes
