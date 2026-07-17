@@ -11,7 +11,6 @@ jiff.workspace = true
 rand.workspace = true
 rustc-hash.workspace = true
 rayon.workspace = true
-mimalloc = { version = "=0.1.50", optional = true }
 tikv-jemallocator = { version = "=0.6.0", optional = true }
 
 [dev-dependencies]
@@ -29,5 +28,4 @@ harness = false
 
 [features]
 default = ["jemalloc"]
-mimalloc = ["dep:mimalloc"]
 jemalloc = ["dep:tikv-jemallocator"]
