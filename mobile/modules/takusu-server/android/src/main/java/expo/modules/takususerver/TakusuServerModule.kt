@@ -6,6 +6,7 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.records.Field
 import expo.modules.kotlin.records.Record
 import java.io.File
+import org.json.JSONObject
 import uniffi.takusu_android.ServerStatus
 import uniffi.takusu_android.TakusuServer
 import uniffi.takusu_android.clearLogs
@@ -120,6 +121,55 @@ class TakusuServerModule : Module() {
                 } catch (e: Exception) {
                     false
                 }
+            }
+
+            Function("runScheduleOperation") {
+                operation: String,
+                operationId: String,
+                paramsJson: String,
+                workersUrl: String,
+                token: String,
+                ->
+                val context =
+                    appContext.reactContext
+                        ?: throw CodedException("ERR_NO_CONTEXT", "Android context is unavailable", null)
+                if (workersUrl.isEmpty() || token.isEmpty()) {
+                    throw CodedException("ERR_MISSING_CREDENTIALS", "workersUrl and token are required", null)
+                }
+                ScheduleOperationWorker.enqueue(
+                    context,
+                    operation,
+                    operationId,
+                    paramsJson,
+                    workersUrl,
+                    token,
+                )
+                true
+            }
+
+            AsyncFunction("getScheduleOperationStatus") {
+                val context = appContext.reactContext ?: return@AsyncFunction mapOf("status" to "none")
+                val file = ScheduleOperationWorker.statusFile(context)
+                if (!file.exists()) {
+                    return@AsyncFunction mapOf("status" to "none")
+                }
+                try {
+                    val json = JSONObject(file.readText())
+                    mapOf(
+                        "id" to json.optString("id", ""),
+                        "status" to json.optString("status", "none"),
+                        "operation" to json.optString("operation", ""),
+                        "message" to json.optString("message", ""),
+                    )
+                } catch (e: Exception) {
+                    mapOf("status" to "none")
+                }
+            }
+
+            Function("clearScheduleOperationStatus") {
+                val context = appContext.reactContext ?: return@Function false
+                ScheduleOperationWorker.clearStatus(context)
+                true
             }
         }
 

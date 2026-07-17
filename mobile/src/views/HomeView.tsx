@@ -41,6 +41,7 @@ import Reanimated, {
 import { useColors, COLORS, BRAND_COLOR } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
 import TakusuWidgetModule from '../../modules/takusu-widget/src/TakusuWidgetModule';
+import { useScheduleOperation } from '@/src/hooks/useScheduleOperation';
 import {
   rescheduleFromRaw,
   postInProgressNotification,
@@ -143,7 +144,7 @@ const VIEWABILITY_CONFIG = {
   viewAreaCoveragePercentThreshold: 0,
 } as const;
 export function HomeView() {
-  const { client, notifications } = useServer();
+  const { client, notifications, workersUrl, workersToken } = useServer();
   const router = useRouter();
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -354,6 +355,15 @@ export function HomeView() {
       setRefreshing(false);
     }
   }, [client]);
+
+  const { startScheduleOperation } = useScheduleOperation({
+    client,
+    workersUrl,
+    workersToken,
+    refresh,
+    setStatusLabel,
+    showError,
+  });
 
   useEffect(() => {
     refresh();
@@ -905,63 +915,40 @@ export function HomeView() {
     await refresh();
   }
 
-  // Run an async operation while showing a status label in the top-bar
-  // center. The label is cleared when the operation finishes (success or
-  // failure).
-  async function withStatus<T>(
-    label: string,
-    fn: () => Promise<T>,
-  ): Promise<T> {
-    setStatusLabel(label);
-    try {
-      return await fn();
-    } finally {
-      setStatusLabel(null);
-    }
-  }
-
-  async function rescheduleSelected() {
+  function rescheduleSelected() {
     if (!client) return;
     const pinned = tasks.filter((t) => !selected.has(t.id)).map((t) => t.id);
     const until = new Date();
     until.setDate(until.getDate() + 7);
-    try {
-      await withStatus('タスクを再スケジュール中', () =>
-        client.reschedule({
-          mode: 'range',
-          from: new Date().toISOString(),
-          until: until.toISOString(),
-          pinned,
-        }),
-      );
-    } catch (e) {
-      showError(e, '再スケジュールに失敗');
-      return;
-    }
+    startScheduleOperation(
+      'reschedule',
+      {
+        mode: 'range',
+        from: new Date().toISOString(),
+        until: until.toISOString(),
+        pinned,
+      },
+      'タスクを再スケジュール中',
+    );
     setSelected(new Set());
-    await refresh();
   }
 
-  async function rescheduleOthers() {
+  function rescheduleOthers() {
     if (!client) return;
     const pinned = Array.from(selected);
     const until = new Date();
     until.setDate(until.getDate() + 7);
-    try {
-      await withStatus('タスクを再スケジュール中', () =>
-        client.reschedule({
-          mode: 'range',
-          from: new Date().toISOString(),
-          until: until.toISOString(),
-          pinned,
-        }),
-      );
-    } catch (e) {
-      showError(e, '再スケジュールに失敗');
-      return;
-    }
+    startScheduleOperation(
+      'reschedule',
+      {
+        mode: 'range',
+        from: new Date().toISOString(),
+        until: until.toISOString(),
+        pinned,
+      },
+      'タスクを再スケジュール中',
+    );
     setSelected(new Set());
-    await refresh();
   }
 
   async function deleteSelected() {
@@ -1393,23 +1380,10 @@ export function HomeView() {
             styles.topButton,
             pressed && styles.topButtonPressed,
           ]}
-          onPress={async () => {
+          onPress={() => {
             if (!client) return;
             haptic.medium();
-            try {
-              await withStatus('タスクをスケジュール中', () =>
-                client.generateSchedule({}),
-              );
-              // Trigger Google Calendar sync (no-op if not configured)
-              await withStatus('GCal同期中', () =>
-                client
-                  .triggerSync()
-                  .catch((e) => logError('Google Calendar同期', e)),
-              );
-            } catch (e) {
-              showError(e, 'スケジュール生成に失敗');
-            }
-            await refresh();
+            startScheduleOperation('generate', {}, 'タスクをスケジュール中');
           }}
         >
           <Ionicons name="refresh" size={22} color={BRAND_COLOR} />

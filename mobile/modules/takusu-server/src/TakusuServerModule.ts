@@ -12,12 +12,19 @@ export interface ServerStatusResult {
   port: number;
 }
 
+export interface ScheduleOperationStatus {
+  id?: string;
+  status: 'running' | 'succeeded' | 'failed' | 'none';
+  operation?: string;
+  message?: string;
+}
+
 interface TakusuServerModuleType extends NativeModule {
-  // The Kotlin module registers these as synchronous `Function`s (not
-  // `AsyncFunction`), so they return their values directly rather than
-  // Promise-wrapped values. `await` on a non-Promise still works, but
-  // `.catch()` / `.then()` on the raw return value does not — callers
-  // that need Promise chaining must wrap with `Promise.resolve(...)`.
+  // Functions registered with Kotlin `Function` return values directly
+  // (not Promise-wrapped). `await` on a non-Promise still works, but
+  // `.catch()` / `.then()` on the raw return value does not — callers that
+  // need Promise chaining must wrap with `Promise.resolve(...)`.
+  // Functions registered with Kotlin `AsyncFunction` return a Promise.
   start(options: StartOptions): boolean;
   stop(): boolean;
   status(): ServerStatusResult;
@@ -26,6 +33,15 @@ interface TakusuServerModuleType extends NativeModule {
   pushLog(line: string): boolean;
   startModelDownload(modelId: string): boolean;
   isModelCached(modelId: string): Promise<boolean>;
+  runScheduleOperation(
+    operation: string,
+    operationId: string,
+    paramsJson: string,
+    workersUrl: string,
+    token: string,
+  ): boolean;
+  getScheduleOperationStatus(): Promise<ScheduleOperationStatus>;
+  clearScheduleOperationStatus(): boolean;
 }
 
 const TakusuServerModule =
