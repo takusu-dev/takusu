@@ -567,7 +567,7 @@ impl AgentSession {
             });
         }
         let schedule_commit = request.changes.iter().any(|change| {
-            change.target_label.starts_with("schedule ")
+            change.target_label.split_whitespace().next() == Some("schedule")
                 && matches!(change.operation.as_str(), "generate" | "reschedule")
         });
         let mut receipts = Vec::new();
