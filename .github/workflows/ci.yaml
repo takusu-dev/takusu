@@ -142,6 +142,10 @@ jobs:
         working-directory: mobile
         run: npx tsc --noEmit
 
+      - name: Test
+        working-directory: mobile
+        run: npm run test
+
   kotlin-check:
     needs: changes
     if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.kotlin == 'true'
