@@ -6,6 +6,9 @@
     "paths": {
       "@/*": ["./*"]
     },
+    // Explicitly load only Jest globals here. React and React Native types are
+    // provided by their own packages. Add other @types packages if needed.
+    "types": ["jest"],
     "ignoreDeprecations": "6.0"
   }
 }
