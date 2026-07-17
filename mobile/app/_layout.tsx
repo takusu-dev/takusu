@@ -11,7 +11,12 @@ import * as Sentry from '@sentry/react-native';
 import type { TakusuClient } from '@/src/api/client';
 import { ServerProvider, useServer } from '@/src/api/ServerProvider';
 import { installGlobalErrorHandler } from '@/src/api/installGlobalErrorHandler';
-import { ThemeProvider } from '@/src/theme';
+import {
+  ThemeProvider,
+  COLORS,
+  DARK_COLORS,
+  CATPPUCCIN_COLORS,
+} from '@/src/theme';
 import { UndoRedoToast } from '@/src/components/UndoRedoToast';
 import { haptic } from '@/src/components/haptics';
 import {
@@ -161,7 +166,7 @@ function handleActionButton(
 }
 
 function ThemedApp() {
-  const { darkMode, client, notifications } = useServer();
+  const { theme, client, notifications } = useServer();
   const MAX_PROCESSED_RESPONSE_IDS = 50;
 
   // Queue of notification action responses that arrived before `client` was
@@ -265,14 +270,64 @@ function ThemedApp() {
     processResponse(lastNotificationResponse);
   }, [lastNotificationResponse, processResponse]);
 
+  const isDark = theme !== 'light';
+  const stackBg =
+    theme === 'catppuccin'
+      ? CATPPUCCIN_COLORS.white
+      : isDark
+        ? DARK_COLORS.white
+        : COLORS.white;
+
+  const paperTheme =
+    theme === 'catppuccin'
+      ? {
+          ...MD3DarkTheme,
+          colors: {
+            ...MD3DarkTheme.colors,
+            primary: CATPPUCCIN_COLORS.brand,
+            onPrimary: '#FFFFFF',
+            primaryContainer: CATPPUCCIN_COLORS.surfaceTint,
+            onPrimaryContainer: CATPPUCCIN_COLORS.black,
+            secondary: CATPPUCCIN_COLORS.gray,
+            onSecondary: CATPPUCCIN_COLORS.black,
+            secondaryContainer: CATPPUCCIN_COLORS.surface,
+            onSecondaryContainer: CATPPUCCIN_COLORS.black,
+            tertiary: CATPPUCCIN_COLORS.brandLight,
+            onTertiary: CATPPUCCIN_COLORS.black,
+            tertiaryContainer: CATPPUCCIN_COLORS.surfaceTint,
+            onTertiaryContainer: CATPPUCCIN_COLORS.black,
+            surface: CATPPUCCIN_COLORS.surface,
+            onSurface: CATPPUCCIN_COLORS.black,
+            surfaceVariant: CATPPUCCIN_COLORS.surfaceTint,
+            onSurfaceVariant: CATPPUCCIN_COLORS.grayLight,
+            background: CATPPUCCIN_COLORS.white,
+            onBackground: CATPPUCCIN_COLORS.black,
+            outline: CATPPUCCIN_COLORS.separator,
+            outlineVariant: CATPPUCCIN_COLORS.grayDark,
+            error: CATPPUCCIN_COLORS.red,
+            onError: '#FFFFFF',
+            errorContainer: '#4D2A32',
+            onErrorContainer: CATPPUCCIN_COLORS.black,
+            inverseSurface: CATPPUCCIN_COLORS.black,
+            inverseOnSurface: CATPPUCCIN_COLORS.white,
+            inversePrimary: CATPPUCCIN_COLORS.brandLight,
+            shadow: '#000000',
+            scrim: '#000000',
+            backdrop: 'rgba(24,25,38,0.5)',
+          },
+        }
+      : isDark
+        ? MD3DarkTheme
+        : MD3LightTheme;
+
   return (
-    <ThemeProvider dark={darkMode}>
-      <PaperProvider theme={darkMode ? MD3DarkTheme : MD3LightTheme}>
-        <StatusBar style={darkMode ? 'light' : 'dark'} />
+    <ThemeProvider theme={theme}>
+      <PaperProvider theme={paperTheme}>
+        <StatusBar style={isDark ? 'light' : 'dark'} />
         <Stack
           screenOptions={{
             headerShown: false,
-            contentStyle: { backgroundColor: darkMode ? '#1A1A2E' : '#fff' },
+            contentStyle: { backgroundColor: stackBg },
           }}
         >
           <Stack.Screen name="index" />
