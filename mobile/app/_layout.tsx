@@ -4,7 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { PaperProvider, MD3DarkTheme, MD3LightTheme } from 'react-native-paper';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
 import * as Sentry from '@sentry/react-native';
@@ -49,6 +49,13 @@ function isValidRoute(url: string): boolean {
   );
 }
 
+function redirect(notification: Notifications.Notification) {
+  const url = notification.request.content.data?.url;
+  if (typeof url === 'string' && url && isValidRoute(url)) {
+    router.push(url);
+  }
+}
+
 if (process.env.EXPO_PUBLIC_SENTRY_DSN) {
   Sentry.init({
     dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
@@ -64,17 +71,12 @@ if (process.env.EXPO_PUBLIC_SENTRY_DSN) {
   });
 }
 
-// Process a notification action response (START / DONE / CANCEL).
-// Returns true if the response was an action button (handled), false otherwise.
-// When `client` is null the action is queued via `pendingActions` so it can
-// be replayed once the server is ready — this fixes #353 where tapping "開始"
-// on a notification silently did nothing because the local server hadn't
-// finished starting yet.
-function handleActionResponse(
+// Process a notification action button (START / DONE / CANCEL).
+// Returns true if the response was a recognized action button, false otherwise.
+function handleActionButton(
   response: Notifications.NotificationResponse,
-  client: TakusuClient | null,
+  client: TakusuClient,
   inProgressNotifEnabled: boolean,
-  pendingActions: RefObject<Notifications.NotificationResponse[]>,
 ): boolean {
   const actionId = response.actionIdentifier;
 
@@ -82,10 +84,6 @@ function handleActionResponse(
   if (actionId === ACTION_START) {
     const taskId = response.notification.request.content.data?.taskId;
     if (typeof taskId !== 'string' || !taskId) return true;
-    if (!client) {
-      pendingActions.current.push(response);
-      return true;
-    }
     haptic.medium();
     client
       .updateTask(taskId, { status: 'in_progress' })
@@ -129,10 +127,6 @@ function handleActionResponse(
   if (actionId === ACTION_DONE || actionId === ACTION_CANCEL) {
     const taskId = response.notification.request.content.data?.taskId;
     if (typeof taskId !== 'string' || !taskId) return true;
-    if (!client) {
-      pendingActions.current.push(response);
-      return true;
-    }
     const newStatus = actionId === ACTION_DONE ? 'completed' : 'skipped';
     if (actionId === ACTION_DONE) haptic.success();
     else haptic.warning();
@@ -168,12 +162,18 @@ function handleActionResponse(
 
 function ThemedApp() {
   const { darkMode, client, notifications } = useServer();
-  // Track whether the initial cold-start notification response has been handled
-  // to prevent duplicate navigation when client transitions from null to non-null
-  const initialResponseHandled = useRef(false);
+  const MAX_PROCESSED_RESPONSE_IDS = 50;
+
   // Queue of notification action responses that arrived before `client` was
   // ready (server still starting on cold launch). Drained once `client` is set.
   const pendingActions = useRef<Notifications.NotificationResponse[]>([]);
+  // Track ids queued while waiting for `client` so we don't enqueue duplicates.
+  const pendingResponseIds = useRef(new Set<string>());
+  // Deduplicate notification responses; the same response may be reported
+  // through multiple channels (cold-start value + listener event).
+  const processedResponseIds = useRef(new Set<string>());
+  const processedResponseOrder = useRef<string[]>([]);
+  const lastNotificationResponse = Notifications.useLastNotificationResponse();
 
   // Set up notification channels, categories, permissions, and listeners
   useEffect(() => {
@@ -184,68 +184,86 @@ function ThemedApp() {
     setupNotifications();
   }, []);
 
-  // Drain queued action responses once `client` becomes available (#353).
-  useEffect(() => {
-    if (!client) return;
-    if (pendingActions.current.length === 0) return;
-    const queued = pendingActions.current;
-    pendingActions.current = [];
-    for (const response of queued) {
-      handleActionResponse(
+  const processResponse = useCallback(
+    (response: Notifications.NotificationResponse) => {
+      const id = response.notification.request.identifier;
+      if (!id) return;
+      if (
+        pendingResponseIds.current.has(id) ||
+        processedResponseIds.current.has(id)
+      ) {
+        return;
+      }
+
+      function markProcessed() {
+        if (processedResponseIds.current.has(id)) return;
+        processedResponseIds.current.add(id);
+        processedResponseOrder.current.push(id);
+        if (
+          processedResponseOrder.current.length > MAX_PROCESSED_RESPONSE_IDS
+        ) {
+          const oldest = processedResponseOrder.current.shift()!;
+          processedResponseIds.current.delete(oldest);
+        }
+      }
+
+      if (!client) {
+        pendingActions.current.push(response);
+        pendingResponseIds.current.add(id);
+        return;
+      }
+
+      const handled = handleActionButton(
         response,
         client,
         notifications.inProgress,
-        pendingActions,
       );
-    }
-  }, [client, notifications.inProgress]);
-
-  // Handle notification taps (body tap → navigate to URL in data)
-  useEffect(() => {
-    function redirect(notification: Notifications.Notification) {
-      const url = notification.request.content.data?.url;
-      if (typeof url === 'string' && url && isValidRoute(url)) {
-        router.push(url);
-      }
-    }
-
-    // Check if app was opened from a notification (only once on cold start).
-    // Only handle default body-tap actions here — action buttons (START/
-    // DONE/CANCEL) have opensAppToForeground: false so they don't cold-start
-    // the app, and getLastNotificationResponse() could return a stale action
-    // response from a previous session. Action buttons are handled by the
-    // live listener below, which queues them until `client` is ready (#353).
-    if (!initialResponseHandled.current) {
-      const lastResponse = Notifications.getLastNotificationResponse();
-      if (
-        lastResponse?.notification &&
-        lastResponse.actionIdentifier ===
-          Notifications.DEFAULT_ACTION_IDENTIFIER
-      ) {
-        redirect(lastResponse.notification);
-      }
-      initialResponseHandled.current = true;
-    }
-
-    const subscription = Notifications.addNotificationResponseReceivedListener(
-      (response) => {
-        const handled = handleActionResponse(
-          response,
-          client,
-          notifications.inProgress,
-          pendingActions,
-        );
-        if (handled) return;
-
-        // Default action (tap on notification body) → navigate
+      if (handled) {
+        markProcessed();
+      } else {
         redirect(response.notification);
-      },
-    );
+        markProcessed();
+      }
 
-    return () => {
-      subscription.remove();
-    };
-  }, [client, notifications]);
+      if (
+        lastNotificationResponse &&
+        lastNotificationResponse.notification.request.identifier === id
+      ) {
+        try {
+          Notifications.clearLastNotificationResponse();
+        } catch {
+          // ignore missing native method
+        }
+      }
+    },
+    [client, notifications.inProgress, lastNotificationResponse],
+  );
+
+  // Drain queued action responses once `client` becomes available (#353).
+  useEffect(() => {
+    if (!client || pendingActions.current.length === 0) return;
+    const queued = pendingActions.current;
+    pendingActions.current = [];
+    for (const response of queued) {
+      const id = response.notification.request.identifier;
+      if (id) pendingResponseIds.current.delete(id);
+      processResponse(response);
+    }
+  }, [
+    client,
+    notifications.inProgress,
+    lastNotificationResponse,
+    processResponse,
+  ]);
+
+  // Handle notification responses (body tap and action buttons) from both
+  // cold start and live listener events. On Android, action buttons must open
+  // the app to foreground to be delivered; on iOS the listener fires in the
+  // background as well (#647).
+  useEffect(() => {
+    if (!lastNotificationResponse) return;
+    processResponse(lastNotificationResponse);
+  }, [lastNotificationResponse, processResponse]);
 
   return (
     <ThemeProvider dark={darkMode}>
