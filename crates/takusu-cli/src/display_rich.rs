@@ -52,6 +52,7 @@ pub fn display_task_detail(
         Cell::new("Avg (min)").fg(Color::Cyan),
         Cell::new("σ (min)").fg(Color::Cyan),
         Cell::new("Parallel").fg(Color::Cyan),
+        Cell::new("Host").fg(Color::Cyan),
         Cell::new("Abandon").fg(Color::Cyan),
     ]);
     table.add_row(vec![
@@ -68,6 +69,7 @@ pub fn display_task_detail(
         Cell::new(task.avg_minutes),
         Cell::new(task.sigma_minutes),
         Cell::new(if task.parallelizable { "✓" } else { "✗" }),
+        Cell::new(if task.allows_parallel { "✓" } else { "✗" }),
         Cell::new(format!("{:.1}", task.abandonability)),
     ]);
     println!("{table}");
@@ -109,6 +111,7 @@ pub fn display_habits(habits: &[HabitRow]) {
             Cell::new("Avg (min)").fg(Color::Cyan),
             Cell::new("σ (min)").fg(Color::Cyan),
             Cell::new("Parallel").fg(Color::Cyan),
+            Cell::new("Host").fg(Color::Cyan),
             Cell::new("Abandon").fg(Color::Cyan),
             Cell::new("Active").fg(Color::Cyan),
         ]);
@@ -130,6 +133,7 @@ pub fn display_habits(habits: &[HabitRow]) {
             Cell::new(h.avg_minutes),
             Cell::new(h.sigma_minutes),
             Cell::new(if h.parallelizable { "✓" } else { "✗" }),
+            Cell::new(if h.allows_parallel { "✓" } else { "✗" }),
             Cell::new(format!("{:.1}", h.abandonability)),
             Cell::new(active_text).fg(active_color),
         ]);
@@ -157,6 +161,7 @@ pub fn display_habit_detail(habit: &HabitRow) {
         Cell::new("Avg (min)").fg(Color::Cyan),
         Cell::new("σ (min)").fg(Color::Cyan),
         Cell::new("Parallel").fg(Color::Cyan),
+        Cell::new("Host").fg(Color::Cyan),
         Cell::new("Abandon").fg(Color::Cyan),
         Cell::new("Active").fg(Color::Cyan),
     ]);
@@ -169,6 +174,7 @@ pub fn display_habit_detail(habit: &HabitRow) {
         Cell::new(habit.avg_minutes),
         Cell::new(habit.sigma_minutes),
         Cell::new(if habit.parallelizable { "✓" } else { "✗" }),
+        Cell::new(if habit.allows_parallel { "✓" } else { "✗" }),
         Cell::new(format!("{:.1}", habit.abandonability)),
         Cell::new(active_text).fg(active_color),
     ]);
@@ -202,6 +208,7 @@ pub fn display_habit_steps(steps: &[HabitStepRow]) {
             Cell::new("Avg (min)").fg(Color::Cyan),
             Cell::new("σ (min)").fg(Color::Cyan),
             Cell::new("Parallel").fg(Color::Cyan),
+            Cell::new("Host").fg(Color::Cyan),
             Cell::new("Abandon").fg(Color::Cyan),
             Cell::new("Depends").fg(Color::Cyan),
         ]);
@@ -218,6 +225,7 @@ pub fn display_habit_steps(steps: &[HabitStepRow]) {
             Cell::new(s.avg_minutes),
             Cell::new(s.sigma_minutes),
             Cell::new(if s.parallelizable { "✓" } else { "✗" }),
+            Cell::new(if s.allows_parallel { "✓" } else { "✗" }),
             Cell::new(format!("{:.1}", s.abandonability)),
             Cell::new(if deps_str.is_empty() {
                 "-".into()
@@ -252,6 +260,7 @@ pub fn display_tasks(
             Cell::new("Avg (min)").fg(Color::Cyan),
             Cell::new("σ (min)").fg(Color::Cyan),
             Cell::new("Parallel").fg(Color::Cyan),
+            Cell::new("Host").fg(Color::Cyan),
             Cell::new("Abandon").fg(Color::Cyan),
         ]);
 
@@ -279,6 +288,7 @@ pub fn display_tasks(
             Cell::new(t.avg_minutes),
             Cell::new(t.sigma_minutes),
             Cell::new(if t.parallelizable { "✓" } else { "✗" }),
+            Cell::new(if t.allows_parallel { "✓" } else { "✗" }),
             Cell::new(format!("{:.1}", t.abandonability)),
         ]);
     }

@@ -35,12 +35,13 @@ pub fn display_task_detail(
         task.title
     );
     println!(
-        "   deadline: {} | est: {}min (+/-{}) | abandon: {:.1} | parallel: {}",
+        "   deadline: {} | est: {}min (+/-{}) | abandon: {:.1} | parallel: {} | host: {}",
         fmt_simple(&task.end_at, tz),
         task.avg_minutes,
         task.sigma_minutes,
         task.abandonability,
         if task.parallelizable { "yes" } else { "no" },
+        if task.allows_parallel { "yes" } else { "no" },
     );
     if let Some(ref start) = task.start_at {
         println!("   start: {}", fmt_simple(start, tz));
@@ -82,11 +83,13 @@ pub fn display_tasks(
         let short_id = task_id_label(t, habit_map);
         println!("{} {} {}", status_marker, short_id, t.title);
         println!(
-            "   deadline: {} | est: {}min (+/-{}) | abandon: {:.1}",
+            "   deadline: {} | est: {}min (+/-{}) | abandon: {:.1} | parallel: {} | host: {}",
             fmt_simple(&t.end_at, tz),
             t.avg_minutes,
             t.sigma_minutes,
-            t.abandonability
+            t.abandonability,
+            if t.parallelizable { "yes" } else { "no" },
+            if t.allows_parallel { "yes" } else { "no" },
         );
         if let Some(ref desc) = t.description {
             println!("   {desc}");
@@ -183,11 +186,12 @@ pub fn display_habits(habits: &[HabitRow]) {
             short_id, h.title, h.recurrence, h.start_time, h.end_time, active
         );
         println!(
-            "   est: {}min (+/-{}) | abandon: {:.1} | parallel: {}",
+            "   est: {}min (+/-{}) | abandon: {:.1} | parallel: {} | host: {}",
             h.avg_minutes,
             h.sigma_minutes,
             h.abandonability,
             if h.parallelizable { "yes" } else { "no" },
+            if h.allows_parallel { "yes" } else { "no" },
         );
         if let Some(ref desc) = h.description
             && !desc.is_empty()
@@ -205,7 +209,7 @@ pub fn display_habit_detail(habit: &HabitRow) {
         habit.display_id, habit.title, habit.recurrence, habit.start_time, habit.end_time, active
     );
     println!(
-        "   est: {}min (+/-{}) | abandon: {:.1} | parallel: {} | allows_parallel: {} | window: {}",
+        "   est: {}min (+/-{}) | abandon: {:.1} | parallel: {} | host: {} | window: {}",
         habit.avg_minutes,
         habit.sigma_minutes,
         habit.abandonability,
@@ -235,8 +239,16 @@ pub fn display_habit_steps(steps: &[HabitStepRow]) {
             format!(" ← {}", deps.join(","))
         };
         println!(
-            "  {} [{}] {} ({}–{}, {}min){}",
-            s.id, s.position, s.title, s.start_time, s.end_time, s.avg_minutes, deps_str
+            "  {} [{}] {} ({}–{}, {}min) parallel: {} host: {}{}",
+            s.id,
+            s.position,
+            s.title,
+            s.start_time,
+            s.end_time,
+            s.avg_minutes,
+            if s.parallelizable { "yes" } else { "no" },
+            if s.allows_parallel { "yes" } else { "no" },
+            deps_str
         );
         if let Some(ref desc) = s.description
             && !desc.is_empty()
