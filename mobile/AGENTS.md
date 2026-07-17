@@ -88,6 +88,46 @@ Rebuild with `npx expo run:android` again only after:
 For a release-equivalent dev APK without Metro (testing native behavior end
 to end), use `nix run .#build-android-apk-dev` then `adb install -r`.
 
+### Emulator (Nix)
+
+The repo provides a Nix-managed Android emulator so you can test without a
+physical device. The emulator uses an `x86_64` system image so it can use KVM
+on x86_64 hosts. The matching APK is built with `x86_64` native libs.
+
+```sh
+nix run .#android-emulator
+```
+
+On first run this creates an AVD named `takusu` under `~/.takusu/android/avd`
+and launches it on the first free port in the 5554-5584 range. The AVD is
+reused on subsequent runs.
+
+Then build and install the emulator APK in another terminal:
+
+```sh
+nix run .#build-android-apk-emulator
+adb -s emulator-5554 install -r mobile/android/app/build/outputs/apk/release/app-release.apk
+```
+
+Or use `npx expo run:android` with the running emulator:
+
+```sh
+nix develop
+cd mobile
+TAKUSU_BUILD_VARIANT=dev TAKUSU_ANDROID_ABIS=x86_64 npx expo run:android --device emulator-5554
+```
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `TAKUSU_EMULATOR_DEVICE` | `takusu` | AVD name |
+| `TAKUSU_EMULATOR_API` | `35` | System-image API level |
+| `TAKUSU_EMULATOR_IMAGE` | `google_apis` | System image type |
+| `TAKUSU_EMULATOR_ABI` | `x86_64` | Emulator ABI |
+| `TAKUSU_EMULATOR_USER_HOME` | `$HOME/.takusu/android` | `ANDROID_USER_HOME` directory |
+| `TAKUSU_EMULATOR_DEFAULT_FLAGS` | `-no-boot-anim -gpu swiftshader_indirect` | Flags always passed to `emulator` |
+| `TAKUSU_EMULATOR_FLAGS` | (empty) | Extra flags appended to the default set |
+| `TAKUSU_ANDROID_ABIS` | `arm64-v8a` | ABIs passed to `reactNativeArchitectures` by `post-prebuild-android.sh` |
+
 ### Known Issues & Workarounds
 
 | Issue                                                            | Fix                                                                           |

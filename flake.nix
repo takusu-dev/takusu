@@ -74,6 +74,22 @@
           };
           androidNdkHome = "${androidComposition.ndk-bundle}/libexec/android-sdk/ndk-bundle";
 
+          # Android SDK with emulator + x86_64 system image for local development.
+          # Kept separate from androidComposition so the build/NDK closure is not
+          # bloated by the emulator and system image downloads.
+          emulatorComposition =
+            (pkgs.androidenv.composeAndroidPackages.override { licenseAccepted = true; })
+              {
+                includeNDK = false;
+                includeEmulator = true;
+                includeSystemImages = true;
+                includeSources = false;
+                platformVersions = [ "35" ];
+                systemImageTypes = [ "google_apis" ];
+                abiVersions = [ "x86_64" ];
+              };
+          emulatorSdk = emulatorComposition.androidsdk;
+
           # Sherpa-ONNX prebuilt shared libraries for host tests and the Android
           # cross-build. Nix-managed so CI doesn't depend on the build.rs
           # download/extract cache under target/.
@@ -128,11 +144,14 @@
               cmake
               libclang
             ];
-            buildInputs = with pkgs; [
-              alsa-lib
-              libpulseaudio
-              openblas
-            ] ++ [ sherpaOnnxLinuxX64Shared ];
+            buildInputs =
+              with pkgs;
+              [
+                alsa-lib
+                libpulseaudio
+                openblas
+              ]
+              ++ [ sherpaOnnxLinuxX64Shared ];
             LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
             OPENBLAS_PATH = "${pkgs.openblas}/lib";
             BLAS_INCLUDE_DIRS = "${pkgs.openblas.dev}/include";
@@ -153,11 +172,14 @@
               cmake
               libclang
             ];
-            buildInputs = with pkgs; [
-              alsa-lib
-              libpulseaudio
-              openblas
-            ] ++ [ sherpaOnnxLinuxX64Shared ];
+            buildInputs =
+              with pkgs;
+              [
+                alsa-lib
+                libpulseaudio
+                openblas
+              ]
+              ++ [ sherpaOnnxLinuxX64Shared ];
             LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
             OPENBLAS_PATH = "${pkgs.openblas}/lib";
             BLAS_INCLUDE_DIRS = "${pkgs.openblas.dev}/include";
@@ -175,36 +197,33 @@
               cmake
               libclang
             ];
-            buildInputs = with pkgs; [
-              alsa-lib
-              libpulseaudio
-              openblas
-            ] ++ [ sherpaOnnxLinuxX64Shared ];
+            buildInputs =
+              with pkgs;
+              [
+                alsa-lib
+                libpulseaudio
+                openblas
+              ]
+              ++ [ sherpaOnnxLinuxX64Shared ];
             LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
             OPENBLAS_PATH = "${pkgs.openblas}/lib";
             BLAS_INCLUDE_DIRS = "${pkgs.openblas.dev}/include";
             SHERPA_ONNX_LIB_DIR = "${sherpaOnnxLinuxX64Shared}/lib";
           };
 
-          # Cross-compile takusu-android .so for all Android ABIs.
+          # Cross-compile takusu-android .so for a list of Android targets.
           # Uses crane only for cargo registry vendoring (no network needed in
           # the Nix sandbox). We can't use crane's buildDepsOnly because it
           # builds for the host target — the artifacts are useless for Android
           # cross-compilation. Instead, stdenv.mkDerivation + cargo-ndk builds
           # everything from the vendored registry in one derivation.
-          takusu-android-libs =
+          mkTakusuAndroidLibs =
+            { pname, androidTargets }:
             let
               vendoredDeps = craneLib.vendorCargoDeps { inherit src; };
-              # Only build arm64-v8a (aarch64-linux-android). Modern Android
-              # devices are arm64; dropping armeabi-v7a / x86 / x86_64 cuts the
-              # Rust cross-compile and Gradle CMake build time by ~4x.
-              androidTargets = [
-                "aarch64-linux-android"
-              ];
             in
             pkgs.stdenv.mkDerivation {
-              inherit src version;
-              pname = "takusu-android-libs";
+              inherit src version pname;
 
               nativeBuildInputs = [
                 rust-bin
@@ -223,7 +242,6 @@
                 LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
                 OPENBLAS_PATH = "${pkgs.openblas}/lib";
                 BLAS_INCLUDE_DIRS = "${pkgs.openblas.dev}/include";
-                SHERPA_ONNX_LIB_DIR = "${sherpaOnnxAndroid}/jniLibs/arm64-v8a";
                 # cargo-ndk exports the Android clang as CC. Keep host C
                 # build scripts (bzip2/ring) on the host compiler.
                 "CC_x86_64-unknown-linux-gnu" = "${pkgs.stdenv.cc}/bin/cc";
@@ -247,8 +265,14 @@
               buildPhase = ''
                 runHook preBuild
                 for target in ${lib.concatStringsSep " " androidTargets}; do
+                  case $target in
+                    aarch64-linux-android) sherpa_abi="arm64-v8a" ;;
+                    armv7-linux-androideabi) sherpa_abi="armeabi-v7a" ;;
+                    x86_64-linux-android) sherpa_abi="x86_64" ;;
+                    i686-linux-android) sherpa_abi="x86" ;;
+                  esac
                   echo "Building $target..."
-                  cargo ndk -t "$target" build -p takusu-android --release --no-default-features
+                  SHERPA_ONNX_LIB_DIR="${sherpaOnnxAndroid}/jniLibs/$sherpa_abi" cargo ndk -t "$target" build -p takusu-android --release --no-default-features
                 done
                 runHook postBuild
               '';
@@ -270,6 +294,19 @@
               '';
             };
 
+          takusu-android-libs = mkTakusuAndroidLibs {
+            pname = "takusu-android-libs";
+            # Only build arm64-v8a (aarch64-linux-android) for release. Modern
+            # Android devices are arm64; dropping armeabi-v7a / x86 / x86_64
+            # cuts the Rust cross-compile and Gradle CMake build time.
+            androidTargets = [ "aarch64-linux-android" ];
+          };
+
+          takusu-android-libs-emulator = mkTakusuAndroidLibs {
+            pname = "takusu-android-libs-emulator";
+            androidTargets = [ "x86_64-linux-android" ];
+          };
+
           # Host-native uniffi-bindgen binary for generating Kotlin bindings.
           # Built with the `bindgen` feature which pulls in uniffi/cli.
           uniffi-bindgen = craneLib.buildPackage {
@@ -281,11 +318,14 @@
               cmake
               libclang
             ];
-            buildInputs = with pkgs; [
-              alsa-lib
-              libpulseaudio
-              openblas
-            ] ++ [ sherpaOnnxLinuxX64Shared ];
+            buildInputs =
+              with pkgs;
+              [
+                alsa-lib
+                libpulseaudio
+                openblas
+              ]
+              ++ [ sherpaOnnxLinuxX64Shared ];
             LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
             OPENBLAS_PATH = "${pkgs.openblas}/lib";
             BLAS_INCLUDE_DIRS = "${pkgs.openblas.dev}/include";
@@ -382,7 +422,7 @@
                 androidComposition.ndk-bundle
                 androidComposition.androidsdk
               ];
-              androidApkBuildText = ''
+              makeAndroidApkBuildText = androidLibs: abiDir: ''
                 export ANDROID_NDK_HOME="${androidNdkHome}"
                 export ANDROID_HOME="${androidComposition.androidsdk}/libexec/android-sdk"
                 # React Native's Gradle plugin errors out when ANDROID_HOME and
@@ -413,7 +453,7 @@
                 # 1. Copy pre-built .so from Nix store into jniLibs/
                 echo "── Step 1: Copy native libraries from Nix store ──"
                 rm -rf "$JNILIBS_DIR"
-                cp -r "${takusu-android-libs}/jniLibs" "$JNILIBS_DIR"
+                cp -r "${androidLibs}/jniLibs" "$JNILIBS_DIR"
                 echo "  copied .so files to $JNILIBS_DIR"
 
                 # 2. Generate UniFFI Kotlin bindings from the .so
@@ -422,7 +462,7 @@
                 BINDINGS_TMP="$BINDINGS_DIR/uniffi"
                 mkdir -p "$BINDINGS_TMP"
                 "${uniffi-bindgen}/bin/uniffi-bindgen" generate \
-                  --library "${takusu-android-libs}/jniLibs/arm64-v8a/libtakusu_android.so" \
+                  --library "${androidLibs}/jniLibs/${abiDir}/libtakusu_android.so" \
                   --language kotlin \
                   --out-dir "$BINDINGS_TMP"
                 GENERATED_FILE=$(find "$BINDINGS_TMP" -name "*.kt" -type f | head -1)
@@ -457,12 +497,15 @@
                 echo ""
                 echo "✅ APK built: $(pwd)/app/build/outputs/apk/release/app-release.apk"
               '';
+              androidApkBuildText = makeAndroidApkBuildText takusu-android-libs "arm64-v8a";
+              androidApkEmulatorBuildText = makeAndroidApkBuildText takusu-android-libs-emulator "x86_64";
             in
             {
               inherit
                 takusu-cli
                 takusu-local
                 takusu-android-libs
+                takusu-android-libs-emulator
                 uniffi-bindgen
                 ;
               default = takusu-cli;
@@ -489,6 +532,100 @@
                 text = ''
                   export TAKUSU_BUILD_VARIANT=dev
                   ${androidApkBuildText}
+                '';
+              };
+
+              # Emulator APK build. Builds x86_64 native libs so the app runs
+              # on the x86_64 emulator (the host architecture for KVM).
+              # Run with `nix run .#build-android-apk-emulator`.
+              build-android-apk-emulator = pkgs.writeShellApplication {
+                name = "build-android-apk-emulator";
+                runtimeInputs = androidApkRuntimeInputs;
+                text = ''
+                  export TAKUSU_BUILD_VARIANT=dev
+                  export TAKUSU_ANDROID_ABIS=x86_64
+                  ${androidApkEmulatorBuildText}
+                '';
+              };
+
+              # Android emulator for local development. Creates an AVD on first
+              # run and launches an x86_64 emulator (matching the host for KVM).
+              # Run with `nix run .#android-emulator`.
+              android-emulator = pkgs.writeShellApplication {
+                name = "android-emulator";
+                runtimeInputs = [
+                  emulatorSdk
+                  pkgs.openjdk_headless
+                  pkgs.coreutils
+                  pkgs.gnugrep
+                ];
+                text = ''
+                  #!/usr/bin/env bash
+                  set -euo pipefail
+
+                  export ANDROID_HOME="${emulatorSdk}/libexec/android-sdk"
+                  export ANDROID_SDK_ROOT="$ANDROID_HOME"
+                  export JAVA_HOME="${pkgs.openjdk_headless}/lib/openjdk"
+
+                  DEVICE_NAME="''${TAKUSU_EMULATOR_DEVICE:-takusu}"
+                  API_LEVEL="''${TAKUSU_EMULATOR_API:-35}"
+                  IMAGE_TYPE="''${TAKUSU_EMULATOR_IMAGE:-google_apis}"
+                  ABI="''${TAKUSU_EMULATOR_ABI:-x86_64}"
+                  SYSTEM_IMAGE="system-images;android-$API_LEVEL;$IMAGE_TYPE;$ABI"
+                  DEFAULT_FLAGS=( -no-boot-anim -gpu swiftshader_indirect )
+                  if [ -n "''${TAKUSU_EMULATOR_DEFAULT_FLAGS:-}" ]; then
+                    read -r -a DEFAULT_FLAGS <<< "''${TAKUSU_EMULATOR_DEFAULT_FLAGS:-}"
+                  fi
+                  EXTRA_FLAGS=()
+                  if [ -n "''${TAKUSU_EMULATOR_FLAGS:-}" ]; then
+                    read -r -a EXTRA_FLAGS <<< "''${TAKUSU_EMULATOR_FLAGS:-}"
+                  fi
+                  ANDROID_USER_HOME="''${TAKUSU_EMULATOR_USER_HOME:-$HOME/.takusu/android}"
+                  ANDROID_AVD_HOME="$ANDROID_USER_HOME/avd"
+                  export ANDROID_USER_HOME ANDROID_AVD_HOME
+
+                  mkdir -p "$ANDROID_AVD_HOME"
+
+                  AVD_DIR="$ANDROID_AVD_HOME/$DEVICE_NAME.avd"
+                  if [ -d "$AVD_DIR" ]; then
+                    existing_abi=$(grep '^abi.type=' "$AVD_DIR/config.ini" 2>/dev/null | cut -d= -f2 || true)
+                    if [ "$existing_abi" != "$ABI" ]; then
+                      echo "Existing AVD '$DEVICE_NAME' uses ABI '$existing_abi'; removing it to recreate with '$ABI'..."
+                      rm -rf "$AVD_DIR"
+                      rm -f "$ANDROID_AVD_HOME/$DEVICE_NAME.ini"
+                    fi
+                  fi
+
+                  if [ ! -d "$AVD_DIR" ]; then
+                    echo "Creating AVD '$DEVICE_NAME' with $SYSTEM_IMAGE..."
+                    printf '\n' | avdmanager create avd \
+                      --force \
+                      -n "$DEVICE_NAME" \
+                      -k "$SYSTEM_IMAGE" \
+                      -p "$AVD_DIR"
+                  fi
+
+                  echo "Looking for a free emulator port in range 5554-5584..."
+                  port=""
+                  for i in $(seq 5554 2 5584); do
+                    if ! adb devices | grep -q "emulator-$i"; then
+                      port="$i"
+                      break
+                    fi
+                  done
+
+                  if [ -z "$port" ]; then
+                    echo "No free emulator port found" >&2
+                    exit 1
+                  fi
+
+                  echo "Launching emulator '$DEVICE_NAME' on port $port"
+                  exec "$ANDROID_HOME/emulator/emulator" \
+                    -avd "$DEVICE_NAME" \
+                    -port "$port" \
+                    "''${DEFAULT_FLAGS[@]}" \
+                    "''${EXTRA_FLAGS[@]}" \
+                    "$@"
                 '';
               };
 

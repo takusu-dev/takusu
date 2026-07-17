@@ -90,17 +90,19 @@ else
   echo "  Warning: unexpected org.gradle.jvmargs format; heap left unchanged" >&2
 fi
 
-# 5. Limit reactNativeArchitectures to arm64-v8a only.
-#    The Rust .so is only built for aarch64 (see flake.nix androidTargets),
-#    so building CMake for other ABIs wastes time and fails without their .so.
-#    expo-build-properties' buildArchs is buggy (expo/expo#38225), so set
-#    reactNativeArchitectures directly in gradle.properties.
+# 5. Limit reactNativeArchitectures to the ABI(s) we actually built.
+#    The Rust .so only exists for those ABIs, so building CMake for others
+#    wastes time and fails. Defaults to arm64-v8a; set TAKUSU_ANDROID_ABIS to
+#    override (e.g. x86_64 for the Nix emulator). expo-build-properties'
+#    buildArchs is buggy (expo/expo#38225), so set reactNativeArchitectures
+#    directly in gradle.properties.
+ANDROID_ABIS="${TAKUSU_ANDROID_ABIS:-arm64-v8a}"
 if grep -q 'reactNativeArchitectures=' "$GRADLE_PROPERTIES"; then
-  sed -i 's/^reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' "$GRADLE_PROPERTIES"
+  sed -i "s/^reactNativeArchitectures=.*/reactNativeArchitectures=$ANDROID_ABIS/" "$GRADLE_PROPERTIES"
 else
-  echo "reactNativeArchitectures=arm64-v8a" >> "$GRADLE_PROPERTIES"
+  echo "reactNativeArchitectures=$ANDROID_ABIS" >> "$GRADLE_PROPERTIES"
 fi
-echo "  Limited reactNativeArchitectures to arm64-v8a"
+echo "  Limited reactNativeArchitectures to $ANDROID_ABIS"
 
 # 6. Enable Gradle parallel + build cache for faster incremental builds.
 #    These are safe additions that only help when tasks are cacheable.
