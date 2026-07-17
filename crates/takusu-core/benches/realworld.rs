@@ -73,16 +73,11 @@ fn bench_realworld_plan(c: &mut Criterion) {
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(30));
 
+    // Keep only the scale endpoints (7d and 30d) for full-plan benchmarks.
+    // The 14d fixture is still exercised by plan_partial and plan_in_range below.
+
     group.bench_function("plan realworld habits (7d)", |b| {
         let (planner, _) = build_planner(FIXTURE_7D);
-        b.iter(|| {
-            let plan = planner.plan();
-            black_box(plan);
-        })
-    });
-
-    group.bench_function("plan realworld habits (14d)", |b| {
-        let (planner, _) = build_planner(FIXTURE_14D);
         b.iter(|| {
             let plan = planner.plan();
             black_box(plan);

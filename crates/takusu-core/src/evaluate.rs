@@ -3,45 +3,42 @@
 //! スケジュール `Plan` をスカラー値に写像する。最大化すべき値。
 //!
 //! ```text
-//! E(plan, T) = Σ deadline_score(i)      // 締切充足
-//!             + Σ start_score(i)         // 開始可能時間制約
-//!             + Σ depend_score(i, T)    // 依存関係 (constraint annealing)
-//!             + Σ buffer_score(i)        // 不確実性バッファ報酬
-//!             + Σ duration_score(i)     // 所要時間マッチ
-//!             + Σ sleep_score(d)         // 日ごと睡眠評価
-//!             + Σ daily_load_score(d)    // #459 日ごと作業負荷
-//!             + Σ parallel_violation     // 並列違反
-//!             + inclusion_bonus          // スケジュール存在ボーナス
-//!             + stability_score          // #211 前回配置からの安定性
-//!             + habit_consistency_score  // #306 habit時刻一貫性ボーナス
+//! E(plan, T) = Σ task_and_depend_scores(i, T)  // 締切 + 開始可能時間 + 所要時間 + 依存関係
+//!             + Σ buffer_score(i)              // 不確実性バッファ報酬
+//!             + Σ sleep_score(d)               // 日ごと睡眠評価
+//!             + Σ daily_load_score(d)          // #459 日ごと作業負荷
+//!             + Σ parallel_violation           // 並列違反
+//!             + inclusion_bonus                // スケジュール存在ボーナス
+//!             + stability_score                // #211 前回配置からの安定性
+//!             + habit_consistency_score        // #306 habit時刻一貫性ボーナス
 //! ```
 //!
 //! ## 各項の詳細
 //!
-//! ### deadline_score
-//! - slack >= 0: `min(slack * W_EARLY, 早期報酬上限)` — 早く終わるほどボーナス(上限あり)
-//! - slack < 0:  `slack * W_LATE` — 締切超過ペナルティ (|W_LATE| ≫ W_EARLY)
+//! ### task_and_depend_scores
+//! 1 回のループで締切・開始時刻・所要時間・依存関係の 4 つのスコアを計算する。
 //!
-//! ### start_score
-//! - 開始可能時刻なし または 開始可能時刻以後 → 0
-//! - それ以外 → `(scheduled_start - start) * W_START` (負)
-//!
-//! ### depend_score (constraint annealing, 違反スロット数比例)
-//! - 依存先タスクが終了していない場合:
-//!   `-(違反スロット数) * W_DEPEND_BASE * (1.0 - T/T₀)`
-//! - 温度 T が高いうちは違反ペナルティが小さい → 探索範囲が広がる
-//! - T → 0 で最大ペナルティに収束 → 実行可能領域へ誘導
-//! - 違反の大きさに比例するため、大きな依存違反ほど強く罰せられる
+//! - 締切 (deadline):
+//!   - slack >= 0: `min(slack * W_EARLY, 早期報酬上限)` — 早く終わるほどボーナス(上限あり)
+//!   - slack < 0:  `slack * W_LATE` — 締切超過ペナルティ (|W_LATE| ≫ W_EARLY)
+//! - 開始可能時刻 (start):
+//!   - 開始可能時刻なし または 開始可能時刻以後 → 0
+//!   - それ以外 → `(scheduled_start - start) * W_START` (負)
+//! - 所要時間マッチ (duration):
+//!   - `deficit = avg - scheduled_duration`
+//!   - deficit > 0: `-deficit² * W_SHORT` — 見積り不足 (二次で急峻)
+//!   - deficit < 0: `deficit * W_OVER` — 取りすぎ (線形で軽微)
+//! - 依存関係 (constraint annealing):
+//!   - 依存先タスクが終了していない場合:
+//!     `-(違反スロット数) * W_DEPEND_BASE * (1.0 - T/T₀)`
+//!   - 温度 T が高いうちは違反ペナルティが小さい → 探索範囲が広がる
+//!   - T → 0 で最大ペナルティに収束 → 実行可能領域へ誘導
+//!   - 違反の大きさに比例するため、大きな依存違反ほど強く罰せられる
 //!
 //! ### buffer_score
 //! - `task.sigma * 連続空き時間 * W_BUFFER`
 //! - sigma=0 の確定タスクはバッファ報酬なし
 //! - sigmaが大きいタスクの後ろに、締切まで競合なく連続する空きがあるほど高スコア
-//!
-//! ### duration_score
-//! - `deficit = avg - scheduled_duration`
-//! - deficit > 0: `-deficit² * W_SHORT` — 見積り不足 (二次で急峻)
-//! - deficit < 0: `deficit * W_OVER` — 取りすぎ (線形で軽微)
 //!
 //! ### sleep_score (per day, 3h threshold)
 //! - ベース: `-sleep_used * W_SLEEP_NORMAL`
@@ -82,6 +79,7 @@
 //! - W_INCLUSION=10: タスクをスケジュールから外さない誘因十分。
 
 use super::*;
+use rustc_hash::FxHashMap;
 
 const W_EARLY: f64 = 1.0;
 const W_LATE: f64 = 20.0;
@@ -116,18 +114,44 @@ const W_DAILY_OVERLOAD: f64 = 0.5;
 const W_DAILY_MAXIMUM: f64 = 2.0;
 
 pub fn evaluate(planner: &Planner, plan: &Plan, temperature: f64, t0: f64) -> f64 {
+    let mut sorted = Vec::with_capacity(plan.schedules.len());
+    let mut pair_scratch = Vec::with_capacity(plan.schedules.len());
+    evaluate_with_scratch(
+        planner,
+        plan,
+        temperature,
+        t0,
+        &mut sorted,
+        &mut pair_scratch,
+    )
+}
+
+/// `evaluate` の内部実装。sorted 区間列と区間 union 用 scratch バッファを
+/// 呼び出し側が再利用することで、ホットパス（SA ループ）での毎回の allocation を避ける。
+pub(crate) fn evaluate_with_scratch(
+    planner: &Planner,
+    plan: &Plan,
+    temperature: f64,
+    t0: f64,
+    sorted: &mut Vec<(Point, Point, usize)>,
+    pair_scratch: &mut Vec<(Point, Point)>,
+) -> f64 {
     let mut score = 0.0;
     let schedules = &plan.schedules;
     let index = build_index(planner, schedules);
+    let (plan_start, plan_end) = plan_range(schedules);
 
-    score += deadline_score(planner, &index);
-    score += start_score(planner, &index);
-    score += depend_score(planner, &index, temperature, t0);
+    // Sort schedules once by start so per-day/window scans can break early and
+    // parallel_violation can avoid its own copy+sort.
+    sorted.clear();
+    sorted.extend_from_slice(schedules);
+    sorted.sort_unstable_by_key(|(s, _, _)| s.0);
+
+    score += task_and_depend_scores(planner, &index, temperature, t0);
     score += buffer_score(planner, &index);
-    score += duration_score(planner, &index);
-    score += sleep_score(planner, schedules);
-    score += daily_load_score(planner, schedules);
-    score += parallel_violation_score(planner, schedules);
+    score += sleep_score(planner, sorted, (plan_start, plan_end), pair_scratch);
+    score += daily_load_score(planner, sorted, (plan_start, plan_end), pair_scratch);
+    score += parallel_violation_score(planner, sorted);
     score += inclusion_bonus(planner, schedules);
     score += stability_score(planner, &index);
     score += habit_consistency_score(planner, &index);
@@ -149,12 +173,21 @@ fn build_index(
     index
 }
 
-fn deadline_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
+fn task_and_depend_scores(
+    planner: &Planner,
+    index: &[Option<(Point, Point)>],
+    temperature: f64,
+    t0: f64,
+) -> f64 {
+    let depend_weight = W_DEPEND_BASE * (1.0 - temperature / t0);
     let mut score = 0.0;
+    let mut depend_penalty_slots = 0i64;
     for task in &planner.tasks {
-        let Some((_start, sched_end)) = index[task.id] else {
+        let Some((sched_start, sched_end)) = index[task.id] else {
             continue;
         };
+
+        // deadline_score
         let slack = Point::delta(task.end, sched_end);
         if slack >= 0 {
             score += (slack as f64 * W_EARLY).min(50.0);
@@ -162,46 +195,33 @@ fn deadline_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
             let weight = 1.0 - task.abandonability;
             score += slack as f64 * W_LATE * weight;
         }
-    }
-    score
-}
 
-fn start_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
-    let mut score = 0.0;
-    for task in &planner.tasks {
-        let Some((sched_start, _sched_end)) = index[task.id] else {
-            continue;
-        };
+        // start_score
         if let Some(task_start) = task.start
             && sched_start < task_start
         {
             score += Point::delta(sched_start, task_start) as f64 * W_START;
         }
-    }
-    score
-}
 
-fn depend_score(
-    planner: &Planner,
-    index: &[Option<(Point, Point)>],
-    temperature: f64,
-    t0: f64,
-) -> f64 {
-    let weight = W_DEPEND_BASE * (1.0 - temperature / t0);
-    let mut penalty_slots = 0i64;
-    for task in &planner.tasks {
-        let Some((sched_start, _)) = index[task.id] else {
-            continue;
-        };
+        // duration_score
+        let actual = Point::delta(sched_end, sched_start);
+        let deficit = task.cost_estimate.avg as i64 - actual;
+        if deficit > 0 {
+            score += -(deficit * deficit) as f64 * W_SHORT;
+        } else if deficit < 0 {
+            score += deficit as f64 * W_OVER;
+        }
+
+        // depend_score (merged into the same loop)
         for dep_id in &task.depends {
             if let Some(Some((_, dep_end))) = index.get(*dep_id)
                 && *dep_end > sched_start
             {
-                penalty_slots += dep_end.0 - sched_start.0;
+                depend_penalty_slots += dep_end.0 - sched_start.0;
             }
         }
     }
-    -(penalty_slots as f64) * weight
+    score - (depend_penalty_slots as f64) * depend_weight
 }
 
 fn buffer_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
@@ -240,24 +260,12 @@ fn buffer_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
     score
 }
 
-fn duration_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
-    let mut score = 0.0;
-    for task in &planner.tasks {
-        let Some((sched_start, sched_end)) = index[task.id] else {
-            continue;
-        };
-        let actual = Point::delta(sched_end, sched_start);
-        let deficit = task.cost_estimate.avg as i64 - actual;
-        if deficit > 0 {
-            score += -(deficit * deficit) as f64 * W_SHORT;
-        } else if deficit < 0 {
-            score += deficit as f64 * W_OVER;
-        }
-    }
-    score
-}
-
-fn sleep_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
+fn sleep_score(
+    planner: &Planner,
+    sorted: &[(Point, Point, usize)],
+    (plan_start, plan_end): (Point, Point),
+    scratch: &mut Vec<(Point, Point)>,
+) -> f64 {
     if !planner.sleep.enabled {
         return 0.0;
     }
@@ -269,7 +277,6 @@ fn sleep_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
     );
     let sleep_len = sleep_end_rel - sleep_start_rel;
 
-    let (plan_start, plan_end) = plan_range(schedules);
     if plan_start >= plan_end {
         return 0.0;
     }
@@ -284,16 +291,22 @@ fn sleep_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
         let sleep_window_start = Point(day_start_point.0 + sleep_start_rel);
         let sleep_window_end = Point(day_start_point.0 + sleep_end_rel);
 
-        let mut intervals: Vec<(Point, Point)> = Vec::new();
-        for (s_start, s_end, _) in schedules {
+        scratch.clear();
+        for (s_start, s_end, _) in sorted {
+            if s_end.0 <= sleep_window_start.0 {
+                continue;
+            }
+            if s_start.0 >= sleep_window_end.0 {
+                break;
+            }
             let overlap_start = Point(s_start.0.max(sleep_window_start.0));
             let overlap_end = Point(s_end.0.min(sleep_window_end.0));
             if overlap_start < overlap_end {
-                intervals.push((overlap_start, overlap_end));
+                scratch.push((overlap_start, overlap_end));
             }
         }
 
-        let occupied = union_length(&mut intervals);
+        let occupied = union_length_sorted(scratch);
 
         if occupied > 0 {
             let sleep_got = (sleep_len - occupied).max(0);
@@ -322,7 +335,12 @@ fn sleep_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
 ///   快適容量超過に対する緩やかなペナルティ。
 /// - `-W_DAILY_MAXIMUM * max(0, load(day) - maximum)^2`  
 ///   最大容量超過に対する強いペナルティ。
-fn daily_load_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
+fn daily_load_score(
+    planner: &Planner,
+    sorted: &[(Point, Point, usize)],
+    (plan_start, plan_end): (Point, Point),
+    scratch: &mut Vec<(Point, Point)>,
+) -> f64 {
     if planner.workload.comfortable_slots_per_day == 0
         && planner.workload.maximum_slots_per_day == 0
     {
@@ -332,7 +350,6 @@ fn daily_load_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f
     let slots_per_day = (24 * 60) / planner.per as i64;
     let day_start_epoch = planner.sleep.day_start;
 
-    let (plan_start, plan_end) = plan_range(schedules);
     if plan_start >= plan_end {
         return 0.0;
     }
@@ -344,19 +361,22 @@ fn daily_load_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f
     let mut score = 0.0;
     while day_start.0 < plan_end.0 {
         let day_end = Point(day_start.0 + slots_per_day);
-        let mut intervals: Vec<(Point, Point)> = Vec::new();
-        for (s, e, _) in schedules {
-            if e.0 <= day_start.0 || s.0 >= day_end.0 {
+        scratch.clear();
+        for (s, e, _) in sorted {
+            if e.0 <= day_start.0 {
                 continue;
+            }
+            if s.0 >= day_end.0 {
+                break;
             }
             let clip_start = Point(s.0.max(day_start.0));
             let clip_end = Point(e.0.min(day_end.0));
             if clip_start < clip_end {
-                intervals.push((clip_start, clip_end));
+                scratch.push((clip_start, clip_end));
             }
         }
 
-        let load = union_length(&mut intervals);
+        let load = union_length_sorted(scratch);
         let normal_penalty = (load * load) as f64 * W_DAILY_NORMAL;
         let comfortable_excess = (load - planner.workload.comfortable_slots_per_day).max(0);
         let overload_penalty = (comfortable_excess * comfortable_excess) as f64 * W_DAILY_OVERLOAD;
@@ -371,11 +391,26 @@ fn daily_load_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f
 }
 
 /// 区間列の union の長さを返す。区間は `(start, end)` で `start < end` 前提。
+#[cfg(test)]
 fn union_length(intervals: &mut [(Point, Point)]) -> i64 {
     if intervals.is_empty() {
         return 0;
     }
+    if intervals.len() == 1 {
+        return (intervals[0].1).0 - (intervals[0].0).0;
+    }
     intervals.sort_unstable_by_key(|(s, _)| s.0);
+    union_length_sorted(intervals)
+}
+
+/// `union_length` のソート済み入力版。入力は開始時刻昇順であることを前提とする。
+fn union_length_sorted(intervals: &[(Point, Point)]) -> i64 {
+    if intervals.is_empty() {
+        return 0;
+    }
+    if intervals.len() == 1 {
+        return (intervals[0].1).0 - (intervals[0].0).0;
+    }
     let mut total = 0i64;
     let (mut cur_start, mut cur_end) = intervals[0];
     for (s, e) in intervals.iter().skip(1) {
@@ -391,10 +426,7 @@ fn union_length(intervals: &mut [(Point, Point)]) -> i64 {
     total
 }
 
-fn parallel_violation_score(planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
-    let mut sorted: Vec<(Point, Point, usize)> = schedules.to_vec();
-    sorted.sort_unstable_by_key(|(s, _, _)| s.0);
-
+fn parallel_violation_score(planner: &Planner, sorted: &[(Point, Point, usize)]) -> f64 {
     let mut penalty_slots = 0i64;
     let n = sorted.len();
     for i in 0..n {
@@ -468,7 +500,10 @@ fn stability_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
 /// - 2タスク未満のグループは評価しない (分散が意味を持たない)
 fn habit_consistency_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
     let slots_per_day = 24 * 60 / planner.per() as i64;
-    let mut groups: std::collections::HashMap<usize, Vec<i64>> = std::collections::HashMap::new();
+    let mut groups = FxHashMap::<usize, Vec<i64>>::with_capacity_and_hasher(
+        planner.tasks.len(),
+        Default::default(),
+    );
     for task in &planner.tasks {
         let Some(group) = task.habit_group else {
             continue;
@@ -478,23 +513,25 @@ fn habit_consistency_score(planner: &Planner, index: &[Option<(Point, Point)>]) 
         };
         // 日付成分を除去: 時刻帯のみのスロット値
         let tod = sched_start.0.rem_euclid(slots_per_day);
-        groups.entry(group).or_default().push(tod);
+        groups
+            .entry(group)
+            .or_insert_with(|| Vec::with_capacity(4))
+            .push(tod);
     }
 
     let mut bonus = 0.0;
-    for times in groups.values() {
+    for times in groups.values_mut() {
         if times.len() < 2 {
             continue;
         }
         // 時刻は循環 (23:59 → 0:00) なので、ソートして隣接ペアの
         // 円周上の差を取り、その二乗平均を分散の代わりとする。
-        let mut sorted: Vec<i64> = times.clone();
-        sorted.sort_unstable();
-        let n = sorted.len() as f64;
+        times.sort_unstable();
+        let n = times.len() as f64;
         let mut sum_sq_diff = 0.0;
-        for i in 0..sorted.len() {
-            let next = (i + 1) % sorted.len();
-            let raw = (sorted[next] - sorted[i]).abs();
+        for i in 0..times.len() {
+            let next = (i + 1) % times.len();
+            let raw = (times[next] - times[i]).abs();
             let diff = raw.min(slots_per_day - raw);
             sum_sq_diff += diff as f64 * diff as f64;
         }

@@ -90,7 +90,8 @@ jobs:
     if: |
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true')
+      (github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true') ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/push-') && needs.changes.outputs.rust == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: read
