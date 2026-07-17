@@ -49,16 +49,15 @@ mod solver;
 use jiff::Timestamp;
 use thiserror::Error;
 
+// If both allocator features are enabled (e.g. with `--all-features`), prefer
+// `jemalloc` because it is the default and fastest measured allocator.
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static GLOBAL_ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 #[cfg(all(feature = "mimalloc", not(feature = "jemalloc")))]
 #[global_allocator]
-static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
-#[cfg(all(feature = "jemalloc", not(feature = "mimalloc")))]
-#[global_allocator]
-static JEMALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-
-#[cfg(all(feature = "mimalloc", feature = "jemalloc"))]
-compile_error!("only one of `mimalloc` and `jemalloc` features can be enabled at a time");
+static GLOBAL_ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 // ── Point ────────────────────────────────────────────────────────────
 

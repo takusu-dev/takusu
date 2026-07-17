@@ -82,3 +82,29 @@ This file records stable baseline numbers for `takusu-core` performance work.
 - `mimalloc` 0.1.50 remains available as an opt-in feature (`--no-default-features --features mimalloc`).
 - A workspace `Cargo.toml` profile override (`[profile.dev|test.package."tikv-jemalloc-sys"] opt-level = 3`) fixes the `_FORTIFY_SOURCE` warnings-as-errors in Nix dev shells with newer glibc.
 - arm64 build verified: `cargo ndk -t aarch64-linux-android check -p takusu-core` succeeds with the default `jemalloc` feature.
+
+## 2026-07-18: release profile tuning (`codegen-units = 1`, `lto = "thin"`)
+
+Compared `opt-level = "s"`, `"z"`, and `3` for `takusu-core` release builds.
+All runs use `jemalloc` default.
+
+- `opt-level = 3` (speed):
+  - `cargo run -p takusu-core --example score_check --release`: `0.106s`, `1.056395 µs`
+  - `time ./target/release/examples/profile` (20 calls): `~1.79s` (1.827s, 1.790s, 1.765s)
+  - `cargo bench -p takusu-core --bench realworld`:
+    - `plan realworld habits (7d)`: `25.464 ms`
+    - `plan realworld habits (30d)`: `474.81 ms`
+    - `plan_partial realworld habits (14d, 5 pinned)`: `142.47 ms`
+    - `plan_in_range realworld habits (14d, days 2-7)`: `49.816 ms`
+- `opt-level = "s"` (size):
+  - `score_check` release: `0.135s`, `1.347508 µs`
+  - `profile` 20 calls: `~2.43s` (2.445s, 2.431s, 2.412s)
+- `opt-level = "z"` (aggressive size):
+  - `score_check` release: `0.185s`, `1.850095 µs`
+  - `profile` 20 calls: `~4.53s` (4.481s, 4.507s, 4.638s)
+
+### Notes
+
+- `opt-level = 3` is the fastest across all measured `takusu-core` workloads.
+- `"s"` and `"z"` regress runtime, with `"z"` being dramatically slower.
+- Final workspace `Cargo.toml` uses `codegen-units = 1`, `lto = "thin"`, `opt-level = 3`.
