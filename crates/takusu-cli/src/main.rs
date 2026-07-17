@@ -124,15 +124,10 @@ enum Commands {
         command: SkillCommands,
     },
 
-    /// Agent assistant (text mode; --text for a single turn)
+    /// Agent assistant
     Agent {
-        /// Single text input for one agent turn
-        #[arg(short, long)]
-        text: Option<String>,
-
-        /// Auto-approve any pending changes without prompting
-        #[arg(long)]
-        yes: bool,
+        #[command(subcommand)]
+        command: AgentCommands,
     },
 
     /// MCP server over stdio
@@ -141,6 +136,34 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
+enum AgentCommands {
+    /// Run the agent assistant
+    Run {
+        /// Single text input for one agent turn
+        #[arg(short, long)]
+        text: Option<String>,
+
+        /// Auto-approve any pending changes without prompting
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Show or edit agent configuration
+    Config {
+        #[command(subcommand)]
+        command: AgentConfigCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum AgentConfigCommands {
+    /// Show current agent config file
+    Show,
+    /// Set a config value by key path (e.g. llm.base_url https://api.openai.com/v1)
+    Set { key: String, value: String },
+}
+
+#[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum ConfigCommands {
     /// Show config file path and contents
     Show,
@@ -164,6 +187,12 @@ enum ConfigCommands {
         sleep_start: Option<String>,
         #[arg(long)]
         sleep_end: Option<String>,
+        /// Comfortable daily workload in hours (stored as minutes)
+        #[arg(long)]
+        comfortable: Option<f64>,
+        /// Maximum daily workload in hours (stored as minutes)
+        #[arg(long)]
+        maximum: Option<f64>,
     },
 }
 
@@ -515,6 +544,9 @@ enum ScheduledSpanCommands {
     /// List scheduled spans for a habit
     #[command(visible_alias = "ls")]
     List { id: String },
+    /// List scheduled spans for all habits
+    #[command(name = "list-all", visible_alias = "ls-all")]
+    ListAll,
     /// Remove a scheduled span
     #[command(visible_alias = "rm")]
     Remove { id: String, span_id: String },
@@ -525,6 +557,9 @@ enum StepsCommands {
     /// List steps for a habit
     #[command(visible_alias = "ls")]
     List { id: String },
+    /// List steps for all habits
+    #[command(name = "list-all", visible_alias = "ls-all")]
+    ListAll,
 
     /// Edit steps for a habit in $EDITOR (JSON array)
     Edit { id: String },
@@ -692,6 +727,8 @@ fn main() {
                     tz,
                     sleep_start,
                     sleep_end,
+                    comfortable: _,
+                    maximum: _,
                 } => {
                     if let Some(v) = storage {
                         config::set("storage", v).unwrap_or_else(|e| {
@@ -841,7 +878,8 @@ async fn run(
 ) -> Result<(), AppError> {
     match cmd {
         Commands::Health => {
-            println!("OK (local mode)");
+            let status = app.health_check().await?;
+            println!("{status}");
         }
         Commands::Task { command } => run_task(mode, app.as_ref(), &tz, command).await?,
         Commands::Schedule { command } => run_schedule(mode, app.as_ref(), &tz, command).await?,
@@ -849,7 +887,13 @@ async fn run(
         Commands::Sync { command } => run_sync(app.as_ref(), command).await?,
         Commands::Habit { command } => run_habit(mode, app.as_ref(), command).await?,
         Commands::Skill { command } => run_skill(mode, app.as_ref(), command).await?,
-        Commands::Agent { text, yes } => agent::run(app, text, yes).await?,
+        Commands::Agent { command } => match command {
+            AgentCommands::Run { text, yes } => agent::run(app, text, yes).await?,
+            AgentCommands::Config { command } => match command {
+                AgentConfigCommands::Show => agent::config_show()?,
+                AgentConfigCommands::Set { key, value } => agent::config_set(&key, &value)?,
+            },
+        },
         #[cfg(feature = "mcp")]
         Commands::Mcp => mcp::run(app).await?,
         Commands::GenRootToken => unreachable!(),
@@ -1352,6 +1396,13 @@ async fn run_habit_steps(
                 DisplayMode::Simple => display_simple::display_habit_steps(&steps),
             }
         }
+        StepsCommands::ListAll => {
+            let (steps, habits) = tokio::try_join!(app.list_all_habit_steps(), app.list_habits())?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_all_habit_steps(&steps, &habits),
+                DisplayMode::Simple => display_simple::display_all_habit_steps(&steps, &habits),
+            }
+        }
         StepsCommands::Edit { id } => {
             let steps = app.list_habit_steps(&id).await?;
             let original =
@@ -1502,7 +1553,7 @@ async fn read_skill_body(path: Option<String>) -> Result<Option<String>, AppErro
 }
 
 async fn run_scheduled_spans(
-    _mode: DisplayMode,
+    mode: DisplayMode,
     app: &TakusuApp,
     cmd: ScheduledSpanCommands,
 ) -> Result<(), AppError> {
@@ -1540,6 +1591,18 @@ async fn run_scheduled_spans(
                         s.end_date,
                         s.reason.as_deref().unwrap_or("")
                     );
+                }
+            }
+        }
+        ScheduledSpanCommands::ListAll => {
+            let (spans, habits) =
+                tokio::try_join!(app.list_all_habit_scheduled_spans(), app.list_habits())?;
+            match mode {
+                DisplayMode::Rich => {
+                    display_rich::display_all_habit_scheduled_spans(&spans, &habits)
+                }
+                DisplayMode::Simple => {
+                    display_simple::display_all_habit_scheduled_spans(&spans, &habits)
                 }
             }
         }
@@ -1905,13 +1968,16 @@ async fn run_config(cmd: ConfigCommands, app: &TakusuApp, cfg: &CliConfig) -> Re
             tz,
             sleep_start,
             sleep_end,
+            comfortable,
+            maximum,
             ..
         } => {
             let mut update = UpdateSettings {
                 tz,
                 sleep_start,
                 sleep_end,
-                ..Default::default()
+                comfortable_minutes: comfortable.map(|h| (h * 60.0).round() as i64),
+                maximum_minutes: maximum.map(|h| (h * 60.0).round() as i64),
             };
             if update.tz.is_none() && cfg.tz.is_some() {
                 update.tz = cfg.tz.clone();
@@ -1923,9 +1989,11 @@ async fn run_config(cmd: ConfigCommands, app: &TakusuApp, cfg: &CliConfig) -> Re
                 update.sleep_end = cfg.sleep_end.clone();
             }
             let resp = app.update_settings(&update).await?;
+            let comfortable_h = resp.comfortable_minutes.unwrap_or(0) as f64 / 60.0;
+            let maximum_h = resp.maximum_minutes.unwrap_or(0) as f64 / 60.0;
             println!(
-                "Settings updated: tz={}, sleep_start={}, sleep_end={}",
-                resp.tz, resp.sleep_start, resp.sleep_end
+                "Settings updated: tz={}, sleep_start={}, sleep_end={}, comfortable={:.2}h, maximum={:.2}h",
+                resp.tz, resp.sleep_start, resp.sleep_end, comfortable_h, maximum_h
             );
         }
     }

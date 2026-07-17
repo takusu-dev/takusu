@@ -1,4 +1,5 @@
 use std::io::{self, BufRead, Write};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use takusu_agent::{AgentConfig, AgentError, AgentSession, ApprovalRequest};
@@ -146,4 +147,109 @@ async fn run_repl(session: &AgentSession, yes: bool) -> Result<(), AppError> {
 
 fn agent_err(e: AgentError) -> AppError {
     AppError::Internal(e.to_string())
+}
+
+fn agent_config_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| {
+                let mut p = PathBuf::from(h);
+                p.push(".config");
+                p
+            })
+        })
+}
+
+fn agent_config_path() -> PathBuf {
+    let mut path = agent_config_dir().unwrap_or_else(|| PathBuf::from("."));
+    path.push("takusu");
+    path.push("agent.toml");
+    path
+}
+
+pub fn config_show() -> Result<(), AppError> {
+    let path = agent_config_path();
+    if path.exists() {
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| AppError::Internal(format!("failed to read agent config: {e}")))?;
+        println!("{}\n{}", path.display(), content);
+    } else {
+        println!(
+            "No agent config file at {}; defaults will be used.",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+pub fn config_set(key: &str, value: &str) -> Result<(), AppError> {
+    let path = agent_config_path();
+    let mut doc = if path.exists() {
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| AppError::Internal(format!("failed to read agent config: {e}")))?;
+        content
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| AppError::BadRequest(format!("invalid agent config: {e}")))?
+    } else {
+        toml_edit::DocumentMut::new()
+    };
+
+    set_toml_path(&mut doc, key, value)
+        .map_err(|e| AppError::BadRequest(format!("failed to set {key}: {e}")))?;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| AppError::Internal(format!("failed to create config dir: {e}")))?;
+    }
+    std::fs::write(&path, doc.to_string())
+        .map_err(|e| AppError::Internal(format!("failed to write agent config: {e}")))?;
+
+    println!("Updated agent config: {key} = {value}");
+    Ok(())
+}
+
+fn parse_toml_edit_value(s: &str) -> toml_edit::Value {
+    if let Ok(b) = s.parse::<bool>() {
+        return b.into();
+    }
+    if let Ok(i) = s.parse::<i64>() {
+        return i.into();
+    }
+    if let Ok(f) = s.parse::<f64>() {
+        return f.into();
+    }
+    toml_edit::Value::String(toml_edit::Formatted::new(s.to_string()))
+}
+
+fn set_toml_path(doc: &mut toml_edit::DocumentMut, path: &str, value: &str) -> Result<(), String> {
+    let keys: Vec<&str> = path.split('.').collect();
+    if keys.is_empty() {
+        return Err("empty key path".into());
+    }
+
+    let table = doc.as_table_mut();
+    let mut item: &mut toml_edit::Item = &mut table[keys[0]];
+    for key in &keys[1..keys.len() - 1] {
+        if !item.is_table() {
+            *item = toml_edit::Item::Table(toml_edit::Table::new());
+        }
+        let t = item.as_table_mut().ok_or("expected table")?;
+        item = &mut t[*key];
+    }
+
+    if keys.len() > 1 {
+        if !item.is_table() {
+            *item = toml_edit::Item::Table(toml_edit::Table::new());
+        }
+        let t = item.as_table_mut().ok_or("expected table")?;
+        t.insert(
+            keys.last().unwrap(),
+            toml_edit::value(parse_toml_edit_value(value)),
+        );
+    } else {
+        table.insert(keys[0], toml_edit::value(parse_toml_edit_value(value)));
+    }
+
+    Ok(())
 }

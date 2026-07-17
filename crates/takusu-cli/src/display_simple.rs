@@ -1,5 +1,7 @@
 use jiff::Timestamp;
-use takusu_storage::{HabitRow, HabitStepRow, ScheduleEntry, SkillRow, TaskRow, TokenRow};
+use takusu_storage::{
+    HabitRow, HabitScheduledSpanRow, HabitStepRow, ScheduleEntry, SkillRow, TaskRow, TokenRow,
+};
 
 /// Build the display label for a task ID.
 /// Habit-generated tasks show `h{habit_display_id}#{task_display_id}` (#305);
@@ -274,4 +276,60 @@ pub fn display_skill_detail(skill: &SkillRow) {
     println!("{} {} ({})", skill.slug, skill.name, marker);
     println!("  {}\n", skill.description);
     println!("{}", skill.body);
+}
+
+fn habit_label_by_id<'a>(habit_id: &str, habits: &'a [HabitRow]) -> (&'a str, i64) {
+    let habit = habits.iter().find(|h| h.id == habit_id);
+    match habit {
+        Some(h) => (&h.title, h.display_id),
+        None => ("(unknown)", 0),
+    }
+}
+
+pub fn display_all_habit_scheduled_spans(spans: &[HabitScheduledSpanRow], habits: &[HabitRow]) {
+    if spans.is_empty() {
+        println!("  (no scheduled spans)");
+        return;
+    }
+    for s in spans {
+        let (title, display_id) = habit_label_by_id(&s.habit_id, habits);
+        println!(
+            "h{} {}\t{}\t{}..{}\t{}",
+            display_id,
+            title,
+            s.id,
+            s.start_date,
+            s.end_date,
+            s.reason.as_deref().unwrap_or("")
+        );
+    }
+}
+
+pub fn display_all_habit_steps(steps: &[HabitStepRow], habits: &[HabitRow]) {
+    if steps.is_empty() {
+        println!("  (no steps)");
+        return;
+    }
+    for s in steps {
+        let (title, display_id) = habit_label_by_id(&s.habit_id, habits);
+        let deps: Vec<String> = serde_json::from_str(&s.depends_on).unwrap_or_default();
+        let deps_str = if deps.is_empty() {
+            String::new()
+        } else {
+            format!(" ← {}", deps.join(","))
+        };
+        println!(
+            "h{} {}\t{} [{}] {} ({}–{}, {}min) parallel: {}{}",
+            display_id,
+            title,
+            s.id,
+            s.position,
+            s.title,
+            s.start_time,
+            s.end_time,
+            s.avg_minutes,
+            if s.parallelizable { "yes" } else { "no" },
+            deps_str
+        );
+    }
 }

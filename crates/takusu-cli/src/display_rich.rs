@@ -1,7 +1,9 @@
 use comfy_table::{Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 use jiff::Timestamp;
 use takusu_habit::{RecurrenceRule, summarize};
-use takusu_storage::{HabitRow, HabitStepRow, ScheduleEntry, SkillRow, TaskRow, TokenRow};
+use takusu_storage::{
+    HabitRow, HabitScheduledSpanRow, HabitStepRow, ScheduleEntry, SkillRow, TaskRow, TokenRow,
+};
 
 /// Parse a recurrence JSON string into a human-readable summary.
 /// Falls back to the raw string if parsing fails.
@@ -226,6 +228,90 @@ pub fn display_habit_steps(steps: &[HabitStepRow]) {
             Cell::new(s.sigma_minutes),
             Cell::new(if s.parallelizable { "✓" } else { "✗" }),
             Cell::new(if s.allows_parallel { "✓" } else { "✗" }),
+            Cell::new(format!("{:.1}", s.abandonability)),
+            Cell::new(if deps_str.is_empty() {
+                "-".into()
+            } else {
+                deps_str
+            }),
+        ]);
+    }
+    println!("{table}");
+}
+
+fn habit_label_by_id<'a>(habit_id: &'a str, habits: &'a [HabitRow]) -> (&'a str, i64, &'a str) {
+    let habit = habits.iter().find(|h| h.id == habit_id);
+    match habit {
+        Some(h) => (&h.title, h.display_id, &h.id),
+        None => ("(unknown)", 0, habit_id),
+    }
+}
+
+pub fn display_all_habit_scheduled_spans(spans: &[HabitScheduledSpanRow], habits: &[HabitRow]) {
+    if spans.is_empty() {
+        println!("No scheduled spans found.");
+        return;
+    }
+
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_header(vec![
+            Cell::new("Habit").fg(Color::Cyan),
+            Cell::new("ID").fg(Color::Cyan),
+            Cell::new("Start").fg(Color::Cyan),
+            Cell::new("End").fg(Color::Cyan),
+            Cell::new("Reason").fg(Color::Cyan),
+        ]);
+
+    for s in spans {
+        let (title, display_id, _id) = habit_label_by_id(&s.habit_id, habits);
+        table.add_row(vec![
+            Cell::new(format!("h{} {}", display_id, title)),
+            Cell::new(&s.id),
+            Cell::new(&s.start_date),
+            Cell::new(&s.end_date),
+            Cell::new(s.reason.as_deref().unwrap_or("")),
+        ]);
+    }
+    println!("{table}");
+}
+
+pub fn display_all_habit_steps(steps: &[HabitStepRow], habits: &[HabitRow]) {
+    if steps.is_empty() {
+        println!("No steps found.");
+        return;
+    }
+
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_header(vec![
+            Cell::new("Habit").fg(Color::Cyan),
+            Cell::new("Pos").fg(Color::Cyan),
+            Cell::new("Title").fg(Color::Cyan),
+            Cell::new("Time").fg(Color::Cyan),
+            Cell::new("Avg (min)").fg(Color::Cyan),
+            Cell::new("σ (min)").fg(Color::Cyan),
+            Cell::new("Parallel").fg(Color::Cyan),
+            Cell::new("Abandon").fg(Color::Cyan),
+            Cell::new("Depends").fg(Color::Cyan),
+        ]);
+
+    for s in steps {
+        let (title, display_id, _id) = habit_label_by_id(&s.habit_id, habits);
+        let deps: Vec<String> = serde_json::from_str(&s.depends_on).unwrap_or_default();
+        let deps_str = deps.join(",");
+        table.add_row(vec![
+            Cell::new(format!("h{} {}", display_id, title)),
+            Cell::new(s.position),
+            Cell::new(&s.title),
+            Cell::new(format!("{}–{}", s.start_time, s.end_time)),
+            Cell::new(s.avg_minutes),
+            Cell::new(s.sigma_minutes),
+            Cell::new(if s.parallelizable { "✓" } else { "✗" }),
             Cell::new(format!("{:.1}", s.abandonability)),
             Cell::new(if deps_str.is_empty() {
                 "-".into()
