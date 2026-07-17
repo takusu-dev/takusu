@@ -332,9 +332,9 @@ enum TaskCommands {
     /// Change task status (pending, scheduled, in_progress, completed, skipped)
     Status { id: String, status: String },
 
-    /// Detect and offer to remove redundant (composite) dependency edges (#355)
+    /// Detect and offer to remove redundant (composite) dependency edges
     #[command(visible_alias = "deps")]
-    DepsCheck,
+    DepsCheck, // (#355)
 
     /// Import tasks from an iCalendar (.ics) file
     #[command(name = "import-ical", visible_alias = "ical")]
@@ -474,21 +474,21 @@ enum HabitCommands {
     #[command(visible_alias = "rm")]
     Delete { id: String },
 
-    /// Manage habit scheduled spans (#303 / #503)
+    /// Manage habit scheduled spans
     #[command(name = "scheduled-spans", visible_aliases = ["spans", "pause"])]
     ScheduledSpans {
         #[command(subcommand)]
         command: ScheduledSpanCommands,
-    },
+    }, // (#303 / #503)
 
-    /// Detect and offer to remove redundant step dependency edges (#355)
-    StepsCheck { id: String },
+    /// Detect and offer to remove redundant step dependency edges
+    StepsCheck { id: String }, // (#355)
 
-    /// Manage habit steps (#95)
+    /// Manage habit steps
     Steps {
         #[command(subcommand)]
         command: StepsCommands,
-    },
+    }, // (#95)
 }
 
 #[derive(Subcommand)]
