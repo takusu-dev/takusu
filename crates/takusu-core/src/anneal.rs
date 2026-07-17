@@ -45,6 +45,8 @@ use rand::{Rng, RngExt};
 use rustc_hash::FxHashSet;
 
 use super::*;
+use evaluate::evaluate_with_scratch;
+#[cfg(test)]
 use evaluate::evaluate;
 
 struct TabuList {
@@ -327,6 +329,11 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
     let mut current = build_initial(planner);
     let mut best = current.clone();
 
+    // Reusable scratch buffers for evaluate() so the SA hot loop does not
+    // allocate on every call.
+    let mut sorted = Vec::with_capacity(task_count);
+    let mut pair_scratch = Vec::with_capacity(task_count);
+
     let total_avg: i64 = planner
         .tasks
         .iter()
@@ -340,7 +347,14 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
     let mut tabu = TabuList::new(task_count * 2);
     let mut temperature = t0;
 
-    let mut eval_current = evaluate(planner, &current, temperature, t0);
+    let mut eval_current = evaluate_with_scratch(
+        planner,
+        &current,
+        temperature,
+        t0,
+        &mut sorted,
+        &mut pair_scratch,
+    );
     let mut eval_best = eval_current;
 
     let mut stagnant_levels = 0u32;
@@ -348,8 +362,17 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
     while temperature > t_min {
         let mut improved = false;
         for _ in 0..iter_per_temp {
-            let neighbor = generate_neighbor(planner, &current, rng);
-            let eval_neighbor = evaluate(planner, &neighbor, temperature, t0);
+            let Some(neighbor) = generate_neighbor(planner, &current, rng) else {
+                continue;
+            };
+            let eval_neighbor = evaluate_with_scratch(
+                planner,
+                &neighbor,
+                temperature,
+                t0,
+                &mut sorted,
+                &mut pair_scratch,
+            );
 
             if is_tabu(&tabu, &neighbor) && eval_neighbor <= eval_best {
                 continue;
@@ -369,7 +392,21 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
                     // temperature could make a worse plan score higher.
                     // The T=0 comparison ensures best tracks the plan that
                     // is actually best at the final temperature (#282).
-                    if evaluate(planner, &current, 0.0, t0) > evaluate(planner, &best, 0.0, t0) {
+                    if evaluate_with_scratch(
+                        planner,
+                        &current,
+                        0.0,
+                        t0,
+                        &mut sorted,
+                        &mut pair_scratch,
+                    ) > evaluate_with_scratch(
+                        planner,
+                        &best,
+                        0.0,
+                        t0,
+                        &mut sorted,
+                        &mut pair_scratch,
+                    ) {
                         best = current.clone();
                         eval_best = eval_current;
                         improved = true;
@@ -399,8 +436,22 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
         }
 
         temperature *= alpha;
-        eval_current = evaluate(planner, &current, temperature, t0);
-        eval_best = evaluate(planner, &best, temperature, t0);
+        eval_current = evaluate_with_scratch(
+            planner,
+            &current,
+            temperature,
+            t0,
+            &mut sorted,
+            &mut pair_scratch,
+        );
+        eval_best = evaluate_with_scratch(
+            planner,
+            &best,
+            temperature,
+            t0,
+            &mut sorted,
+            &mut pair_scratch,
+        );
     }
 
     repair_polish(planner, best, None)
@@ -427,6 +478,11 @@ pub fn sa_lns_partial(
     let mut current = build_initial_partial(planner, pinned);
     let mut best = current.clone();
 
+    // Reusable scratch buffers for evaluate() so the SA hot loop does not
+    // allocate on every call.
+    let mut sorted = Vec::with_capacity(task_count);
+    let mut pair_scratch = Vec::with_capacity(task_count);
+
     let total_avg: i64 = planner
         .tasks
         .iter()
@@ -441,7 +497,14 @@ pub fn sa_lns_partial(
     let mut tabu = TabuList::new(task_count * 2);
     let mut temperature = t0;
 
-    let mut eval_current = evaluate(planner, &current, temperature, t0);
+    let mut eval_current = evaluate_with_scratch(
+        planner,
+        &current,
+        temperature,
+        t0,
+        &mut sorted,
+        &mut pair_scratch,
+    );
     let mut eval_best = eval_current;
 
     let mut stagnant_levels = 0u32;
@@ -449,8 +512,18 @@ pub fn sa_lns_partial(
     while temperature > t_min {
         let mut improved = false;
         for _ in 0..iter_per_temp {
-            let neighbor = generate_neighbor_partial(planner, &current, rng, &pinned_ids);
-            let eval_neighbor = evaluate(planner, &neighbor, temperature, t0);
+            let Some(neighbor) = generate_neighbor_partial(planner, &current, rng, &pinned_ids)
+            else {
+                continue;
+            };
+            let eval_neighbor = evaluate_with_scratch(
+                planner,
+                &neighbor,
+                temperature,
+                t0,
+                &mut sorted,
+                &mut pair_scratch,
+            );
 
             if is_tabu(&tabu, &neighbor) && eval_neighbor <= eval_best {
                 continue;
@@ -466,7 +539,21 @@ pub fn sa_lns_partial(
                 if eval_current > eval_best {
                     // Compare at T=0 to avoid temperature-dependent score
                     // drift (#282).
-                    if evaluate(planner, &current, 0.0, t0) > evaluate(planner, &best, 0.0, t0) {
+                    if evaluate_with_scratch(
+                        planner,
+                        &current,
+                        0.0,
+                        t0,
+                        &mut sorted,
+                        &mut pair_scratch,
+                    ) > evaluate_with_scratch(
+                        planner,
+                        &best,
+                        0.0,
+                        t0,
+                        &mut sorted,
+                        &mut pair_scratch,
+                    ) {
                         best = current.clone();
                         eval_best = eval_current;
                         improved = true;
@@ -490,8 +577,22 @@ pub fn sa_lns_partial(
         }
 
         temperature *= alpha;
-        eval_current = evaluate(planner, &current, temperature, t0);
-        eval_best = evaluate(planner, &best, temperature, t0);
+        eval_current = evaluate_with_scratch(
+            planner,
+            &current,
+            temperature,
+            t0,
+            &mut sorted,
+            &mut pair_scratch,
+        );
+        eval_best = evaluate_with_scratch(
+            planner,
+            &best,
+            temperature,
+            t0,
+            &mut sorted,
+            &mut pair_scratch,
+        );
     }
 
     repair_polish(planner, best, Some(&pinned_ids))
@@ -566,7 +667,11 @@ fn repair_polish(planner: &Planner, best: Plan, pinned_ids: Option<&FxHashSet<us
         schedules: greedy_rebuild(planner, &remaining, &destroyed),
     };
 
-    if evaluate(planner, &rebuilt, 0.0, 1.0) > evaluate(planner, &best, 0.0, 1.0) {
+    let mut sorted = Vec::with_capacity(planner.tasks.len());
+    let mut pair_scratch = Vec::with_capacity(planner.tasks.len());
+    if evaluate_with_scratch(planner, &rebuilt, 0.0, 1.0, &mut sorted, &mut pair_scratch)
+        > evaluate_with_scratch(planner, &best, 0.0, 1.0, &mut sorted, &mut pair_scratch)
+    {
         rebuilt
     } else {
         best
@@ -637,7 +742,7 @@ fn generate_neighbor_partial(
     current: &Plan,
     rng: &mut impl Rng,
     pinned_ids: &FxHashSet<usize>,
-) -> Plan {
+) -> Option<Plan> {
     let unpinned: Vec<usize> = current
         .schedules
         .iter()
@@ -646,7 +751,7 @@ fn generate_neighbor_partial(
         .collect();
 
     if unpinned.is_empty() {
-        return current.clone();
+        return None;
     }
 
     let unpinned_positions: Vec<usize> = current
@@ -659,7 +764,7 @@ fn generate_neighbor_partial(
 
     let r = rng.random_range(0..100u32) as i32;
 
-    let result = match r {
+    match r {
         0..=19 => {
             let idx = rng.random_range(0..unpinned_positions.len());
             let pos = unpinned_positions[idx];
@@ -667,7 +772,7 @@ fn generate_neighbor_partial(
         }
         20..=39 => {
             if unpinned.len() < 2 {
-                return current.clone();
+                return None;
             }
             let a_idx = rng.random_range(0..unpinned_positions.len());
             let a_pos = unpinned_positions[a_idx];
@@ -685,15 +790,13 @@ fn generate_neighbor_partial(
         }
         55..=69 => {
             if unpinned.len() < 2 {
-                return current.clone();
+                return None;
             }
             neighbor_reorder_partial(planner, current, &unpinned_positions, rng)
         }
         70..=84 => neighbor_repair_depend(planner, current, rng, Some(pinned_ids)),
         _ => neighbor_lns_partial(planner, current, rng, pinned_ids),
-    };
-
-    result.unwrap_or_else(|| current.clone())
+    }
 }
 
 fn neighbor_shift_at(
@@ -878,19 +981,17 @@ fn mark_tabu(tabu: &mut TabuList, current: &Plan, neighbor: &Plan) {
     }
 }
 
-fn generate_neighbor(planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Plan {
+fn generate_neighbor(planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Option<Plan> {
     let r = rng.random_range(0..100u32) as i32;
 
-    let result = match r {
+    match r {
         0..=19 => neighbor_shift(planner, current, rng),
         20..=39 => neighbor_swap(planner, current, rng),
         40..=54 => neighbor_duration(planner, current, rng),
         55..=69 => neighbor_reorder(planner, current, rng),
         70..=84 => neighbor_repair_depend(planner, current, rng, None),
         _ => neighbor_lns(planner, current, rng),
-    };
-
-    result.unwrap_or_else(|| current.clone())
+    }
 }
 
 fn neighbor_shift(planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Option<Plan> {

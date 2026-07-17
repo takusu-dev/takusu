@@ -40,11 +40,15 @@ takusu/
 ├── crates/
 │   ├── takusu-core/          # Core planner (data types, scheduling algorithm)
 │   │   ├── src/lib.rs        #   Public API (Point, Task, NormalDist, Planner, Plan, RescheduleRange)
-│   │   ├── src/evaluate.rs   #   Evaluation function (10 components)
+│   │   ├── src/evaluate.rs   #   Evaluation function (8 components)
 │   │   ├── src/anneal.rs     #   SA + LNS + Tabu Search (full + partial)
 │   │   ├── src/solver.rs     #   Parallel restart + solve/solve_partial entry points
-│   │   ├── benches/plan.rs   #   Criterion benchmark (25 tasks)
-│   │   └── examples/daily.rs #   Example: 1-day schedule with 9 tasks
+│   │   ├── benches/plan.rs            #   Criterion benchmark (25 tasks)
+│   │   ├── benches/realworld.rs       #   Criterion benchmark (real-world habit fixtures)
+│   │   ├── examples/daily.rs          #   Example: 1-day schedule with 9 tasks
+│   │   ├── examples/common/mod.rs     #   Shared fixture loader for examples
+│   │   ├── examples/profile.rs        #   Profile planner.plan() under perf
+│   │   └── examples/score_check.rs    #   Microbenchmark evaluate() on a fixed plan
 │   ├── takusu-local/         # Local server (axum + SQLite, uses takusu-local-lib)
 │   ├── takusu-local-lib/     # Business logic library (shared by takusu-local and takusu-cli)
 │   │   ├── src/
@@ -102,13 +106,16 @@ takusu/
 │   ├── issue-assign/SKILL.md
 │   ├── pr-watch/SKILL.md
 │   ├── jj-resolve/SKILL.md
-│   └── discord-notify/SKILL.md
+│   ├── discord-notify/SKILL.md
+│   ├── profile/SKILL.md     # Perf flamegraph + top-function summary helper
+│   └── optimize/SKILL.md    # Benchmark-driven takusu-core optimization workflow
 └── scripts/                  # Agent + user helper scripts
     ├── issue-view.sh         # GitHub issue list/show (label/assignee/state filters)
     ├── issue-assign.sh       # Assign an unassigned issue to the current user
     ├── pr-watch.sh           # PR CI/review/comment snapshot + polling watch loop
     ├── jj-resolve.sh         # Jujutsu conflict list/show/edit/mark/merge/abort
-    └── discord-notify.sh     # Discord webhook sender (DISCORD_WEBHOOK_URL env)
+    ├── discord-notify.sh     # Discord webhook sender (DISCORD_WEBHOOK_URL env)
+    └── profile.sh            # Perf profiling with flamegraph + top-self summary
 ```
 
 ## Development Environment
@@ -133,6 +140,7 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `cargo bench -p takusu-ical` | Run iCal parsing benchmark |
 | `cargo codspeed build` and `cargo codspeed run` | Build/run all benchmarks with CodSpeed |
 | `cargo flamegraph --bench realworld` | Generate a flamegraph for the realworld benchmark |
+| `./scripts/profile.sh --example profile -p takusu-core` | Profile a target under perf, output flamegraph + top-self summary |
 | `cargo run -p takusu-habit --example expand_realworld -- --horizon-days N --output ...` | Regenerate real-world task fixtures from the habit fixture |
 | `cargo test -p takusu-worker` | Run takusu-worker unit tests (6 auth tests) |
 | `cargo test -p takusu-worker --test auth -- --ignored` | Run takusu-worker auth integration tests (requires `wrangler`) |
@@ -196,11 +204,11 @@ The default loop for any task is:
 
 ## Agent Helpers
 
-Five shell scripts in `scripts/` wrap common agent workflows. Each has a
+Six shell scripts in `scripts/` wrap common agent workflows. Each has a
 matching thin Devin skill in `.devin/skills/<name>/SKILL.md` so the agent
 can invoke them via `/issue-view`, `/issue-assign`, `/pr-watch`, `/jj-resolve`,
-or `/discord-notify`. **Prefer the scripts over raw `gh`/`jj`/`curl`** — they
-produce stable, agent-friendly output and centralize the flag spelling.
+`/discord-notify`, `/profile`, or `/optimize`. **Prefer the scripts over raw `gh`/`jj`/`curl`** —
+they produce stable, agent-friendly output and centralize the flag spelling.
 
 ### `issue-view.sh` — GitHub issue viewer
 
@@ -272,6 +280,24 @@ resolved" command — a file is considered resolved once all conflict markers
 are removed, so `mark` just verifies that condition. Use `merge` if you
 prefer a 3-way merge tool over manual marker editing.
 
+### `profile.sh` — Perf flamegraph + top-function summary
+
+Profiles a Rust example or binary under `perf`, then emits an SVG flamegraph
+and sorted `top-self` / `top-total` summaries. Useful because raw `perf report`
+output is hard to read for Rust (inlined generic symbols and deep rayon stacks).
+
+```sh
+./scripts/profile.sh --example profile -p takusu-core
+./scripts/profile.sh --bin takusu-local -p takusu-local
+./scripts/profile.sh --example daily -p takusu-core -- --some-arg
+```
+
+- Builds with frame pointers + debug info, runs `perf record -e cycles:u -g`,
+  then converts with `inferno-collapse-perf` / `inferno-flamegraph`.
+- Outputs in `target/profile/` by default (`-o <dir>` to override):
+  `flamegraph.svg`, `top.txt`, `top-self.txt`, `top-total.txt`, `collapsed.txt`.
+- Requires `perf` and `inferno`; auto-pulls from nixpkgs via `nix` if missing.
+
 ### `discord-notify.sh` — Discord webhook sender
 
 Sends a message or embed to Discord via webhook. The URL is read from
@@ -306,7 +332,7 @@ real logic lives in the shell scripts so it can be used outside Devin too.
 | `thiserror` | 2.0 | workspace | Error derive macro |
 | `jiff` | 0.2.21 | takusu-core, takusu-local, takusu-cli | Date/time handling |
 | `rand` | 0.10 | takusu-core | RNG for SA |
-| `rustc-hash` | 2.1 | takusu-core | `FxHashSet` (faster than std) |
+| `rustc-hash` | 2.1 | takusu-core | `FxHashSet` / `FxHashMap` (faster than std) |
 | `rayon` | 1.10 | takusu-core | Parallel SA restarts |
 | `criterion` | 5.0.1 (`codspeed-criterion-compat`) | takusu-core, takusu-habit, takusu-ical (dev) | CodSpeed-compatible benchmarking |
 | `tokio` | 1.52.0 | workspace | Async runtime (full features) |
