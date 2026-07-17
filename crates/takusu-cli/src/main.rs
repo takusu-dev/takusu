@@ -750,12 +750,19 @@ fn main() {
 
         // Build local config from CLI config and environment overrides
         let mut local_cfg = LocalConfig::default();
-        if let Ok(v) = std::env::var("TAKUSU_STORAGE") && !v.is_empty() {
+        let env_storage = std::env::var("TAKUSU_STORAGE").ok().filter(|s| !s.is_empty());
+        let env_db = std::env::var("TAKUSU_DB").ok().filter(|s| !s.is_empty());
+
+        if let Some(v) = env_storage {
             local_cfg.storage = v;
+        } else if env_db.is_some() {
+            // TAKUSU_DB only makes sense for the sqlite backend, so prefer it
+            // over a config file that may point at production workers.
+            local_cfg.storage = "sqlite".to_string();
         } else if let Some(ref v) = cfg.storage {
             local_cfg.storage = v.clone();
         }
-        if let Ok(v) = std::env::var("TAKUSU_DB") && !v.is_empty() {
+        if let Some(v) = env_db {
             local_cfg.db = v;
         } else if let Some(ref v) = cfg.db {
             local_cfg.db = v.clone();
