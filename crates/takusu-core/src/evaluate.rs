@@ -115,18 +115,11 @@ const W_DAILY_MAXIMUM: f64 = 2.0;
 
 pub fn evaluate(planner: &Planner, plan: &Plan, temperature: f64, t0: f64) -> f64 {
     let mut sorted = Vec::with_capacity(plan.schedules.len());
-    let mut pair_scratch = Vec::with_capacity(plan.schedules.len());
-    evaluate_with_scratch(
-        planner,
-        plan,
-        temperature,
-        t0,
-        &mut sorted,
-        &mut pair_scratch,
-    )
+    let mut index = Vec::with_capacity(planner.tasks.len());
+    evaluate_with_scratch(planner, plan, temperature, t0, &mut sorted, &mut index)
 }
 
-/// `evaluate` の内部実装。sorted 区間列と区間 union 用 scratch バッファを
+/// `evaluate` の内部実装。sorted 区間列と index 用 scratch バッファを
 /// 呼び出し側が再利用することで、ホットパス（SA ループ）での毎回の allocation を避ける。
 pub(crate) fn evaluate_with_scratch(
     planner: &Planner,
@@ -134,11 +127,11 @@ pub(crate) fn evaluate_with_scratch(
     temperature: f64,
     t0: f64,
     sorted: &mut Vec<(Point, Point, usize)>,
-    pair_scratch: &mut Vec<(Point, Point)>,
+    index: &mut Vec<Option<(Point, Point)>>,
 ) -> f64 {
     let mut score = 0.0;
     let schedules = &plan.schedules;
-    let index = build_index(planner, schedules);
+    build_index_into(planner, schedules, index);
     let (plan_start, plan_end) = plan_range(schedules);
 
     // Sort schedules once by start so per-day/window scans can break early and
@@ -147,29 +140,40 @@ pub(crate) fn evaluate_with_scratch(
     sorted.extend_from_slice(schedules);
     sorted.sort_unstable_by_key(|(s, _, _)| s.0);
 
-    score += task_and_depend_scores(planner, &index, temperature, t0);
-    score += buffer_score(planner, &index);
-    score += sleep_score(planner, sorted, (plan_start, plan_end), pair_scratch);
-    score += daily_load_score(planner, sorted, (plan_start, plan_end), pair_scratch);
+    score += task_and_depend_scores(planner, index, temperature, t0);
+    score += buffer_score(planner, index);
+    score += sleep_score(planner, sorted, (plan_start, plan_end));
+    score += daily_load_score(planner, sorted, (plan_start, plan_end));
     score += parallel_violation_score(planner, sorted);
     score += inclusion_bonus(planner, schedules);
-    score += stability_score(planner, &index);
-    score += habit_consistency_score(planner, &index);
+    score += stability_score(planner, index);
+    score += habit_consistency_score(planner, index);
 
     score
 }
 
 /// task_id → (start, end) の索引。O(n) で構築し、各スコア関数の探索を O(1) にする。
-fn build_index(
+fn build_index_into(
     planner: &Planner,
     schedules: &[(Point, Point, usize)],
-) -> Vec<Option<(Point, Point)>> {
-    let mut index = vec![None; planner.tasks.len()];
+    index: &mut Vec<Option<(Point, Point)>>,
+) {
+    index.clear();
+    index.resize(planner.tasks.len(), None);
     for (s, e, id) in schedules {
         if *id < index.len() {
             index[*id] = Some((*s, *e));
         }
     }
+}
+
+#[cfg(test)]
+fn build_index(
+    planner: &Planner,
+    schedules: &[(Point, Point, usize)],
+) -> Vec<Option<(Point, Point)>> {
+    let mut index = Vec::with_capacity(planner.tasks.len());
+    build_index_into(planner, schedules, &mut index);
     index
 }
 
@@ -260,11 +264,49 @@ fn buffer_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
     score
 }
 
+/// `sorted` 内の区間を `[window_start, window_end)` に clip した上で
+/// 重複を統合した占有長さを返す。allocation なし。
+#[inline]
+fn union_length_in_window(
+    sorted: &[(Point, Point, usize)],
+    window_start: Point,
+    window_end: Point,
+) -> i64 {
+    let mut total = 0i64;
+    let mut cur_start = Point(0);
+    let mut cur_end = Point(0);
+    let mut in_union = false;
+    for (s, e, _) in sorted {
+        if e.0 <= window_start.0 {
+            continue;
+        }
+        if s.0 >= window_end.0 {
+            break;
+        }
+        let clip_start = Point(s.0.max(window_start.0));
+        let clip_end = Point(e.0.min(window_end.0));
+        if !in_union {
+            cur_start = clip_start;
+            cur_end = clip_end;
+            in_union = true;
+        } else if clip_start.0 > cur_end.0 {
+            total += cur_end.0 - cur_start.0;
+            cur_start = clip_start;
+            cur_end = clip_end;
+        } else if clip_end.0 > cur_end.0 {
+            cur_end = clip_end;
+        }
+    }
+    if in_union {
+        total += cur_end.0 - cur_start.0;
+    }
+    total
+}
+
 fn sleep_score(
     planner: &Planner,
     sorted: &[(Point, Point, usize)],
     (plan_start, plan_end): (Point, Point),
-    scratch: &mut Vec<(Point, Point)>,
 ) -> f64 {
     if !planner.sleep.enabled {
         return 0.0;
@@ -291,22 +333,7 @@ fn sleep_score(
         let sleep_window_start = Point(day_start_point.0 + sleep_start_rel);
         let sleep_window_end = Point(day_start_point.0 + sleep_end_rel);
 
-        scratch.clear();
-        for (s_start, s_end, _) in sorted {
-            if s_end.0 <= sleep_window_start.0 {
-                continue;
-            }
-            if s_start.0 >= sleep_window_end.0 {
-                break;
-            }
-            let overlap_start = Point(s_start.0.max(sleep_window_start.0));
-            let overlap_end = Point(s_end.0.min(sleep_window_end.0));
-            if overlap_start < overlap_end {
-                scratch.push((overlap_start, overlap_end));
-            }
-        }
-
-        let occupied = union_length_sorted(scratch);
+        let occupied = union_length_in_window(sorted, sleep_window_start, sleep_window_end);
 
         if occupied > 0 {
             let sleep_got = (sleep_len - occupied).max(0);
@@ -339,7 +366,6 @@ fn daily_load_score(
     planner: &Planner,
     sorted: &[(Point, Point, usize)],
     (plan_start, plan_end): (Point, Point),
-    scratch: &mut Vec<(Point, Point)>,
 ) -> f64 {
     if planner.workload.comfortable_slots_per_day == 0
         && planner.workload.maximum_slots_per_day == 0
@@ -361,22 +387,9 @@ fn daily_load_score(
     let mut score = 0.0;
     while day_start.0 < plan_end.0 {
         let day_end = Point(day_start.0 + slots_per_day);
-        scratch.clear();
-        for (s, e, _) in sorted {
-            if e.0 <= day_start.0 {
-                continue;
-            }
-            if s.0 >= day_end.0 {
-                break;
-            }
-            let clip_start = Point(s.0.max(day_start.0));
-            let clip_end = Point(e.0.min(day_end.0));
-            if clip_start < clip_end {
-                scratch.push((clip_start, clip_end));
-            }
-        }
 
-        let load = union_length_sorted(scratch);
+        let load = union_length_in_window(sorted, day_start, day_end);
+
         let normal_penalty = (load * load) as f64 * W_DAILY_NORMAL;
         let comfortable_excess = (load - planner.workload.comfortable_slots_per_day).max(0);
         let overload_penalty = (comfortable_excess * comfortable_excess) as f64 * W_DAILY_OVERLOAD;
@@ -396,21 +409,7 @@ fn union_length(intervals: &mut [(Point, Point)]) -> i64 {
     if intervals.is_empty() {
         return 0;
     }
-    if intervals.len() == 1 {
-        return (intervals[0].1).0 - (intervals[0].0).0;
-    }
     intervals.sort_unstable_by_key(|(s, _)| s.0);
-    union_length_sorted(intervals)
-}
-
-/// `union_length` のソート済み入力版。入力は開始時刻昇順であることを前提とする。
-fn union_length_sorted(intervals: &[(Point, Point)]) -> i64 {
-    if intervals.is_empty() {
-        return 0;
-    }
-    if intervals.len() == 1 {
-        return (intervals[0].1).0 - (intervals[0].0).0;
-    }
     let mut total = 0i64;
     let (mut cur_start, mut cur_end) = intervals[0];
     for (s, e) in intervals.iter().skip(1) {

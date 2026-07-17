@@ -45,9 +45,9 @@ use rand::{Rng, RngExt};
 use rustc_hash::FxHashSet;
 
 use super::*;
-use evaluate::evaluate_with_scratch;
 #[cfg(test)]
 use evaluate::evaluate;
+use evaluate::evaluate_with_scratch;
 
 struct TabuList {
     entries: VecDeque<(usize, i64, i64)>,
@@ -332,7 +332,7 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
     // Reusable scratch buffers for evaluate() so the SA hot loop does not
     // allocate on every call.
     let mut sorted = Vec::with_capacity(task_count);
-    let mut pair_scratch = Vec::with_capacity(task_count);
+    let mut index = Vec::with_capacity(task_count);
 
     let total_avg: i64 = planner
         .tasks
@@ -347,14 +347,8 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
     let mut tabu = TabuList::new(task_count * 2);
     let mut temperature = t0;
 
-    let mut eval_current = evaluate_with_scratch(
-        planner,
-        &current,
-        temperature,
-        t0,
-        &mut sorted,
-        &mut pair_scratch,
-    );
+    let mut eval_current =
+        evaluate_with_scratch(planner, &current, temperature, t0, &mut sorted, &mut index);
     let mut eval_best = eval_current;
 
     let mut stagnant_levels = 0u32;
@@ -365,14 +359,8 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
             let Some(neighbor) = generate_neighbor(planner, &current, rng) else {
                 continue;
             };
-            let eval_neighbor = evaluate_with_scratch(
-                planner,
-                &neighbor,
-                temperature,
-                t0,
-                &mut sorted,
-                &mut pair_scratch,
-            );
+            let eval_neighbor =
+                evaluate_with_scratch(planner, &neighbor, temperature, t0, &mut sorted, &mut index);
 
             if is_tabu(&tabu, &neighbor) && eval_neighbor <= eval_best {
                 continue;
@@ -392,21 +380,9 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
                     // temperature could make a worse plan score higher.
                     // The T=0 comparison ensures best tracks the plan that
                     // is actually best at the final temperature (#282).
-                    if evaluate_with_scratch(
-                        planner,
-                        &current,
-                        0.0,
-                        t0,
-                        &mut sorted,
-                        &mut pair_scratch,
-                    ) > evaluate_with_scratch(
-                        planner,
-                        &best,
-                        0.0,
-                        t0,
-                        &mut sorted,
-                        &mut pair_scratch,
-                    ) {
+                    if evaluate_with_scratch(planner, &current, 0.0, t0, &mut sorted, &mut index)
+                        > evaluate_with_scratch(planner, &best, 0.0, t0, &mut sorted, &mut index)
+                    {
                         best = current.clone();
                         eval_best = eval_current;
                         improved = true;
@@ -436,22 +412,9 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
         }
 
         temperature *= alpha;
-        eval_current = evaluate_with_scratch(
-            planner,
-            &current,
-            temperature,
-            t0,
-            &mut sorted,
-            &mut pair_scratch,
-        );
-        eval_best = evaluate_with_scratch(
-            planner,
-            &best,
-            temperature,
-            t0,
-            &mut sorted,
-            &mut pair_scratch,
-        );
+        eval_current =
+            evaluate_with_scratch(planner, &current, temperature, t0, &mut sorted, &mut index);
+        eval_best = evaluate_with_scratch(planner, &best, temperature, t0, &mut sorted, &mut index);
     }
 
     repair_polish(planner, best, None)
@@ -481,7 +444,7 @@ pub fn sa_lns_partial(
     // Reusable scratch buffers for evaluate() so the SA hot loop does not
     // allocate on every call.
     let mut sorted = Vec::with_capacity(task_count);
-    let mut pair_scratch = Vec::with_capacity(task_count);
+    let mut index = Vec::with_capacity(task_count);
 
     let total_avg: i64 = planner
         .tasks
@@ -497,14 +460,8 @@ pub fn sa_lns_partial(
     let mut tabu = TabuList::new(task_count * 2);
     let mut temperature = t0;
 
-    let mut eval_current = evaluate_with_scratch(
-        planner,
-        &current,
-        temperature,
-        t0,
-        &mut sorted,
-        &mut pair_scratch,
-    );
+    let mut eval_current =
+        evaluate_with_scratch(planner, &current, temperature, t0, &mut sorted, &mut index);
     let mut eval_best = eval_current;
 
     let mut stagnant_levels = 0u32;
@@ -516,14 +473,8 @@ pub fn sa_lns_partial(
             else {
                 continue;
             };
-            let eval_neighbor = evaluate_with_scratch(
-                planner,
-                &neighbor,
-                temperature,
-                t0,
-                &mut sorted,
-                &mut pair_scratch,
-            );
+            let eval_neighbor =
+                evaluate_with_scratch(planner, &neighbor, temperature, t0, &mut sorted, &mut index);
 
             if is_tabu(&tabu, &neighbor) && eval_neighbor <= eval_best {
                 continue;
@@ -539,21 +490,9 @@ pub fn sa_lns_partial(
                 if eval_current > eval_best {
                     // Compare at T=0 to avoid temperature-dependent score
                     // drift (#282).
-                    if evaluate_with_scratch(
-                        planner,
-                        &current,
-                        0.0,
-                        t0,
-                        &mut sorted,
-                        &mut pair_scratch,
-                    ) > evaluate_with_scratch(
-                        planner,
-                        &best,
-                        0.0,
-                        t0,
-                        &mut sorted,
-                        &mut pair_scratch,
-                    ) {
+                    if evaluate_with_scratch(planner, &current, 0.0, t0, &mut sorted, &mut index)
+                        > evaluate_with_scratch(planner, &best, 0.0, t0, &mut sorted, &mut index)
+                    {
                         best = current.clone();
                         eval_best = eval_current;
                         improved = true;
@@ -577,22 +516,9 @@ pub fn sa_lns_partial(
         }
 
         temperature *= alpha;
-        eval_current = evaluate_with_scratch(
-            planner,
-            &current,
-            temperature,
-            t0,
-            &mut sorted,
-            &mut pair_scratch,
-        );
-        eval_best = evaluate_with_scratch(
-            planner,
-            &best,
-            temperature,
-            t0,
-            &mut sorted,
-            &mut pair_scratch,
-        );
+        eval_current =
+            evaluate_with_scratch(planner, &current, temperature, t0, &mut sorted, &mut index);
+        eval_best = evaluate_with_scratch(planner, &best, temperature, t0, &mut sorted, &mut index);
     }
 
     repair_polish(planner, best, Some(&pinned_ids))
@@ -667,10 +593,16 @@ fn repair_polish(planner: &Planner, best: Plan, pinned_ids: Option<&FxHashSet<us
         schedules: greedy_rebuild(planner, &remaining, &destroyed),
     };
 
-    let mut sorted = Vec::with_capacity(planner.tasks.len());
-    let mut pair_scratch = Vec::with_capacity(planner.tasks.len());
-    if evaluate_with_scratch(planner, &rebuilt, 0.0, 1.0, &mut sorted, &mut pair_scratch)
-        > evaluate_with_scratch(planner, &best, 0.0, 1.0, &mut sorted, &mut pair_scratch)
+    let mut eval_sorted = Vec::with_capacity(planner.tasks.len());
+    let mut eval_index = Vec::with_capacity(planner.tasks.len());
+    if evaluate_with_scratch(
+        planner,
+        &rebuilt,
+        0.0,
+        1.0,
+        &mut eval_sorted,
+        &mut eval_index,
+    ) > evaluate_with_scratch(planner, &best, 0.0, 1.0, &mut eval_sorted, &mut eval_index)
     {
         rebuilt
     } else {
