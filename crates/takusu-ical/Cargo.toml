@@ -8,3 +8,10 @@ repository.workspace = true
 [dependencies]
 thiserror.workspace = true
 serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "parse"
+harness = false

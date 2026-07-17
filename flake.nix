@@ -500,6 +500,7 @@
               ci-rust = pkgs.buildEnv {
                 name = "ci-rust";
                 paths = with pkgs; [
+                  cargo-codspeed
                   cargo-expand
                   cargo-nextest
                   rust-bin
@@ -576,14 +577,16 @@
             # so the binary cache warms exactly the same store paths.
             rust = pkgs.mkShell {
               nativeBuildInputs = with pkgs; [
+                cargo-codspeed
                 cargo-expand
+                cargo-flamegraph
                 cargo-nextest
                 rust-bin
                 pkg-config
                 cmake
                 stdenv.cc
                 mold
-              ];
+              ] ++ lib.optional pkgs.stdenv.isLinux pkgs.perf;
               buildInputs = with pkgs; [
                 alsa-lib
                 libpulseaudio
@@ -669,7 +672,9 @@
             # Node, JVM, MCP config symlink, etc.).
             default = pkgs.mkShell {
               nativeBuildInputs = with pkgs; [
+                cargo-codspeed
                 cargo-expand
+                cargo-flamegraph
                 cargo-nextest
                 cargo-ndk
                 rust-bin
@@ -681,7 +686,7 @@
                 wrangler
                 openjdk_headless
                 ktlint
-              ];
+              ] ++ lib.optional pkgs.stdenv.isLinux pkgs.perf;
 
               buildInputs = with pkgs; [
                 alsa-lib

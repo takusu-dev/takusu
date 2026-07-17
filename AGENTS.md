@@ -128,7 +128,12 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `cargo nextest run -p takusu-core` | Run core planner tests (45) |
 | `cargo nextest run -p takusu-local` | Run local server integration tests (39) |
 | `cargo nextest run -p takusu-ical` | Run iCal parser tests (15) |
-| `cargo bench -p takusu-core` | Run benchmark (~148ms for 25 tasks) |
+| `cargo bench -p takusu-core` | Run core benchmarks (synthetic plan and realworld habit fixtures) |
+| `cargo bench -p takusu-habit` | Run habit recurrence expansion benchmarks |
+| `cargo bench -p takusu-ical` | Run iCal parsing benchmark |
+| `cargo codspeed build` and `cargo codspeed run` | Build/run all benchmarks with CodSpeed |
+| `cargo flamegraph --bench realworld` | Generate a flamegraph for the realworld benchmark |
+| `cargo run -p takusu-habit --example expand_realworld -- --horizon-days N --output ...` | Regenerate real-world task fixtures from the habit fixture |
 | `cargo test -p takusu-worker` | Run takusu-worker unit tests (6 auth tests) |
 | `cargo test -p takusu-worker --test auth -- --ignored` | Run takusu-worker auth integration tests (requires `wrangler`) |
 | `cargo run --example daily` | Run daily schedule example |
@@ -300,17 +305,17 @@ real logic lives in the shell scripts so it can be used outside Devin too.
 |-------|---------|---------|-------|
 | `thiserror` | 2.0 | workspace | Error derive macro |
 | `jiff` | 0.2.21 | takusu-core, takusu-local, takusu-cli | Date/time handling |
-| `rand` | 0.8 | takusu-core | RNG for SA |
+| `rand` | 0.10 | takusu-core | RNG for SA |
 | `rustc-hash` | 2.1 | takusu-core | `FxHashSet` (faster than std) |
 | `rayon` | 1.10 | takusu-core | Parallel SA restarts |
-| `criterion` | 0.5 | takusu-core (dev) | Benchmarking |
+| `criterion` | 5.0.1 (`codspeed-criterion-compat`) | takusu-core, takusu-habit, takusu-ical (dev) | CodSpeed-compatible benchmarking |
 | `tokio` | 1.52.0 | workspace | Async runtime (full features) |
 | `axum` | 0.8 | takusu-local | HTTP framework |
-| `sqlx` | 0.8 (sqlite) | takusu-local, takusu-local-lib | SQLite async driver |
+| `sqlx` | 0.9 (sqlite) | takusu-local, takusu-local-lib | SQLite async driver |
 | `serde` / `serde_json` | 1 / 1 | takusu-local, takusu-ical, takusu-client | Serialization |
 | `uuid` | 1 (v7) | takusu-local, takusu-local-lib | ID generation |
-| `sha2` | 0.10 | takusu-local-lib | Token hashing |
-| `tower-http` | 0.6 (cors,trace) | takusu-local | HTTP middleware |
+| `sha2` | 0.11 | takusu-local-lib | Token hashing |
+| `tower-http` | 0.7 (cors,trace) | takusu-local | HTTP middleware |
 | `tracing` / `tracing-subscriber` | 0.1 / 0.3 | takusu-local, takusu-local-lib | Logging |
 | `async-trait` | 0.1 | takusu-local-lib | Async trait |
 | `reqwest` | 0.13 (rustls) | google-cal, takusu-local-lib, takusu-client, takusu-audio | HTTP client |

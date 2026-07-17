@@ -79,6 +79,43 @@ jobs:
       - run: nix develop .#rust --command bash -c "cargo nextest run --all"
       - run: nix develop .#rust --command bash -c "cargo test --doc --all-features -- --nocapture"
 
+  codspeed:
+    needs: changes
+    if: |
+      github.event_name == 'workflow_dispatch' || (
+        needs.changes.outputs.rust == 'true' && (
+          github.event_name == 'pull_request' ||
+          (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        )
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
+
+      - name: Restore binary cache
+        uses: asa1984/infra/.github/actions/binary-cache@44165003348ea3578a66f8c879bfaf23a3c7cc18
+        with:
+          package: .#ci-rust
+
+      - run: nix profile install .#ci-rust
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build benchmarks
+        run: nix develop .#rust --command bash -c 'cargo codspeed build'
+
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: simulation
+          run: nix develop .#rust --command bash -c 'cargo codspeed run'
+
   android-build:
     needs: changes
     if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
