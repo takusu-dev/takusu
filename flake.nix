@@ -144,6 +144,10 @@
             strictDeps = true;
             pname = "takusu-cli";
             cargoExtraArgs = "-p takusu-cli";
+            # Tests that spawn an in-process HTTP client need CA certificates,
+            # which are not available in the Nix build sandbox. CI already runs
+            # the full test suite separately, so skip checks here.
+            doCheck = false;
             nativeBuildInputs = with pkgs; [
               pkg-config
               cmake
