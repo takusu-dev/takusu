@@ -39,3 +39,21 @@ This file records stable baseline numbers for `takusu-core` performance work.
 - `plan_in_range` over 14d fixture, 20 calls:
   - total `1.580s`
   - mean `79.0 ms`
+
+## 2026-07-18: current `@` (kpzytzys 8e01c02a) before allocator experiments
+
+- `cargo run -p takusu-core --example score_check` (debug):
+  - score `-1844.372500`
+  - total `2.268s`
+  - mean `22.678947 µs`
+- `cargo run -p takusu-core --example score_check --release`:
+  - score `-1844.372500`
+  - total `0.159s`
+  - mean `1.594242 µs`
+- `time ./target/release/examples/profile` (20 full `plan()` calls):
+  - real `~3.11s` (three runs: 3.227s, 3.135s, 2.980s)
+- `cargo bench -p takusu-core --bench realworld`:
+  - `plan realworld habits (7d)`: `40.865 ms`
+  - `plan realworld habits (30d)`: `749.92 ms`
+  - `plan_partial realworld habits (14d, 5 pinned)`: `241.08 ms`
+  - `plan_in_range realworld habits (14d, days 2-7)`: `84.368 ms`
