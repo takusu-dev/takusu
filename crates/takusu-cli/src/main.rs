@@ -306,6 +306,13 @@ enum TaskCommands {
     /// Detect and offer to remove redundant (composite) dependency edges (#355)
     #[command(visible_alias = "deps")]
     DepsCheck,
+
+    /// Import tasks from an iCalendar (.ics) file
+    #[command(name = "import-ical", visible_alias = "ical")]
+    ImportIcal {
+        /// Path to the .ics file, or "-" to read from stdin
+        file: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1073,6 +1080,25 @@ async fn run_task(
         TaskCommands::DepsCheck => {
             deps_check_tasks(app).await?;
         }
+        TaskCommands::ImportIcal { file } => {
+            let content = read_text_file(&file).await?;
+            let result = app.import_ical(&content).await?;
+            if result.task_ids.is_empty() {
+                println!("No tasks imported.");
+            } else {
+                let id_set: std::collections::HashSet<String> =
+                    result.task_ids.iter().cloned().collect();
+                let all_tasks = app.list_tasks(&TaskQuery::default()).await?;
+                let tasks: Vec<_> = all_tasks
+                    .into_iter()
+                    .filter(|t| id_set.contains(&t.id))
+                    .collect();
+                match mode {
+                    DisplayMode::Rich => display_rich::display_tasks(&tasks, tz, &habit_map),
+                    DisplayMode::Simple => display_simple::display_tasks(&tasks, tz, &habit_map),
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -1334,7 +1360,7 @@ async fn run_habit_steps(
             }
         }
         StepsCommands::Set { id, file } => {
-            let content = read_steps_file(&file).await?;
+            let content = read_text_file(&file).await?;
             let inputs = editor::parse_edited_steps(&content).map_err(AppError::BadRequest)?;
             let replaced = app.replace_habit_steps(&id, &inputs).await?;
             match mode {
@@ -1346,7 +1372,7 @@ async fn run_habit_steps(
     Ok(())
 }
 
-async fn read_steps_file(path: &str) -> Result<String, AppError> {
+async fn read_text_file(path: &str) -> Result<String, AppError> {
     match path {
         "-" => {
             let mut buf = String::new();
