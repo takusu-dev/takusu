@@ -1,0 +1,72 @@
+name: CodSpeed
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  # Detect which areas of the repo changed so unrelated jobs can be skipped.
+  # On workflow_dispatch every job runs (manual triggers ignore the filter).
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'flake.nix'
+              - 'flake.lock'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/codspeed.yml'
+
+  codspeed:
+    needs: changes
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true') ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/push-') && needs.changes.outputs.rust == 'true')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        bench:
+          - package: takusu-habit
+            name: habit
+          - package: takusu-ical
+            name: parse
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
+
+      - name: Restore binary cache
+        uses: asa1984/infra/.github/actions/binary-cache@44165003348ea3578a66f8c879bfaf23a3c7cc18
+        with:
+          package: .#ci-rust
+
+      - run: nix profile install .#ci-rust
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build benchmark
+        run: nix develop .#rust --command bash -c 'cargo codspeed build -p ${{ matrix.bench.package }} --bench ${{ matrix.bench.name }}'
+
+      - name: Run benchmark
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: simulation
+          run: nix develop .#rust --command bash -c 'cargo codspeed run -p ${{ matrix.bench.package }} --bench ${{ matrix.bench.name }}'
