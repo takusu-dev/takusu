@@ -32,6 +32,7 @@ import Markdown, {
   type MarkdownStyles,
   type RenderRules,
 } from 'react-native-markdown-renderer';
+import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import { DEFAULT_PORT, useServer } from '@/src/api/ServerProvider';
 import { markdownToSpeech } from '@/src/utils/markdownToSpeech';
 import TakusuAudioModule from '../../modules/takusu-server/src/TakusuAudioModule';
@@ -379,6 +380,7 @@ function AssistantMessage({
 }
 
 const SWIPE_THRESHOLD = 40;
+const SCROLL_THRESHOLD = 40;
 
 export function AgentView() {
   const router = useRouter();
@@ -451,6 +453,8 @@ export function AgentView() {
   } | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   const backgroundAbortedRef = useRef(false);
+  const flatListRef = useRef<FlatList<Message>>(null);
+  const autoScrollRef = useRef(true);
   const viewOffset = useSharedValue(0);
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: viewOffset.value }],
@@ -512,6 +516,7 @@ export function AgentView() {
     }
     const index = ids.indexOf(id);
     const snapshot = await loadSessionSnapshot(id);
+    autoScrollRef.current = true;
     setMessages(snapshot?.messages ?? []);
     setApproval(snapshot?.approval ?? null);
     sessionIdRef.current = id;
@@ -749,6 +754,7 @@ export function AgentView() {
       return;
     setError(null);
     backgroundAbortedRef.current = false;
+    autoScrollRef.current = true;
     setMessages((current) => [
       ...current,
       { id: newId('user'), role: 'user', text: value.trim() },
@@ -939,6 +945,23 @@ export function AgentView() {
     );
   }, []);
 
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const { contentOffset, contentSize, layoutMeasurement } =
+        event.nativeEvent;
+      const distanceFromBottom =
+        contentSize.height - contentOffset.y - layoutMeasurement.height;
+      autoScrollRef.current = distanceFromBottom <= SCROLL_THRESHOLD;
+    },
+    [],
+  );
+
+  const handleMessagesContentSizeChange = useCallback(() => {
+    if (autoScrollRef.current) {
+      flatListRef.current?.scrollToEnd({ animated: false });
+    }
+  }, []);
+
   async function toggleRecording() {
     if (busy || isSwitchingRef.current || !historyReady) return;
     setError(null);
@@ -1017,6 +1040,7 @@ export function AgentView() {
       activeIndexRef.current = nextIndex;
       setText('');
       viewOffset.value = direction * width;
+      autoScrollRef.current = true;
       setMessages(snapshot.messages);
       setApproval(snapshot.approval);
       saveSessionHistory({
@@ -1181,6 +1205,7 @@ export function AgentView() {
           </Pressable>
         </View>
         <FlatList
+          ref={flatListRef}
           style={styles.messages}
           contentContainerStyle={styles.messageContent}
           data={messages}
@@ -1210,6 +1235,9 @@ export function AgentView() {
               />
             );
           }}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+          onContentSizeChange={handleMessagesContentSizeChange}
           ListEmptyComponent={
             <Text style={[styles.empty, { color: colors.gray }]}>
               何を予定しますか？
