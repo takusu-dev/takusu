@@ -23,6 +23,13 @@ export class AgentApiError extends Error {
   }
 }
 
+export class AbortError extends Error {
+  constructor(message = 'Stream aborted') {
+    super(message);
+    this.name = 'AbortError';
+  }
+}
+
 export class AgentClient {
   private readonly baseUrl: string;
   private readonly token: string;
@@ -83,6 +90,7 @@ export class AgentClient {
     text: string,
     idempotencyKey: string,
     onEvent: (event: TurnEvent) => void,
+    signal?: AbortSignal,
   ): Promise<AgentTurnResult> {
     return new Promise((resolve, reject) => {
       const url = `${this.baseUrl}/api/agent/v1/sessions/${encodeURIComponent(sessionId)}/turns/stream`;
@@ -95,6 +103,22 @@ export class AgentClient {
       let buffer = '';
       let lastResponseLength = 0;
       let done = false;
+
+      const abort = () => {
+        try {
+          xhr.abort();
+        } catch {
+          // Ignore errors from a double-abort or a completed request.
+        }
+      };
+      const cleanupSignal = () => {
+        signal?.removeEventListener('abort', abort);
+      };
+      if (signal?.aborted) {
+        reject(new AbortError('Stream aborted'));
+        return;
+      }
+      signal?.addEventListener('abort', abort);
 
       const parseBlock = (block: string) => {
         const dataLines: string[] = [];
@@ -126,6 +150,7 @@ export class AgentClient {
           onEvent(event);
           if (event.type === 'Done') {
             done = true;
+            cleanupSignal();
             resolve(event.data);
           }
         } catch {
@@ -167,6 +192,7 @@ export class AgentClient {
       };
 
       xhr.onload = () => {
+        cleanupSignal();
         if (xhr.status >= 400) {
           reject(
             new AgentApiError(xhr.status, xhr.responseText || 'request failed'),
@@ -184,13 +210,15 @@ export class AgentClient {
       };
 
       xhr.onerror = () => {
+        cleanupSignal();
         reject(
           new AgentApiError(xhr.status, xhr.responseText || 'network error'),
         );
       };
 
       xhr.onabort = () => {
-        reject(new Error('Stream aborted'));
+        cleanupSignal();
+        reject(new AbortError('Stream aborted'));
       };
 
       xhr.send(
