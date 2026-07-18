@@ -93,23 +93,6 @@ fn bench_plan_partial_25(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_plan_50(c: &mut Criterion) {
-    let mut rng = StdRng::seed_from_u64(43);
-    let planner = generate_tasks(&mut rng, 50);
-
-    let mut group = c.benchmark_group("plan");
-    group.sample_size(10);
-
-    group.bench_function("plan 50 tasks", |b| {
-        b.iter(|| {
-            let plan = planner.plan();
-            black_box(plan);
-        })
-    });
-
-    group.finish();
-}
-
 fn bench_plan_100(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(44);
     let planner = generate_tasks(&mut rng, 100);
@@ -160,23 +143,6 @@ fn bench_plan_range_25(c: &mut Criterion) {
     group.bench_function("plan_in_range 25 tasks", |b| {
         b.iter(|| {
             let plan = planner.plan_in_range(&range, &plan.schedules, &[]);
-            black_box(plan);
-        })
-    });
-
-    group.finish();
-}
-
-fn bench_plan_200(c: &mut Criterion) {
-    let mut rng = StdRng::seed_from_u64(45);
-    let planner = generate_tasks(&mut rng, 200);
-
-    let mut group = c.benchmark_group("plan");
-    group.sample_size(10);
-
-    group.bench_function("plan 200 tasks", |b| {
-        b.iter(|| {
-            let plan = planner.plan();
             black_box(plan);
         })
     });
@@ -239,9 +205,7 @@ criterion_group!(
     benches,
     bench_plan_25,
     bench_plan_partial_25,
-    bench_plan_50,
     bench_plan_100,
-    bench_plan_200,
     bench_plan_many_parallel,
     bench_plan_many_fixed,
     bench_plan_many_dependencies,
