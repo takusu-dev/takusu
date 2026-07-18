@@ -11,6 +11,11 @@ export interface ToolCallItem {
   isError?: boolean;
 }
 
+export type MessageSegment =
+  | { type: 'thinking'; text: string }
+  | { type: 'text'; text: string }
+  | { type: 'toolCall'; callIndex: number };
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant';
@@ -19,6 +24,8 @@ export interface Message {
   toolCalls?: ToolCallItem[];
   state?: 'thinking' | 'tool_call' | 'answering' | 'done';
   collapsed?: boolean;
+  segments?: MessageSegment[];
+  collapsedGroups?: boolean[];
 }
 
 export interface AgentSessionSnapshot {

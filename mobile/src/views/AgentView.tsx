@@ -47,13 +47,334 @@ import {
   loadSessionSnapshot,
   type AgentSessionSnapshot,
   type Message,
+  type MessageSegment,
+  type ToolCallItem,
   saveSessionHistory,
   saveSessionSnapshot,
 } from '@/src/api/agentSessionStore';
-import { BRAND_COLOR, COLORS, useColors } from '@/src/theme';
+import { BRAND_COLOR, COLORS, useColors, type ColorSet } from '@/src/theme';
 
 function newId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function appendSegment(
+  segments: MessageSegment[],
+  segment: MessageSegment,
+): MessageSegment[] {
+  const last = segments[segments.length - 1];
+  if (last && last.type === 'text' && segment.type === 'text') {
+    return [
+      ...segments.slice(0, -1),
+      { ...last, text: last.text + segment.text },
+    ];
+  }
+  if (last && last.type === 'thinking' && segment.type === 'thinking') {
+    return [
+      ...segments.slice(0, -1),
+      { ...last, text: last.text + segment.text },
+    ];
+  }
+  return [...segments, segment];
+}
+
+function appendTextSegment(
+  segments: MessageSegment[],
+  text: string,
+): MessageSegment[] {
+  return appendSegment(segments, { type: 'text', text });
+}
+
+function finalizeTextSegment(
+  segments: MessageSegment[],
+  text: string,
+): MessageSegment[] {
+  const last = segments[segments.length - 1];
+  if (last && last.type === 'text') {
+    return [...segments.slice(0, -1), { ...last, text }];
+  }
+  return [...segments, { type: 'text', text }];
+}
+
+function buildFallbackSegments(message: Message): MessageSegment[] {
+  const segments: MessageSegment[] = [];
+  if (message.thinking && message.thinking.length > 0) {
+    segments.push({ type: 'thinking', text: message.thinking });
+  }
+  message.toolCalls?.forEach((_, index) => {
+    segments.push({ type: 'toolCall', callIndex: index });
+  });
+  if (message.text.length > 0) {
+    segments.push({ type: 'text', text: message.text });
+  }
+  return segments;
+}
+
+function getCollapsed(message: Message, groupIndex: number): boolean {
+  if (message.collapsedGroups && message.collapsedGroups.length > groupIndex) {
+    return message.collapsedGroups[groupIndex] ?? true;
+  }
+  return message.collapsed ?? true;
+}
+
+function updateCollapsedGroup(message: Message, groupIndex: number): boolean[] {
+  const next = [...(message.collapsedGroups ?? [])];
+  while (next.length <= groupIndex) {
+    next.push(true);
+  }
+  next[groupIndex] = !getCollapsed(message, groupIndex);
+  return next;
+}
+
+interface TextItem {
+  type: 'text';
+  text: string;
+}
+
+interface ContextItem {
+  type: 'context';
+  thinking?: string;
+  callIndices: number[];
+  groupIndex: number;
+}
+
+type AssistantItem = TextItem | ContextItem;
+
+function buildAssistantItems(message: Message): AssistantItem[] {
+  const segments = message.segments ?? buildFallbackSegments(message);
+  const items: AssistantItem[] = [];
+  let context: ContextItem | null = null;
+  let text: TextItem | null = null;
+  let groupCount = 0;
+  for (const segment of segments) {
+    if (segment.type === 'text') {
+      if (context) {
+        items.push(context);
+        context = null;
+      }
+      if (text) {
+        text.text += segment.text;
+      } else {
+        text = { type: 'text', text: segment.text };
+      }
+      continue;
+    }
+    if (text) {
+      items.push(text);
+      text = null;
+    }
+    if (!context) {
+      context = {
+        type: 'context',
+        callIndices: [],
+        groupIndex: groupCount++,
+      };
+    }
+    if (segment.type === 'thinking') {
+      context.thinking = (context.thinking ?? '') + segment.text;
+    } else {
+      context.callIndices.push(segment.callIndex);
+    }
+  }
+  if (text) items.push(text);
+  if (context) items.push(context);
+  return items;
+}
+
+interface ToolNameChipProps {
+  call: ToolCallItem;
+  colors: ColorSet;
+}
+
+function ToolNameChip({ call, colors }: ToolNameChipProps) {
+  return (
+    <View
+      style={[
+        styles.toolChip,
+        {
+          backgroundColor: colors.surface,
+          borderColor: colors.separator,
+        },
+      ]}
+    >
+      <View
+        style={[
+          styles.toolChipDot,
+          {
+            backgroundColor: call.isError ? colors.red : colors.green,
+          },
+        ]}
+      />
+      <Text style={[styles.toolChipText, { color: colors.black }]}>
+        {call.name}
+      </Text>
+    </View>
+  );
+}
+
+interface ToolCallCardProps {
+  call: ToolCallItem;
+  colors: ColorSet;
+}
+
+function ToolCallCard({ call, colors }: ToolCallCardProps) {
+  return (
+    <View
+      style={[
+        styles.toolCall,
+        {
+          backgroundColor: colors.surface,
+          borderColor: colors.separator,
+        },
+      ]}
+    >
+      <View style={styles.toolCallHeader}>
+        <View
+          style={[
+            styles.toolStatus,
+            {
+              backgroundColor: call.isError ? colors.red : colors.green,
+            },
+          ]}
+        />
+        <Text style={{ color: colors.black, fontWeight: '700' }}>
+          {call.name}
+        </Text>
+      </View>
+      {call.arguments !== undefined && (
+        <Text style={[styles.toolArgs, { color: colors.gray }]}>
+          {JSON.stringify(call.arguments, null, 2)}
+        </Text>
+      )}
+      {call.result !== undefined && (
+        <Text
+          style={{
+            color: call.isError ? colors.red : colors.green,
+          }}
+        >
+          {call.isError ? `エラー: ${call.result}` : call.result}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+interface AssistantMessageProps {
+  item: Message;
+  colors: ColorSet;
+  markdownStyles: Partial<MarkdownStyles>;
+  markdownIt: MarkdownIt;
+  markdownRules: RenderRules;
+  onToggleGroupCollapsed: (messageId: string, groupIndex: number) => void;
+}
+
+function AssistantMessage({
+  item,
+  colors,
+  markdownStyles,
+  markdownIt,
+  markdownRules,
+  onToggleGroupCollapsed,
+}: AssistantMessageProps) {
+  const items = useMemo(() => buildAssistantItems(item), [item]);
+  return (
+    <View
+      style={[
+        styles.bubble,
+        styles.assistantBubble,
+        { backgroundColor: colors.separator, gap: 8 },
+      ]}
+    >
+      {items.map((it, idx) => {
+        if (it.type === 'text') {
+          return (
+            <View key={`t-${idx}`}>
+              {item.state === 'done' || item.state === undefined ? (
+                <Markdown
+                  style={markdownStyles}
+                  markdownit={markdownIt}
+                  rules={markdownRules}
+                >
+                  {it.text}
+                </Markdown>
+              ) : (
+                <Text style={{ color: colors.black }}>{it.text}</Text>
+              )}
+            </View>
+          );
+        }
+        const collapsed = getCollapsed(item, it.groupIndex);
+        const calls = it.callIndices
+          .map((i) => item.toolCalls?.[i])
+          .filter((c): c is ToolCallItem => c !== undefined);
+        const hasThinking = it.thinking && it.thinking.length > 0;
+        return (
+          <View key={`c-${idx}`} style={{ gap: 6 }}>
+            <Pressable
+              onPress={() => onToggleGroupCollapsed(item.id, it.groupIndex)}
+              style={[
+                styles.contextHeader,
+                {
+                  backgroundColor: colors.surfaceTint,
+                  borderColor: colors.separator,
+                },
+              ]}
+            >
+              <View style={styles.contextHeaderInner}>
+                <Ionicons
+                  name={collapsed ? 'chevron-forward' : 'chevron-down'}
+                  size={14}
+                  color={colors.gray}
+                />
+                <View style={styles.toolChips}>
+                  {hasThinking && (
+                    <View
+                      style={[
+                        styles.toolChip,
+                        {
+                          backgroundColor: colors.surface,
+                          borderColor: colors.separator,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[styles.toolChipText, { color: colors.black }]}
+                      >
+                        考え中
+                      </Text>
+                    </View>
+                  )}
+                  {calls.slice(0, 3).map((call, i) => (
+                    <ToolNameChip key={i} call={call} colors={colors} />
+                  ))}
+                  {calls.length > 3 && (
+                    <Text style={[styles.toolChipText, { color: colors.gray }]}>
+                      +{calls.length - 3}
+                    </Text>
+                  )}
+                </View>
+              </View>
+            </Pressable>
+            {!collapsed && (
+              <View style={styles.contextBody}>
+                {it.thinking && (
+                  <Text style={[styles.thinkingText, { color: colors.gray }]}>
+                    {it.thinking}
+                  </Text>
+                )}
+                {calls.map((call, i) => (
+                  <ToolCallCard key={i} call={call} colors={colors} />
+                ))}
+              </View>
+            )}
+          </View>
+        );
+      })}
+      {item.state !== 'done' && item.text.length === 0 && (
+        <ActivityIndicator color={BRAND_COLOR} />
+      )}
+    </View>
+  );
 }
 
 const SWIPE_THRESHOLD = 40;
@@ -433,7 +754,8 @@ export function AgentView() {
           thinking: '',
           toolCalls: [],
           state: 'thinking',
-          collapsed: false,
+          segments: [],
+          collapsedGroups: [],
         },
       ]);
       const result = await client.runTurnStream(
@@ -450,9 +772,14 @@ export function AgentView() {
             switch (event.type) {
               case 'Thinking':
                 next.thinking = (next.thinking ?? '') + event.data;
+                next.segments = appendSegment(next.segments ?? [], {
+                  type: 'thinking',
+                  text: event.data,
+                });
                 next.state = 'thinking';
                 break;
-              case 'ToolCall':
+              case 'ToolCall': {
+                const callIndex = (next.toolCalls ?? []).length;
                 next.toolCalls = [
                   ...(next.toolCalls ?? []),
                   {
@@ -460,8 +787,13 @@ export function AgentView() {
                     arguments: event.data.arguments,
                   },
                 ];
+                next.segments = appendSegment(next.segments ?? [], {
+                  type: 'toolCall',
+                  callIndex,
+                });
                 next.state = 'tool_call';
                 break;
+              }
               case 'ToolResult': {
                 const calls = [...(next.toolCalls ?? [])];
                 const last = calls[calls.length - 1];
@@ -474,17 +806,27 @@ export function AgentView() {
               }
               case 'Text':
                 next.text = (next.text ?? '') + event.data;
+                next.segments = appendTextSegment(
+                  next.segments ?? [],
+                  event.data,
+                );
                 next.state = 'answering';
-                next.collapsed = true;
                 break;
               case 'Error':
                 next.text = event.data;
+                next.segments = finalizeTextSegment(
+                  next.segments ?? [],
+                  event.data,
+                );
                 next.state = 'done';
                 break;
               case 'Done':
                 next.text = event.data.text;
+                next.segments = finalizeTextSegment(
+                  next.segments ?? [],
+                  event.data.text,
+                );
                 next.state = 'done';
-                next.collapsed = true;
                 break;
             }
             return [
@@ -549,11 +891,15 @@ export function AgentView() {
     await sendText(value);
   }
 
-  function toggleCollapsed(id: string) {
+  const toggleGroupCollapsed = useCallback((id: string, groupIndex: number) => {
     setMessages((current) =>
-      current.map((m) => (m.id === id ? { ...m, collapsed: !m.collapsed } : m)),
+      current.map((m) =>
+        m.id === id
+          ? { ...m, collapsedGroups: updateCollapsedGroup(m, groupIndex) }
+          : m,
+      ),
     );
-  }
+  }, []);
 
   async function toggleRecording() {
     if (busy || isSwitchingRef.current || !historyReady) return;
@@ -596,14 +942,17 @@ export function AgentView() {
         newId('approval'),
       );
       setApproval(null);
+      const resolveText = result.approved
+        ? '変更を適用しました。'
+        : '変更を取り消しました。';
       setMessages((current) => [
         ...current,
         {
           id: newId('assistant'),
           role: 'assistant',
-          text: result.approved
-            ? '変更を適用しました。'
-            : '変更を取り消しました。',
+          text: resolveText,
+          segments: [{ type: 'text', text: resolveText }],
+          collapsedGroups: [],
         },
       ]);
     } catch (e: unknown) {
@@ -812,100 +1161,15 @@ export function AgentView() {
                 </View>
               );
             }
-            const hasContext =
-              (item.thinking && item.thinking.length > 0) ||
-              (item.toolCalls && item.toolCalls.length > 0);
             return (
-              <View
-                style={[
-                  styles.bubble,
-                  styles.assistantBubble,
-                  { backgroundColor: colors.separator },
-                ]}
-              >
-                {hasContext && (
-                  <Pressable
-                    onPress={() => toggleCollapsed(item.id)}
-                    style={styles.contextHeader}
-                  >
-                    <Text
-                      style={[
-                        styles.contextHeaderText,
-                        { color: colors.black },
-                      ]}
-                    >
-                      {item.collapsed ? '▶ ' : '▼ '}
-                      {item.thinking && item.thinking.length > 0
-                        ? '考え中'
-                        : ''}
-                      {item.thinking &&
-                      item.toolCalls &&
-                      item.toolCalls.length > 0
-                        ? ' / '
-                        : ''}
-                      {item.toolCalls && item.toolCalls.length > 0
-                        ? `ツール (${item.toolCalls.length})`
-                        : ''}
-                    </Text>
-                  </Pressable>
-                )}
-                {!item.collapsed && hasContext && (
-                  <View style={styles.contextBody}>
-                    {item.thinking && item.thinking.length > 0 && (
-                      <Text
-                        style={[styles.thinkingText, { color: colors.gray }]}
-                      >
-                        {item.thinking}
-                      </Text>
-                    )}
-                    {item.toolCalls?.map((call, index) => (
-                      <View key={index} style={styles.toolCall}>
-                        <Text
-                          style={{ color: colors.black, fontWeight: '700' }}
-                        >
-                          {call.name}
-                        </Text>
-                        {call.arguments !== undefined && (
-                          <Text
-                            style={[styles.toolArgs, { color: colors.gray }]}
-                          >
-                            {JSON.stringify(call.arguments, null, 2)}
-                          </Text>
-                        )}
-                        {call.result !== undefined && (
-                          <Text
-                            style={{
-                              color: call.isError ? '#B33A3A' : '#2E7D32',
-                            }}
-                          >
-                            {call.isError
-                              ? `エラー: ${call.result}`
-                              : call.result}
-                          </Text>
-                        )}
-                      </View>
-                    ))}
-                  </View>
-                )}
-                {item.text.length > 0 && (
-                  <View style={{ marginTop: hasContext ? 8 : 0 }}>
-                    {item.state === 'done' || item.state === undefined ? (
-                      <Markdown
-                        style={markdownStyles}
-                        markdownit={markdownIt}
-                        rules={markdownRules}
-                      >
-                        {item.text}
-                      </Markdown>
-                    ) : (
-                      <Text style={{ color: colors.black }}>{item.text}</Text>
-                    )}
-                  </View>
-                )}
-                {item.state !== 'done' && item.text.length === 0 && (
-                  <ActivityIndicator color={BRAND_COLOR} />
-                )}
-              </View>
+              <AssistantMessage
+                item={item}
+                colors={colors}
+                markdownStyles={markdownStyles}
+                markdownIt={markdownIt}
+                markdownRules={markdownRules}
+                onToggleGroupCollapsed={toggleGroupCollapsed}
+              />
             );
           }}
           ListEmptyComponent={
@@ -1095,16 +1359,50 @@ const styles = StyleSheet.create({
   bubble: { maxWidth: '85%', padding: 12, borderRadius: 14 },
   userBubble: { alignSelf: 'flex-end' },
   assistantBubble: { alignSelf: 'flex-start' },
-  contextHeader: { marginBottom: 4 },
-  contextHeaderText: { fontSize: 12, fontWeight: '700' },
-  contextBody: { gap: 6, marginBottom: 8 },
+  contextHeader: {
+    borderRadius: 10,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  contextHeaderInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 8,
+  },
+  toolChips: {
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 6,
+  },
+  toolChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  toolChipDot: { width: 6, height: 6, borderRadius: 3 },
+  toolChipText: { fontSize: 11 },
+  contextBody: { gap: 6 },
   thinkingText: { fontSize: 12, fontStyle: 'italic' },
   toolCall: {
-    backgroundColor: 'rgba(0,0,0,0.03)',
-    borderRadius: 8,
-    padding: 8,
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
     gap: 4,
   },
+  toolCallHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  toolStatus: { width: 8, height: 8, borderRadius: 4 },
   toolArgs: { fontSize: 11, fontFamily: 'monospace' },
   approval: {
     margin: 12,
