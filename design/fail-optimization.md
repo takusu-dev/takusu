@@ -98,3 +98,46 @@ The Criterion `realworld` numbers varied wildly between runs (e.g. `realworld 7d
 ### Status
 
 The experiment was kept and refined: `evaluate_with_scratch()` still reuses scratch buffers in the SA hot loop, `union_length_sorted()` stays inlined, and the public `evaluate()` wrapper allocates per call rather than using `thread_local`.
+
+---
+
+## 2026-07-18: Skip passed intervals in `sleep_score`/`daily_load_score` scans
+
+### Change
+
+- `crates/takusu-core/src/evaluate.rs`
+  - Added a `start_idx` cursor to `sleep_score()` and `daily_load_score()`.
+  - Sliced `sorted` with `&sorted[start_idx..]` before calling `union_length_in_window()` so already-passed intervals are not re-scanned for every day/sleep window.
+
+### Rationale
+
+Profiling showed `daily_load_score`, `sleep_score`, and `union_length_in_window` as top self-time contributors. Since `sorted` is sorted by start and both scoring loops iterate over monotonically increasing windows, a running start index should skip intervals that ended before the current window.
+
+### Baseline (before this experiment, after the habit score optimization)
+
+- `cargo bench -p takusu-core --bench realworld`:
+  - `plan realworld habits (7d)`: `21.326 ms`
+  - `plan realworld habits (30d)`: `461.21 ms`
+  - `plan_partial realworld habits (14d, 5 pinned)`: `148.74 ms`
+  - `plan_in_range realworld habits (14d, days 2-7)`: `53.013 ms`
+
+### Result (after adding per-window `start_idx` slices)
+
+- First run:
+  - `plan realworld habits (7d)`: `22.387 ms` (**+5.0%**)
+  - `plan realworld habits (30d)`: `481.41 ms` (**+4.4%**)
+  - `plan_partial realworld habits (14d, 5 pinned)`: `153.22 ms` (**+3.0%**)
+  - `plan_in_range realworld habits (14d, days 2-7)`: `55.957 ms` (**+5.6%**)
+- Second run (same binary, likely warmer allocator/CPU):
+  - `plan realworld habits (7d)`: `21.433 ms`
+  - `plan realworld habits (30d)`: `463.55 ms`
+  - `plan_partial realworld habits (14d, 5 pinned)`: `149.49 ms`
+  - `plan_in_range realworld habits (14d, days 2-7)`: `53.190 ms`
+
+### Observation
+
+The `start_idx` cursor added a small per-iteration overhead and did not yield a consistent improvement across the `realworld` suite. The 30d benchmark sometimes improved (first run +4%, second run ~same), but the 7d, `plan_partial`, and `plan_in_range` benches regressed or stayed flat. The `union_length_in_window()` scan is already cheap due to early `continue`/`break`, so the cost of maintaining and slicing from `start_idx` outweighs the benefit on these fixtures.
+
+### Status
+
+Abandoned. `sleep_score()` and `daily_load_score()` keep their original full-slice `union_length_in_window()` calls.
