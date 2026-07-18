@@ -144,3 +144,39 @@ All runs use `jemalloc` default.
   - `plan realworld habits (30d)`: `430.51 ms`
   - `plan_partial realworld habits (14d, 5 pinned)`: `136.81 ms`
   - `plan_in_range realworld habits (14d, days 2-7)`: `48.520 ms`
+
+## 2026-07-19: current `@` (`xmwoozvv 25bc00d3`) before optimization pass
+
+- `cargo run -p takusu-core --example score_check` (debug):
+  - score `-1844.372500`
+  - total `2.340s`
+  - mean `23.400908 µs`
+- `cargo run -p takusu-core --example score_check --release`:
+  - score `-1844.372500`
+  - total `0.139s`
+  - mean `1.386401 µs`
+- `time ./target/release/examples/profile` (20 full `plan()` calls):
+  - real `2.401s`
+- `cargo bench -p takusu-core --bench realworld`:
+  - `plan realworld habits (7d)`: `37.299 ms`
+  - `plan realworld habits (30d)`: `899.64 ms`
+  - `plan_partial realworld habits (14d, 5 pinned)`: `257.93 ms`
+  - `plan_in_range realworld habits (14d, days 2-7)`: `75.925 ms`
+
+## 2026-07-19: after monotonic union cursor + merged index/range build + faster parallel loop
+
+- `cargo run -p takusu-core --example score_check` (debug):
+  - score `-1844.372500`
+  - total `1.447s`
+  - mean `14.472389 µs`
+- `cargo run -p takusu-core --example score_check --release`:
+  - score `-1844.372500`
+  - total `0.088s`
+  - mean `0.879013 µs`
+- `time ./target/release/examples/profile` (20 full `plan()` calls):
+  - real `1.984s`
+- `cargo bench -p takusu-core --bench realworld`:
+  - `plan realworld habits (7d)`: `25.516 ms`
+  - `plan realworld habits (30d)`: `468.73 ms`
+  - `plan_partial realworld habits (14d, 5 pinned)`: `170.76 ms`
+  - `plan_in_range realworld habits (14d, days 2-7)`: `56.721 ms`

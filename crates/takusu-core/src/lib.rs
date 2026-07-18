@@ -80,11 +80,13 @@ impl Point {
     }
 
     /// 絶対値の差 (符号なし)。
+    #[inline(always)]
     pub fn diff(lhs: Point, rhs: Point) -> i64 {
         (lhs.0 - rhs.0).abs()
     }
 
     /// 符号付きの差。`lhs - rhs`。前後関係の判定に使う。
+    #[inline(always)]
     pub fn delta(lhs: Point, rhs: Point) -> i64 {
         lhs.0 - rhs.0
     }
