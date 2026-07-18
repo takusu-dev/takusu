@@ -49,7 +49,7 @@ impl MobileAudio {
         })?;
         let mut tts_config = CartesiaSonicConfig::new(api_key);
         tts_config.voice_id = voice_id.clone();
-        tts_config.output_format = CartesiaOutputFormat::wav("pcm_s16le", sample_rate);
+        tts_config.output_format = CartesiaOutputFormat::mp3(sample_rate, 128_000);
         Ok(Self {
             hush: Mutex::new(hush),
             stt,
@@ -89,7 +89,7 @@ impl MobileAudio {
             })
     }
 
-    pub fn synthesize_wav(&self, text: String) -> Result<Vec<u8>, TakusuError> {
+    pub fn synthesize(&self, text: String) -> Result<Vec<u8>, TakusuError> {
         if text.trim().is_empty() {
             return Err(TakusuError::Audio {
                 detail: "TTS text was empty".to_string(),
@@ -100,7 +100,7 @@ impl MobileAudio {
             voice: Some(self.voice_id.clone()),
             reference_audio_path: None,
             options: TtsOptions {
-                response_format: Some("wav".to_string()),
+                response_format: Some("mp3".to_string()),
                 speed: None,
             },
         };

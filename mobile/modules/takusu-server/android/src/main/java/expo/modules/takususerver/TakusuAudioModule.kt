@@ -76,12 +76,12 @@ class TakusuAudioModule : Module() {
                 val instance =
                     audio
                         ?: throw CodedException("ERR_AUDIO_CONFIG", "Audio is not configured", null)
-                val wav = instance.synthesizeWav(text)
+                val mp3 = instance.synthesize(text)
                 val cacheDir =
                     appContext.reactContext?.cacheDir
                         ?: throw CodedException("ERR_AUDIO_CONFIG", "React context is not available", null)
-                val file = File(cacheDir, "takusu-agent-response.wav")
-                file.writeBytes(wav)
+                val file = File(cacheDir, "takusu-agent-response.mp3")
+                file.writeBytes(mp3)
                 player?.release()
                 player =
                     MediaPlayer().also { mediaPlayer ->
