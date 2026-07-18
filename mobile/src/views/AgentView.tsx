@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
@@ -39,7 +40,7 @@ import {
   loadAgentApiKey,
   loadSettings,
 } from '@/src/api/settingsStore';
-import { AgentClient, AgentApiError } from '@/src/api/agentClient';
+import { AgentClient, AgentApiError, AbortError } from '@/src/api/agentClient';
 import type { ApprovalRequest, TurnEvent } from '@/src/api/agentTypes';
 import {
   deleteSessionSnapshot,
@@ -448,6 +449,8 @@ export function AgentView() {
     language: string;
     sampleRate: number;
   } | null>(null);
+  const streamAbortRef = useRef<AbortController | null>(null);
+  const backgroundAbortedRef = useRef(false);
   const viewOffset = useSharedValue(0);
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: viewOffset.value }],
@@ -465,6 +468,16 @@ export function AgentView() {
   useEffect(() => {
     isSwitchingRef.current = isSwitching;
   }, [isSwitching]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (next) => {
+      if (next === 'background' && streamAbortRef.current) {
+        backgroundAbortedRef.current = true;
+        streamAbortRef.current.abort();
+      }
+    });
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     const showEvent =
@@ -735,11 +748,14 @@ export function AgentView() {
     if (!value.trim() || busy || isSwitchingRef.current || !historyReady)
       return;
     setError(null);
+    backgroundAbortedRef.current = false;
     setMessages((current) => [
       ...current,
       { id: newId('user'), role: 'user', text: value.trim() },
     ]);
     setBusy(true);
+    const abortController = new AbortController();
+    streamAbortRef.current = abortController;
     let assistantId: string | null = null;
     try {
       const session = await ensureSession();
@@ -836,6 +852,7 @@ export function AgentView() {
             ];
           });
         },
+        abortController.signal,
       );
       setApproval(result.approval_request);
       const ttsText = markdownToSpeech(result.text);
@@ -850,35 +867,56 @@ export function AgentView() {
         }
       }
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      if (assistantId) {
-        setMessages((current) =>
-          current.map((m) =>
-            m.id === assistantId
-              ? { ...m, text: message, state: 'done', toolCalls: [] }
-              : m,
-          ),
-        );
-      }
-      if (e instanceof AgentApiError && e.status === 404) {
-        const lostId = sessionIdRef.current;
-        if (lostId) {
-          await deleteSessionSnapshot(lostId);
+      const isAbort = backgroundAbortedRef.current || e instanceof AbortError;
+      if (isAbort) {
+        backgroundAbortedRef.current = false;
+        if (assistantId) {
+          setMessages((current) =>
+            current.map((m) =>
+              m.id === assistantId
+                ? {
+                    ...m,
+                    text: m.text || '応答が中断されました',
+                    state: 'done',
+                    toolCalls: [],
+                    segments: undefined,
+                  }
+                : m,
+            ),
+          );
         }
-        const remaining = sessionIdsRef.current.filter((s) => s !== lostId);
-        sessionIdsRef.current = remaining;
-        setSessionIds(remaining);
-        try {
-          const created = await client.createSession();
-          await activateSessionId(created, true);
-        } catch {
-          sessionIdRef.current = null;
-        }
-        setError('Agentセッションが終了しました。もう一度送信してください');
       } else {
-        setError(message);
+        const message = e instanceof Error ? e.message : String(e);
+        if (assistantId) {
+          setMessages((current) =>
+            current.map((m) =>
+              m.id === assistantId
+                ? { ...m, text: message, state: 'done', toolCalls: [] }
+                : m,
+            ),
+          );
+        }
+        if (e instanceof AgentApiError && e.status === 404) {
+          const lostId = sessionIdRef.current;
+          if (lostId) {
+            await deleteSessionSnapshot(lostId);
+          }
+          const remaining = sessionIdsRef.current.filter((s) => s !== lostId);
+          sessionIdsRef.current = remaining;
+          setSessionIds(remaining);
+          try {
+            const created = await client.createSession();
+            await activateSessionId(created, true);
+          } catch {
+            sessionIdRef.current = null;
+          }
+          setError('Agentセッションが終了しました。もう一度送信してください');
+        } else {
+          setError(message);
+        }
       }
     } finally {
+      streamAbortRef.current = null;
       setBusy(false);
     }
   }
