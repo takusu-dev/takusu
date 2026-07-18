@@ -160,6 +160,16 @@ class ScheduleOperationWorker(
         )
     }
 
+    private val notificationIconResId: Int by lazy {
+        val appIcon =
+            applicationContext.resources.getIdentifier(
+                "notification_icon",
+                "drawable",
+                applicationContext.packageName,
+            )
+        if (appIcon != 0) appIcon else android.R.drawable.stat_notify_sync_noanim
+    }
+
     private fun createForegroundInfo(
         title: String,
         text: String,
@@ -169,7 +179,7 @@ class ScheduleOperationWorker(
         val notification: Notification =
             NotificationCompat
                 .Builder(applicationContext, CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.stat_sys_download)
+                .setSmallIcon(notificationIconResId)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setOngoing(ongoing)
