@@ -284,7 +284,7 @@ prefer a 3-way merge tool over manual marker editing.
 
 Profiles a Rust example or binary under `perf`, then emits an SVG flamegraph
 and sorted `top-self` / `top-total` summaries. Useful because raw `perf report`
-output is hard to read for Rust (inlined generic symbols and deep rayon stacks).
+output is hard to read for Rust (inlined generic symbols and deep call stacks).
 
 ```sh
 ./scripts/profile.sh --example profile -p takusu-core
@@ -333,7 +333,6 @@ real logic lives in the shell scripts so it can be used outside Devin too.
 | `jiff` | 0.2.21 | takusu-core, takusu-local, takusu-cli | Date/time handling |
 | `rand` | 0.10 | takusu-core | RNG for SA |
 | `rustc-hash` | 2.1 | takusu-core | `FxHashSet` / `FxHashMap` (faster than std) |
-| `rayon` | 1.10 | takusu-core | Parallel SA restarts |
 | `criterion` | 5.0.1 (`codspeed-criterion-compat`) | takusu-core, takusu-habit, takusu-ical (dev) | CodSpeed-compatible benchmarking |
 | `tokio` | 1.52.0 | workspace | Async runtime (full features) |
 | `axum` | 0.8 | takusu-local | HTTP framework |
@@ -357,7 +356,7 @@ real logic lives in the shell scripts so it can be used outside Devin too.
 
 - **SA + LNS + Tabu Search**: Simulated Annealing with 5 neighbor types
   (shift 25% / swap 25% / duration 20% / reorder 15% / LNS 15%)
-- **Parallel restarts**: `rayon` — 1 chain per CPU core (max 4), best solution selected
+- **Single-chain solver**: one deterministic SA run per `plan()` call
 - **Constraint annealing**: Dependency penalty proportional to `(1 - T/T₀)`, allowing
   feasibility-boundary crossing at high temperature, hard constraint at T→0
 - **Evaluation caching**: `eval_current` / `eval_best` cached per temperature step;

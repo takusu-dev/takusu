@@ -1,49 +1,18 @@
-//! # ソルバー: 並列再起動 SA
+//! # ソルバー: 単一 SA チェーン
 //!
-//! k 本の独立 SA チェーンを rayon で並列実行し、評価関数最大の解を選択する。
+//! 1 本の SA チェーンを実行して最適解を返す。
 //! タスクはすべてスケジュールされる（諦めない）。
 //! abandonability が高いタスクは deadline 超過ペナルティが軽減される。
-//!
-//! ## 並列戦略
-//!
-//! 各チェーンは異なる乱数シード (0..num_chains) で初期化。
-//! これにより、同じ貪欲初期解から出発しても異なる SA 軌道を辿る。
-//! `MAX_CHAINS=4`: CPUコア数にクランプ。過剰並列はメモリ競合と
-//! 収穫逓減のため制限。
-//!
-//! ## 部分問題分割の検討
-//!
-//! ### DAG 連結成分分解
-//! 依存グラフを連結成分に分割し、成分ごとに独立 SA。n=100 を 5×20 に分割すれば
-//! 評価関数 25倍高速。品質低下は中程度。時間窓競合のマージが課題。
-//!
-//! ### 結論
-//! 現時点では全体 SA + 並列再起動が最も堅実。
-
-use std::cmp::Ordering;
 
 use rand::SeedableRng;
 use rand::rngs::StdRng;
-use rayon::prelude::*;
 
 use super::*;
 use anneal::{sa_lns, sa_lns_partial};
-use evaluate::evaluate;
-
-const MAX_CHAINS: usize = 4;
 
 pub fn solve(planner: &Planner) -> Plan {
-    let num_chains = rayon::current_num_threads().clamp(1, MAX_CHAINS);
-
-    (0..num_chains)
-        .into_par_iter()
-        .map(|seed| sa_lns(planner, &mut StdRng::seed_from_u64(seed as u64)))
-        .max_by(|a, b| {
-            evaluate(planner, a, 0.0, 1.0)
-                .partial_cmp(&evaluate(planner, b, 0.0, 1.0))
-                .unwrap_or(Ordering::Equal)
-        })
-        .unwrap_or_else(|| Plan { schedules: vec![] })
+    let mut rng = StdRng::seed_from_u64(0);
+    sa_lns(planner, &mut rng)
 }
 
 /// 範囲外のタスク ID は無視し、有効な pinned が空の場合は solve (sa_lns) に委譲する。
@@ -64,23 +33,8 @@ pub fn solve_partial(planner: &Planner, pinned: &[(Point, Point, usize)]) -> Pla
         return solve(planner);
     }
 
-    let num_chains = rayon::current_num_threads().clamp(1, MAX_CHAINS);
-
-    (0..num_chains)
-        .into_par_iter()
-        .map(|seed| {
-            sa_lns_partial(
-                planner,
-                &valid_pinned,
-                &mut StdRng::seed_from_u64(seed as u64),
-            )
-        })
-        .max_by(|a, b| {
-            evaluate(planner, a, 0.0, 1.0)
-                .partial_cmp(&evaluate(planner, b, 0.0, 1.0))
-                .unwrap_or(Ordering::Equal)
-        })
-        .unwrap_or_else(|| Plan { schedules: vec![] })
+    let mut rng = StdRng::seed_from_u64(0);
+    sa_lns_partial(planner, &valid_pinned, &mut rng)
 }
 
 #[cfg(test)]

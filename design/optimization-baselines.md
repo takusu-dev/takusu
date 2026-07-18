@@ -198,3 +198,23 @@ All runs use `jemalloc` default.
   - `plan realworld habits (30d)`: `438.27 ms`
   - `plan_partial realworld habits (14d, 5 pinned)`: `142.35 ms`
   - `plan_in_range realworld habits (14d, days 2-7)`: `49.176 ms`
+
+## 2026-07-19: after removing rayon and switching to a single SA chain
+
+Verified the hypothesis from #707: the multi-chain parallel restart was not improving
+schedule quality on the real-world fixtures, and the single-chain solver is faster.
+
+- `cargo run -p takusu-core --example score_check --release`:
+  - score `-1844.372500`
+  - total `0.085s`
+  - mean `0.851299 µs`
+- `time ./target/release/examples/profile` (20 full `plan()` calls):
+  - real `~1.34s` (1.337s)
+- `cargo bench -p takusu-core --bench realworld`:
+  - `plan realworld habits (7d)`: `19.304 ms`
+  - `plan realworld habits (30d)`: `335.12 ms`
+  - `plan_partial realworld habits (14d, 5 pinned)`: `123.27 ms`
+  - `plan_in_range realworld habits (14d, days 2-7)`: `42.405 ms`
+
+Scores on the 7d/14d/30d real-world fixtures were identical between the 4-chain parallel
+and single-chain configurations, while wall-clock time dropped across all fixtures.

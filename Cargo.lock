@@ -4221,7 +4221,6 @@ dependencies = [
  "codspeed-criterion-compat",
  "jiff",
  "rand 0.10.1",
- "rayon",
  "rustc-hash",
  "serde",
  "serde_json",
