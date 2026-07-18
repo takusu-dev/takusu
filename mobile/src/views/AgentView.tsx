@@ -53,6 +53,7 @@ import {
   saveSessionHistory,
   saveSessionSnapshot,
 } from '@/src/api/agentSessionStore';
+import { ApprovalPanel } from '@/src/components/ApprovalPanel';
 import { BRAND_COLOR, COLORS, useColors, type ColorSet } from '@/src/theme';
 
 function newId(prefix: string): string {
@@ -1150,7 +1151,7 @@ export function AgentView() {
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.white }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <Reanimated.View style={[styles.container, animatedStyle]}>
         <View
@@ -1217,45 +1218,13 @@ export function AgentView() {
           }
         />
         {approval && (
-          <View style={[styles.approval, { borderColor: colors.separator }]}>
-            <Text style={[styles.approvalTitle, { color: colors.black }]}>
-              確認が必要です
-            </Text>
-            <Text style={{ color: colors.black }}>{approval.why}</Text>
-            {approval.changes.map((change, index) => (
-              <Text
-                key={`${change.operation}-${index}`}
-                style={{ color: colors.black }}
-              >
-                ・{change.description}
-              </Text>
-            ))}
-            {approval.warnings.map((warning) => (
-              <Text key={warning} style={{ color: '#A65B00' }}>
-                注意: {warning}
-              </Text>
-            ))}
-            <View style={styles.approvalActions}>
-              <Pressable
-                disabled={busy || isSwitching}
-                onPress={() => resolve(false)}
-                style={styles.deny}
-              >
-                <Text style={styles.denyText}>拒否</Text>
-              </Pressable>
-              <Pressable
-                disabled={busy || isSwitching}
-                onPress={() => resolve(true)}
-                style={styles.approve}
-              >
-                {busy ? (
-                  <ActivityIndicator color={COLORS.white} />
-                ) : (
-                  <Text style={styles.approveText}>承認</Text>
-                )}
-              </Pressable>
-            </View>
-          </View>
+          <ApprovalPanel
+            approval={approval}
+            colors={colors}
+            busy={busy || isSwitching}
+            onApprove={() => resolve(true)}
+            onDeny={() => resolve(false)}
+          />
         )}
         {error && (
           <Pressable onPress={() => Alert.alert('Agentエラー', error)}>
@@ -1442,32 +1411,6 @@ const styles = StyleSheet.create({
   },
   toolStatus: { width: 8, height: 8, borderRadius: 4 },
   toolArgs: { fontSize: 11, fontFamily: 'monospace' },
-  approval: {
-    margin: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderRadius: 12,
-    gap: 6,
-  },
-  approvalTitle: { fontWeight: '700', fontSize: 16 },
-  approvalActions: { flexDirection: 'row', gap: 8, marginTop: 8 },
-  deny: {
-    flex: 1,
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#B33A3A',
-    alignItems: 'center',
-  },
-  denyText: { color: '#B33A3A', fontWeight: '700' },
-  approve: {
-    flex: 1,
-    padding: 12,
-    borderRadius: 8,
-    backgroundColor: BRAND_COLOR,
-    alignItems: 'center',
-  },
-  approveText: { color: COLORS.white, fontWeight: '700' },
   error: { color: '#B33A3A', paddingHorizontal: 16, paddingBottom: 8 },
   switcher: {
     flexDirection: 'row',

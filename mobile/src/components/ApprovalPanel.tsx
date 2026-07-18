@@ -1,0 +1,1008 @@
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import type { ApprovalRequest, ProposedChange } from '@/src/api/agentTypes';
+import type { ColorSet } from '@/src/theme';
+
+const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
+
+function asString(value: unknown): string | null {
+  if (typeof value === 'string') return value;
+  return null;
+}
+
+function asNumber(value: unknown): number | undefined {
+  if (typeof value === 'number') return value;
+  return undefined;
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  return undefined;
+}
+
+function asArray<T>(value: unknown): T[] | undefined {
+  if (Array.isArray(value)) return value as T[];
+  return undefined;
+}
+
+function formatDuration(minutes: number): string {
+  if (minutes >= 60) {
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return m === 0 ? `${h}時間` : `${h}時間${m}分`;
+  }
+  return `${minutes}分`;
+}
+
+function parseDateTime(iso: string): {
+  date: string;
+  time: string;
+} | null {
+  const m = iso.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)$/,
+  );
+  if (!m) return null;
+  const [, y, mo, d, h, mi] = m;
+  const date = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d)));
+  const weekday = WEEKDAYS[date.getUTCDay()];
+  return {
+    date: `${Number(mo)}/${Number(d)} (${weekday})`,
+    time: `${h}:${mi}`,
+  };
+}
+
+function formatInstant(iso: string): string {
+  const parsed = parseDateTime(iso);
+  if (parsed) return `${parsed.date} ${parsed.time}`;
+  return iso;
+}
+
+function formatDateTimeRange(start: string, end: string): string | null {
+  const s = parseDateTime(start);
+  const e = parseDateTime(end);
+  if (!s || !e) return null;
+  if (s.date === e.date) {
+    return `${s.date} ${s.time} 〜 ${e.time}`;
+  }
+  return `${s.date} ${s.time} 〜 ${e.date} ${e.time}`;
+}
+
+function formatTimeRange(start: string, end: string): string {
+  return `${start} 〜 ${end}`;
+}
+
+function formatRecurrence(rrule: string): string {
+  const freq = rrule.match(/FREQ=([^;]+)/i)?.[1]?.toUpperCase();
+  const map: Record<string, string> = {
+    DAILY: '毎日',
+    WEEKLY: '毎週',
+    MONTHLY: '毎月',
+    YEARLY: '毎年',
+  };
+  return map[freq ?? ''] || rrule;
+}
+
+function getTargetType(change: ProposedChange): string {
+  const label = change.target_label;
+  const first = label.split(' ')[0];
+  return first ?? 'task';
+}
+
+function getTargetName(change: ProposedChange): string {
+  const parts = change.target_label.split(' ');
+  if (parts.length <= 1) return '';
+  return parts.slice(1).join(' ');
+}
+
+function getOperationBadge(operation: string): {
+  label: string;
+  color: 'success' | 'brand' | 'error' | 'muted';
+} {
+  switch (operation) {
+    case 'create':
+      return { label: '作成', color: 'success' };
+    case 'update':
+      return { label: '更新', color: 'brand' };
+    case 'delete':
+      return { label: '削除', color: 'error' };
+    case 'generate':
+      return { label: '生成', color: 'muted' };
+    case 'reschedule':
+      return { label: '再調整', color: 'muted' };
+    default:
+      return { label: operation, color: 'muted' };
+  }
+}
+
+interface DateTimeDiffProps {
+  before: string;
+  after: string;
+  colors: ColorSet;
+}
+
+function DateTimeDiff({ before, after, colors }: DateTimeDiffProps) {
+  const b = parseDateTime(before);
+  const a = parseDateTime(after);
+  if (b && a && b.date === a.date) {
+    return (
+      <Text style={{ color: colors.black }}>
+        {b.date}{' '}
+        <Text style={[styles.strikethrough, { color: colors.gray }]}>
+          {b.time}
+        </Text>{' '}
+        → {a.time}
+      </Text>
+    );
+  }
+  return (
+    <Text style={{ color: colors.black }}>
+      <Text style={[styles.strikethrough, { color: colors.gray }]}>
+        {formatInstant(before)}
+      </Text>{' '}
+      → {formatInstant(after)}
+    </Text>
+  );
+}
+
+interface WhenRowProps {
+  label: string;
+  before?: string;
+  after?: string;
+  value?: string;
+  colors: ColorSet;
+}
+
+function WhenRow({ label, before, after, value, colors }: WhenRowProps) {
+  return (
+    <View style={styles.whenRow}>
+      <Text style={[styles.whenLabel, { color: colors.gray }]}>{label}</Text>
+      {before !== undefined && after !== undefined ? (
+        <DateTimeDiff before={before} after={after} colors={colors} />
+      ) : (
+        <Text style={[styles.whenValue, { color: colors.black }]}>
+          {value ?? ''}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+function parseDependsOn(value: unknown): (string | number)[] {
+  if (Array.isArray(value)) return value as (string | number)[];
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed as (string | number)[];
+    } catch {
+      // fall through
+    }
+  }
+  return [];
+}
+
+function resolveStepRef(
+  ref: string | number,
+  steps: Record<string, unknown>[],
+): { index: number; title: string } | null {
+  let idx = -1;
+  if (typeof ref === 'number') {
+    // refs are 1-indexed display numbers.
+    idx = ref - 1;
+  } else {
+    // Numeric strings are also 1-indexed display numbers.
+    const num = Number(ref);
+    if (!Number.isNaN(num) && String(num) === ref.trim()) {
+      idx = num - 1;
+    } else {
+      idx = steps.findIndex((s) => s.id === ref || s.tempId === ref);
+    }
+  }
+  const target = steps[idx];
+  if (target) {
+    return {
+      index: idx,
+      title: asString(target.title) ?? '',
+    };
+  }
+  return null;
+}
+
+interface StepListProps {
+  steps: unknown[];
+  colors: ColorSet;
+}
+
+function StepList({ steps, colors }: StepListProps) {
+  const stepRecords = steps.map((s) => (s ?? {}) as Record<string, unknown>);
+  return (
+    <View
+      style={[
+        styles.stepList,
+        { backgroundColor: colors.surface, borderColor: colors.separator },
+      ]}
+    >
+      {stepRecords.map((step, index) => {
+        const title = asString(step.title) ?? '';
+        const start = asString(step.start_time);
+        const end = asString(step.end_time);
+        const avg = asNumber(step.avg_minutes);
+        const fixed = asBoolean(step.fixed) ?? false;
+        const time =
+          start && end
+            ? formatTimeRange(start, end)
+            : avg !== undefined
+              ? formatDuration(avg)
+              : '';
+        const deps = parseDependsOn(step.depends_on);
+        const depTexts = deps
+          .map((ref) => resolveStepRef(ref, stepRecords))
+          .filter((r): r is { index: number; title: string } => r !== null)
+          .map((r) => `${r.index + 1}. ${r.title}`);
+
+        return (
+          <View key={index} style={styles.stepItem}>
+            <View style={styles.stepMain}>
+              <Text
+                style={[
+                  styles.stepNumber,
+                  { backgroundColor: colors.surfaceTint, color: colors.black },
+                ]}
+              >
+                {index + 1}
+              </Text>
+              <Text style={[styles.stepTitle, { color: colors.black }]}>
+                {title}
+              </Text>
+              {fixed && (
+                <View
+                  style={[
+                    styles.stepFixedBadge,
+                    { backgroundColor: colors.red },
+                  ]}
+                >
+                  <Text style={styles.stepFixedText}>固定</Text>
+                </View>
+              )}
+            </View>
+            <View style={styles.stepDetails}>
+              {time.length > 0 && (
+                <Text style={[styles.stepMeta, { color: colors.gray }]}>
+                  {time}
+                </Text>
+              )}
+              {depTexts.length > 0 && (
+                <Text style={[styles.stepDeps, { color: colors.gray }]}>
+                  依存: {depTexts.join('、 ')}
+                </Text>
+              )}
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+interface TaskChangeRowsProps {
+  after: Record<string, unknown>;
+  before: Record<string, unknown>;
+  colors: ColorSet;
+  isFixed: boolean;
+  isUpdate: boolean;
+}
+
+function TaskChangeRows({
+  after,
+  before,
+  colors,
+  isFixed,
+  isUpdate,
+}: TaskChangeRowsProps): React.ReactNode[] {
+  const rows: React.ReactNode[] = [];
+
+  if (!isUpdate) {
+    const start = asString(after.start_at ?? before.start_at);
+    const end = asString(after.end_at ?? before.end_at);
+    const avg = asNumber(after.avg_minutes ?? before.avg_minutes);
+
+    if (isFixed && start && end) {
+      const range = formatDateTimeRange(start, end);
+      if (range) {
+        rows.push(
+          <WhenRow
+            key="range"
+            label="固定予定"
+            value={range}
+            colors={colors}
+          />,
+        );
+      }
+    } else if (end) {
+      rows.push(
+        <WhenRow
+          key="end"
+          label="期限"
+          value={formatInstant(end)}
+          colors={colors}
+        />,
+      );
+      if (avg !== undefined) {
+        rows.push(
+          <WhenRow
+            key="avg"
+            label="所要"
+            value={formatDuration(avg)}
+            colors={colors}
+          />,
+        );
+      }
+    } else if (start) {
+      rows.push(
+        <WhenRow
+          key="start"
+          label="開始"
+          value={formatInstant(start)}
+          colors={colors}
+        />,
+      );
+    }
+  } else {
+    const afterEnd = asString(after.end_at);
+    const beforeEnd = asString(before.end_at);
+    const afterStart = asString(after.start_at);
+    const beforeStart = asString(before.start_at);
+    const afterAvg = asNumber(after.avg_minutes);
+    const beforeAvg = asNumber(before.avg_minutes);
+
+    const startChanged =
+      afterStart !== null && beforeStart !== null && afterStart !== beforeStart;
+    const endChanged =
+      afterEnd !== null && beforeEnd !== null && afterEnd !== beforeEnd;
+    const startAdded = afterStart !== null && beforeStart === null;
+    const endAdded = afterEnd !== null && beforeEnd === null;
+
+    if (
+      isFixed &&
+      startChanged &&
+      endChanged &&
+      afterStart &&
+      afterEnd &&
+      beforeStart &&
+      beforeEnd
+    ) {
+      const beforeRange = formatDateTimeRange(beforeStart, beforeEnd);
+      const afterRange = formatDateTimeRange(afterStart, afterEnd);
+      if (beforeRange && afterRange) {
+        rows.push(
+          <WhenRow
+            key="range-diff"
+            label="固定予定"
+            before={beforeRange}
+            after={afterRange}
+            colors={colors}
+          />,
+        );
+      }
+    } else {
+      if (startChanged) {
+        rows.push(
+          <WhenRow
+            key="start-diff"
+            label="開始"
+            before={beforeStart}
+            after={afterStart}
+            colors={colors}
+          />,
+        );
+      }
+      if (endChanged) {
+        rows.push(
+          <WhenRow
+            key="end-diff"
+            label="期限"
+            before={beforeEnd}
+            after={afterEnd}
+            colors={colors}
+          />,
+        );
+      }
+    }
+
+    if (startAdded && afterStart) {
+      const end = afterEnd ?? beforeEnd;
+      if (end) {
+        const range = formatDateTimeRange(afterStart, end);
+        if (range) {
+          rows.push(
+            <WhenRow
+              key="range"
+              label="固定予定"
+              value={range}
+              colors={colors}
+            />,
+          );
+        }
+      } else {
+        rows.push(
+          <WhenRow
+            key="start"
+            label="開始"
+            value={formatInstant(afterStart)}
+            colors={colors}
+          />,
+        );
+      }
+    } else if (endAdded && afterEnd) {
+      rows.push(
+        <WhenRow
+          key="end"
+          label="期限"
+          value={formatInstant(afterEnd)}
+          colors={colors}
+        />,
+      );
+    }
+
+    if (
+      afterAvg !== undefined &&
+      beforeAvg !== undefined &&
+      afterAvg !== beforeAvg
+    ) {
+      rows.push(
+        <WhenRow
+          key="avg-diff"
+          label="所要"
+          before={formatDuration(beforeAvg)}
+          after={formatDuration(afterAvg)}
+          colors={colors}
+        />,
+      );
+    } else if (afterAvg !== undefined && beforeAvg === undefined) {
+      rows.push(
+        <WhenRow
+          key="avg"
+          label="所要"
+          value={formatDuration(afterAvg)}
+          colors={colors}
+        />,
+      );
+    }
+  }
+
+  return rows;
+}
+
+interface HabitChangeRowsProps {
+  after: Record<string, unknown>;
+  before: Record<string, unknown>;
+  colors: ColorSet;
+  isUpdate: boolean;
+}
+
+function HabitChangeRows({
+  after,
+  before,
+  colors,
+  isUpdate,
+}: HabitChangeRowsProps): React.ReactNode[] {
+  const rows: React.ReactNode[] = [];
+
+  if (!isUpdate) {
+    const startTime = asString(after.start_time ?? before.start_time);
+    const endTime = asString(after.end_time ?? before.end_time);
+    const recurrence = asString(after.recurrence ?? before.recurrence);
+    const avg = asNumber(after.avg_minutes ?? before.avg_minutes);
+
+    if (startTime && endTime) {
+      rows.push(
+        <WhenRow
+          key="range"
+          label="時間帯"
+          value={formatTimeRange(startTime, endTime)}
+          colors={colors}
+        />,
+      );
+    }
+    if (recurrence) {
+      rows.push(
+        <WhenRow
+          key="recurrence"
+          label="繰り返し"
+          value={formatRecurrence(recurrence)}
+          colors={colors}
+        />,
+      );
+    }
+    if (avg !== undefined) {
+      rows.push(
+        <WhenRow
+          key="avg"
+          label="所要"
+          value={formatDuration(avg)}
+          colors={colors}
+        />,
+      );
+    }
+  } else {
+    const afterStart = asString(after.start_time);
+    const beforeStart = asString(before.start_time);
+    const afterEnd = asString(after.end_time);
+    const beforeEnd = asString(before.end_time);
+    const afterRecurrence = asString(after.recurrence);
+    const beforeRecurrence = asString(before.recurrence);
+    const afterAvg = asNumber(after.avg_minutes);
+    const beforeAvg = asNumber(before.avg_minutes);
+
+    const startChanged =
+      afterStart !== null && beforeStart !== null && afterStart !== beforeStart;
+    const endChanged =
+      afterEnd !== null && beforeEnd !== null && afterEnd !== beforeEnd;
+    const startAdded = afterStart !== null && beforeStart === null;
+    const endAdded = afterEnd !== null && beforeEnd === null;
+
+    if (
+      startChanged &&
+      endChanged &&
+      afterStart &&
+      afterEnd &&
+      beforeStart &&
+      beforeEnd
+    ) {
+      rows.push(
+        <WhenRow
+          key="range-diff"
+          label="時間帯"
+          before={formatTimeRange(beforeStart, beforeEnd)}
+          after={formatTimeRange(afterStart, afterEnd)}
+          colors={colors}
+        />,
+      );
+    } else {
+      if (startChanged) {
+        rows.push(
+          <WhenRow
+            key="start-diff"
+            label="開始"
+            before={beforeStart}
+            after={afterStart}
+            colors={colors}
+          />,
+        );
+      }
+      if (endChanged) {
+        rows.push(
+          <WhenRow
+            key="end-diff"
+            label="終了"
+            before={beforeEnd}
+            after={afterEnd}
+            colors={colors}
+          />,
+        );
+      }
+    }
+
+    if (startAdded && afterStart) {
+      const end = afterEnd ?? beforeEnd;
+      if (end) {
+        rows.push(
+          <WhenRow
+            key="range"
+            label="時間帯"
+            value={formatTimeRange(afterStart, end)}
+            colors={colors}
+          />,
+        );
+      } else {
+        rows.push(
+          <WhenRow
+            key="start"
+            label="開始"
+            value={afterStart}
+            colors={colors}
+          />,
+        );
+      }
+    } else if (endAdded && afterEnd) {
+      rows.push(
+        <WhenRow key="end" label="終了" value={afterEnd} colors={colors} />,
+      );
+    }
+
+    if (
+      afterRecurrence &&
+      beforeRecurrence &&
+      afterRecurrence !== beforeRecurrence
+    ) {
+      rows.push(
+        <WhenRow
+          key="recurrence-diff"
+          label="繰り返し"
+          before={formatRecurrence(beforeRecurrence)}
+          after={formatRecurrence(afterRecurrence)}
+          colors={colors}
+        />,
+      );
+    } else if (afterRecurrence && !beforeRecurrence) {
+      rows.push(
+        <WhenRow
+          key="recurrence"
+          label="繰り返し"
+          value={formatRecurrence(afterRecurrence)}
+          colors={colors}
+        />,
+      );
+    }
+
+    if (
+      afterAvg !== undefined &&
+      beforeAvg !== undefined &&
+      afterAvg !== beforeAvg
+    ) {
+      rows.push(
+        <WhenRow
+          key="avg-diff"
+          label="所要"
+          before={formatDuration(beforeAvg)}
+          after={formatDuration(afterAvg)}
+          colors={colors}
+        />,
+      );
+    } else if (afterAvg !== undefined && beforeAvg === undefined) {
+      rows.push(
+        <WhenRow
+          key="avg"
+          label="所要"
+          value={formatDuration(afterAvg)}
+          colors={colors}
+        />,
+      );
+    }
+  }
+
+  return rows;
+}
+
+interface ScheduleChangeRowsProps {
+  after: Record<string, unknown>;
+  before: Record<string, unknown>;
+  colors: ColorSet;
+}
+
+function ScheduleChangeRows({
+  after,
+  before,
+  colors,
+}: ScheduleChangeRowsProps): React.ReactNode[] {
+  const rows: React.ReactNode[] = [];
+  const from = asString(after.from ?? before.from);
+  const until = asString(after.until ?? before.until);
+  const taskIds = asArray<string>(after.task_ids ?? before.task_ids);
+  if (from && until) {
+    const range = formatDateTimeRange(from, until);
+    if (range) {
+      rows.push(
+        <WhenRow key="range" label="範囲" value={range} colors={colors} />,
+      );
+    }
+  }
+  if (taskIds && taskIds.length > 0) {
+    rows.push(
+      <WhenRow
+        key="tasks"
+        label="対象"
+        value={`${taskIds.length} 件`}
+        colors={colors}
+      />,
+    );
+  }
+  return rows;
+}
+
+interface ChangeCardProps {
+  change: ProposedChange;
+  colors: ColorSet;
+}
+
+function ChangeCard({ change, colors }: ChangeCardProps) {
+  const targetType = getTargetType(change);
+  const targetName = getTargetName(change);
+  const op = getOperationBadge(change.operation);
+
+  const after = (change.after ?? {}) as Record<string, unknown>;
+  const before = (change.before ?? {}) as Record<string, unknown>;
+
+  const stepsArray = asArray<Record<string, unknown>>(
+    after.steps ?? before.steps,
+  );
+
+  const isFixed = asBoolean(after.fixed) ?? asBoolean(before.fixed) ?? false;
+  const isUpdate = change.operation === 'update';
+
+  const rows: React.ReactNode[] =
+    targetType === 'task'
+      ? TaskChangeRows({ after, before, colors, isFixed, isUpdate })
+      : targetType === 'habit'
+        ? HabitChangeRows({ after, before, colors, isUpdate })
+        : targetType === 'schedule'
+          ? ScheduleChangeRows({ after, before, colors })
+          : [];
+
+  const badgeColor =
+    op.color === 'success'
+      ? colors.green
+      : op.color === 'brand'
+        ? colors.brand
+        : op.color === 'error'
+          ? colors.red
+          : colors.gray;
+
+  return (
+    <View
+      style={[
+        styles.changeCard,
+        { backgroundColor: colors.surfaceTint, borderColor: colors.separator },
+      ]}
+    >
+      <View style={styles.changeRow}>
+        <View style={[styles.badge, { backgroundColor: badgeColor }]}>
+          <Text style={styles.badgeText}>{op.label}</Text>
+        </View>
+        <Text style={[styles.changeTarget, { color: colors.black }]}>
+          {targetName}
+        </Text>
+        {isFixed && (
+          <View style={[styles.fixedBadge, { backgroundColor: colors.red }]}>
+            <Text style={styles.badgeText}>固定</Text>
+          </View>
+        )}
+      </View>
+      {rows.length > 0 && (
+        <View
+          style={[
+            styles.whenBlock,
+            { backgroundColor: colors.surface, borderColor: colors.separator },
+          ]}
+        >
+          {rows}
+        </View>
+      )}
+      {stepsArray && stepsArray.length > 0 && (
+        <StepList steps={stepsArray} colors={colors} />
+      )}
+      {change.description.length > 0 && (
+        <Text style={[styles.changeDesc, { color: colors.gray }]}>
+          {change.description}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+interface ApprovalPanelProps {
+  approval: ApprovalRequest;
+  colors: ColorSet;
+  busy: boolean;
+  onApprove: () => void;
+  onDeny: () => void;
+}
+
+export function ApprovalPanel({
+  approval,
+  colors,
+  busy,
+  onApprove,
+  onDeny,
+}: ApprovalPanelProps) {
+  return (
+    <View
+      style={[
+        styles.panel,
+        { backgroundColor: colors.surface, borderColor: colors.separator },
+      ]}
+    >
+      <View>
+        <Text style={[styles.title, { color: colors.black }]}>
+          以下の変更を承認しますか？
+        </Text>
+        {approval.why.length > 0 && (
+          <Text style={[styles.why, { color: colors.gray }]}>
+            {approval.why}
+          </Text>
+        )}
+      </View>
+
+      <Text
+        style={[
+          styles.summary,
+          { color: colors.gray, backgroundColor: colors.surfaceTint },
+        ]}
+      >
+        {approval.changes.length} 件の変更
+      </Text>
+
+      <View style={styles.changeList}>
+        {approval.changes.map((change, index) => (
+          <ChangeCard
+            key={`${change.operation}-${index}`}
+            change={change}
+            colors={colors}
+          />
+        ))}
+      </View>
+
+      {approval.warnings.length > 0 && (
+        <View style={[styles.warningBox, { borderColor: '#A65B00' }]}>
+          {approval.warnings.map((warning) => (
+            <Text key={warning} style={{ color: '#A65B00' }}>
+              注意: {warning}
+            </Text>
+          ))}
+        </View>
+      )}
+
+      <View style={styles.actions}>
+        <Pressable
+          disabled={busy}
+          onPress={onDeny}
+          style={[styles.deny, { borderColor: colors.red }]}
+        >
+          <Text style={[styles.denyText, { color: colors.red }]}>拒否</Text>
+        </Pressable>
+        <Pressable
+          disabled={busy}
+          onPress={onApprove}
+          style={[styles.approve, { backgroundColor: colors.brand }]}
+        >
+          {busy ? (
+            <ActivityIndicator color={colors.white} />
+          ) : (
+            <Text style={[styles.approveText, { color: colors.white }]}>
+              承認
+            </Text>
+          )}
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  panel: {
+    margin: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderRadius: 12,
+    gap: 12,
+  },
+  title: { fontWeight: '700', fontSize: 16 },
+  why: { fontSize: 13, lineHeight: 18, marginTop: 4 },
+  summary: {
+    fontSize: 12,
+    borderRadius: 8,
+    padding: 6,
+    paddingHorizontal: 10,
+  },
+  changeList: { gap: 10 },
+  changeCard: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 10,
+    gap: 8,
+  },
+  changeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  badge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  badgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  fixedBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    marginLeft: 'auto',
+  },
+  changeTarget: {
+    fontWeight: '700',
+    fontSize: 14,
+    flexShrink: 1,
+  },
+  whenBlock: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 8,
+    paddingHorizontal: 10,
+    gap: 4,
+  },
+  whenRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+  },
+  whenLabel: {
+    minWidth: 56,
+    fontSize: 13,
+  },
+  whenValue: { fontSize: 13, fontWeight: '600' },
+  strikethrough: { textDecorationLine: 'line-through' },
+  stepList: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 8,
+    paddingHorizontal: 10,
+    gap: 6,
+  },
+  stepItem: {
+    gap: 4,
+  },
+  stepMain: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  stepDetails: {
+    paddingLeft: 28,
+    gap: 2,
+  },
+  stepNumber: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    textAlign: 'center',
+    fontSize: 11,
+    fontWeight: '700',
+    lineHeight: 20,
+  },
+  stepTitle: { fontSize: 13, fontWeight: '600', flex: 1 },
+  stepFixedBadge: {
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 8,
+  },
+  stepFixedText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  stepMeta: { fontSize: 12 },
+  stepDeps: { fontSize: 11 },
+  changeDesc: { fontSize: 13 },
+  warningBox: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    gap: 4,
+  },
+  actions: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  deny: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  denyText: { fontWeight: '700' },
+  approve: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  approveText: { fontWeight: '700' },
+});

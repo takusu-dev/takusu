@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>agent approval UI mock (#700)</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --text: #1c1824;
+      --muted: #6c6578;
+      --card: #f3eef7;
+      --border: #e5ddee;
+      --brand: #7261a3;
+      --surface: #ffffff;
+      --surfaceTint: #f3eef7;
+      --success: #5a8f6e;
+      --error: #c06b6b;
+      --warning: #a65b00;
+    }
+
+    [data-theme="dark"] {
+      --bg: #15131c;
+      --text: #f0ecf5;
+      --muted: #a9a3b4;
+      --card: #272236;
+      --border: #363049;
+      --brand: #7261a3;
+      --surface: #1e1b27;
+      --surfaceTint: #272236;
+      --success: #6aa67e;
+      --error: #d67a7a;
+      --warning: #e0a87a;
+    }
+
+    [data-theme="catppuccin"] {
+      --bg: #24273a;
+      --text: #cad3f5;
+      --muted: #8087a2;
+      --card: #363a4f;
+      --border: #494d64;
+      --brand: #7261a3;
+      --surface: #363a4f;
+      --surfaceTint: #494d64;
+      --success: #a6da95;
+      --error: #ed8796;
+      --warning: #f5a97f;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      transition: background 0.2s, color 0.2s;
+    }
+
+    h1 { margin: 0 0 8px; font-size: 22px; }
+    p { margin: 0 0 16px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+    a { color: var(--brand); }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+
+    .scenarios {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+
+    button {
+      padding: 8px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--card);
+      color: var(--text);
+      cursor: pointer;
+      font: inherit;
+      font-size: 13px;
+    }
+
+    .theme-btn.active,
+    .scenario-btn.active {
+      outline: 2px solid var(--brand);
+      outline-offset: 2px;
+    }
+
+    .mock-wrap {
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+      align-items: flex-start;
+    }
+
+    .legend {
+      flex: 1;
+      min-width: 220px;
+      max-width: 420px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .legend h2 {
+      font-size: 16px;
+      color: var(--text);
+      margin: 0 0 10px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 4px;
+    }
+
+    .legend ul {
+      margin: 0 0 16px;
+      padding-left: 18px;
+      line-height: 1.8;
+    }
+
+    .phone {
+      width: 360px;
+      height: 720px;
+      border: 12px solid #0e0c14;
+      border-radius: 44px;
+      overflow: hidden;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.45);
+      background: var(--bg);
+      flex-shrink: 0;
+    }
+
+    .screen {
+      position: relative;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+      color: var(--text);
+      overflow: hidden;
+    }
+
+    .mock-header {
+      padding: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+
+    .mock-header-left,
+    .mock-header-right {
+      font-size: 18px;
+      color: var(--text);
+      min-width: 28px;
+      text-align: center;
+    }
+
+    .mock-title {
+      font-weight: 700;
+      font-size: 18px;
+    }
+
+    .chat {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .approval-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      margin-top: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .approval-title {
+      font-weight: 700;
+      font-size: 16px;
+    }
+
+    .approval-why {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    .approval-summary {
+      font-size: 12px;
+      color: var(--muted);
+      background: var(--surfaceTint);
+      border-radius: 8px;
+      padding: 6px 10px;
+    }
+
+    .change-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .change-card {
+      background: var(--surfaceTint);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .change-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 12px;
+      color: #fff;
+      flex-shrink: 0;
+    }
+
+    .badge.create { background: var(--success); }
+    .badge.update { background: var(--brand); }
+    .badge.delete { background: var(--error); }
+    .badge.schedule { background: var(--muted); }
+
+    .fixed-badge {
+      margin-left: auto;
+      background: var(--error);
+    }
+
+    .change-target {
+      font-weight: 700;
+      font-size: 14px;
+    }
+
+    .when-block {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .when-row {
+      font-size: 13px;
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .when-label {
+      color: var(--muted);
+      min-width: 56px;
+      flex-shrink: 0;
+    }
+
+    .when-value {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .when-diff {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .diff-date {
+      color: var(--muted);
+    }
+
+    .diff-before {
+      color: var(--muted);
+      text-decoration: line-through;
+    }
+
+    .diff-after {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .change-desc {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .step-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+
+    .step-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 13px;
+    }
+
+    .step-main {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .step-details {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding-left: 28px;
+    }
+
+    .step-number {
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      background: var(--surfaceTint);
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .step-title {
+      flex: 1;
+      font-weight: 600;
+    }
+
+    .step-fixed {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 5px;
+      border-radius: 8px;
+      background: var(--error);
+      color: #fff;
+      flex-shrink: 0;
+    }
+
+    .step-meta {
+      color: var(--muted);
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+
+    .step-deps {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .warning-box {
+      background: rgba(166, 91, 0, 0.08);
+      border: 1px solid var(--warning);
+      color: var(--warning);
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .approval-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .approve {
+      flex: 1;
+      padding: 12px;
+      border-radius: 10px;
+      background: var(--brand);
+      color: #fff;
+      font-weight: 700;
+      border: none;
+    }
+
+    .deny {
+      flex: 1;
+      padding: 12px;
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--error);
+      font-weight: 700;
+      border: 1px solid var(--error);
+    }
+
+    .bubble {
+      max-width: 85%;
+      padding: 12px;
+      border-radius: 14px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .user-bubble {
+      align-self: flex-end;
+      background: var(--brand);
+      color: #fff;
+    }
+
+    .assistant-bubble {
+      align-self: flex-start;
+      background: var(--card);
+      color: var(--text);
+    }
+  </style>
+</head>
+<body data-theme="catppuccin">
+  <h1>agent approval UI mock</h1>
+  <p>
+    Issue <a href="https://github.com/takusu-dev/takusu/issues/700">#700</a>
+    — ツール承認画面で「いつ」「どんなタスクが追加されるか」をもっと分かりやすくする。
+  </p>
+
+  <div class="controls">
+    <button class="theme-btn active" data-theme="catppuccin">catppuccin</button>
+    <button class="theme-btn" data-theme="light">light</button>
+    <button class="theme-btn" data-theme="dark">dark</button>
+  </div>
+
+  <div class="scenarios">
+    <button class="scenario-btn active" data-scenario="task">タスク作成</button>
+    <button class="scenario-btn" data-scenario="fixed">固定タスク作成</button>
+    <button class="scenario-btn" data-scenario="habit">習慣作成</button>
+    <button class="scenario-btn" data-scenario="update">期限変更</button>
+    <button class="scenario-btn" data-scenario="habitSteps">習慣（steps）</button>
+  </div>
+
+  <div class="mock-wrap">
+    <div class="phone">
+      <div class="screen">
+        <div class="mock-header">
+          <div class="mock-header-left">&#x2190;</div>
+          <div class="mock-title">agent</div>
+          <div class="mock-header-right">&#x22ee;</div>
+        </div>
+        <div class="chat" id="chat"></div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <h2>ポイント</h2>
+      <ul>
+        <li>操作は badge、対象はタイトル/参照だけ表示。種別接頭辞（task など）は省略。</li>
+        <li>固定予定（start_at あり）の場合は「固定」ラベルを出し、時間帯を 〜 で表示。</li>
+        <li>非固定タスクは「期限」と「所要時間」を表示。プランナーが自動スケジュール。</li>
+        <li>更新の diff は変わった部分だけ打ち消し線。同じ日なら日付は一回。</li>
+        <li>習慣は「時間帯」「繰り返し」「所要」で表示。</li>
+        <li>habit の steps は各 step の固定/非固定と、step 間の依存関係を表示。</li>
+        <li>警告は実際の approval.warnings のみ表示。常時表示の汎用メッセージは不要。</li>
+        <li>補完理由など自明な inferred fields は非表示。</li>
+      </ul>
+      <p>
+        この HTML はあくまで mock です。実装時は
+        <code>mobile/src/views/AgentView.tsx</code>
+        の <code>approval</code> 部分を置き換えてください。
+      </p>
+    </div>
+  </div>
+
+  <script>
+    const scenarios = {
+      task: {
+        user: '新しい作業を 1 時間入れて',
+        assistant: 'かしこまりました。今日中に 1 時間の作業を追加します。',
+        why: 'ユーザーが追加を依頼したため、新しいタスクを作成します。',
+        changes: [
+          {
+            op: 'create',
+            target: '新しい作業',
+            desc: 'タスク「新しい作業」を作成（プランナーが自動スケジュール）',
+            rows: [
+              { label: '期限', value: '7/20 (月) 18:00' },
+              { label: '所要', value: '1時間' },
+            ],
+          },
+        ],
+      },
+      fixed: {
+        user: '明日 16 時から 1 時間会議を入れて',
+        assistant: 'かしこまりました。7/21 (火) 16:00 から 1 時間の固定予定を入れます。',
+        why: 'ユーザーが固定予定を依頼したため、時間を確保します。',
+        changes: [
+          {
+            op: 'create',
+            target: '会議',
+            desc: '固定タスク「会議」を作成',
+            fixed: true,
+            rows: [
+              { label: '固定予定', value: '7/21 (火) 16:00 〜 17:00' },
+            ],
+          },
+        ],
+      },
+      habit: {
+        user: '朝 7 時から 30 分ランニングの習慣を作って',
+        assistant: 'かしこまりました。毎朝のランニング習慣を作成します。',
+        why: 'ユーザーが習慣を依頼したため、毎日の時間を確保します。',
+        changes: [
+          {
+            op: 'create',
+            target: '朝のランニング',
+            desc: '習慣「朝のランニング」を作成',
+            rows: [
+              { label: '時間帯', value: '07:00 〜 07:30' },
+              { label: '繰り返し', value: '毎日' },
+              { label: '所要', value: '30分' },
+            ],
+          },
+        ],
+      },
+      update: {
+        user: '買い物の期限を 18 時に変えて',
+        assistant: 'かしこまりました。買い物の期限を 18:00 に変更します。',
+        why: 'ユーザーが期限変更を依頼したため、タスクを更新します。',
+        changes: [
+          {
+            op: 'update',
+            target: '#12 買い物',
+            desc: 'タスク #12（買い物）を更新（期限変更）',
+            rows: [
+              { label: '期限', date: '7/20 (月)', before: '20:00', after: '18:00' },
+            ],
+          },
+        ],
+      },
+      habitSteps: {
+        user: '朝 7 時から 30 分ランニングの習慣を作って',
+        assistant: 'かしこまりました。3 ステップのランニング習慣を作成します。',
+        why: 'ユーザーが複数ステップの習慣を依頼したため、作成します。',
+        changes: [
+          {
+            op: 'create',
+            target: '朝のランニング',
+            desc: '習慣「朝のランニング」を作成（複数ステップ）',
+            rows: [
+              { label: '時間帯', value: '07:00 〜 07:30' },
+              { label: '繰り返し', value: '毎日' },
+              { label: '所要', value: '30分' },
+            ],
+            steps: [
+              { title: '準備', time: '07:00 〜 07:05', duration: '5分', fixed: true },
+              { title: '走る', time: '07:05 〜 07:25', duration: '20分', dependsOn: [1] },
+              { title: 'クールダウン', time: '07:25 〜 07:30', duration: '5分', fixed: true, dependsOn: [2] },
+            ],
+          },
+        ],
+      },
+    };
+
+    let activeScenario = 'task';
+
+    function escapeHtml(text) {
+      return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function renderBadge(op) {
+      const labels = { create: '作成', update: '更新', delete: '削除', schedule: '再調整' };
+      const text = labels[op] || op;
+      return `<span class="badge ${op}">${escapeHtml(text)}</span>`;
+    }
+
+    function renderFixed() {
+      return `<span class="badge fixed-badge">固定</span>`;
+    }
+
+    function renderRow(row) {
+      if (row.before !== undefined && row.after !== undefined) {
+        const sameDate = row.date ? `<span class="diff-date">${escapeHtml(row.date)}</span>` : '';
+        return `
+          <div class="when-row">
+            <span class="when-label">${escapeHtml(row.label)}</span>
+            <div class="when-diff">
+              ${sameDate}
+              <span class="diff-before">${escapeHtml(row.before)}</span>
+              <span>&rarr;</span>
+              <span class="diff-after">${escapeHtml(row.after)}</span>
+            </div>
+          </div>
+        `;
+      }
+      return `
+        <div class="when-row">
+          <span class="when-label">${escapeHtml(row.label)}</span>
+          <span class="when-value">${escapeHtml(row.value)}</span>
+        </div>
+      `;
+    }
+
+    function renderSteps(steps) {
+      if (!steps || steps.length === 0) return '';
+      const depsFor = (s, i) => {
+        if (!s.dependsOn || s.dependsOn.length === 0) return '';
+        const list = s.dependsOn.map((ref) => {
+          const idx = typeof ref === 'number' ? ref - 1 : steps.findIndex((x) => x.id === ref || x.tempId === ref || x.position === ref);
+          const target = steps[idx];
+          return target ? `${idx + 1}. ${escapeHtml(target.title)}` : escapeHtml(String(ref));
+        }).join('、 ');
+        return `<div class="step-deps">依存: ${list}</div>`;
+      };
+      const items = steps.map((s, i) => `
+        <div class="step-item">
+          <div class="step-main">
+            <span class="step-number">${i + 1}</span>
+            <span class="step-title">${escapeHtml(s.title)}</span>
+            ${s.fixed ? '<span class="step-fixed">固定</span>' : ''}
+          </div>
+          <div class="step-details">
+            <div class="step-meta">${escapeHtml(s.time)} · ${escapeHtml(s.duration)}</div>
+            ${depsFor(s, i)}
+          </div>
+        </div>
+      `).join('');
+      return `<div class="step-list">${items}</div>`;
+    }
+
+    function renderChange(change) {
+      const rows = change.rows.map(renderRow).join('');
+      return `
+        <div class="change-card">
+          <div class="change-row">
+            ${renderBadge(change.op)}
+            <span class="change-target">${escapeHtml(change.target)}</span>
+            ${change.fixed ? renderFixed() : ''}
+          </div>
+          <div class="when-block">${rows}</div>
+          ${renderSteps(change.steps)}
+          <div class="change-desc">${escapeHtml(change.desc)}</div>
+        </div>
+      `;
+    }
+
+    function render() {
+      const s = scenarios[activeScenario];
+      const chat = document.getElementById('chat');
+      const changes = s.changes.map(renderChange).join('');
+      chat.innerHTML = `
+        <div class="bubble user-bubble">${escapeHtml(s.user)}</div>
+        <div class="bubble assistant-bubble">${escapeHtml(s.assistant)}</div>
+
+        <div class="approval-panel">
+          <div>
+            <div class="approval-title">以下の変更を承認しますか？</div>
+            <div class="approval-why">${escapeHtml(s.why)}</div>
+          </div>
+
+          <div class="approval-summary">${s.changes.length} 件の変更</div>
+
+          <div class="change-list">${changes}</div>
+
+          ${s.warnings && s.warnings.length > 0 ? `
+            <div class="warning-box">
+              ${s.warnings.map((w) => `注意: ${escapeHtml(w)}`).join('<br>')}
+            </div>
+          ` : ''}
+
+          <div class="approval-actions">
+            <button class="deny">拒否</button>
+            <button class="approve">承認</button>
+          </div>
+        </div>
+      `;
+    }
+
+    document.querySelectorAll('.theme-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.body.setAttribute('data-theme', btn.dataset.theme);
+        document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      });
+    });
+
+    document.querySelectorAll('.scenario-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activeScenario = btn.dataset.scenario;
+        document.querySelectorAll('.scenario-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        render();
+      });
+    });
+
+    const params = new URLSearchParams(location.search);
+    if (params.has('scenario')) {
+      activeScenario = params.get('scenario') || 'task';
+    }
+    document.querySelectorAll('.scenario-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.scenario === activeScenario);
+    });
+    render();
+  </script>
+</body>
+</html>
