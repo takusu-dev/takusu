@@ -8,6 +8,7 @@ use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 
+use async_trait::async_trait;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -17,10 +18,14 @@ use axum::{Json, Router};
 use futures_util::StreamExt as _;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::unbounded_channel;
+use tokio::sync::oneshot;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use uuid::Uuid;
 
-use crate::{AgentError, AgentSession, ApprovalRequest, ApprovalResult, TurnEvent, TurnResult};
+use crate::{
+    AgentError, AgentSession, ApprovalRequest, ApprovalResult, ToolError, TurnEvent, TurnResult,
+    UserInputAnswer, UserInputProvider, UserInputQuestion,
+};
 
 pub const API_VERSION: u8 = 1;
 
@@ -105,16 +110,22 @@ where
 pub struct AgentApiState {
     pub bearer_token: String,
     pub factory: Arc<dyn SessionFactory>,
+    user_input_provider: Arc<dyn UserInputProvider>,
     sessions: Mutex<BoundedMap<String, Arc<AgentSession>>>,
     turn_results: Mutex<BoundedMap<(String, String), TurnResultDto>>,
     approval_results: Mutex<BoundedMap<(String, String), ApprovalResultDto>>,
 }
 
 impl AgentApiState {
-    pub fn new(bearer_token: impl Into<String>, factory: Arc<dyn SessionFactory>) -> Self {
+    pub fn new(
+        bearer_token: impl Into<String>,
+        factory: Arc<dyn SessionFactory>,
+        user_input_provider: Arc<dyn UserInputProvider>,
+    ) -> Self {
         Self {
             bearer_token: bearer_token.into(),
             factory,
+            user_input_provider,
             sessions: Mutex::new(BoundedMap::new(MAX_SESSIONS)),
             turn_results: Mutex::new(BoundedMap::new(MAX_TURN_RESULTS)),
             approval_results: Mutex::new(BoundedMap::new(MAX_APPROVAL_RESULTS)),
@@ -123,6 +134,72 @@ impl AgentApiState {
 
     fn session(&self, id: &str) -> Option<Arc<AgentSession>> {
         self.sessions.lock().ok()?.get(id).cloned()
+    }
+}
+
+/// Provider that bridges a blocking `correct_asr` tool call to the mobile client
+/// through the agent HTTP API.
+#[derive(Clone, Debug)]
+pub struct ApiUserInputProvider {
+    resolvers: Arc<Mutex<HashMap<String, oneshot::Sender<Vec<UserInputAnswer>>>>>,
+    timeout: std::time::Duration,
+}
+
+const USER_INPUT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+impl ApiUserInputProvider {
+    pub fn new() -> Self {
+        Self::with_timeout(USER_INPUT_TIMEOUT)
+    }
+
+    pub fn with_timeout(timeout: std::time::Duration) -> Self {
+        Self {
+            resolvers: Arc::new(Mutex::new(HashMap::new())),
+            timeout,
+        }
+    }
+}
+
+impl Default for ApiUserInputProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl UserInputProvider for ApiUserInputProvider {
+    async fn request(
+        &self,
+        call_id: &str,
+        _questions: Vec<UserInputQuestion>,
+    ) -> Result<Vec<UserInputAnswer>, ToolError> {
+        let (tx, rx) = oneshot::channel();
+        self.resolvers
+            .lock()
+            .unwrap()
+            .insert(call_id.to_string(), tx);
+        // Wait for the client to call the resolve endpoint, with a timeout to
+        // avoid keeping stale resolvers in memory indefinitely.
+        match tokio::time::timeout(self.timeout, rx).await {
+            Ok(Ok(answers)) => Ok(answers),
+            Ok(Err(_)) | Err(_) => {
+                self.resolvers.lock().unwrap().remove(call_id);
+                Err(ToolError::Cancelled)
+            }
+        }
+    }
+
+    async fn resolve(&self, call_id: &str, answers: Vec<UserInputAnswer>) -> Result<(), ToolError> {
+        let tx = self
+            .resolvers
+            .lock()
+            .unwrap()
+            .remove(call_id)
+            .ok_or_else(|| {
+                ToolError::InvalidArgs(format!("no pending user input request for {call_id}"))
+            })?;
+        tx.send(answers).map_err(|_| ToolError::Cancelled)?;
+        Ok(())
     }
 }
 
@@ -170,6 +247,11 @@ pub struct ApprovalDecisionRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserInputResolutionRequest {
+    pub answers: Vec<UserInputAnswer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalResultDto {
     pub id: String,
     pub approved: bool,
@@ -193,6 +275,7 @@ pub struct CapabilitiesResponse {
     pub audio_input: bool,
     pub tts: bool,
     pub approvals: bool,
+    pub user_input: bool,
 }
 
 pub fn router(state: Arc<AgentApiState>) -> Router {
@@ -206,6 +289,10 @@ pub fn router(state: Arc<AgentApiState>) -> Router {
         .route(
             "/sessions/{id}/approvals/{approval_id}",
             post(resolve_approval),
+        )
+        .route(
+            "/sessions/{id}/tool-calls/{call_id}/user-input",
+            post(resolve_user_input),
         )
         .route("/sessions/{id}", delete(delete_session))
         .with_state(state)
@@ -232,6 +319,7 @@ async fn capabilities(State(state): State<Arc<AgentApiState>>, headers: HeaderMa
             audio_input: true,
             tts: true,
             approvals: true,
+            user_input: true,
         },
     })
     .into_response()
@@ -446,6 +534,35 @@ async fn resolve_approval(
     .into_response()
 }
 
+async fn resolve_user_input(
+    State(state): State<Arc<AgentApiState>>,
+    Path((id, call_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<Versioned<UserInputResolutionRequest>>,
+) -> Response {
+    if !authorized(&headers, &state.bearer_token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if body.version != API_VERSION {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    if state.session(&id).is_none() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if let Err(error) = state
+        .user_input_provider
+        .resolve(&call_id, body.value.answers)
+        .await
+    {
+        return agent_error(AgentError::Tool(error));
+    }
+    Json(Versioned {
+        version: API_VERSION,
+        value: serde_json::json!({ "ok": true }),
+    })
+    .into_response()
+}
+
 async fn delete_session(
     State(state): State<Arc<AgentApiState>>,
     Path(id): Path<String>,
@@ -490,4 +607,78 @@ fn agent_error(error: AgentError) -> Response {
         })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn api_user_input_resolve_returns_answers() {
+        let provider = ApiUserInputProvider::with_timeout(Duration::from_secs(60));
+        let questions = vec![UserInputQuestion {
+            text: "kore".into(),
+            purpose: "test".into(),
+        }];
+        let request = provider.request("call-1", questions.clone());
+        let resolve = async {
+            provider
+                .resolve(
+                    "call-1",
+                    vec![UserInputAnswer {
+                        text: "これ".into(),
+                    }],
+                )
+                .await
+                .unwrap();
+        };
+        let (answers, ()) = tokio::join!(request, resolve);
+        assert_eq!(answers.unwrap()[0].text, "これ");
+    }
+
+    #[tokio::test]
+    async fn api_user_input_resolve_unknown_request_fails() {
+        let provider = ApiUserInputProvider::new();
+        let result = provider
+            .resolve(
+                "unknown",
+                vec![UserInputAnswer {
+                    text: "ignored".into(),
+                }],
+            )
+            .await;
+        assert!(matches!(result, Err(ToolError::InvalidArgs(_))));
+    }
+
+    #[tokio::test]
+    async fn api_user_input_request_times_out_and_cleans_map() {
+        let provider = ApiUserInputProvider::with_timeout(Duration::from_millis(10));
+        let result = provider.request("timeout-call", vec![]).await;
+        assert!(matches!(result, Err(ToolError::Cancelled)));
+    }
+
+    #[tokio::test]
+    async fn api_user_input_resolve_to_dropped_receiver_is_cancelled() {
+        let provider = ApiUserInputProvider::new();
+        let (tx, rx) = oneshot::channel();
+        provider
+            .resolvers
+            .lock()
+            .unwrap()
+            .insert("dropped".to_string(), tx);
+        // Drop the receiver before resolve is called; this simulates a session
+        // ending or a turn being cancelled while the user-input request is pending.
+        drop(rx);
+        let result = provider
+            .resolve(
+                "dropped",
+                vec![UserInputAnswer {
+                    text: "ignored".into(),
+                }],
+            )
+            .await;
+        assert!(matches!(result, Err(ToolError::Cancelled)));
+    }
 }

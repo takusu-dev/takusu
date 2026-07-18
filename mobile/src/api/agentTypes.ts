@@ -43,13 +43,30 @@ export interface AgentTurnResult {
   approval_request: ApprovalRequest | null;
 }
 
+export interface UserInputQuestion {
+  text: string;
+  for: string;
+}
+
+export interface UserInputAnswer {
+  text: string;
+}
+
 export type TurnEvent =
   | { type: 'Thinking'; data: string }
   | { type: 'Text'; data: string }
-  | { type: 'ToolCall'; data: { name: string; arguments: unknown } }
+  | {
+      type: 'ToolCall';
+      data: { name: string; call_id: string; arguments: unknown };
+    }
   | {
       type: 'ToolResult';
-      data: { name: string; content: string; is_error: boolean };
+      data: {
+        name: string;
+        call_id: string;
+        content: string;
+        is_error: boolean;
+      };
     }
   | { type: 'Error'; data: string }
   | { type: 'Done'; data: AgentTurnResult };

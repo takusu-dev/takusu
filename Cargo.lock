@@ -4181,6 +4181,7 @@ dependencies = [
 name = "takusu-cli"
 version = "0.20260718.3"
 dependencies = [
+ "async-trait",
  "atty",
  "axum",
  "clap",

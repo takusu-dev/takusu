@@ -7,9 +7,13 @@ pub mod runner;
 pub mod tool;
 pub mod tools;
 pub mod transport;
+pub mod user_input;
 
 pub use tool::{
     ChangeReceipt, InferredField, ProposedChange, Tool, ToolError, ToolOutput, ToolRegistry,
+};
+pub use user_input::{
+    StubUserInputProvider, UserInputAnswer, UserInputProvider, UserInputQuestion,
 };
 
 use futures_util::StreamExt;
@@ -21,6 +25,7 @@ use takusu_client::{
     ClientError, CreateHabit, CreateSkill, CreateTask, SaveScheduleRequest, ScheduleEntry,
     UpdateHabit, UpdateSkill, UpdateTask,
 };
+use uuid::Uuid;
 
 use jiff::Unit;
 
@@ -147,10 +152,14 @@ pub enum TurnEvent {
     Text(String),
     ToolCall {
         name: String,
+        #[serde(rename = "call_id")]
+        call_id: String,
         arguments: Value,
     },
     ToolResult {
         name: String,
+        #[serde(rename = "call_id")]
+        call_id: String,
         content: String,
         is_error: bool,
     },
@@ -396,12 +405,6 @@ impl AgentSession {
 
                         let is_truncated = finish_reason == Some(llm::FinishReason::Length);
                         let calls = std::mem::take(&mut current_calls);
-                        for call in &calls {
-                            emit(TurnEvent::ToolCall {
-                                name: call.name.clone(),
-                                arguments: call.arguments.clone(),
-                            });
-                        }
                         let tool_results = self
                             .execute_tool_calls(
                                 calls,
@@ -468,25 +471,39 @@ impl AgentSession {
     {
         let mut results = Vec::with_capacity(calls.len());
         for call in calls {
-            let (msg, event) = if is_truncated {
+            // Generate a unique id for this tool-call invocation. This id is
+            // exposed to the client via TurnEvent so that user-input providers
+            // (e.g. correct_asr) can be resolved without colliding with the
+            // LLM's own (sometimes short/repeated) call ids.
+            let tool_call_id = Uuid::now_v7().to_string();
+            emit(TurnEvent::ToolCall {
+                name: call.name.clone(),
+                call_id: tool_call_id.clone(),
+                arguments: call.arguments.clone(),
+            });
+
+            let msg = if is_truncated {
                 let content = format!(
                     "Tool call \"{}\" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.",
                     call.name
                 );
-                (
-                    llm::Message::ToolResult {
-                        call_id: call.id,
-                        content: content.clone(),
-                        is_error: true,
-                    },
-                    Some(TurnEvent::ToolResult {
-                        name: call.name.clone(),
-                        content,
-                        is_error: true,
-                    }),
-                )
+                emit(TurnEvent::ToolResult {
+                    call_id: tool_call_id,
+                    name: call.name.clone(),
+                    content: content.clone(),
+                    is_error: true,
+                });
+                llm::Message::ToolResult {
+                    call_id: call.id,
+                    content,
+                    is_error: true,
+                }
             } else {
-                match self.registry.call(&call.name, call.arguments.clone()).await {
+                match self
+                    .registry
+                    .call_with_id(&call.name, &tool_call_id, call.arguments.clone())
+                    .await
+                {
                     Ok(output) => {
                         if output.why.is_some() {
                             *approval_why = output.why;
@@ -496,41 +513,35 @@ impl AgentSession {
                         inferred_fields.extend(output.inferred_fields);
                         changes.extend(output.changes);
                         *schedule_dirty |= output.schedule_dirty;
-                        let content = output.content.clone();
-                        (
-                            llm::Message::ToolResult {
-                                call_id: call.id,
-                                content: output.content,
-                                is_error: output.is_error,
-                            },
-                            Some(TurnEvent::ToolResult {
-                                name: call.name.clone(),
-                                content,
-                                is_error: output.is_error,
-                            }),
-                        )
+                        emit(TurnEvent::ToolResult {
+                            call_id: tool_call_id,
+                            name: call.name.clone(),
+                            content: output.content.clone(),
+                            is_error: output.is_error,
+                        });
+                        llm::Message::ToolResult {
+                            call_id: call.id,
+                            content: output.content,
+                            is_error: output.is_error,
+                        }
                     }
                     Err(e) if e.is_recoverable() => {
                         let content = e.to_string();
-                        (
-                            llm::Message::ToolResult {
-                                call_id: call.id,
-                                content: content.clone(),
-                                is_error: true,
-                            },
-                            Some(TurnEvent::ToolResult {
-                                name: call.name.clone(),
-                                content,
-                                is_error: true,
-                            }),
-                        )
+                        emit(TurnEvent::ToolResult {
+                            call_id: tool_call_id,
+                            name: call.name.clone(),
+                            content: content.clone(),
+                            is_error: true,
+                        });
+                        llm::Message::ToolResult {
+                            call_id: call.id,
+                            content,
+                            is_error: true,
+                        }
                     }
                     Err(e) => return Err(AgentError::Tool(e)),
                 }
             };
-            if let Some(event) = event {
-                emit(event);
-            }
             results.push(msg);
         }
         Ok(results)
@@ -853,7 +864,7 @@ impl AgentSession {
             音声での読み上げとクライアント表示の両方を前提とし、簡潔で自然な日本語を使ってください。
             クライアントでは Markdown としてレンダリングされるため、読みやすさのため軽微な Markdown 記法（例：**強調**、- 箇条書き）を使ってもよいですが、読み上げ時に Markdown 記号は取り除かれるため、記号なしでも自然な日本語になるようにしてください。
             長い構造化した Markdown（表・コードブロック・多階層リストなど）は避けてください。
-            ユーザーの入力は音声認識（ASR）の結果である場合があります。認識誤差を考慮し、不自然な点があれば推測せずに確認または修整を提案してください。
+            ユーザーの入力は音声認識（ASR）の結果である場合があります。認識誤差を考慮し、不自然な点があれば `correct_asr` を使って確認または修整を提案してください。
 
             ## 現在のコンテキスト
             - 現在日時（サーバー時刻）: {now}
@@ -875,6 +886,13 @@ impl AgentSession {
             - skills_list: スキル一覧を取得
             - skills_read: 指定したスキルの詳細を取得
 
+            ### 確認
+            - correct_asr: 音声認識（ASR）の誤認識をユーザーに確認して訂正する。
+              文脈から自明に解釈できる誤りは推測して進み、ユーザーに確認しない。
+              固有名詞・同音異義語・文脈に依存する数字/日付/曜日など、誤ると意味が変わる場合に使う。
+              複数の語が怪しい場合は 1 回の呼び出しで `questions` 配列としてまとめて送る。
+              `questions` の各要素は `{{ "text": "認識されたテキスト", "for": "その語の用途と疑っている理由" }}`。
+
             ### 変更提案（承認が必要）
             - create_task: タスク作成を提案
             - update_task: タスク更新を提案
@@ -895,7 +913,7 @@ impl AgentSession {
             4. タスク・習慣を参照・作成・更新する際は、`display_id`（`#42` や `h1#3` など）を使用してください。UUID や内部 ID は使わないでください。
             5. 不明な固有名詞やユーザー固有の情報は、推測せずに確認するか、既存のタスク・習慣を検索して一致するものを探してください。
             6. ツールの結果に基づいて応答してください。データがない場合は正直に「データがありません」と伝えてください。
-            7. ユーザーの入力は音声認識（ASR）の結果の場合があります。まず自分がどう解釈したかを提示し、不自然な単語や文脈があれば、推測せずに確認または修整を促してください。
+            7. ユーザーの入力は音声認識（ASR）の結果の場合があります。まず自分がどう解釈したかを提示し、不自然な単語や文脈があれば、`correct_asr` を使って推測せずに確認または修整を促してください。
             8. ユーザーから明確な指示を受けた場合や必要な情報が揃っている場合は、『提案してもよいですか』のような中間確認を挟まず、直接変更を提案してください。音声対話では余分なターンを避えてください。
             9. ツールの存在を忘れないでください。応答前に、必要な情報を取得するためのツールがないか簡潔に確認し、適切なツールを順番に呼び出してください。
             10. 複雑なタスクでは、推論のステップを簡潔に整理してから行動してください。
@@ -906,7 +924,7 @@ impl AgentSession {
             - 簡潔で、ポイントを絞って話すこと。
             - 承認を必要とする変更を提案するときは、変更内容とその理由を分かりやすく提示すること。
             - ユーザーがタスク・スケジュール管理以外の話題を振った場合は、一度丁寧に範囲外であることを伝え、タスク管理で何か手伝えるか尋ねてください。
-            - 音声入力と思われる場合は、認識結果を解釈してユーザーに提示し、不自然なら確認・修整を促してください。
+            - 音声入力と思われる場合は、認識結果を解釈してユーザーに提示し、不自然なら `correct_asr` で確認・修整を促してください。
             - 変更提案を行うときは、変更内容と理由を一度に提示し、承認を待ってください。余計な前置きや確認のターンを挟まないでください。
 
             ## セキュリティ・ガードレール

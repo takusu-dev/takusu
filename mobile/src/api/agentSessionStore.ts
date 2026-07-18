@@ -6,6 +6,7 @@ const SNAPSHOT_KEY = (id: string) => `takusu.agent.sessionSnapshot.${id}`;
 
 export interface ToolCallItem {
   name: string;
+  callId?: string;
   arguments?: unknown;
   result?: string;
   isError?: boolean;
