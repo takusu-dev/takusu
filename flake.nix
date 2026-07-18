@@ -257,8 +257,12 @@
                 C_x86_64_unknown_linux_gnu = "${pkgs.stdenv.cc}/bin/cc";
                 # tikv-jemalloc-sys emits -lgcc for Android, but newer NDKs
                 # replaced libgcc with libunwind. Add a shim that redirects
-                # -lgcc to -lunwind so jemalloc still links.
-                RUSTFLAGS = "-L ${androidLibgccShim}/lib";
+                # -lgcc to -lunwind so jemalloc still links. Use target-specific
+                # rustflags so host build scripts are not affected.
+                CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS = "-L ${androidLibgccShim}/lib";
+                CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_RUSTFLAGS = "-L ${androidLibgccShim}/lib";
+                CARGO_TARGET_X86_64_LINUX_ANDROID_RUSTFLAGS = "-L ${androidLibgccShim}/lib";
+                CARGO_TARGET_I686_LINUX_ANDROID_RUSTFLAGS = "-L ${androidLibgccShim}/lib";
               };
 
               # Don't run tests — cross-compiled binaries can't execute on host.
@@ -682,7 +686,10 @@
                     zlib
                     sherpaOnnxAndroid
                   ]
-                  ++ [ androidComposition.ndk-bundle ];
+                  ++ [
+                    androidComposition.ndk-bundle
+                    androidLibgccShim
+                  ];
               };
 
               # Combined closure of the two Nix-built Android derivations
@@ -796,6 +803,14 @@
                 export HOST_CXX="${pkgs.stdenv.cc}/bin/c++"
                 export HOST_CFLAGS=""
                 export HOST_CXXFLAGS=""
+                # tikv-jemalloc-sys emits -lgcc for Android, but newer NDKs
+                # replaced libgcc with libunwind. Add a shim that redirects
+                # -lgcc to -lunwind so jemalloc still links. Use target-specific
+                # rustflags so host build scripts are not affected.
+                export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-L ${androidLibgccShim}/lib"
+                export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_RUSTFLAGS="-L ${androidLibgccShim}/lib"
+                export CARGO_TARGET_X86_64_LINUX_ANDROID_RUSTFLAGS="-L ${androidLibgccShim}/lib"
+                export CARGO_TARGET_I686_LINUX_ANDROID_RUSTFLAGS="-L ${androidLibgccShim}/lib"
               '';
             };
 
@@ -881,6 +896,15 @@
                 fi
                 mkdir -p .devin
                 ln -sf ${mcp-config} .devin/config.json
+
+                # tikv-jemalloc-sys emits -lgcc for Android, but newer NDKs
+                # replaced libgcc with libunwind. Add a shim that redirects
+                # -lgcc to -lunwind so jemalloc still links. Use target-specific
+                # rustflags so host build scripts are not affected.
+                export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-L ${androidLibgccShim}/lib"
+                export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_RUSTFLAGS="-L ${androidLibgccShim}/lib"
+                export CARGO_TARGET_X86_64_LINUX_ANDROID_RUSTFLAGS="-L ${androidLibgccShim}/lib"
+                export CARGO_TARGET_I686_LINUX_ANDROID_RUSTFLAGS="-L ${androidLibgccShim}/lib"
               '';
             };
           };
