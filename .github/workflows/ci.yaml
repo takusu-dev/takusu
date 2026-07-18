@@ -100,10 +100,6 @@ jobs:
       fail-fast: false
       matrix:
         bench:
-          - package: takusu-core
-            name: plan
-          - package: takusu-core
-            name: realworld
           - package: takusu-habit
             name: habit
           - package: takusu-ical

@@ -1,0 +1,46 @@
+name: CodSpeed Walltime
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  codspeed-walltime:
+    name: Run walltime benchmarks
+    runs-on: codspeed-macro
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        bench:
+          - package: takusu-core
+            name: plan
+          - package: takusu-core
+            name: realworld
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
+
+      - name: Restore binary cache
+        uses: asa1984/infra/.github/actions/binary-cache@44165003348ea3578a66f8c879bfaf23a3c7cc18
+        with:
+          package: .#ci-rust
+
+      - run: nix profile install .#ci-rust
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build benchmark
+        run: nix develop .#rust --command bash -c 'cargo codspeed build -m walltime -p ${{ matrix.bench.package }} --bench ${{ matrix.bench.name }}'
+
+      - name: Run benchmark
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: walltime
+          run: nix develop .#rust --command bash -c 'cargo codspeed run -m walltime -p ${{ matrix.bench.package }} --bench ${{ matrix.bench.name }}'
