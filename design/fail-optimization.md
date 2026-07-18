@@ -141,3 +141,137 @@ The `start_idx` cursor added a small per-iteration overhead and did not yield a 
 ### Status
 
 Abandoned. `sleep_score()` and `daily_load_score()` keep their original full-slice `union_length_in_window()` calls.
+
+---
+
+## 2026-07-19: single-pass habit sort by `(group, time_of_day)`
+
+### Change
+
+- `crates/takusu-core/src/evaluate.rs` (`habit_consistency_score()`)
+  - Replaced group-only sort + per-group `tod` sort with a single `entries.sort_unstable_by_key(|e| (e.0, e.1))`.
+  - Removed the second per-group `sort_unstable_by_key(|e| e.1)`.
+
+### Rationale
+
+Profiling showed `habit_consistency_score()` as a top self-time contributor (7.28%). Combining two sorts into one was expected to reduce comparison and key-extraction overhead.
+
+### Baseline (before this experiment)
+
+- `cargo run -p takusu-core --example score_check --release`:
+  - score `-1844.372500`
+  - total `0.084s`
+  - mean `0.836737 µs`
+- `cargo bench -p takusu-core --bench realworld`:
+  - `plan realworld habits (7d)`: `22.064 ms`
+  - `plan realworld habits (30d)`: `438.27 ms`
+  - `plan_partial realworld habits (14d, 5 pinned)`: `142.35 ms`
+  - `plan_in_range realworld habits (14d, days 2-7)`: `49.176 ms`
+
+### Result (after single-pass tuple-key sort)
+
+- `cargo run -p takusu-core --example score_check --release`:
+  - score `-1844.372500`
+  - total `0.138s`
+  - mean `1.379904 µs` (**+64.9%**)
+- `cargo bench -p takusu-core --bench realworld`:
+  - `plan realworld habits (7d)`: `22.130 ms` (no significant change)
+  - `plan realworld habits (30d)`: `461.28 ms` (**+5.2%**)
+  - `plan_partial realworld habits (14d, 5 pinned)`: `866.71 ms` (**+509%**, high variance: 587–1255 ms)
+  - `plan_in_range realworld habits (14d, days 2-7)`: `147.81 ms` (**+200%**, high variance: 111–236 ms)
+
+### Observation
+
+The single-pass tuple-key sort regressed `score_check` and the `realworld` suite. The `plan_partial` and `plan_in_range` paths saw especially large, high-variance slowdowns, suggesting the score change interacted badly with the partial SA landscape (more accepted neighbors, more `Plan` clones, and/or more `greedy_rebuild` work in `repair_polish`).
+
+### Status
+
+Abandoned. `habit_consistency_score()` reverts to the original group sort + per-group `tod` sort.
+
+---
+
+## 2026-07-19: `TabuList` backed by `FxHashSet` for O(1) lookups
+
+### Change
+
+- `crates/takusu-core/src/anneal.rs` (`TabuList`)
+  - Added an `FxHashSet<(usize, i64, i64)>` alongside the `VecDeque` FIFO.
+  - `push()` removes the oldest entry from both the queue and the set, then inserts the new key.
+  - `contains()` checks the set instead of scanning the `VecDeque`.
+
+### Rationale
+
+`is_tabu()` is called for every generated neighbor and previously scanned the `VecDeque` (capacity `2 * task_count`) for each schedule entry. A hash set was expected to turn that O(capacity) lookup into O(1).
+
+### Baseline (before this experiment)
+
+- `cargo bench -p takusu-core --bench realworld`:
+  - `plan realworld habits (7d)`: `22.064 ms`
+  - `plan realworld habits (30d)`: `438.27 ms`
+  - `plan_partial realworld habits (14d, 5 pinned)`: `142.35 ms`
+  - `plan_in_range realworld habits (14d, days 2-7)`: `49.176 ms`
+
+### Result (after `FxHashSet` TabuList)
+
+- `cargo bench -p takusu-core --bench realworld`:
+  - `plan realworld habits (7d)`: `27.222 ms` (**+23.4%**)
+  - `plan realworld habits (30d)`: `496.49 ms` (**+13.3%**)
+  - `plan_partial realworld habits (14d, 5 pinned)`: `161.07 ms` (**+13.2%**)
+  - `plan_in_range realworld habits (14d, days 2-7)`: `54.017 ms` (**+9.8%**)
+
+### Observation
+
+For the small tabu capacities in these fixtures (`2 * task_count`), the hash-set insert/remove and hashing overhead in `push()`/`contains()` outweighs the benefit of O(1) lookup. The linear scan of a small `VecDeque` is faster in practice.
+
+### Status
+
+Abandoned. `TabuList` keeps the original `VecDeque`-only linear scan.
+
+---
+
+## 2026-07-19: `union_length_in_window` raw `i64` arithmetic / `#[inline(always)]`
+
+### Change
+
+- `crates/takusu-core/src/evaluate.rs` (`union_length_in_window()`)
+  - Tried replacing `Point` temporaries with raw `i64` values.
+  - Tried marking the function `#[inline(always)]`.
+  - Tried keeping `Point` with `#[inline(always)]`.
+
+### Rationale
+
+`union_length_in_window()` is a top self-time contributor. Avoiding `Point` construction and forcing inlining were expected to reduce per-day scan overhead.
+
+### Baseline (before this experiment)
+
+- `cargo run -p takusu-core --example score_check --release`:
+  - score `-1844.372500`
+  - total `0.084s`
+  - mean `0.836737 µs`
+- `cargo bench -p takusu-core --bench realworld`:
+  - `plan realworld habits (7d)`: `22.064 ms`
+  - `plan realworld habits (30d)`: `438.27 ms`
+  - `plan_partial realworld habits (14d, 5 pinned)`: `142.35 ms`
+  - `plan_in_range realworld habits (14d, days 2-7)`: `49.176 ms`
+
+### Result
+
+- Raw `i64` + `#[inline]`:
+  - `score_check` release: `1.85 µs` (**+121%**)
+- Raw `i64` + `#[inline(always)]`:
+  - `score_check` release: `2.61 µs` (**+212%**)
+- `Point` + `#[inline(always)]`:
+  - `score_check` release: `1.69 µs` (**+102%**)
+- `Point` + `#[inline(always)]` (full `realworld` bench):
+  - `plan 7d`: `31.97 ms` (**+44.9%**)
+  - `plan 30d`: `742.20 ms` (**+69.4%**)
+  - `plan_partial`: `296.66 ms` (**+108%**)
+  - `plan_in_range`: `86.95 ms` (**+76.9%**)
+
+### Observation
+
+Changing the function body or forcing inlining perturbed the compiler's optimization decisions enough that `sleep_score()`/`daily_load_score()` no longer inlined well with `evaluate_with_scratch()`. The original `Point` implementation with `#[inline]` is the fastest on this workload, so it should be left untouched.
+
+### Status
+
+Abandoned. `union_length_in_window()` reverts to the original `Point`/`#[inline]` implementation.
