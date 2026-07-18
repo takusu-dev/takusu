@@ -267,6 +267,12 @@ fn habit_summary_json(habit: &HabitRow) -> Value {
 }
 
 fn habit_json(habit: &HabitDetail) -> Value {
+    // Positions are exposed to the client as 1-indexed display numbers.
+    let id_to_display_position: HashMap<String, i64> = habit
+        .steps
+        .iter()
+        .map(|s| (s.id.clone(), s.position + 1))
+        .collect();
     json!({
         "display_id": habit.habit.display_id,
         "reference": format!("h{}", habit.habit.display_id),
@@ -283,13 +289,18 @@ fn habit_json(habit: &HabitDetail) -> Value {
         "active": habit.habit.active,
         "fixed": habit.habit.fixed,
         "window_mode": habit.habit.window_mode,
-        "steps": habit.steps.iter().map(step_json).collect::<Vec<_>>(),
+        "steps": habit.steps.iter().map(|s| step_json(s, &id_to_display_position)).collect::<Vec<_>>(),
     })
 }
 
-fn step_json(step: &HabitStepRow) -> Value {
+fn step_json(step: &HabitStepRow, id_to_display_position: &HashMap<String, i64>) -> Value {
+    let depends_on: Vec<i64> = serde_json::from_str::<Vec<String>>(&step.depends_on)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|id| id_to_display_position.get(id).copied())
+        .collect();
     json!({
-        "position": step.position,
+        "position": step.position + 1,
         "title": step.title,
         "description": step.description,
         "start_time": step.start_time,
@@ -300,6 +311,7 @@ fn step_json(step: &HabitStepRow) -> Value {
         "allows_parallel": step.allows_parallel,
         "abandonability": step.abandonability,
         "fixed": step.fixed,
+        "depends_on": depends_on,
     })
 }
 
@@ -784,35 +796,31 @@ impl MutationKind {
         match self {
             Self::CreateTask => {
                 let t = title.unwrap_or_else(|| "(名称未設定)".to_owned());
-                (t.clone(), format!("タスク「{t}」を作成"))
+                (t.clone(), format!("「{t}」を作成"))
             }
             Self::UpdateTask => {
                 let r = task_ref.unwrap_or_else(|| "(参照不明)".to_owned());
-                let description = title.map_or_else(
-                    || format!("タスク{r}を更新"),
-                    |t| format!("タスク{r}（{t}）を更新"),
-                );
+                let description =
+                    title.map_or_else(|| format!("{r}を更新"), |t| format!("「{t}」を更新"));
                 (r, description)
             }
             Self::DeleteTask => {
                 let r = task_ref.unwrap_or_else(|| "(参照不明)".to_owned());
-                (r.clone(), format!("タスク{r}を削除"))
+                (r.clone(), format!("{r}を削除"))
             }
             Self::CreateHabit => {
                 let t = title.unwrap_or_else(|| "(名称未設定)".to_owned());
-                (t.clone(), format!("習慣「{t}」を作成"))
+                (t.clone(), format!("「{t}」を作成"))
             }
             Self::UpdateHabit => {
                 let r = habit_ref.unwrap_or_else(|| "(参照不明)".to_owned());
-                let description = title.map_or_else(
-                    || format!("習慣{r}を更新"),
-                    |t| format!("習慣{r}（{t}）を更新"),
-                );
+                let description =
+                    title.map_or_else(|| format!("{r}を更新"), |t| format!("「{t}」を更新"));
                 (r, description)
             }
             Self::DeleteHabit => {
                 let r = habit_ref.unwrap_or_else(|| "(参照不明)".to_owned());
-                (r.clone(), format!("習慣{r}を削除"))
+                (r.clone(), format!("{r}を削除"))
             }
             Self::GenerateSchedule => (String::new(), "スケジュールを生成".to_owned()),
             Self::Reschedule => (String::new(), "スケジュールを再調整".to_owned()),
@@ -834,7 +842,7 @@ impl MutationKind {
                     "parallelizable": {"type": "boolean"},
                     "allows_parallel": {"type": "boolean"},
                     "abandonability": {"type": "number"},
-                    "inferred_fields": {"type": "array"},
+                    "inferred_fields": {"type": "array", "description": "List of fields that were inferred from ambiguous user input and should be highlighted. Do not include obvious conversions (e.g. '1 hour' -> 60 minutes) or values filled from the current date/time."},
                 }),
             ),
             Self::UpdateTask => (
@@ -856,7 +864,7 @@ impl MutationKind {
                         "enum": ["pending", "scheduled", "in_progress", "completed", "skipped"],
                         "description": "New task status. 'completed' means done."
                     },
-                    "inferred_fields": {"type": "array"},
+                    "inferred_fields": {"type": "array", "description": "List of fields that were inferred from ambiguous user input and should be highlighted. Do not include obvious conversions (e.g. '1 hour' -> 60 minutes) or values filled from the current date/time."},
                 }),
             ),
             Self::DeleteTask => (
@@ -884,7 +892,7 @@ impl MutationKind {
                     "parallelizable": {"type": "boolean"},
                     "allows_parallel": {"type": "boolean"},
                     "abandonability": {"type": "number"},
-                    "inferred_fields": {"type": "array"},
+                    "inferred_fields": {"type": "array", "description": "List of fields that were inferred from ambiguous user input and should be highlighted. Do not include obvious conversions (e.g. '1 hour' -> 60 minutes) or values filled from the current date/time."},
                 }),
             ),
             Self::UpdateHabit => (
@@ -902,7 +910,7 @@ impl MutationKind {
                     "allows_parallel": {"type": "boolean"},
                     "abandonability": {"type": "number"},
                     "active": {"type": "boolean"},
-                    "inferred_fields": {"type": "array"},
+                    "inferred_fields": {"type": "array", "description": "List of fields that were inferred from ambiguous user input and should be highlighted. Do not include obvious conversions (e.g. '1 hour' -> 60 minutes) or values filled from the current date/time."},
                 }),
             ),
             Self::DeleteHabit => (
@@ -1333,6 +1341,26 @@ mod tests {
     }
 
     #[test]
+    fn habit_json_maps_step_dependencies_to_display_positions() {
+        let habit = habit_row("habit-uuid", 7, "habit");
+        let first = step_row("step-1", "habit-uuid", 0, "warmup");
+        let mut second = step_row("step-2", "habit-uuid", 1, "run");
+        second.depends_on = r#"["step-1"]"#.to_string();
+        let detail = HabitDetail {
+            habit,
+            steps: vec![first, second],
+        };
+
+        let value = habit_json(&detail);
+        let steps = value["steps"].as_array().unwrap();
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0]["position"], 1);
+        assert_eq!(steps[0]["depends_on"], json!([]));
+        assert_eq!(steps[1]["position"], 2);
+        assert_eq!(steps[1]["depends_on"], json!([1]));
+    }
+
+    #[test]
     fn schedule_entry_value_includes_title_display_id_and_reference() {
         let task = task_row("task-uuid", 3, "task title", Some("habit-uuid"), &[]);
         let habit = habit_row("habit-uuid", 7, "habit");
@@ -1506,37 +1534,37 @@ mod tests {
             MutationKind::CreateTask.change_summary(&args(&[("title", "演習30題追加")])),
             (
                 "演習30題追加".to_owned(),
-                "タスク「演習30題追加」を作成".to_owned()
+                "「演習30題追加」を作成".to_owned()
             ),
         );
         assert_eq!(
             MutationKind::UpdateTask
                 .change_summary(&args(&[("task_ref", "#42"), ("title", "予習")])),
-            ("#42".to_owned(), "タスク#42（予習）を更新".to_owned()),
+            ("#42".to_owned(), "「予習」を更新".to_owned()),
         );
         assert_eq!(
             MutationKind::UpdateTask.change_summary(&args(&[("task_ref", "#42")])),
-            ("#42".to_owned(), "タスク#42を更新".to_owned()),
+            ("#42".to_owned(), "#42を更新".to_owned()),
         );
         assert_eq!(
             MutationKind::DeleteTask.change_summary(&args(&[("task_ref", "#7")])),
-            ("#7".to_owned(), "タスク#7を削除".to_owned()),
+            ("#7".to_owned(), "#7を削除".to_owned()),
         );
         assert_eq!(
             MutationKind::CreateHabit.change_summary(&args(&[("title", "毎朝ジョギング")])),
             (
                 "毎朝ジョギング".to_owned(),
-                "習慣「毎朝ジョギング」を作成".to_owned()
+                "「毎朝ジョギング」を作成".to_owned()
             ),
         );
         assert_eq!(
             MutationKind::UpdateHabit
                 .change_summary(&args(&[("habit_ref", "h3"), ("title", "夜ジョギング")])),
-            ("h3".to_owned(), "習慣h3（夜ジョギング）を更新".to_owned()),
+            ("h3".to_owned(), "「夜ジョギング」を更新".to_owned()),
         );
         assert_eq!(
             MutationKind::DeleteHabit.change_summary(&args(&[("habit_ref", "h1")])),
-            ("h1".to_owned(), "習慣h1を削除".to_owned()),
+            ("h1".to_owned(), "h1を削除".to_owned()),
         );
         assert_eq!(
             MutationKind::GenerateSchedule.change_summary(&serde_json::Map::new()),
@@ -1553,12 +1581,12 @@ mod tests {
             MutationKind::CreateTask.change_summary(&blank_title),
             (
                 "(名称未設定)".to_owned(),
-                "タスク「(名称未設定)」を作成".to_owned()
+                "「(名称未設定)」を作成".to_owned()
             ),
         );
         assert_eq!(
             MutationKind::UpdateTask.change_summary(&serde_json::Map::new()),
-            ("(参照不明)".to_owned(), "タスク(参照不明)を更新".to_owned()),
+            ("(参照不明)".to_owned(), "(参照不明)を更新".to_owned()),
         );
     }
 }
