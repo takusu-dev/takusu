@@ -180,3 +180,21 @@ All runs use `jemalloc` default.
   - `plan realworld habits (30d)`: `468.73 ms`
   - `plan_partial realworld habits (14d, 5 pinned)`: `170.76 ms`
   - `plan_in_range realworld habits (14d, days 2-7)`: `56.721 ms`
+
+## 2026-07-19: current parent before failed experiment pass (`d7a0d49`)
+
+- `cargo run -p takusu-core --example score_check` (debug):
+  - score `-1844.372500`
+  - total `1.645s`
+  - mean `16.447747 µs`
+- `cargo run -p takusu-core --example score_check --release`:
+  - score `-1844.372500`
+  - total `0.084s`
+  - mean `0.836737 µs`
+- `time ./target/release/examples/profile` (20 full `plan()` calls):
+  - real `~2.11s` (three runs: 2.284s, 2.012s, 2.029s)
+- `cargo bench -p takusu-core --bench realworld`:
+  - `plan realworld habits (7d)`: `22.064 ms`
+  - `plan realworld habits (30d)`: `438.27 ms`
+  - `plan_partial realworld habits (14d, 5 pinned)`: `142.35 ms`
+  - `plan_in_range realworld habits (14d, days 2-7)`: `49.176 ms`
