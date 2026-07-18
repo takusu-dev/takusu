@@ -170,6 +170,8 @@ pub struct AgentSession {
     turn_lock: tokio::sync::Mutex<()>,
     /// Last provider-reported prompt token count, used to guide history trimming.
     last_prompt_tokens: Mutex<Option<usize>>,
+    /// Estimated tokens of the last built system prompt, used for consistent history trimming.
+    last_system_estimate: Mutex<Option<usize>>,
     pending_approval: Mutex<Option<ApprovalRequest>>,
     approval_sequence: Mutex<u64>,
     schedule_dirty: Mutex<bool>,
@@ -201,6 +203,7 @@ impl AgentSession {
             history: Mutex::new(Vec::new()),
             turn_lock: tokio::sync::Mutex::new(()),
             last_prompt_tokens: Mutex::new(None),
+            last_system_estimate: Mutex::new(None),
             pending_approval: Mutex::new(None),
             approval_sequence: Mutex::new(0),
             schedule_dirty: Mutex::new(false),
@@ -214,6 +217,8 @@ impl AgentSession {
 
         let tools = self.registry.definitions();
         let system = llm::Message::System(self.build_system_prompt().await);
+        let system_estimate = system.estimate_tokens();
+        *self.last_system_estimate.lock().unwrap() = Some(system_estimate);
 
         let mut local = self.history.lock().unwrap().clone();
         local.push(llm::Message::User(user_text.to_string()));
@@ -228,7 +233,7 @@ impl AgentSession {
 
         loop {
             if tool_call_count >= self.config.llm.max_tool_calls {
-                self.replace_history(local, None, system.estimate_tokens());
+                self.replace_history(local, None, system_estimate);
                 return Err(AgentError::TooManyToolCalls);
             }
 
@@ -249,7 +254,7 @@ impl AgentSession {
                     local.push(llm::Message::Assistant(llm::AssistantContent::Text(
                         text.clone(),
                     )));
-                    self.replace_history(local, response.prompt_tokens, system.estimate_tokens());
+                    self.replace_history(local, response.prompt_tokens, system_estimate);
                     let approval_request = self.make_approval_request(
                         proposed_changes,
                         inferred_fields,
@@ -267,11 +272,7 @@ impl AgentSession {
                 llm::LlmResponseContent::ToolCalls(calls) => {
                     tool_call_count += calls.len();
                     if tool_call_count > self.config.llm.max_tool_calls {
-                        self.replace_history(
-                            local,
-                            response.prompt_tokens,
-                            system.estimate_tokens(),
-                        );
+                        self.replace_history(local, response.prompt_tokens, system_estimate);
                         return Err(AgentError::TooManyToolCalls);
                     }
 
@@ -312,6 +313,8 @@ impl AgentSession {
 
         let tools = self.registry.definitions();
         let system = llm::Message::System(self.build_system_prompt().await);
+        let system_estimate = system.estimate_tokens();
+        *self.last_system_estimate.lock().unwrap() = Some(system_estimate);
 
         let mut local = self.history.lock().unwrap().clone();
         local.push(llm::Message::User(user_text.to_string()));
@@ -326,7 +329,7 @@ impl AgentSession {
 
         loop {
             if tool_call_count >= self.config.llm.max_tool_calls {
-                self.replace_history(local, None, system.estimate_tokens());
+                self.replace_history(local, None, system_estimate);
                 return Err(AgentError::TooManyToolCalls);
             }
 
@@ -356,7 +359,7 @@ impl AgentSession {
                     llm::LlmStreamEvent::ToolCall(call) => {
                         tool_call_count += 1;
                         if tool_call_count > self.config.llm.max_tool_calls {
-                            self.replace_history(local, None, system.estimate_tokens());
+                            self.replace_history(local, None, system_estimate);
                             return Err(AgentError::TooManyToolCalls);
                         }
                         current_calls.push(call);
@@ -371,7 +374,7 @@ impl AgentSession {
                             local.push(llm::Message::Assistant(llm::AssistantContent::Text(
                                 text.clone(),
                             )));
-                            self.replace_history(local, prompt_tokens, system.estimate_tokens());
+                            self.replace_history(local, prompt_tokens, system_estimate);
                             let approval_request = self.make_approval_request(
                                 proposed_changes,
                                 inferred_fields,
@@ -533,6 +536,19 @@ impl AgentSession {
         Ok(results)
     }
 
+    fn build_approval_resolution_message(approved: bool, changes: &[ProposedChange]) -> String {
+        let header = if approved {
+            "ユーザーは以下の提案を承認し、変更を適用しました。"
+        } else {
+            "ユーザーは以下の提案を拒否しました。"
+        };
+        let mut lines = vec![header.to_string()];
+        for change in changes {
+            lines.push(format!("- {}", change.description));
+        }
+        lines.join("\n")
+    }
+
     pub fn pending_approval(&self) -> Option<ApprovalRequest> {
         self.pending_approval.lock().ok()?.clone()
     }
@@ -558,7 +574,12 @@ impl AgentSession {
         if jiff::Timestamp::now() >= request.expires_at {
             return Err(AgentError::Tool(ToolError::Cancelled));
         }
+        let resolution_message = Self::build_approval_resolution_message(approve, &request.changes);
+        let system_estimate = self.last_system_estimate.lock().unwrap().unwrap_or(0);
         if !approve {
+            let mut local = self.history.lock().unwrap().clone();
+            local.push(llm::Message::User(resolution_message));
+            self.replace_history(local, None, system_estimate);
             return Ok(ApprovalResult {
                 id: id.to_owned(),
                 approved: false,
@@ -572,19 +593,40 @@ impl AgentSession {
         });
         let mut receipts = Vec::new();
         let mut schedule_dirty = *self.schedule_dirty.lock().unwrap();
+        let mut execution_error = None;
         for change in request.changes {
             let args = change.arguments.clone().unwrap_or_default();
-            let receipt = self.execute_proposed_change(&change, args).await?;
-            schedule_dirty |= matches!(
-                change.target_label.split_whitespace().next(),
-                Some("task" | "habit")
-            );
-            receipts.push(receipt);
+            match self.execute_proposed_change(&change, args).await {
+                Ok(receipt) => {
+                    schedule_dirty |= matches!(
+                        change.target_label.split_whitespace().next(),
+                        Some("task" | "habit")
+                    );
+                    receipts.push(receipt);
+                }
+                Err(e) => {
+                    execution_error = Some((change, e));
+                    break;
+                }
+            }
         }
-        if schedule_commit {
+        if schedule_commit && execution_error.is_none() {
             schedule_dirty = false;
         }
         *self.schedule_dirty.lock().unwrap() = schedule_dirty;
+        if let Some((change, e)) = execution_error {
+            let error_message = format!(
+                "ユーザーは以下の提案を承認しましたが、変更の適用中にエラーが発生しました: {}\n- {}",
+                e, change.description
+            );
+            let mut local = self.history.lock().unwrap().clone();
+            local.push(llm::Message::User(error_message));
+            self.replace_history(local, None, system_estimate);
+            return Err(e);
+        }
+        let mut local = self.history.lock().unwrap().clone();
+        local.push(llm::Message::User(resolution_message));
+        self.replace_history(local, None, system_estimate);
         Ok(ApprovalResult {
             id: id.to_owned(),
             approved: true,
@@ -1135,6 +1177,89 @@ mod tests {
         }
     }
 
+    struct ProposeTool;
+
+    #[async_trait::async_trait]
+    impl Tool for ProposeTool {
+        fn name(&self) -> &'static str {
+            "propose"
+        }
+
+        fn description(&self) -> &'static str {
+            "proposes a change that requires user approval"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            json!({
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"}
+                },
+                "required": ["title"]
+            })
+        }
+
+        async fn call(&self, args: Value) -> Result<ToolOutput, ToolError> {
+            let title = args
+                .get("title")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ToolError::InvalidArgs("missing title".to_string()))?;
+            Ok(ToolOutput {
+                content: r#"{"approval_required":true}"#.to_string(),
+                why: Some(format!("propose creating {title}")),
+                proposed_changes: vec![ProposedChange {
+                    operation: "create".to_string(),
+                    target_label: format!("task {title}"),
+                    description: format!("create task {title}"),
+                    before: None,
+                    after: Some(args.clone()),
+                    arguments: Some(args),
+                    observed_updated_at: None,
+                }],
+                ..Default::default()
+            })
+        }
+    }
+
+    struct ScheduleProposeTool;
+
+    #[async_trait::async_trait]
+    impl Tool for ScheduleProposeTool {
+        fn name(&self) -> &'static str {
+            "propose_schedule"
+        }
+
+        fn description(&self) -> &'static str {
+            "proposes a schedule that requires user approval"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            })
+        }
+
+        async fn call(&self, _args: Value) -> Result<ToolOutput, ToolError> {
+            let args = json!({"_preview_entries": []});
+            Ok(ToolOutput {
+                content: r#"{"approval_required":true}"#.to_string(),
+                why: Some("propose generating schedule".to_string()),
+                proposed_changes: vec![ProposedChange {
+                    operation: "generate".to_string(),
+                    target_label: "schedule".to_string(),
+                    description: "スケジュールを生成".to_string(),
+                    before: None,
+                    after: Some(args.clone()),
+                    arguments: Some(args),
+                    observed_updated_at: None,
+                }],
+                ..Default::default()
+            })
+        }
+    }
+
     struct MockLlm {
         calls: Mutex<Vec<(Vec<llm::Message>, Vec<Value>)>>,
         responses: Mutex<Vec<llm::LlmResponse>>,
@@ -1555,5 +1680,112 @@ mod tests {
         assert_eq!(result.text, "今日は会議が2つあります");
         assert!(result.changes.is_empty());
         assert!(!result.schedule_dirty);
+    }
+
+    #[tokio::test]
+    async fn denied_proposal_is_recorded_in_history() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(ProposeTool));
+
+        let mock = MockLlm {
+            calls: Mutex::new(Vec::new()),
+            responses: Mutex::new(vec![
+                llm::LlmResponse {
+                    content: llm::LlmResponseContent::ToolCalls(vec![llm::ToolCall {
+                        id: "call_1".to_string(),
+                        name: "propose".to_string(),
+                        arguments: json!({"title": "test"}),
+                    }]),
+                    prompt_tokens: None,
+                    finish_reason: None,
+                },
+                llm::LlmResponse {
+                    content: llm::LlmResponseContent::Text("提案します".to_string()),
+                    prompt_tokens: None,
+                    finish_reason: None,
+                },
+            ]),
+        };
+
+        let agent = AgentSession::new(AgentConfig::default(), registry, mock);
+        let result = agent.run_turn("add task").await.unwrap();
+        let approval = result.approval_request.expect("approval required");
+
+        let resolved = agent.resolve_approval(&approval.id, false).await.unwrap();
+        assert!(!resolved.approved);
+
+        let history = agent.history.lock().unwrap();
+        let found = history
+            .iter()
+            .any(|m| matches!(m, llm::Message::User(text) if text.contains("拒否")));
+        assert!(
+            found,
+            "denial should be recorded in LLM history: {:?}",
+            history
+        );
+    }
+
+    #[tokio::test]
+    async fn approved_proposal_is_recorded_in_history() {
+        use axum::routing::post;
+        use axum::{Json, Router};
+        use takusu_client::ScheduleRow;
+
+        let app = Router::new().route(
+            "/api/schedule/replace",
+            post(|Json(_): Json<serde_json::Value>| async move {
+                Json(ScheduleRow {
+                    id: "sched-1".to_string(),
+                    created_at: "2026-07-18T00:00:00Z".to_string(),
+                    updated_at: "2026-07-18T00:00:00Z".to_string(),
+                    schedule: "{}".to_string(),
+                })
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(ScheduleProposeTool));
+
+        let mock = MockLlm {
+            calls: Mutex::new(Vec::new()),
+            responses: Mutex::new(vec![
+                llm::LlmResponse {
+                    content: llm::LlmResponseContent::ToolCalls(vec![llm::ToolCall {
+                        id: "call_1".to_string(),
+                        name: "propose_schedule".to_string(),
+                        arguments: json!({}),
+                    }]),
+                    prompt_tokens: None,
+                    finish_reason: None,
+                },
+                llm::LlmResponse {
+                    content: llm::LlmResponseContent::Text("スケジュールを提案します".to_string()),
+                    prompt_tokens: None,
+                    finish_reason: None,
+                },
+            ]),
+        };
+
+        let mut cfg = AgentConfig::default();
+        cfg.server.url = format!("http://{addr}");
+        let agent = AgentSession::new(cfg, registry, mock);
+        let result = agent.run_turn("スケジュールを作成して").await.unwrap();
+        let approval = result.approval_request.expect("approval required");
+
+        let resolved = agent.resolve_approval(&approval.id, true).await.unwrap();
+        assert!(resolved.approved);
+
+        let history = agent.history.lock().unwrap();
+        let found = history
+            .iter()
+            .any(|m| matches!(m, llm::Message::User(text) if text.contains("承認")));
+        assert!(
+            found,
+            "approval should be recorded in LLM history: {:?}",
+            history
+        );
     }
 }
