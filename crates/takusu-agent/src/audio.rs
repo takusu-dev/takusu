@@ -4,12 +4,15 @@
 //! record → transcribe → agent turn → synthesize → play.
 //! It is not exposed as an LLM tool.
 
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use takusu_audio::play::{AudioClip, PlayError};
 use takusu_audio::{
-    CartesiaSonic, CartesiaSonicConfig, FunASRClient, FunASRConfig, FunASRMode, RecordConfig,
-    SpeechToText, TextToSpeech, TtsOptions, TtsRequest, default_hotwords, record,
+    CartesiaSonic, CartesiaSonicConfig, ModelCache, RecordConfig, SherpaOnnxAsr,
+    SherpaOnnxAsrConfig, SherpaOnnxModel, SpeechToText, TextToSpeech, TtsOptions, TtsRequest,
+    record,
 };
 use thiserror::Error;
 
@@ -50,7 +53,7 @@ pub use crate::audio_config::{AudioConfig, SttConfig, TtsConfig};
 /// Application-level audio adapter. Owns the agent session and the audio clients.
 pub struct AudioAdapter {
     session: AgentSession,
-    stt: Box<dyn SpeechToText>,
+    stt: Arc<dyn SpeechToText>,
     tts: Box<dyn TextToSpeech>,
     tts_voice_id: String,
     tts_speed: Option<f32>,
@@ -58,9 +61,14 @@ pub struct AudioAdapter {
 
 impl AudioAdapter {
     /// Create an audio adapter from an existing agent session.
-    pub fn new(session: AgentSession) -> Result<Self, AudioError> {
+    pub async fn new(session: AgentSession) -> Result<Self, AudioError> {
         let config = &session.config.audio;
-        let stt = build_stt(&config.stt)?;
+        let stt = tokio::task::spawn_blocking({
+            let stt_config = config.stt.clone();
+            move || build_stt(&stt_config)
+        })
+        .await
+        .map_err(|e| AudioError::Transcribe(format!("stt build task failed: {e}")))??;
         let (tts, voice_id, speed) = build_tts(&config.tts)?;
         Ok(Self {
             session,
@@ -80,7 +88,7 @@ impl AudioAdapter {
             }
 
             let text =
-                transcribe_with_timeout(self.stt.as_ref(), &samples, Duration::from_secs(120))
+                transcribe_with_timeout(Arc::clone(&self.stt), &samples, Duration::from_secs(120))
                     .await?;
             if text.trim().is_empty() {
                 continue;
@@ -121,28 +129,45 @@ impl AudioAdapter {
     }
 }
 
-fn build_stt(config: &SttConfig) -> Result<Box<dyn SpeechToText>, AudioError> {
+fn build_stt(config: &SttConfig) -> Result<Arc<dyn SpeechToText>, AudioError> {
     match config.backend.as_str() {
-        "funasr" => {
-            let mode = match config.mode.as_str() {
-                "2pass" => FunASRMode::TwoPass,
-                _ => FunASRMode::Offline,
+        "sherpa" => {
+            let model = match config.model.as_str() {
+                "sense-voice" => SherpaOnnxModel::SenseVoice,
+                "funasr-nano" => SherpaOnnxModel::FunasrNano,
+                other => {
+                    return Err(AudioError::UnsupportedBackend(format!(
+                        "unknown sherpa model: {other}"
+                    )));
+                }
             };
-            let hotwords = if config.hotwords.is_empty() {
-                default_hotwords()
-                    .get(&config.language)
-                    .cloned()
-                    .unwrap_or_default()
+            let model_dir = if config.model_dir.is_empty() {
+                if matches!(model, SherpaOnnxModel::FunasrNano) {
+                    return Err(AudioError::Transcribe(
+                        "sherpa funasr-nano requires a model_dir".into(),
+                    ));
+                }
+                let cache =
+                    ModelCache::default_dir().map_err(|e| AudioError::Transcribe(e.to_string()))?;
+                cache
+                    .ensure("sherpa-sense-voice-int8")
+                    .map_err(|e| AudioError::Transcribe(e.to_string()))?
             } else {
-                config.hotwords.clone()
+                PathBuf::from(&config.model_dir)
             };
-            let client = FunASRClient::new(FunASRConfig {
-                url: config.url.clone(),
-                language: config.language.clone(),
-                hotwords,
-                mode,
-            });
-            Ok(Box::new(client))
+            let asr_config = SherpaOnnxAsrConfig {
+                model_dir,
+                model,
+                tokens: None,
+                num_threads: config.num_threads,
+                provider: config.provider.clone(),
+                sample_rate: config.sample_rate,
+                language: Some(config.language.clone()),
+                use_itn: config.use_itn,
+            };
+            let asr = SherpaOnnxAsr::from_config(&asr_config)
+                .map_err(|e| AudioError::Transcribe(e.to_string()))?;
+            Ok(Arc::new(asr))
         }
         other => Err(AudioError::UnsupportedBackend(other.to_string())),
     }
@@ -188,15 +213,24 @@ async fn record_with_timeout(timeout: Duration) -> Result<Vec<f32>, AudioError> 
 }
 
 async fn transcribe_with_timeout(
-    stt: &dyn SpeechToText,
+    stt: Arc<dyn SpeechToText>,
     samples: &[f32],
     timeout: Duration,
 ) -> Result<String, AudioError> {
-    let text = tokio::time::timeout(timeout, stt.transcribe(samples))
-        .await
-        .map_err(|_| AudioError::Timeout)?
-        .map_err(|e| AudioError::Transcribe(e.to_string()))?;
-    Ok(text)
+    let samples = samples.to_vec();
+    tokio::time::timeout(
+        timeout,
+        tokio::task::spawn_blocking(move || {
+            let handle = tokio::runtime::Handle::try_current()
+                .map_err(|e| AudioError::Transcribe(e.to_string()))?;
+            handle
+                .block_on(stt.transcribe(&samples))
+                .map_err(|e| AudioError::Transcribe(e.to_string()))
+        }),
+    )
+    .await
+    .map_err(|_| AudioError::Timeout)?
+    .map_err(|e| AudioError::Transcribe(format!("transcribe task failed: {e}")))?
 }
 
 async fn synthesize_with_timeout(
@@ -241,11 +275,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stt_config_defaults_to_funasr() {
+    fn stt_config_defaults_to_sherpa() {
         let config = SttConfig::default();
-        assert_eq!(config.backend, "funasr");
-        assert_eq!(config.url, "ws://127.0.0.1:10095");
+        assert_eq!(config.backend, "sherpa");
         assert_eq!(config.language, "ja");
+        assert_eq!(config.model, "sense-voice");
+        assert!(config.use_itn);
+        assert_eq!(config.num_threads, 2);
+        assert_eq!(config.provider, "cpu");
+        assert_eq!(config.sample_rate, 16000);
     }
 
     #[test]
@@ -260,6 +298,16 @@ mod tests {
     fn build_stt_rejects_unknown_backend() {
         let config = SttConfig {
             backend: "unknown".to_string(),
+            ..SttConfig::default()
+        };
+        assert!(build_stt(&config).is_err());
+    }
+
+    #[test]
+    fn build_stt_rejects_unknown_sherpa_model() {
+        let config = SttConfig {
+            backend: "sherpa".to_string(),
+            model: "unknown".to_string(),
             ..SttConfig::default()
         };
         assert!(build_stt(&config).is_err());

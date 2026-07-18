@@ -10,7 +10,7 @@ name = "takusu-audio"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["sherpa"]
 hush = ["takusu-audio/hush"]
 sherpa = ["takusu-audio/sherpa"]
 

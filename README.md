@@ -9,7 +9,7 @@
 - REST API サーバー (axum + SQLite) と Cloudflare Worker バックエンド
 - CLI クライアント（エディタ編集・リッチテーブル表示）
 - モバイルアプリ（Expo + React Native、UniFFI ネイティブモジュール）
-- 音声アシスタント: 録音 + STT（sherpa-onnx / FunASR WebSocket クライアント）
+- 音声アシスタント: 録音 + STT（sherpa-onnx）
 - iCalendar インポート・Google Calendar 同期・習慣の RRULE 展開
 
 ## 構成

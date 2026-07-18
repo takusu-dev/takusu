@@ -55,7 +55,6 @@ takusu-cli
 
 takusu-audio
   ├── cpal            (マイク録音)
-  ├── tokio-tungstenite (FunASR WebSocket)
   └── reqwest         (モデルダウンロード)
 
 takusu-local
@@ -317,22 +316,21 @@ let schedule = client.generate_schedule(&req).await?;
 - RMS 0.1 に正規化
 - Enter キーで停止
 
-### 6.2 STT (takusu-audio/src/funasr.rs)
+### 6.2 STT (takusu-audio/src/sherpa.rs)
 
 ```
-[Client]                         [FunASR Server (external)]
-   │ WebSocket connect                │
-   │──── {"type":"start",...} ────────▶│
-   │──── binary PCM f32 audio ────────▶│
-   │──── {"type":"end"} ──────────────▶│
-   │◀─── {"type":"result","text":"..."}─│
+[takusu-audio-cli / takusu-agent]
+   │
+   ├── model dir or cache ──▶ Sherpa-ONNX OfflineRecognizer
+   │
+   └── f32 16kHz mono PCM ──▶ SherpaOnnxAsr::transcribe ──▶ text
 ```
 
-- モード: offline（全文一度に）のみ実装。`2pass` はプロトコル上受け付ける
-- モデル: SenseVoice-Small（日本語特化）
-- 言語: ja（日本語）, hotwords 指定可
-- クライアント側タイムアウト: 接続 10s / 結果待ち 120s
-- ローカル実行には `takusu-audio/src/sherpa.rs` (Sherpa-ONNX) を使う
+- バックエンド: Sherpa-ONNX (`OfflineRecognizer`)
+- モデル: SenseVoice (default), FunASR Nano
+- 言語: SenseVoice 言語指定可 (`auto`, `zh`, `en`, `ja`, `ko`)
+- 初回実行時は `sherpa-sense-voice-int8` を `ModelCache` から自動ダウンロード
+- `funasr-nano` は `--sherpa-model-dir` でローカルモデルが必要
 
 ### 6.3 TTS (takusu-audio/src/tts.rs)
 
@@ -502,7 +500,7 @@ takusu-worker (WASM / cdylib)
 | `AppError` | `takusu-local-lib/src/error.rs` |
 | `Storage` trait | `takusu-storage/src/storage.rs` |
 | `Client` | `takusu-client/src/lib.rs` |
-| `FunASRClient` | `takusu-audio/src/funasr.rs` |
+| `SherpaOnnxAsr` | `takusu-audio/src/sherpa.rs` |
 | `TtsClient` | `takusu-audio/src/tts.rs` |
 | `Habit`, `RecurrenceRule` | `takusu-habit/src/lib.rs` |
 | `IcalTask` | `takusu-ical/src/lib.rs` |
