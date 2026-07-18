@@ -140,8 +140,9 @@ pub(crate) fn evaluate_with_scratch(
 ) -> f64 {
     let mut score = 0.0;
     let schedules = &plan.schedules;
-    build_index_into(planner, schedules, index);
-    let (plan_start, plan_end) = plan_range(schedules);
+
+    // index 構築と plan_range を同時に行う。
+    let (plan_start, plan_end) = build_index_into(planner, schedules, index);
 
     // Sort schedules once by start so per-day/window scans can break early and
     // parallel_violation can avoid its own copy+sort.
@@ -162,17 +163,38 @@ pub(crate) fn evaluate_with_scratch(
 }
 
 /// task_id → (start, end) の索引。O(n) で構築し、各スコア関数の探索を O(1) にする。
+/// 同時にスケジュール全体の [plan_start, plan_end) も返す。
 fn build_index_into(
     planner: &Planner,
     schedules: &[(Point, Point, usize)],
     index: &mut Vec<Option<(Point, Point)>>,
-) {
+) -> (Point, Point) {
     index.clear();
     index.resize(planner.tasks.len(), None);
+    let mut plan_start = Point(0);
+    let mut plan_end = Point(0);
+    let mut first = true;
     for (s, e, id) in schedules {
         if *id < index.len() {
             index[*id] = Some((*s, *e));
         }
+        if first {
+            plan_start = *s;
+            plan_end = *e;
+            first = false;
+        } else {
+            if s.0 < plan_start.0 {
+                plan_start = *s;
+            }
+            if e.0 > plan_end.0 {
+                plan_end = *e;
+            }
+        }
+    }
+    if first {
+        (Point(0), Point(0))
+    } else {
+        (plan_start, plan_end)
     }
 }
 
@@ -274,40 +296,46 @@ fn buffer_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
 }
 
 /// `sorted` 内の区間を `[window_start, window_end)` に clip した上で
-/// 重複を統合した占有長さを返す。allocation なし。
-#[inline]
+/// 重複を統合した占有長さを返す。`start_idx` は呼び出し側が持つカーソルで、
+/// 既に通過した区間を再スキャンしない。ウィンドウが単調に進む場合、
+/// 全ウィンドウ通しで O(n + windows * active) に近づける。
+#[inline(always)]
 fn union_length_in_window(
     sorted: &[(Point, Point, usize)],
     window_start: Point,
     window_end: Point,
+    start_idx: &mut usize,
 ) -> i64 {
+    let n = sorted.len();
+    // ウィンドウ開始以前に終わる区間はスキップ
+    while *start_idx < n && sorted[*start_idx].1.0 <= window_start.0 {
+        *start_idx += 1;
+    }
+
     let mut total = 0i64;
-    let mut cur_start = Point(0);
-    let mut cur_end = Point(0);
+    let mut cur_start = 0i64;
+    let mut cur_end = 0i64;
     let mut in_union = false;
-    for (s, e, _) in sorted {
-        if e.0 <= window_start.0 {
-            continue;
-        }
+    for (s, e, _) in &sorted[*start_idx..n] {
         if s.0 >= window_end.0 {
             break;
         }
-        let clip_start = Point(s.0.max(window_start.0));
-        let clip_end = Point(e.0.min(window_end.0));
+        let clip_start = s.0.max(window_start.0);
+        let clip_end = e.0.min(window_end.0);
         if !in_union {
             cur_start = clip_start;
             cur_end = clip_end;
             in_union = true;
-        } else if clip_start.0 > cur_end.0 {
-            total += cur_end.0 - cur_start.0;
+        } else if clip_start > cur_end {
+            total += cur_end - cur_start;
             cur_start = clip_start;
             cur_end = clip_end;
-        } else if clip_end.0 > cur_end.0 {
+        } else if clip_end > cur_end {
             cur_end = clip_end;
         }
     }
     if in_union {
-        total += cur_end.0 - cur_start.0;
+        total += cur_end - cur_start;
     }
     total
 }
@@ -337,12 +365,14 @@ fn sleep_score(
     let mut day_start_point = Point(first_day - slots_per_day);
 
     let mut score = 0.0;
+    let mut start_idx = 0usize;
 
     while day_start_point.0 + sleep_start_rel <= plan_end.0 {
         let sleep_window_start = Point(day_start_point.0 + sleep_start_rel);
         let sleep_window_end = Point(day_start_point.0 + sleep_end_rel);
 
-        let occupied = union_length_in_window(sorted, sleep_window_start, sleep_window_end);
+        let occupied =
+            union_length_in_window(sorted, sleep_window_start, sleep_window_end, &mut start_idx);
 
         if occupied > 0 {
             let sleep_got = (sleep_len - occupied).max(0);
@@ -394,10 +424,11 @@ fn daily_load_score(
     let mut day_start = Point(first_day);
 
     let mut score = 0.0;
+    let mut start_idx = 0usize;
     while day_start.0 < plan_end.0 {
         let day_end = Point(day_start.0 + slots_per_day);
 
-        let load = union_length_in_window(sorted, day_start, day_end);
+        let load = union_length_in_window(sorted, day_start, day_end, &mut start_idx);
 
         let normal_penalty = (load * load) as f64 * W_DAILY_NORMAL;
         let comfortable_excess = (load - planner.workload.comfortable_slots_per_day).max(0);
@@ -437,17 +468,18 @@ fn union_length(intervals: &mut [(Point, Point)]) -> i64 {
 fn parallel_violation_score(planner: &Planner, sorted: &[(Point, Point, usize)]) -> f64 {
     let mut penalty_slots = 0i64;
     let n = sorted.len();
+    let tasks = &planner.tasks;
     for i in 0..n {
         let (a_start, a_end, a_id) = sorted[i];
-        for (b_start, b_end, b_id) in sorted.iter().skip(i + 1).copied() {
-            if b_start >= a_end {
+        for (b_start, b_end, b_id) in &sorted[(i + 1)..n] {
+            if b_start.0 >= a_end.0 {
                 break;
             }
-            if b_end <= a_start {
+            if b_end.0 <= a_start.0 {
                 continue;
             }
-            let task_a = &planner.tasks[a_id];
-            let task_b = &planner.tasks[b_id];
+            let task_a = &tasks[a_id];
+            let task_b = &tasks[*b_id];
             if !((task_a.allows_parallel && task_b.parallelizable)
                 || (task_b.allows_parallel && task_a.parallelizable))
             {
@@ -520,8 +552,9 @@ fn habit_consistency_score(
         let Some((sched_start, _)) = index[task.id] else {
             continue;
         };
-        // 日付成分を除去: 時刻帯のみのスロット値
-        let tod = sched_start.0.rem_euclid(slots_per_day);
+        // 日付成分を除去: 時刻帯のみのスロット値。
+        // スケジュールされた時刻は非負なので通常の `%` で十分。
+        let tod = sched_start.0 % slots_per_day;
         entries.push((group, tod));
     }
 
@@ -564,23 +597,6 @@ fn habit_consistency_score(
         bonus += W_HABIT_CONSISTENCY * consistency;
     }
     bonus
-}
-
-fn plan_range(schedules: &[(Point, Point, usize)]) -> (Point, Point) {
-    if schedules.is_empty() {
-        return (Point(0), Point(0));
-    }
-    let mut min_p = schedules[0].0;
-    let mut max_p = schedules[0].1;
-    for (s, e, _) in schedules {
-        if s.0 < min_p.0 {
-            min_p = *s;
-        }
-        if e.0 > max_p.0 {
-            max_p = *e;
-        }
-    }
-    (min_p, max_p)
 }
 
 #[cfg(test)]
