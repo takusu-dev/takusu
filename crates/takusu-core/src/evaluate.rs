@@ -79,7 +79,6 @@
 //! - W_INCLUSION=10: タスクをスケジュールから外さない誘因十分。
 
 use super::*;
-use rustc_hash::FxHashMap;
 
 const W_EARLY: f64 = 1.0;
 const W_LATE: f64 = 20.0;
@@ -116,7 +115,16 @@ const W_DAILY_MAXIMUM: f64 = 2.0;
 pub fn evaluate(planner: &Planner, plan: &Plan, temperature: f64, t0: f64) -> f64 {
     let mut sorted = Vec::with_capacity(plan.schedules.len());
     let mut index = Vec::with_capacity(planner.tasks.len());
-    evaluate_with_scratch(planner, plan, temperature, t0, &mut sorted, &mut index)
+    let mut habit_entries = Vec::with_capacity(planner.tasks.len());
+    evaluate_with_scratch(
+        planner,
+        plan,
+        temperature,
+        t0,
+        &mut sorted,
+        &mut index,
+        &mut habit_entries,
+    )
 }
 
 /// `evaluate` の内部実装。sorted 区間列と index 用 scratch バッファを
@@ -128,6 +136,7 @@ pub(crate) fn evaluate_with_scratch(
     t0: f64,
     sorted: &mut Vec<(Point, Point, usize)>,
     index: &mut Vec<Option<(Point, Point)>>,
+    habit_entries: &mut Vec<(usize, i64)>,
 ) -> f64 {
     let mut score = 0.0;
     let schedules = &plan.schedules;
@@ -147,7 +156,7 @@ pub(crate) fn evaluate_with_scratch(
     score += parallel_violation_score(planner, sorted);
     score += inclusion_bonus(planner, schedules);
     score += stability_score(planner, index);
-    score += habit_consistency_score(planner, index);
+    score += habit_consistency_score(planner, index, habit_entries);
 
     score
 }
@@ -497,12 +506,13 @@ fn stability_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
 /// - 分散が0 (全タスクが同時刻) → 最大ボーナス `W_HABIT_CONSISTENCY`
 /// - 分散が `HABIT_CONSISTENCY_MAX_VAR` 以上 → ボーナス0
 /// - 2タスク未満のグループは評価しない (分散が意味を持たない)
-fn habit_consistency_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
+fn habit_consistency_score(
+    planner: &Planner,
+    index: &[Option<(Point, Point)>],
+    entries: &mut Vec<(usize, i64)>,
+) -> f64 {
     let slots_per_day = 24 * 60 / planner.per() as i64;
-    let mut groups = FxHashMap::<usize, Vec<i64>>::with_capacity_and_hasher(
-        planner.tasks.len(),
-        Default::default(),
-    );
+    entries.clear();
     for task in &planner.tasks {
         let Some(group) = task.habit_group else {
             continue;
@@ -512,25 +522,39 @@ fn habit_consistency_score(planner: &Planner, index: &[Option<(Point, Point)>]) 
         };
         // 日付成分を除去: 時刻帯のみのスロット値
         let tod = sched_start.0.rem_euclid(slots_per_day);
-        groups
-            .entry(group)
-            .or_insert_with(|| Vec::with_capacity(4))
-            .push(tod);
+        entries.push((group, tod));
     }
 
+    if entries.len() < 2 {
+        return 0.0;
+    }
+
+    // 1 つの共有バッファで habit グループを扱い、FxHashMap や各グループごとの
+    // Vec 割り当てを避ける。まず group だけでソートし、グループ内は小さな
+    // スライスを時刻帯でソートして隣接差分を計算する。
+    entries.sort_unstable_by_key(|e| e.0);
+
     let mut bonus = 0.0;
-    for times in groups.values_mut() {
-        if times.len() < 2 {
+    let mut i = 0;
+    while i < entries.len() {
+        let group = entries[i].0;
+        let start = i;
+        i += 1;
+        while i < entries.len() && entries[i].0 == group {
+            i += 1;
+        }
+        let count = i - start;
+        if count < 2 {
             continue;
         }
-        // 時刻は循環 (23:59 → 0:00) なので、ソートして隣接ペアの
-        // 円周上の差を取り、その二乗平均を分散の代わりとする。
-        times.sort_unstable();
-        let n = times.len() as f64;
+
+        entries[start..i].sort_unstable_by_key(|e| e.1);
+        let times = &entries[start..i];
+        let n = count as f64;
         let mut sum_sq_diff = 0.0;
-        for i in 0..times.len() {
-            let next = (i + 1) % times.len();
-            let raw = (times[next] - times[i]).abs();
+        for k in 0..times.len() {
+            let next = (k + 1) % times.len();
+            let raw = (times[next].1 - times[k].1).abs();
             let diff = raw.min(slots_per_day - raw);
             sum_sq_diff += diff as f64 * diff as f64;
         }
@@ -1361,12 +1385,13 @@ mod tests {
             (Point(200 + slots_per_day), Point(202 + slots_per_day), t1),
         ]);
 
+        let mut entries = Vec::new();
         assert_eq!(
-            habit_consistency_score(&p, &build_index(&p, &same_time.schedules)),
+            habit_consistency_score(&p, &build_index(&p, &same_time.schedules), &mut entries),
             0.0
         );
         assert_eq!(
-            habit_consistency_score(&p, &build_index(&p, &diff_time.schedules)),
+            habit_consistency_score(&p, &build_index(&p, &diff_time.schedules), &mut entries),
             0.0
         );
     }
@@ -1376,7 +1401,8 @@ mod tests {
         let mut p = make_planner();
         let t0 = add_habit_task(&mut p, 2, 100, 0);
         let plan = plan_with(vec![(Point(10), Point(12), t0)]);
-        let score = habit_consistency_score(&p, &build_index(&p, &plan.schedules));
+        let mut entries = Vec::new();
+        let score = habit_consistency_score(&p, &build_index(&p, &plan.schedules), &mut entries);
         assert_eq!(score, 0.0, "single-task habit group should get no bonus");
     }
 

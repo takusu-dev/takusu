@@ -108,3 +108,39 @@ All runs use `jemalloc` default.
 - `opt-level = 3` is the fastest across all measured `takusu-core` workloads.
 - `"s"` and `"z"` regress runtime, with `"z"` being dramatically slower.
 - Final workspace `Cargo.toml` uses `codegen-units = 1`, `lto = "thin"`, `opt-level = 3`.
+
+## 2026-07-18: current `@` (`mznorlwlozxntznprlxprrpzzrtrmoqp`) on top of `ee39af0` before this optimization pass
+
+- `cargo run -p takusu-core --example score_check` (debug):
+  - score `-1844.372500`
+  - total `1.631s`
+  - mean `16.314832 µs`
+- `cargo run -p takusu-core --example score_check --release`:
+  - score `-1844.372500`
+  - total `0.115s`
+  - mean `1.154685 µs`
+- `time ./target/release/examples/profile` (20 full `plan()` calls):
+  - real `1.857s`
+- `cargo bench -p takusu-core --bench realworld`:
+  - `plan realworld habits (7d)`: `29.246 ms`
+  - `plan realworld habits (30d)`: `480.08 ms`
+  - `plan_partial realworld habits (14d, 5 pinned)`: `135.17 ms`
+  - `plan_in_range realworld habits (14d, days 2-7)`: `49.867 ms`
+
+## 2026-07-18: after habit score scratch-buffer and group-sort optimization (change `m b`)
+
+- `cargo run -p takusu-core --example score_check` (debug):
+  - score `-1844.372500`
+  - total `1.527s`
+  - mean `15.272834 µs`
+- `cargo run -p takusu-core --example score_check --release`:
+  - score `-1844.372500`
+  - total `0.105s`
+  - mean `1.053581 µs`
+- `time ./target/release/examples/profile` (20 full `plan()` calls):
+  - wall-clock was too noisy during this session (system load varied between `1.6s` and `9s`) to report a stable final value; prefer the Criterion `realworld` bench below.
+- `cargo bench -p takusu-core --bench realworld`:
+  - `plan realworld habits (7d)`: `21.551 ms`
+  - `plan realworld habits (30d)`: `430.51 ms`
+  - `plan_partial realworld habits (14d, 5 pinned)`: `136.81 ms`
+  - `plan_in_range realworld habits (14d, days 2-7)`: `48.520 ms`
