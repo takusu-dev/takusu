@@ -111,6 +111,15 @@
                 } -C $out
               '';
 
+          # Newer Android NDKs (r23+) removed libgcc in favor of libunwind, but
+          # tikv-jemalloc-sys still emits -lgcc for Android. Provide a libgcc.a
+          # linker script that resolves to libunwind so jemalloc can still link.
+          androidLibgccShim = pkgs.runCommand "android-libgcc-shim" { } ''
+            mkdir -p $out/lib
+            # libgcc.a as a linker script redirects -lgcc to -lunwind.
+            echo 'INPUT(-lunwind)' > $out/lib/libgcc.a
+          '';
+
           sherpaOnnxLinuxX64Shared =
             pkgs.runCommand "sherpa-onnx-linux-x64-shared-1.13.4"
               {
@@ -246,6 +255,10 @@
                 # build scripts (bzip2/ring) on the host compiler.
                 "CC_x86_64-unknown-linux-gnu" = "${pkgs.stdenv.cc}/bin/cc";
                 C_x86_64_unknown_linux_gnu = "${pkgs.stdenv.cc}/bin/cc";
+                # tikv-jemalloc-sys emits -lgcc for Android, but newer NDKs
+                # replaced libgcc with libunwind. Add a shim that redirects
+                # -lgcc to -lunwind so jemalloc still links.
+                RUSTFLAGS = "-L ${androidLibgccShim}/lib";
               };
 
               # Don't run tests — cross-compiled binaries can't execute on host.
@@ -713,17 +726,20 @@
             # on jobs that don't use them. The `ci-*` packages above mirror these
             # so the binary cache warms exactly the same store paths.
             rust = pkgs.mkShell {
-              nativeBuildInputs = with pkgs; [
-                cargo-codspeed
-                cargo-expand
-                cargo-flamegraph
-                cargo-nextest
-                rust-bin
-                pkg-config
-                cmake
-                stdenv.cc
-                mold
-              ] ++ lib.optional pkgs.stdenv.isLinux pkgs.perf;
+              nativeBuildInputs =
+                with pkgs;
+                [
+                  cargo-codspeed
+                  cargo-expand
+                  cargo-flamegraph
+                  cargo-nextest
+                  rust-bin
+                  pkg-config
+                  cmake
+                  stdenv.cc
+                  mold
+                ]
+                ++ lib.optional pkgs.stdenv.isLinux pkgs.perf;
               buildInputs = with pkgs; [
                 alsa-lib
                 libpulseaudio
@@ -808,22 +824,25 @@
             # Full shell for local development — keeps everything (Android SDK,
             # Node, JVM, MCP config symlink, etc.).
             default = pkgs.mkShell {
-              nativeBuildInputs = with pkgs; [
-                cargo-codspeed
-                cargo-expand
-                cargo-flamegraph
-                cargo-nextest
-                cargo-ndk
-                rust-bin
-                pkg-config
-                cmake
-                stdenv.cc
-                mold
-                nodejs
-                wrangler
-                openjdk_headless
-                ktlint
-              ] ++ lib.optional pkgs.stdenv.isLinux pkgs.perf;
+              nativeBuildInputs =
+                with pkgs;
+                [
+                  cargo-codspeed
+                  cargo-expand
+                  cargo-flamegraph
+                  cargo-nextest
+                  cargo-ndk
+                  rust-bin
+                  pkg-config
+                  cmake
+                  stdenv.cc
+                  mold
+                  nodejs
+                  wrangler
+                  openjdk_headless
+                  ktlint
+                ]
+                ++ lib.optional pkgs.stdenv.isLinux pkgs.perf;
 
               buildInputs = with pkgs; [
                 alsa-lib
