@@ -1,21 +1,28 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::sync::Arc;
 use takusu_client::{
     Client, HabitDetail, HabitRow, HabitStepRow, SchedulePreviewRequest, TaskQuery, TaskRow,
 };
 use takusu_util::parse_datetime_tz;
 
-use crate::{Tool, ToolError, ToolOutput, ToolRegistry};
+use crate::{Tool, ToolError, ToolOutput, ToolRegistry, UserInputProvider};
 
-/// Registers planner read tools and approval-only mutation proposals.
-pub fn register_tools(registry: &mut ToolRegistry, client: Client) {
+/// Registers planner read tools, approval-only mutation proposals, and the ASR
+/// correction tool.
+pub fn register_tools(
+    registry: &mut ToolRegistry,
+    client: Client,
+    user_input_provider: Arc<dyn UserInputProvider>,
+) {
     register_read_tools(registry, client.clone());
     register_mutation_tools(registry, client.clone());
     registry.register(Box::new(PreviewScheduleTool {
         client: client.clone(),
     }));
-    crate::tools::skills::register_tools(registry, client);
+    crate::tools::skills::register_tools(registry, client.clone());
+    crate::tools::user_input::register_user_input_tool(registry, user_input_provider);
 }
 
 /// Registers the read-only planner tools used by the agent.

@@ -92,6 +92,14 @@ pub trait Tool: Send + Sync {
     fn parameters_schema(&self) -> Value;
     async fn call(&self, args: Value) -> Result<ToolOutput, ToolError>;
 
+    /// Call with the tool-call id from the LLM provider.
+    ///
+    /// Tools that need to correlate with host UI events (e.g. `correct_asr`)
+    /// should override this. The default delegates to `call`.
+    async fn call_with_id(&self, _id: &str, args: Value) -> Result<ToolOutput, ToolError> {
+        self.call(args).await
+    }
+
     /// Returns the tool name in the OpenAI function-calling format.
     fn to_openai_definition(&self) -> Value {
         json!({
@@ -146,5 +154,18 @@ impl ToolRegistry {
             .get(name)
             .ok_or_else(|| ToolError::InvalidArgs(format!("unknown tool: {name}")))?;
         tool.call(args).await
+    }
+
+    pub async fn call_with_id(
+        &self,
+        name: &str,
+        call_id: &str,
+        args: Value,
+    ) -> Result<ToolOutput, ToolError> {
+        let tool = self
+            .tools
+            .get(name)
+            .ok_or_else(|| ToolError::InvalidArgs(format!("unknown tool: {name}")))?;
+        tool.call_with_id(call_id, args).await
     }
 }

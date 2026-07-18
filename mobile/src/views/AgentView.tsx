@@ -9,6 +9,7 @@ import {
   PermissionsAndroid,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -42,7 +43,12 @@ import {
   loadSettings,
 } from '@/src/api/settingsStore';
 import { AgentClient, AgentApiError, AbortError } from '@/src/api/agentClient';
-import type { ApprovalRequest, TurnEvent } from '@/src/api/agentTypes';
+import type {
+  ApprovalRequest,
+  TurnEvent,
+  UserInputQuestion,
+  UserInputAnswer,
+} from '@/src/api/agentTypes';
 import {
   deleteSessionSnapshot,
   loadSessionHistory,
@@ -221,6 +227,11 @@ interface ToolCallCardProps {
 }
 
 function ToolCallCard({ call, colors }: ToolCallCardProps) {
+  const isAsr = call.name === 'correct_asr';
+  const asrCount = isAsr
+    ? ((call.arguments as { questions?: unknown[] } | undefined)?.questions
+        ?.length ?? 0)
+    : 0;
   return (
     <View
       style={[
@@ -241,12 +252,17 @@ function ToolCallCard({ call, colors }: ToolCallCardProps) {
           ]}
         />
         <Text style={{ color: colors.black, fontWeight: '700' }}>
-          {call.name}
+          {isAsr ? 'ASR訂正' : call.name}
         </Text>
       </View>
-      {call.arguments !== undefined && (
+      {!isAsr && call.arguments !== undefined && (
         <Text style={[styles.toolArgs, { color: colors.gray }]}>
           {JSON.stringify(call.arguments, null, 2)}
+        </Text>
+      )}
+      {isAsr && call.arguments !== undefined && (
+        <Text style={[styles.toolArgs, { color: colors.gray }]}>
+          {asrCount} 件の認識テキストを確認
         </Text>
       )}
       {call.result !== undefined && (
@@ -255,7 +271,11 @@ function ToolCallCard({ call, colors }: ToolCallCardProps) {
             color: call.isError ? colors.red : colors.green,
           }}
         >
-          {call.isError ? `エラー: ${call.result}` : call.result}
+          {isAsr
+            ? call.result
+            : call.isError
+              ? `エラー: ${call.result}`
+              : call.result}
         </Text>
       )}
     </View>
@@ -439,6 +459,12 @@ export function AgentView() {
   const [inputHeight, setInputHeight] = useState(44);
   const [historyReady, setHistoryReady] = useState(false);
   const [isSwitching, setIsSwitching] = useState(false);
+  const [userInput, setUserInput] = useState<{
+    sessionId: string;
+    callId: string;
+    questions: UserInputQuestion[];
+    values: string[];
+  } | null>(null);
 
   const sessionIdsRef = useRef<string[]>([]);
   const activeIndexRef = useRef(0);
@@ -802,11 +828,26 @@ export function AgentView() {
                 next.state = 'thinking';
                 break;
               case 'ToolCall': {
+                if (event.data.name === 'correct_asr' && sessionIdRef.current) {
+                  const args = event.data.arguments as
+                    | { questions: UserInputQuestion[] }
+                    | undefined;
+                  const questions = args?.questions ?? [];
+                  if (questions.length > 0) {
+                    setUserInput({
+                      sessionId: sessionIdRef.current,
+                      callId: event.data.call_id,
+                      questions,
+                      values: questions.map((q) => q.text),
+                    });
+                  }
+                }
                 const callIndex = (next.toolCalls ?? []).length;
                 next.toolCalls = [
                   ...(next.toolCalls ?? []),
                   {
                     name: event.data.name,
+                    callId: event.data.call_id,
                     arguments: event.data.arguments,
                   },
                 ];
@@ -819,10 +860,17 @@ export function AgentView() {
               }
               case 'ToolResult': {
                 const calls = [...(next.toolCalls ?? [])];
-                const last = calls[calls.length - 1];
-                if (last) {
-                  last.result = event.data.content;
-                  last.isError = event.data.is_error;
+                const match = calls.find(
+                  (c) => c.callId === event.data.call_id,
+                );
+                if (match) {
+                  if (event.data.name === 'correct_asr') {
+                    match.result = '訂正を反映しました';
+                    match.isError = false;
+                  } else {
+                    match.result = event.data.content;
+                    match.isError = event.data.is_error;
+                  }
                 }
                 next.toolCalls = calls;
                 break;
@@ -924,6 +972,7 @@ export function AgentView() {
       }
     } finally {
       streamAbortRef.current = null;
+      setUserInput(null);
       setBusy(false);
     }
   }
@@ -1021,6 +1070,19 @@ export function AgentView() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function submitUserInput(answers: UserInputAnswer[]) {
+    if (!userInput) return;
+    const { sessionId, callId } = userInput;
+    setUserInput(null);
+    try {
+      await client.submitUserInput(sessionId, callId, answers);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(`訂正の送信に失敗しました: ${message}`);
+      streamAbortRef.current?.abort();
     }
   }
 
@@ -1175,7 +1237,7 @@ export function AgentView() {
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.white }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <Reanimated.View style={[styles.container, animatedStyle]}>
         <View
@@ -1253,6 +1315,107 @@ export function AgentView() {
             onApprove={() => resolve(true)}
             onDeny={() => resolve(false)}
           />
+        )}
+        {userInput && (
+          <View
+            style={[
+              styles.userInputSheet,
+              {
+                borderColor: colors.separator,
+                backgroundColor: colors.surface,
+              },
+            ]}
+          >
+            <Text style={[styles.userInputTitle, { color: colors.black }]}>
+              認識結果を確認してください
+            </Text>
+            <Text style={[styles.userInputSubtitle, { color: colors.gray }]}>
+              自明な部分は推測済みです。曖昧な語だけ確認します
+            </Text>
+            <ScrollView style={styles.userInputScroll}>
+              {userInput.questions.map((q, i) => (
+                <View
+                  key={i}
+                  style={[
+                    styles.userInputCard,
+                    {
+                      borderColor: colors.separator,
+                      backgroundColor: colors.surfaceTint,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.userInputLabel, { color: colors.gray }]}>
+                    元の認識テキスト
+                  </Text>
+                  <Text
+                    style={[styles.userInputOriginal, { color: colors.black }]}
+                  >
+                    {q.text}
+                  </Text>
+                  <Text style={[styles.userInputLabel, { color: colors.gray }]}>
+                    目的
+                  </Text>
+                  <Text
+                    style={[styles.userInputPurpose, { color: colors.black }]}
+                  >
+                    {q.for}
+                  </Text>
+                  <TextInput
+                    style={[
+                      styles.userInputField,
+                      {
+                        color: colors.black,
+                        borderColor: colors.separator,
+                        backgroundColor: colors.surface,
+                      },
+                    ]}
+                    value={userInput.values[i]}
+                    onChangeText={(value) =>
+                      setUserInput((current) =>
+                        current
+                          ? {
+                              ...current,
+                              values: current.values.map((v, idx) =>
+                                idx === i ? value : v,
+                              ),
+                            }
+                          : null,
+                      )
+                    }
+                    placeholder={q.text}
+                    placeholderTextColor={colors.gray}
+                    editable={!isSwitching}
+                  />
+                </View>
+              ))}
+            </ScrollView>
+            <View style={styles.userInputActions}>
+              <Pressable
+                disabled={isSwitching}
+                onPress={() =>
+                  submitUserInput(
+                    userInput.questions.map((q) => ({ text: q.text })),
+                  )
+                }
+                style={[styles.userInputButton, styles.userInputSecondary]}
+              >
+                <Text style={styles.userInputSecondaryText}>
+                  そのまま続ける
+                </Text>
+              </Pressable>
+              <Pressable
+                disabled={isSwitching}
+                onPress={() =>
+                  submitUserInput(
+                    userInput.values.map((value) => ({ text: value })),
+                  )
+                }
+                style={[styles.userInputButton, styles.userInputPrimary]}
+              >
+                <Text style={styles.userInputPrimaryText}>確定</Text>
+              </Pressable>
+            </View>
+          </View>
         )}
         {error && (
           <Pressable onPress={() => Alert.alert('Agentエラー', error)}>
@@ -1439,6 +1602,45 @@ const styles = StyleSheet.create({
   },
   toolStatus: { width: 8, height: 8, borderRadius: 4 },
   toolArgs: { fontSize: 11, fontFamily: 'monospace' },
+  userInputSheet: {
+    margin: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderRadius: 16,
+    gap: 10,
+    maxHeight: '60%',
+  },
+  userInputTitle: { fontWeight: '700', fontSize: 16 },
+  userInputSubtitle: { fontSize: 12 },
+  userInputScroll: { maxHeight: 320 },
+  userInputCard: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 10,
+    gap: 4,
+  },
+  userInputLabel: { fontSize: 11, fontWeight: '600' },
+  userInputOriginal: { fontSize: 15, fontWeight: '700' },
+  userInputPurpose: { fontSize: 13, marginBottom: 6 },
+  userInputField: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+  },
+  userInputActions: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  userInputButton: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  userInputSecondary: { borderWidth: 1, borderColor: '#B33A3A' },
+  userInputSecondaryText: { color: '#B33A3A', fontWeight: '700' },
+  userInputPrimary: { backgroundColor: BRAND_COLOR },
+  userInputPrimaryText: { color: COLORS.white, fontWeight: '700' },
   error: { color: '#B33A3A', paddingHorizontal: 16, paddingBottom: 8 },
   switcher: {
     flexDirection: 'row',

@@ -3,6 +3,7 @@ import type {
   ApprovalRequest,
   ApprovalResult,
   TurnEvent,
+  UserInputAnswer,
 } from './agentTypes';
 
 export type { AgentTurnResult };
@@ -11,6 +12,7 @@ export interface AgentCapabilities {
   audio_input: boolean;
   tts: boolean;
   approvals: boolean;
+  user_input: boolean;
 }
 
 export class AgentApiError extends Error {
@@ -248,6 +250,18 @@ export class AgentClient {
       'POST',
       `/api/agent/v1/sessions/${encodeURIComponent(sessionId)}/approvals/${encodeURIComponent(approvalId)}`,
       { version: 1, approve, idempotency_key: idempotencyKey },
+    );
+  }
+
+  async submitUserInput(
+    sessionId: string,
+    callId: string,
+    answers: UserInputAnswer[],
+  ): Promise<void> {
+    await this.request<{ ok: boolean }>(
+      'POST',
+      `/api/agent/v1/sessions/${encodeURIComponent(sessionId)}/tool-calls/${encodeURIComponent(callId)}/user-input`,
+      { version: 1, answers },
     );
   }
 

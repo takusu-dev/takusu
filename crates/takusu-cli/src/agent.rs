@@ -2,7 +2,11 @@ use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use takusu_agent::{AgentConfig, AgentError, AgentSession, ApprovalRequest};
+use async_trait::async_trait;
+use takusu_agent::{
+    AgentConfig, AgentError, AgentSession, ApprovalRequest, ToolError, UserInputAnswer,
+    UserInputProvider, UserInputQuestion,
+};
 use takusu_client::Client;
 use takusu_local_lib::app::TakusuApp;
 use takusu_local_lib::error::AppError;
@@ -17,8 +21,12 @@ pub async fn run(app: Arc<TakusuApp>, text: Option<String>, yes: bool) -> Result
     config.server.token = local_server.token;
 
     let client = Client::new(&config.server.url, &config.server.token);
-    let session = takusu_agent::runner::build_session(&config, client)
-        .map_err(|e| AppError::Internal(format!("failed to build agent session: {e}")))?;
+    let session = takusu_agent::runner::build_session_with_provider(
+        &config,
+        client,
+        Arc::new(ConsoleUserInputProvider),
+    )
+    .map_err(|e| AppError::Internal(format!("failed to build agent session: {e}")))?;
 
     if let Some(text) = text {
         run_text(&session, &text, yes).await
@@ -143,6 +151,49 @@ async fn run_repl(session: &AgentSession, yes: bool) -> Result<(), AppError> {
         run_text(session, line, yes).await?;
     }
     Ok(())
+}
+
+#[derive(Debug)]
+struct ConsoleUserInputProvider;
+
+#[async_trait]
+impl UserInputProvider for ConsoleUserInputProvider {
+    async fn request(
+        &self,
+        _call_id: &str,
+        questions: Vec<UserInputQuestion>,
+    ) -> Result<Vec<UserInputAnswer>, ToolError> {
+        tokio::task::spawn_blocking(move || {
+            let mut answers = Vec::with_capacity(questions.len());
+            for q in questions {
+                eprintln!("ASR correction: original = \"{}\"", q.text);
+                eprintln!("  purpose: {}", q.purpose);
+                eprint!("  corrected text (empty to keep original): ");
+                io::stdout()
+                    .flush()
+                    .map_err(|e| ToolError::Other(Box::new(e)))?;
+                let mut line = String::new();
+                io::stdin()
+                    .read_line(&mut line)
+                    .map_err(|e| ToolError::Other(Box::new(e)))?;
+                let text = line.trim();
+                answers.push(UserInputAnswer {
+                    text: if text.is_empty() { q.text } else { text.into() },
+                });
+            }
+            Ok(answers)
+        })
+        .await
+        .map_err(|e| ToolError::Other(Box::new(e)))?
+    }
+
+    async fn resolve(
+        &self,
+        _call_id: &str,
+        _answers: Vec<UserInputAnswer>,
+    ) -> Result<(), ToolError> {
+        Ok(())
+    }
 }
 
 fn agent_err(e: AgentError) -> AppError {

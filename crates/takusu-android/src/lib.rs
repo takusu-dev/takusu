@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use takusu_agent::tools::takusu::register_tools;
-use takusu_agent::transport::AgentApiState;
+use takusu_agent::transport::{AgentApiState, ApiUserInputProvider};
 use takusu_agent::{AgentConfig, AgentSession, ToolRegistry};
 use takusu_local::router::router;
 use takusu_local::state::AppState;
@@ -156,20 +156,34 @@ impl TakusuServer {
         };
         agent_config.server.url = format!("http://127.0.0.1:{port}");
         agent_config.server.token = root_token.clone();
-        let agent_factory = Arc::new(move || {
-            let llm = takusu_agent::llm::OpenAIClient::new(agent_config.llm.clone())?;
-            let planner_client =
-                takusu_client::Client::new(&agent_config.server.url, &agent_config.server.token);
-            let mut registry = ToolRegistry::new();
-            register_tools(&mut registry, planner_client.clone());
-            Ok(AgentSession::new_with_client(
-                agent_config.clone(),
-                planner_client,
-                registry,
-                llm,
-            ))
+        let user_input_provider = Arc::new(ApiUserInputProvider::new());
+        let agent_factory = Arc::new({
+            let user_input_provider = user_input_provider.clone();
+            move || {
+                let llm = takusu_agent::llm::OpenAIClient::new(agent_config.llm.clone())?;
+                let planner_client = takusu_client::Client::new(
+                    &agent_config.server.url,
+                    &agent_config.server.token,
+                );
+                let mut registry = ToolRegistry::new();
+                register_tools(
+                    &mut registry,
+                    planner_client.clone(),
+                    user_input_provider.clone(),
+                );
+                Ok(AgentSession::new_with_client(
+                    agent_config.clone(),
+                    planner_client,
+                    registry,
+                    llm,
+                ))
+            }
         });
-        let agent_state = Arc::new(AgentApiState::new(root_token, agent_factory));
+        let agent_state = Arc::new(AgentApiState::new(
+            root_token,
+            agent_factory,
+            user_input_provider,
+        ));
         let app_router = router(state).merge(Router::new().nest(
             "/api/agent/v1",
             takusu_agent::transport::router(agent_state),
