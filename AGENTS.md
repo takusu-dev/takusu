@@ -78,12 +78,11 @@ takusu/
 │   │       ├── lib.rs
 │   │       ├── record.rs     #   Microphone recording (cpal)
 │   │       ├── stt.rs       #   SpeechToText trait
-│   │       ├── funasr.rs    #   FunASR WebSocket client (SenseVoice backend)
 │   │       ├── sherpa.rs    #   Sherpa-ONNX local ASR
 │   │       ├── hush.rs      #   Hush ONNX denoiser
 │   │       └── tts.rs       #   TextToSpeech trait and shared TTS types
 │   ├── takusu-audio-cli/     # CLI for audio recording, transcription, and denoising
-│   │   └── src/main.rs      #   STT via FunASR or Sherpa-ONNX
+│   │   └── src/main.rs      #   STT via Sherpa-ONNX
 │   ├── takusu-client/         # HTTP client library for takusu REST API
 │   │   └── src/lib.rs         #   Client, all request/response types
 │   ├── takusu-cli/            # CLI client (clap derive, editor-based task editing)
@@ -148,7 +147,7 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 | `cargo run -p takusu-cli -- --help` | Run CLI client |
 | `cargo run -p takusu-local` | Start local server |
 | `cargo run -p takusu-audio-cli -- record` | Record microphone audio |
-| `cargo run -p takusu-audio-cli --features sherpa -- transcribe --backend sherpa audio.wav` | Transcribe with Sherpa-ONNX |
+| `cargo run -p takusu-audio-cli -- transcribe audio.wav` | Transcribe a WAV file with Sherpa-ONNX |
 | `./scripts/issue-view.sh list [--label L] [--assignee A] [--state S]` | List GitHub issues (TSV: number, title, labels, assignees, state) |
 | `./scripts/issue-view.sh show <N>` | Show issue title, body, labels, assignees, and full comment thread |
 | `./scripts/issue-assign.sh <N> [<N>...] [--assignee <user>]` | Assign an unassigned issue to the current user (or another user) |
@@ -348,7 +347,6 @@ real logic lives in the shell scripts so it can be used outside Devin too.
 | `clap` | 4 (derive,env) | takusu-cli | CLI argument parsing |
 | `comfy-table` | 7 | takusu-cli | Rich table display |
 | `cpal` | 0.18.1 | takusu-audio | Audio input |
-| `tokio-tungstenite` | 0.29 | takusu-audio | WebSocket client (FunASR) |
 | `futures-util` | 0.3 | takusu-audio | Async stream utilities |
 
 ## Core Planner Design (takusu-core)
@@ -471,7 +469,7 @@ No external HTTP server needed. Run with `cargo nextest run -p takusu-local`.
 - **Planner**: Uses heuristic algorithms (simulated annealing) with an evaluation
   function, not exact SAT solving. Tasks are discretized into 5-minute slots.
 - **Voice Assistant**: Android `VoiceInteractionService` + server for LLM processing.
-  STT uses the FunASR WebSocket client (optional external server) or Sherpa-ONNX local inference.
+  STT uses Sherpa-ONNX local inference.
   LLM fills in missing information (estimates, etc.) using memory of past similar tasks.
 - **Task model**: Includes start time, deadline, cost estimate (normal distribution),
   dependencies, parallelizability, and `abandonability` (deadline flexibility).

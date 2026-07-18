@@ -12,39 +12,57 @@ pub struct AudioConfig {
 pub struct SttConfig {
     #[serde(default = "default_stt_backend")]
     pub backend: String,
-    #[serde(default = "default_stt_url")]
-    pub url: String,
     #[serde(default = "default_stt_language")]
     pub language: String,
     #[serde(default)]
-    pub hotwords: Vec<String>,
-    #[serde(default = "default_stt_mode")]
-    pub mode: String,
+    pub model_dir: String,
+    #[serde(default = "default_stt_model")]
+    pub model: String,
+    #[serde(default = "default_stt_use_itn")]
+    pub use_itn: bool,
+    #[serde(default = "default_stt_num_threads")]
+    pub num_threads: i32,
+    #[serde(default = "default_stt_provider")]
+    pub provider: String,
+    #[serde(default = "default_stt_sample_rate")]
+    pub sample_rate: i32,
 }
 
 impl Default for SttConfig {
     fn default() -> Self {
         Self {
             backend: default_stt_backend(),
-            url: default_stt_url(),
             language: default_stt_language(),
-            hotwords: Vec::new(),
-            mode: default_stt_mode(),
+            model_dir: String::new(),
+            model: default_stt_model(),
+            use_itn: default_stt_use_itn(),
+            num_threads: default_stt_num_threads(),
+            provider: default_stt_provider(),
+            sample_rate: default_stt_sample_rate(),
         }
     }
 }
 
 fn default_stt_backend() -> String {
-    "funasr".into()
-}
-fn default_stt_url() -> String {
-    "ws://127.0.0.1:10095".into()
+    "sherpa".into()
 }
 fn default_stt_language() -> String {
     "ja".into()
 }
-fn default_stt_mode() -> String {
-    "offline".into()
+fn default_stt_model() -> String {
+    "sense-voice".into()
+}
+fn default_stt_use_itn() -> bool {
+    true
+}
+fn default_stt_num_threads() -> i32 {
+    2
+}
+fn default_stt_provider() -> String {
+    "cpu".into()
+}
+fn default_stt_sample_rate() -> i32 {
+    16000
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -7,9 +7,6 @@ pub mod record;
 pub mod stt;
 pub mod tts;
 
-#[cfg(feature = "funasr")]
-pub mod funasr;
-
 #[cfg(feature = "hush")]
 pub mod hush;
 
@@ -24,8 +21,6 @@ pub use sherpa::{SherpaOnnxAsr, SherpaOnnxAsrConfig, SherpaOnnxModel};
 pub use cartesia::{
     CartesiaGenerationConfig, CartesiaOutputFormat, CartesiaSonic, CartesiaSonicConfig,
 };
-#[cfg(feature = "funasr")]
-pub use funasr::{FunASRClient, FunASRConfig, FunASRError, FunASRMode, default_hotwords};
 pub use models::{
     DownloadProgress, DownloadStage, ModelCache, ModelError, ModelRegistry, ModelSpec,
     ProgressCallback,

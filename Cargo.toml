@@ -46,7 +46,6 @@ takusu-local-lib = { path = "crates/takusu-local-lib", default-features = false 
 takusu-local = { path = "crates/takusu-local", default-features = false }
 google-cal = { path = "crates/google-cal" }
 
-tokio-tungstenite = "0.29"
 futures-util = "0.3"
 petgraph = { version = "0.8", default-features = false }
 toml = "0.8"

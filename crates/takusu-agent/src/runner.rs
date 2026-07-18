@@ -25,6 +25,6 @@ pub async fn run_audio(
     no_tts: bool,
 ) -> Result<(), crate::audio::AudioError> {
     use crate::audio::AudioAdapter;
-    let adapter = AudioAdapter::new(session)?;
+    let adapter = AudioAdapter::new(session).await?;
     adapter.run(no_tts).await
 }

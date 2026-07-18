@@ -4,15 +4,7 @@ use std::time::Duration;
 use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "hush")]
 use takusu_audio::hush::Hush;
-use takusu_audio::{
-    FunASRClient, FunASRConfig, FunASRMode, RecordConfig, default_hotwords, record,
-};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum SttBackend {
-    Funasr,
-    Sherpa,
-}
+use takusu_audio::{RecordConfig, record};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum SherpaModel {
@@ -44,26 +36,10 @@ enum Commands {
         max_duration: f64,
     },
 
-    /// Transcribe a WAV audio file
+    /// Transcribe a WAV audio file using Sherpa-ONNX
     Transcribe {
         /// Path to WAV audio file
         audio: PathBuf,
-
-        /// STT backend (funasr, sherpa)
-        #[arg(long, default_value = "funasr")]
-        backend: SttBackend,
-
-        /// FunASR server URL
-        #[arg(long, default_value = "ws://127.0.0.1:10095")]
-        funasr_url: String,
-
-        /// Comma-separated hotwords for FunASR
-        #[arg(long)]
-        hotwords: Option<String>,
-
-        /// FunASR mode: offline or 2pass
-        #[arg(long, default_value = "offline")]
-        funasr_mode: String,
 
         /// Path to Sherpa-ONNX model directory (omit to download SenseVoice on first run)
         #[arg(long)]
@@ -90,7 +66,7 @@ enum Commands {
         sherpa_provider: String,
     },
 
-    /// Record from microphone and transcribe (Press Enter to stop)
+    /// Record from microphone and transcribe with Sherpa-ONNX (Press Enter to stop)
     Listen {
         /// Output WAV file (saved even after transcription)
         #[arg(short, long, default_value = "record.wav")]
@@ -99,22 +75,6 @@ enum Commands {
         /// Maximum recording duration in seconds
         #[arg(long, default_value_t = 120.0)]
         max_duration: f64,
-
-        /// STT backend (funasr, sherpa)
-        #[arg(long, default_value = "funasr")]
-        backend: SttBackend,
-
-        /// FunASR server URL
-        #[arg(long, default_value = "ws://127.0.0.1:10095")]
-        funasr_url: String,
-
-        /// Comma-separated hotwords for FunASR
-        #[arg(long)]
-        hotwords: Option<String>,
-
-        /// FunASR mode: offline or 2pass
-        #[arg(long, default_value = "offline")]
-        funasr_mode: String,
 
         /// Path to Sherpa-ONNX model directory (omit to download SenseVoice on first run)
         #[arg(long)]
@@ -197,10 +157,6 @@ async fn main() {
 
         Commands::Transcribe {
             audio,
-            backend,
-            funasr_url,
-            hotwords,
-            funasr_mode,
             sherpa_model_dir,
             sherpa_model,
             sherpa_language,
@@ -211,40 +167,22 @@ async fn main() {
             let samples = read_wav(&audio);
             eprintln!("Loaded {} samples from {}", samples.len(), audio.display());
 
-            let text = match backend {
-                SttBackend::Funasr => {
-                    transcribe_funasr(
-                        &samples,
-                        None,
-                        &funasr_url,
-                        hotwords.as_deref(),
-                        &funasr_mode,
-                    )
-                    .await
-                }
-                SttBackend::Sherpa => {
-                    transcribe_sherpa(
-                        &samples,
-                        sherpa_model_dir,
-                        sherpa_model,
-                        sherpa_language,
-                        sherpa_use_itn,
-                        sherpa_num_threads,
-                        sherpa_provider,
-                    )
-                    .await
-                }
-            };
+            let text = transcribe_sherpa(
+                &samples,
+                sherpa_model_dir,
+                sherpa_model,
+                sherpa_language,
+                sherpa_use_itn,
+                sherpa_num_threads,
+                sherpa_provider,
+            )
+            .await;
             println!("{text}");
         }
 
         Commands::Listen {
             output,
             max_duration,
-            backend,
-            funasr_url,
-            hotwords,
-            funasr_mode,
             sherpa_model_dir,
             sherpa_model,
             sherpa_language,
@@ -277,30 +215,16 @@ async fn main() {
             write_wav(&output, &samples, 16000);
             eprintln!("Saved to {}", output.display());
 
-            let text = match backend {
-                SttBackend::Funasr => {
-                    transcribe_funasr(
-                        &samples,
-                        None,
-                        &funasr_url,
-                        hotwords.as_deref(),
-                        &funasr_mode,
-                    )
-                    .await
-                }
-                SttBackend::Sherpa => {
-                    transcribe_sherpa(
-                        &samples,
-                        sherpa_model_dir,
-                        sherpa_model,
-                        sherpa_language,
-                        sherpa_use_itn,
-                        sherpa_num_threads,
-                        sherpa_provider,
-                    )
-                    .await
-                }
-            };
+            let text = transcribe_sherpa(
+                &samples,
+                sherpa_model_dir,
+                sherpa_model,
+                sherpa_language,
+                sherpa_use_itn,
+                sherpa_num_threads,
+                sherpa_provider,
+            )
+            .await;
             println!("{text}");
         }
 
@@ -436,73 +360,45 @@ async fn transcribe_sherpa(
             use_itn: sherpa_use_itn,
         };
 
-        eprintln!(
-            "Loading Sherpa-ONNX model from {}...",
-            config.model_dir.display()
-        );
-        let start = std::time::Instant::now();
-        let asr = SherpaOnnxAsr::from_config(&config).unwrap_or_else(|e| {
-            eprintln!("Sherpa-ONNX model error: {e}");
-            std::process::exit(1);
-        });
-        eprintln!("Model loaded in {:.1}s.", start.elapsed().as_secs_f64());
+        let samples = samples.to_vec();
+        tokio::task::spawn_blocking(move || {
+            eprintln!(
+                "Loading Sherpa-ONNX model from {}...",
+                config.model_dir.display()
+            );
+            let start = std::time::Instant::now();
+            let asr = SherpaOnnxAsr::from_config(&config).unwrap_or_else(|e| {
+                eprintln!("Sherpa-ONNX model error: {e}");
+                std::process::exit(1);
+            });
+            eprintln!("Model loaded in {:.1}s.", start.elapsed().as_secs_f64());
 
-        eprintln!(
-            "Transcribing ({} samples, {:.1}s) with Sherpa-ONNX...",
-            samples.len(),
-            samples.len() as f64 / 16000.0
-        );
-        let start = std::time::Instant::now();
-        let text = asr.transcribe(samples).await.unwrap_or_else(|e| {
-            eprintln!("Sherpa-ONNX transcription error: {e}");
-            std::process::exit(1);
-        });
-        eprintln!("Done in {:.1}s.", start.elapsed().as_secs_f64());
-        text
+            let handle = tokio::runtime::Handle::try_current().unwrap_or_else(|e| {
+                eprintln!("No tokio runtime: {e}");
+                std::process::exit(1)
+            });
+
+            eprintln!(
+                "Transcribing ({} samples, {:.1}s) with Sherpa-ONNX...",
+                samples.len(),
+                samples.len() as f64 / 16000.0
+            );
+            let start = std::time::Instant::now();
+            let text = handle
+                .block_on(asr.transcribe(&samples))
+                .unwrap_or_else(|e| {
+                    eprintln!("Sherpa-ONNX transcription error: {e}");
+                    std::process::exit(1)
+                });
+            eprintln!("Done in {:.1}s.", start.elapsed().as_secs_f64());
+            text
+        })
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("Transcription task failed: {e}");
+            std::process::exit(1)
+        })
     }
-}
-
-async fn transcribe_funasr(
-    samples: &[f32],
-    language: Option<&str>,
-    url: &str,
-    hotwords: Option<&str>,
-    mode: &str,
-) -> String {
-    let hw = match hotwords {
-        Some(h) => h.split(',').map(|s| s.trim().to_string()).collect(),
-        None => default_hotwords()
-            .get(language.unwrap_or("ja"))
-            .cloned()
-            .unwrap_or_default(),
-    };
-
-    let funasr_mode = match mode {
-        "2pass" => FunASRMode::TwoPass,
-        _ => FunASRMode::Offline,
-    };
-
-    let config = FunASRConfig {
-        url: url.to_string(),
-        language: language.unwrap_or("ja").to_string(),
-        hotwords: hw,
-        mode: funasr_mode,
-    };
-
-    let client = FunASRClient::new(config);
-
-    eprintln!(
-        "Transcribing ({} samples, {:.1}s) with FunASR ({mode})...",
-        samples.len(),
-        samples.len() as f64 / 16000.0
-    );
-    let start = std::time::Instant::now();
-    let text = client.transcribe(samples).await.unwrap_or_else(|e| {
-        eprintln!("FunASR error: {e}");
-        std::process::exit(1);
-    });
-    eprintln!("Done in {:.1}s.", start.elapsed().as_secs_f64());
-    text
 }
 
 fn write_wav(path: &std::path::Path, samples: &[f32], sample_rate: u32) {
@@ -570,6 +466,12 @@ fn read_wav(path: &std::path::Path) -> Vec<f32> {
         hound::SampleFormat::Float => reader.samples::<f32>().map(|s| s.unwrap()).collect(),
     };
 
+    let samples = if spec.channels > 1 {
+        to_mono(&samples, spec.channels)
+    } else {
+        samples
+    };
+
     if spec.sample_rate != 16000 {
         let ratio = 16000.0 / spec.sample_rate as f64;
         let output_len = ((samples.len() as f64) * ratio).ceil() as usize;
@@ -586,6 +488,19 @@ fn read_wav(path: &std::path::Path) -> Vec<f32> {
     }
 
     samples
+}
+
+fn to_mono(samples: &[f32], channels: u16) -> Vec<f32> {
+    let channels = channels as usize;
+    if channels <= 1 {
+        return samples.to_vec();
+    }
+    let mut mono = Vec::with_capacity(samples.len() / channels);
+    for frame in samples.chunks_exact(channels) {
+        let sum: f32 = frame.iter().sum();
+        mono.push(sum / channels as f32);
+    }
+    mono
 }
 
 #[cfg(test)]
@@ -643,10 +558,10 @@ mod tests {
 
     #[test]
     fn read_wav_8bit_normalizes_correctly() {
-        // hound sign-extends (not left-shifts) 8-bit samples into i16, so the
-        // 2^(bits-1)=128 divisor is correct. This test documents that.
         let dir = std::env::temp_dir();
         let path = dir.join("takusu-read-wav-8.wav");
+        // hound sign-extends (not left-shifts) 8-bit samples into i16, so the
+        // 2^(bits-1)=128 divisor is correct. This test documents that.
         write_wav(&path, 8, &[0.0, 0.5, -0.5, 0.9]);
         let out = read_wav(&path);
         assert_eq!(out.len(), 4);
@@ -659,9 +574,9 @@ mod tests {
 
     #[test]
     fn read_wav_24bit_normalizes_correctly() {
-        // hound sign-extends 24-bit samples into i32, so 2^(bits-1) is correct.
         let dir = std::env::temp_dir();
         let path = dir.join("takusu-read-wav-24.wav");
+        // hound sign-extends 24-bit samples into i32, so 2^(bits-1) is correct.
         write_wav(&path, 24, &[0.0, 0.25, -0.25, 0.9]);
         let out = read_wav(&path);
         assert_eq!(out.len(), 4);
