@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use takusu_client::{
     Client, HabitDetail, HabitRow, HabitStepRow, SchedulePreviewRequest, TaskQuery, TaskRow,
@@ -14,24 +15,28 @@ use crate::{Tool, ToolError, ToolOutput, ToolRegistry, UserInputProvider};
 pub fn register_tools(
     registry: &mut ToolRegistry,
     client: Client,
+    tz_cache: TimeZoneCache,
     user_input_provider: Arc<dyn UserInputProvider>,
 ) {
-    register_read_tools(registry, client.clone());
-    register_mutation_tools(registry, client.clone());
+    register_read_tools(registry, client.clone(), tz_cache.clone());
+    register_mutation_tools(registry, client.clone(), tz_cache.clone());
     registry.register(Box::new(PreviewScheduleTool {
         client: client.clone(),
+        tz_cache: tz_cache.clone(),
     }));
     crate::tools::skills::register_tools(registry, client.clone());
     crate::tools::user_input::register_user_input_tool(registry, user_input_provider);
 }
 
 /// Registers the read-only planner tools used by the agent.
-pub fn register_read_tools(registry: &mut ToolRegistry, client: Client) {
+pub fn register_read_tools(registry: &mut ToolRegistry, client: Client, tz_cache: TimeZoneCache) {
     registry.register(Box::new(ListTasks {
         client: client.clone(),
+        tz_cache: tz_cache.clone(),
     }));
     registry.register(Box::new(GetTask {
         client: client.clone(),
+        tz_cache: tz_cache.clone(),
     }));
     registry.register(Box::new(ListHabits {
         client: client.clone(),
@@ -41,6 +46,7 @@ pub fn register_read_tools(registry: &mut ToolRegistry, client: Client) {
     }));
     registry.register(Box::new(GetSchedule {
         client: client.clone(),
+        tz_cache,
     }));
     registry.register(Box::new(GetSettings { client }));
 }
@@ -105,9 +111,66 @@ fn client_error(error: takusu_client::ClientError) -> ToolError {
     }
 }
 
-async fn server_timezone(client: &Client) -> Result<jiff::tz::TimeZone, ToolError> {
-    let settings = client.get_settings().await.map_err(client_error)?;
-    jiff::tz::TimeZone::get(&settings.tz).map_err(|error| ToolError::Other(Box::new(error)))
+/// Cache for the configured timezone, shared across tools in a session.
+///
+/// Successful `get_settings()` calls are cached for the lifetime of the
+/// session. Failures are backed off (currently 30 seconds) to avoid hammering
+/// the server when it is temporarily unreachable, and callers fall back to the
+/// system timezone.
+#[derive(Clone)]
+pub struct TimeZoneCache {
+    client: Client,
+    state: std::sync::Arc<tokio::sync::Mutex<CacheState>>,
+}
+
+#[derive(Clone)]
+enum CacheState {
+    Empty,
+    Ok(jiff::tz::TimeZone),
+    Failed(std::time::Instant),
+}
+
+impl TimeZoneCache {
+    pub fn new(client: Client) -> Self {
+        Self {
+            client,
+            state: std::sync::Arc::new(tokio::sync::Mutex::new(CacheState::Empty)),
+        }
+    }
+
+    /// Return the configured timezone, falling back to the system timezone on
+    /// any failure.
+    pub async fn get_with_fallback(&self) -> jiff::tz::TimeZone {
+        const FAILURE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+        let mut state = self.state.lock().await;
+        match &*state {
+            CacheState::Ok(tz) => return tz.clone(),
+            CacheState::Failed(at) if at.elapsed() < FAILURE_TTL => {
+                return jiff::Zoned::now().time_zone().clone();
+            }
+            _ => {}
+        }
+
+        match self.load_timezone().await {
+            Ok(tz) => {
+                *state = CacheState::Ok(tz.clone());
+                tz
+            }
+            Err(_) => {
+                *state = CacheState::Failed(std::time::Instant::now());
+                jiff::Zoned::now().time_zone().clone()
+            }
+        }
+    }
+
+    async fn load_timezone(&self) -> Result<jiff::tz::TimeZone, ToolError> {
+        let settings = self.client.get_settings().await.map_err(client_error)?;
+        jiff::tz::TimeZone::get(&settings.tz).map_err(|error| ToolError::Other(Box::new(error)))
+    }
+}
+
+async fn server_timezone(cache: &TimeZoneCache) -> jiff::tz::TimeZone {
+    cache.get_with_fallback().await
 }
 
 fn normalize_datetime(
@@ -119,6 +182,51 @@ fn normalize_datetime(
     parse_datetime_tz(&value, tz)
         .map(Some)
         .map_err(|error| ToolError::InvalidArgs(format!("invalid {name}: {error}")))
+}
+
+/// Format a stored datetime string for display in the configured timezone.
+///
+/// Stored task/schedule datetimes are always UTC, but `datetime('now')`
+/// returns a space-separated naive string (`YYYY-MM-DD HH:MM:SS`).
+/// Standard RFC 3339 / ISO 8601 strings with `T`, `Z`, or an offset are
+/// parsed as absolute timestamps. Naive strings matching the SQLite format
+/// (with a space or `T`) are interpreted as UTC wall-clock times.
+/// Returns the original string unchanged if parsing fails.
+fn format_datetime_for_display(s: &str, tz: &jiff::tz::TimeZone) -> String {
+    if s.is_empty() {
+        return s.to_string();
+    }
+    let s = s.trim();
+    if let Ok(ts) = jiff::Timestamp::from_str(s) {
+        return ts.to_zoned(tz.clone()).to_string();
+    }
+    // SQLite `datetime('now')` and other naive UTC wall-clock formats.
+    for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"] {
+        if let Ok(dt) = jiff::civil::DateTime::strptime(fmt, s)
+            && let Ok(zdt) = dt.to_zoned(jiff::tz::TimeZone::UTC)
+        {
+            return zdt.timestamp().to_zoned(tz.clone()).to_string();
+        }
+    }
+    s.to_string()
+}
+
+/// Convert any absolute datetime fields in the display `args` map from the
+/// canonical UTC representation back to the configured timezone.
+///
+/// Leaves `execution_args` untouched so the backend still receives UTC.
+fn format_display_datetime_args(
+    args: &mut serde_json::Map<String, Value>,
+    tz: &jiff::tz::TimeZone,
+) {
+    for key in ["start_at", "end_at", "from", "until"] {
+        if let Some(Value::String(s)) = args.get(key) {
+            args.insert(
+                key.to_string(),
+                Value::String(format_datetime_for_display(s, tz)),
+            );
+        }
+    }
 }
 
 /// Strip a leading `#` from a user-supplied task reference.
@@ -232,14 +340,18 @@ fn task_reference(task: &TaskRow, habit_display_ids: &HashMap<String, i64>) -> S
         .unwrap_or_else(|| format!("#{}", task.display_id))
 }
 
-fn task_json(task: &TaskRow, ctx: &TaskContext) -> Value {
+fn task_json(task: &TaskRow, ctx: &TaskContext, tz: Option<&jiff::tz::TimeZone>) -> Value {
+    let fmt = |s: &str| match tz {
+        Some(tz) => format_datetime_for_display(s, tz),
+        None => s.to_string(),
+    };
     json!({
         "display_id": task.display_id,
         "reference": ctx.reference(task),
         "title": task.title,
         "description": task.description,
-        "start_at": task.start_at,
-        "end_at": task.end_at,
+        "start_at": task.start_at.as_deref().map(fmt),
+        "end_at": fmt(&task.end_at),
         "avg_minutes": task.avg_minutes,
         "sigma_minutes": task.sigma_minutes,
         "depends": ctx.depends(task),
@@ -248,8 +360,8 @@ fn task_json(task: &TaskRow, ctx: &TaskContext) -> Value {
         "abandonability": task.abandonability,
         "status": task.status,
         "fixed": task.fixed,
-        "created_at": task.created_at,
-        "updated_at": task.updated_at,
+        "created_at": fmt(&task.created_at),
+        "updated_at": fmt(&task.updated_at),
     })
 }
 
@@ -322,7 +434,11 @@ fn step_json(step: &HabitStepRow, id_to_display_position: &HashMap<String, i64>)
     })
 }
 
-fn schedule_entry_value(entry: &Value, ctx: &TaskContext) -> Value {
+fn schedule_entry_value(
+    entry: &Value,
+    ctx: &TaskContext,
+    tz: Option<&jiff::tz::TimeZone>,
+) -> Value {
     let task_id = entry.get("task_id").and_then(Value::as_str).unwrap_or("");
     let (reference, display_id, title) = match ctx.ref_by_id(task_id) {
         Some(r) => (
@@ -336,12 +452,16 @@ fn schedule_entry_value(entry: &Value, ctx: &TaskContext) -> Value {
             Value::String("unknown task".into()),
         ),
     };
+    let fmt = |s: &str| match tz {
+        Some(tz) => format_datetime_for_display(s, tz),
+        None => s.to_string(),
+    };
     json!({
         "reference": reference,
         "display_id": display_id,
         "title": title,
-        "start_at": entry.get("start_at").cloned().unwrap_or(Value::Null),
-        "end_at": entry.get("end_at").cloned().unwrap_or(Value::Null),
+        "start_at": entry.get("start_at").and_then(Value::as_str).map(fmt),
+        "end_at": entry.get("end_at").and_then(Value::as_str).map(fmt),
     })
 }
 
@@ -351,13 +471,13 @@ fn reference_value(id: &str, ctx: &TaskContext) -> Value {
         .unwrap_or_else(|| Value::String("unknown".into()))
 }
 
-fn transform_preview(preview: Value, ctx: &TaskContext) -> Value {
+fn transform_preview(preview: Value, ctx: &TaskContext, tz: Option<&jiff::tz::TimeZone>) -> Value {
     let mut out = preview.as_object().cloned().unwrap_or_default();
 
     if let Some(Value::Array(entries)) = out.get("entries").cloned() {
         let transformed = entries
             .iter()
-            .map(|entry| schedule_entry_value(entry, ctx))
+            .map(|entry| schedule_entry_value(entry, ctx, tz))
             .collect::<Vec<_>>();
         out.insert("entries".into(), Value::Array(transformed));
     }
@@ -381,6 +501,7 @@ fn transform_preview(preview: Value, ctx: &TaskContext) -> Value {
 
 struct ListTasks {
     client: Client,
+    tz_cache: TimeZoneCache,
 }
 
 #[async_trait]
@@ -419,7 +540,7 @@ impl Tool for ListTasks {
             ),
             None => None,
         };
-        let tz = server_timezone(&self.client).await?;
+        let tz = server_timezone(&self.tz_cache).await;
         let query = TaskQuery {
             status: optional_string(&args, "status")?.map(|s| normalize_status(&s)),
             from: normalize_datetime(optional_string(&args, "from")?, &tz, "from")?,
@@ -442,7 +563,7 @@ impl Tool for ListTasks {
         let ctx = TaskContext::new(&all_tasks, &habits);
         let content = tasks
             .iter()
-            .map(|task| task_json(task, &ctx))
+            .map(|task| task_json(task, &ctx, Some(&tz)))
             .collect::<Vec<_>>();
         Ok(ToolOutput {
             content: serde_json::to_string(&content).unwrap(),
@@ -453,6 +574,7 @@ impl Tool for ListTasks {
 
 struct GetTask {
     client: Client,
+    tz_cache: TimeZoneCache,
 }
 
 #[async_trait]
@@ -477,6 +599,7 @@ impl Tool for GetTask {
         let task_ref = required_string(&object(args)?, "task_ref")?;
         let task_ref = strip_leading_hash(&task_ref).to_string();
 
+        let tz = server_timezone(&self.tz_cache).await;
         let default_query = TaskQuery::default();
         let c1 = self.client.clone();
         let c2 = self.client.clone();
@@ -489,7 +612,7 @@ impl Tool for GetTask {
         .map_err(client_error)?;
 
         let ctx = TaskContext::new(&all_tasks, &habits);
-        let result = task_json(&task, &ctx);
+        let result = task_json(&task, &ctx, Some(&tz));
         Ok(ToolOutput {
             content: serde_json::to_string(&result).unwrap(),
             ..Default::default()
@@ -565,6 +688,7 @@ impl Tool for GetHabit {
 
 struct GetSchedule {
     client: Client,
+    tz_cache: TimeZoneCache,
 }
 
 #[async_trait]
@@ -585,6 +709,7 @@ impl Tool for GetSchedule {
     async fn call(&self, args: Value) -> Result<ToolOutput, ToolError> {
         let _ = object(args)?;
 
+        let tz = server_timezone(&self.tz_cache).await;
         let default_query = TaskQuery::default();
         let c1 = self.client.clone();
         let c2 = self.client.clone();
@@ -605,14 +730,14 @@ impl Tool for GetSchedule {
         };
         let entries = entries
             .iter()
-            .map(|entry| schedule_entry_value(entry, &ctx))
+            .map(|entry| schedule_entry_value(entry, &ctx, Some(&tz)))
             .collect::<Vec<_>>();
 
         Ok(ToolOutput {
             content: serde_json::to_string(&json!({
                 "id": schedule.id,
-                "created_at": schedule.created_at,
-                "updated_at": schedule.updated_at,
+                "created_at": format_datetime_for_display(&schedule.created_at, &tz),
+                "updated_at": format_datetime_for_display(&schedule.updated_at, &tz),
                 "entries": entries,
             }))
             .unwrap(),
@@ -652,6 +777,7 @@ impl Tool for GetSettings {
 
 struct PreviewScheduleTool {
     client: Client,
+    tz_cache: TimeZoneCache,
 }
 
 #[async_trait]
@@ -681,7 +807,7 @@ impl Tool for PreviewScheduleTool {
         args.entry("mode")
             .or_insert_with(|| Value::String("full".into()));
 
-        let tz = server_timezone(&self.client).await?;
+        let tz = server_timezone(&self.tz_cache).await;
         normalize_mutation_field(&mut args, "from", &tz)?;
         normalize_mutation_field(&mut args, "until", &tz)?;
         normalize_reference_array(&mut args, "task_ids")?;
@@ -704,14 +830,18 @@ impl Tool for PreviewScheduleTool {
 
         let ctx = TaskContext::new(&tasks, &habits);
         Ok(ToolOutput {
-            content: serde_json::to_string(&transform_preview(preview, &ctx)).unwrap(),
+            content: serde_json::to_string(&transform_preview(preview, &ctx, Some(&tz))).unwrap(),
             ..Default::default()
         })
     }
 }
 
 /// Registers planner mutation tools. Calls only produce approval proposals; they never write.
-pub fn register_mutation_tools(registry: &mut ToolRegistry, client: Client) {
+pub fn register_mutation_tools(
+    registry: &mut ToolRegistry,
+    client: Client,
+    tz_cache: TimeZoneCache,
+) {
     for kind in [
         MutationKind::CreateTask,
         MutationKind::UpdateTask,
@@ -724,6 +854,7 @@ pub fn register_mutation_tools(registry: &mut ToolRegistry, client: Client) {
     ] {
         registry.register(Box::new(MutationTool {
             client: client.clone(),
+            tz_cache: tz_cache.clone(),
             kind,
         }));
     }
@@ -966,6 +1097,7 @@ impl MutationKind {
 
 struct MutationTool {
     client: Client,
+    tz_cache: TimeZoneCache,
     kind: MutationKind,
 }
 
@@ -985,11 +1117,14 @@ impl Tool for MutationTool {
         let mut args = object(args)?;
         validate_mutation(self.kind, &args)?;
 
-        let tz = server_timezone(&self.client).await?;
+        let tz = server_timezone(&self.tz_cache).await;
         normalize_mutation_args(self.kind, &mut args, &tz)?;
 
         let mut execution_args = args.clone();
         normalize_execution_references(self.kind, &mut execution_args)?;
+        // Convert absolute datetimes back to the configured timezone for the
+        // approval UI; execution_args retains the canonical UTC values.
+        format_display_datetime_args(&mut args, &tz);
 
         let (before, observed_updated_at) = match self.kind {
             MutationKind::UpdateTask | MutationKind::DeleteTask => {
@@ -1007,7 +1142,10 @@ impl Tool for MutationTool {
                 .map_err(client_error)?;
 
                 let ctx = TaskContext::new(&all_tasks, &habits);
-                (Some(task_json(&task, &ctx)), Some(task.updated_at))
+                (
+                    Some(task_json(&task, &ctx, Some(&tz))),
+                    Some(task.updated_at),
+                )
             }
             MutationKind::UpdateHabit | MutationKind::DeleteHabit => {
                 let reference = required_string(&args, "habit_ref")?;
@@ -1050,7 +1188,10 @@ impl Tool for MutationTool {
                 ToolError::InvalidArgs("schedule preview did not return entries".into())
             })?;
             execution_args.insert("_preview_entries".into(), entries);
-            args.insert("_preview".into(), transform_preview(preview, &ctx));
+            args.insert(
+                "_preview".into(),
+                transform_preview(preview, &ctx, Some(&tz)),
+            );
         }
 
         let (target, description) = self.kind.change_summary(&args);
@@ -1290,8 +1431,10 @@ mod tests {
 
     #[test]
     fn task_reference_schema_requires_scoped_reference() {
+        let client = Client::new("http://localhost", "");
         let tool = GetTask {
-            client: Client::new("http://localhost", ""),
+            client: client.clone(),
+            tz_cache: TimeZoneCache::new(client),
         };
         let schema = tool.parameters_schema();
         assert_eq!(schema["required"], json!(["task_ref"]));
@@ -1318,7 +1461,7 @@ mod tests {
         let task = task_row("task-uuid", 3, "task", Some("habit-uuid"), &["dep-uuid"]);
         let ctx = TaskContext::new(&[task.clone(), dep.clone()], &[habit]);
 
-        let value = task_json(&task, &ctx);
+        let value = task_json(&task, &ctx, None);
         assert!(value.get("id").is_none());
         assert!(value.get("habit_id").is_none());
         assert!(value.get("habit_step_id").is_none());
@@ -1378,7 +1521,7 @@ mod tests {
             "start_at": "2025-06-05T10:00:00Z",
             "end_at": "2025-06-05T11:00:00Z",
         });
-        let value = schedule_entry_value(&entry, &ctx);
+        let value = schedule_entry_value(&entry, &ctx, None);
 
         assert!(value.get("task_id").is_none());
         assert_eq!(value["reference"], "h7#3");
@@ -1403,7 +1546,7 @@ mod tests {
             "unscheduled_task_ids": ["task-uuid"],
             "displaced_task_ids": ["task-uuid"],
         });
-        let out = transform_preview(preview, &ctx);
+        let out = transform_preview(preview, &ctx, None);
 
         let entries = out["entries"].as_array().unwrap();
         assert_eq!(entries[0]["reference"], "h7#3");
@@ -1506,8 +1649,10 @@ mod tests {
 
     #[test]
     fn list_tasks_status_schema_has_enum() {
+        let client = Client::new("http://localhost", "");
         let tool = ListTasks {
-            client: Client::new("http://localhost", ""),
+            client: client.clone(),
+            tz_cache: TimeZoneCache::new(client),
         };
         let schema = tool.parameters_schema();
         let values: Vec<String> =
@@ -1518,8 +1663,10 @@ mod tests {
 
     #[test]
     fn update_task_status_schema_has_enum() {
+        let client = Client::new("http://localhost", "");
         let tool = MutationTool {
-            client: Client::new("http://localhost", ""),
+            client: client.clone(),
+            tz_cache: TimeZoneCache::new(client),
             kind: MutationKind::UpdateTask,
         };
         let schema = tool.parameters_schema();
@@ -1595,5 +1742,128 @@ mod tests {
             MutationKind::UpdateTask.change_summary(&serde_json::Map::new()),
             ("(参照不明)".to_owned(), "(参照不明)を更新".to_owned()),
         );
+    }
+
+    #[test]
+    fn format_datetime_for_display_converts_utc_to_zoned() {
+        let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+        let out = format_datetime_for_display("2025-06-05T10:00:00Z", &tz);
+        assert!(out.contains("2025-06-05T19:00:00"));
+        assert!(out.contains("+09:00"));
+        assert!(out.contains("[Asia/Tokyo]"));
+    }
+
+    #[test]
+    fn format_datetime_for_display_handles_sqlite_datetime() {
+        let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+        let out = format_datetime_for_display("2025-06-05 10:00:00", &tz);
+        assert!(out.contains("2025-06-05T19:00:00"));
+        assert!(out.contains("+09:00"));
+        assert!(out.contains("[Asia/Tokyo]"));
+    }
+
+    #[test]
+    fn format_datetime_for_display_handles_offset_string() {
+        let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+        let out = format_datetime_for_display("2025-06-05T10:00:00+00:00", &tz);
+        assert!(out.contains("2025-06-05T19:00:00"));
+        assert!(out.contains("+09:00"));
+        assert!(out.contains("[Asia/Tokyo]"));
+    }
+
+    #[test]
+    fn format_datetime_for_display_handles_naive_with_t_separator() {
+        let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+        let out = format_datetime_for_display("2025-06-05T10:00:00", &tz);
+        assert!(out.contains("2025-06-05T19:00:00"));
+        assert!(out.contains("+09:00"));
+        assert!(out.contains("[Asia/Tokyo]"));
+    }
+
+    #[test]
+    fn format_datetime_for_display_returns_unknown_strings_unchanged() {
+        let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+        assert_eq!(format_datetime_for_display("not-a-date", &tz), "not-a-date");
+        assert_eq!(format_datetime_for_display("", &tz), "");
+    }
+
+    #[test]
+    fn task_json_converts_datetimes_to_zoned() {
+        let habit = habit_row("habit-uuid", 7, "habit");
+        let task = task_row("task-uuid", 3, "task", Some("habit-uuid"), &[]);
+        let ctx = TaskContext::new(std::slice::from_ref(&task), &[habit]);
+        let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+
+        let value = task_json(&task, &ctx, Some(&tz));
+
+        assert!(
+            value["end_at"]
+                .as_str()
+                .unwrap()
+                .contains("2025-06-05T19:00:00")
+        );
+        assert!(
+            value["created_at"]
+                .as_str()
+                .unwrap()
+                .contains("2025-06-01T09:00:00")
+        );
+    }
+
+    #[test]
+    fn schedule_entry_value_converts_datetimes_to_zoned() {
+        let task = task_row("task-uuid", 3, "task title", Some("habit-uuid"), &[]);
+        let habit = habit_row("habit-uuid", 7, "habit");
+        let ctx = TaskContext::new(&[task], &[habit]);
+        let entry = json!({
+            "task_id": "task-uuid",
+            "start_at": "2025-06-05T10:00:00Z",
+            "end_at": "2025-06-05T11:00:00Z",
+        });
+        let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+
+        let value = schedule_entry_value(&entry, &ctx, Some(&tz));
+
+        assert!(
+            value["start_at"]
+                .as_str()
+                .unwrap()
+                .contains("2025-06-05T19:00:00")
+        );
+        assert!(
+            value["end_at"]
+                .as_str()
+                .unwrap()
+                .contains("2025-06-05T20:00:00")
+        );
+    }
+
+    #[test]
+    fn format_display_datetime_args_converts_utc_fields_to_zoned() {
+        let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+        let mut args = serde_json::Map::new();
+        args.insert(
+            "start_at".into(),
+            Value::String("2025-06-05T10:00:00Z".into()),
+        );
+        args.insert(
+            "end_at".into(),
+            Value::String("2025-06-05T11:00:00Z".into()),
+        );
+        args.insert("title".into(), Value::String("task".into()));
+        format_display_datetime_args(&mut args, &tz);
+        assert!(
+            args["start_at"]
+                .as_str()
+                .unwrap()
+                .contains("2025-06-05T19:00:00")
+        );
+        assert!(
+            args["end_at"]
+                .as_str()
+                .unwrap()
+                .contains("2025-06-05T20:00:00")
+        );
+        assert_eq!(args["title"], "task");
     }
 }

@@ -7,7 +7,7 @@ mod model;
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
-use takusu_agent::tools::takusu::register_tools;
+use takusu_agent::tools::takusu::{TimeZoneCache, register_tools};
 use takusu_agent::transport::{AgentApiState, ApiUserInputProvider};
 use takusu_agent::{AgentConfig, AgentSession, ToolRegistry};
 use takusu_local::router::router;
@@ -165,15 +165,18 @@ impl TakusuServer {
                     &agent_config.server.url,
                     &agent_config.server.token,
                 );
+                let tz_cache = TimeZoneCache::new(planner_client.clone());
                 let mut registry = ToolRegistry::new();
                 register_tools(
                     &mut registry,
                     planner_client.clone(),
+                    tz_cache.clone(),
                     user_input_provider.clone(),
                 );
-                Ok(AgentSession::new_with_client(
+                Ok(AgentSession::new_with_client_and_cache(
                     agent_config.clone(),
                     planner_client,
+                    tz_cache,
                     registry,
                     llm,
                 ))

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::llm::OpenAIClient;
-use crate::tools::takusu::register_tools;
+use crate::tools::takusu::{TimeZoneCache, register_tools};
 use crate::{
     AgentConfig, AgentError, AgentSession, StubUserInputProvider, ToolRegistry, TurnResult,
     UserInputProvider,
@@ -18,11 +18,18 @@ pub fn build_session_with_provider(
     user_input_provider: Arc<dyn UserInputProvider>,
 ) -> Result<AgentSession, AgentError> {
     let llm = OpenAIClient::new(config.llm.clone())?;
+    let tz_cache = TimeZoneCache::new(client.clone());
     let mut registry = ToolRegistry::new();
-    register_tools(&mut registry, client.clone(), user_input_provider);
-    Ok(AgentSession::new_with_client(
+    register_tools(
+        &mut registry,
+        client.clone(),
+        tz_cache.clone(),
+        user_input_provider,
+    );
+    Ok(AgentSession::new_with_client_and_cache(
         config.clone(),
         client,
+        tz_cache,
         registry,
         llm,
     ))
