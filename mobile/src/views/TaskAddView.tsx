@@ -33,9 +33,9 @@ interface TaskAddViewProps {
   onClose?: () => void;
   /** Pre-selected dependency IDs. Takes precedence over the `deps` search param. */
   initialDeps?: string[];
-  /** When true the view is embedded inside a sheet that already provides
-   *  top safe-area spacing (e.g. TaskAddSheet's grabber handle), so the
-   *  topBar skips adding `insets.top` padding. Defaults to false (standalone route). */
+  /** When true the view is embedded inside another container that already
+   *  provides top safe-area spacing, so the topBar skips adding `insets.top`
+   *  padding. Defaults to false (standalone route). */
   embedded?: boolean;
 }
 

@@ -13,7 +13,6 @@ import {
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
-  PermissionsAndroid,
   Platform,
   LayoutChangeEvent,
   Pressable,
@@ -46,11 +45,16 @@ import Markdown, {
 } from 'react-native-markdown-renderer';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import { DEFAULT_PORT, useServer } from '@/src/api/ServerProvider';
+import { useVoice } from '@/src/api/VoiceContext';
 import { markdownToSpeech } from '@/src/utils/markdownToSpeech';
+import {
+  ensureAudioConfigured,
+  voiceBridge,
+  type VoiceResult,
+} from '@/src/utils/voice';
 import TakusuAudioModule from '../../modules/takusu-server/src/TakusuAudioModule';
 import {
   AGENT_SESSION_HISTORY_DEFAULT,
-  loadAgentApiKey,
   loadSettings,
 } from '@/src/api/settingsStore';
 import { AgentClient, AgentApiError, AbortError } from '@/src/api/agentClient';
@@ -71,6 +75,7 @@ import {
   saveSessionSnapshot,
 } from '@/src/api/agentSessionStore';
 import { ApprovalPanel } from '@/src/components/ApprovalPanel';
+import { ComposerRecordButton } from '@/src/components/ComposerRecordButton';
 import { BRAND_COLOR, COLORS, useColors, type ColorSet } from '@/src/theme';
 
 function newId(prefix: string): string {
@@ -754,6 +759,9 @@ export function AgentView() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const { workersToken, ready } = useServer();
+  const { setShowInAgent } = useVoice();
+  const [pendingResult, setPendingResult] = useState<VoiceResult | null>(null);
+  const sendTextRef = useRef(sendText);
   const client = useMemo(
     () => new AgentClient(`http://127.0.0.1:${DEFAULT_PORT}`, workersToken),
     [workersToken],
@@ -768,7 +776,6 @@ export function AgentView() {
   );
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [busy, setBusy] = useState(false);
-  const [recording, setRecording] = useState(false);
   const [audioReady, setAudioReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(Keyboard.isVisible());
@@ -788,13 +795,6 @@ export function AgentView() {
   const sessionIdRef = useRef<string | null>(null);
   const sessionHistoryCountRef = useRef(AGENT_SESSION_HISTORY_DEFAULT);
   const isSwitchingRef = useRef(false);
-  const audioReadyRef = useRef(false);
-  const lastTtsRef = useRef<{
-    id: string;
-    voiceId: string;
-    language: string;
-    sampleRate: number;
-  } | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   const backgroundAbortedRef = useRef(false);
   const flatListRef = useRef<FlatList<Message>>(null);
@@ -1032,52 +1032,20 @@ export function AgentView() {
     useCallback(() => {
       if (!ready || !workersToken) return;
       let cancelled = false;
-      async function configureAudio() {
-        try {
-          const settings = await loadSettings();
-          const provider = settings.ttsProviders.find(
-            (item) => item.id === settings.activeTtsProvider,
-          );
-          if (!provider) return;
-          const last = lastTtsRef.current;
-          if (
-            audioReadyRef.current &&
-            last &&
-            last.id === provider.id &&
-            last.voiceId === provider.voiceId &&
-            last.language === provider.language &&
-            last.sampleRate === provider.sampleRate
-          ) {
-            return;
-          }
-          const apiKey = await loadAgentApiKey('tts', provider.id);
-          await TakusuAudioModule.configure({
-            modelDir: '',
-            apiKey,
-            voiceId: provider.voiceId,
-            language: provider.language,
-            sampleRate: provider.sampleRate,
-          });
+      ensureAudioConfigured().then(
+        () => {
           if (cancelled) return;
-          audioReadyRef.current = true;
           setAudioReady(true);
           setError(null);
-          lastTtsRef.current = {
-            id: provider.id,
-            voiceId: provider.voiceId,
-            language: provider.language,
-            sampleRate: provider.sampleRate,
-          };
-        } catch (e: unknown) {
+        },
+        (e: unknown) => {
           if (cancelled) return;
-          audioReadyRef.current = false;
           setAudioReady(false);
           setError(
             `音声モデルを準備してください: ${e instanceof Error ? e.message : String(e)}`,
           );
-        }
-      }
-      configureAudio();
+        },
+      );
       return () => {
         cancelled = true;
       };
@@ -1090,6 +1058,31 @@ export function AgentView() {
       () => {},
     );
   }, [messages, approval, busy]);
+
+  useEffect(() => {
+    setShowInAgent(messages.length === 0);
+  }, [messages.length, setShowInAgent]);
+
+  useEffect(() => {
+    return voiceBridge.subscribe((r) => {
+      if (r) setPendingResult(r);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!pendingResult) return;
+    const { transcript, sendNow } = pendingResult;
+    if (sendNow) {
+      sendTextRef.current(transcript);
+    } else {
+      setText((t) => {
+        const prefix = t && !t.endsWith(' ') ? `${t} ` : t;
+        return `${prefix}${transcript}`;
+      });
+    }
+    voiceBridge.consume();
+    setPendingResult(null);
+  }, [pendingResult]);
 
   async function sendText(value: string) {
     if (!value.trim() || busy || isSwitchingRef.current || !historyReady)
@@ -1291,6 +1284,7 @@ export function AgentView() {
       setBusy(false);
     }
   }
+  sendTextRef.current = sendText;
 
   async function send() {
     const value = text.trim();
@@ -1299,6 +1293,14 @@ export function AgentView() {
     setInputHeight(44);
     await sendText(value);
   }
+
+  const appendText = useCallback((transcript: string) => {
+    setText((current) => {
+      const prefix =
+        current && !current.endsWith(' ') ? `${current} ` : current;
+      return `${prefix}${transcript.trim()}`;
+    });
+  }, []);
 
   const toggleGroupCollapsed = useCallback((id: string, groupIndex: number) => {
     setMessages((current) =>
@@ -1326,34 +1328,6 @@ export function AgentView() {
       flatListRef.current?.scrollToEnd({ animated: false });
     }
   }, []);
-
-  async function toggleRecording() {
-    if (busy || isSwitchingRef.current || !historyReady) return;
-    setError(null);
-    try {
-      if (!recording) {
-        if (!audioReady) throw new Error('音声モデルが準備されていません');
-        if (Platform.OS === 'android') {
-          const permission = await PermissionsAndroid.request(
-            PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-          );
-          if (permission !== PermissionsAndroid.RESULTS.GRANTED) {
-            throw new Error('マイク権限が許可されていません');
-          }
-        }
-        TakusuAudioModule.startRecording();
-        setRecording(true);
-        return;
-      }
-      setRecording(false);
-      const transcript = await TakusuAudioModule.stopAndTranscribe();
-      if (transcript.trim()) await sendText(transcript);
-    } catch (e: unknown) {
-      setRecording(false);
-      setBusy(false);
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }
 
   async function resolve(approve: boolean) {
     if (!sessionIdRef.current || !approval || busy || isSwitchingRef.current)
@@ -1793,13 +1767,6 @@ export function AgentView() {
             },
           ]}
         >
-          <Pressable
-            disabled={busy || isSwitching || !historyReady}
-            onPress={toggleRecording}
-            style={[styles.record, recording && styles.recording]}
-          >
-            <Text style={styles.recordText}>{recording ? '停止' : '録音'}</Text>
-          </Pressable>
           <TextInput
             style={[
               styles.input,
@@ -1820,6 +1787,12 @@ export function AgentView() {
               const h = e.nativeEvent.contentSize.height;
               setInputHeight(Math.max(44, Math.min(120, h)));
             }}
+          />
+          <ComposerRecordButton
+            audioReady={audioReady}
+            historyReady={historyReady}
+            busy={busy || isSwitching}
+            onAppend={appendText}
           />
           <Pressable
             disabled={busy || isSwitching || !historyReady || !text.trim()}
@@ -1992,16 +1965,6 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     borderTopWidth: 1,
   },
-  record: {
-    minWidth: 52,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: BRAND_COLOR,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  recording: { backgroundColor: '#B33A3A', borderColor: '#B33A3A' },
-  recordText: { color: BRAND_COLOR, fontWeight: '700' },
   input: {
     flex: 1,
     minHeight: 44,
