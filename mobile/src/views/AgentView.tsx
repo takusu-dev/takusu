@@ -66,6 +66,18 @@ function newId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function formatJson(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === 'string') {
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2);
+    } catch {
+      return value;
+    }
+  }
+  return JSON.stringify(value, null, 2);
+}
+
 function appendSegment(
   segments: MessageSegment[],
   segment: MessageSegment,
@@ -256,7 +268,7 @@ function ToolCallCard({ call, colors }: ToolCallCardProps) {
       </View>
       {!isAsr && call.arguments !== undefined && (
         <Text style={[styles.toolArgs, { color: colors.gray }]}>
-          {JSON.stringify(call.arguments, null, 2)}
+          {formatJson(call.arguments)}
         </Text>
       )}
       {isAsr && call.arguments !== undefined && (
@@ -273,8 +285,8 @@ function ToolCallCard({ call, colors }: ToolCallCardProps) {
           {isAsr
             ? call.result
             : call.isError
-              ? `エラー: ${call.result}`
-              : call.result}
+              ? `エラー: ${formatJson(call.result)}`
+              : formatJson(call.result)}
         </Text>
       )}
     </View>
@@ -393,7 +405,9 @@ function AssistantMessage({
         );
       })}
       {item.state !== 'done' && item.text.length === 0 && (
-        <ActivityIndicator color={BRAND_COLOR} />
+        <View style={styles.loadingIndicator}>
+          <ActivityIndicator color={BRAND_COLOR} />
+        </View>
       )}
     </View>
   );
@@ -481,6 +495,7 @@ export function AgentView() {
   const backgroundAbortedRef = useRef(false);
   const flatListRef = useRef<FlatList<Message>>(null);
   const autoScrollRef = useRef(true);
+  const skipSnapshotSaveRef = useRef(false);
   const viewOffset = useSharedValue(0);
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: viewOffset.value }],
@@ -645,13 +660,10 @@ export function AgentView() {
             setApproval(pending);
           } catch (e) {
             if (e instanceof AgentApiError && e.status === 404) {
-              const created = await client.createSession();
-              const newIds = [...trimmed];
-              newIds[trimmedIndex] = created;
-              sessionIdsRef.current = newIds;
-              setSessionIds(newIds);
-              await deleteSessionSnapshot(newActiveId);
-              await activateSessionId(created, false);
+              // The server session no longer exists, but keep the local snapshot
+              // so the history remains visible and swipable. Clear any stale
+              // pending approval because it can no longer be resolved.
+              setApproval(null);
             } else {
               throw e;
             }
@@ -769,7 +781,7 @@ export function AgentView() {
   );
 
   useEffect(() => {
-    if (!sessionIdRef.current || busy) return;
+    if (!sessionIdRef.current || busy || skipSnapshotSaveRef.current) return;
     saveSessionSnapshot(sessionIdRef.current, { messages, approval }).catch(
       () => {},
     );
@@ -1091,6 +1103,10 @@ export function AgentView() {
   }
 
   function resetToCenter() {
+    if (viewOffset.value === 0) {
+      resetSwitchState();
+      return;
+    }
     viewOffset.value = withTiming(
       0,
       { duration: 200, easing: Easing.out(Easing.exp) },
@@ -1149,13 +1165,19 @@ export function AgentView() {
     isSwitchingRef.current = true;
     setIsSwitching(true);
     const currentId = sessionIdRef.current;
+    const previousMessages = messages;
+    const previousApproval = approval;
+    if (currentId) {
+      await saveSessionSnapshot(currentId, {
+        messages: previousMessages,
+        approval: previousApproval,
+      }).catch(() => {});
+    }
+    skipSnapshotSaveRef.current = true;
+    setMessages([]);
+    setApproval(null);
     try {
       const created = await client.createSession();
-      if (currentId) {
-        await saveSessionSnapshot(currentId, { messages, approval }).catch(
-          () => {},
-        );
-      }
       let ids = [...sessionIdsRef.current, created];
       const max = sessionHistoryCountRef.current;
       const removed: string[] = [];
@@ -1166,10 +1188,6 @@ export function AgentView() {
       await Promise.all(removed.map((id) => deleteSessionSnapshot(id))).catch(
         () => {},
       );
-      const snapshot = (await loadSessionSnapshot(created)) ?? {
-        messages: [],
-        approval: null,
-      };
       sessionIdsRef.current = ids;
       setSessionIds(ids);
       setActiveIndex(nextIndex);
@@ -1177,13 +1195,16 @@ export function AgentView() {
       sessionIdRef.current = created;
       setText('');
       autoScrollRef.current = true;
-      setMessages(snapshot.messages);
-      setApproval(snapshot.approval);
       saveSessionHistory({ ids, activeIndex: nextIndex }).catch(() => {});
       resetToCenter();
     } catch (e: unknown) {
+      sessionIdRef.current = currentId;
+      setMessages(previousMessages);
+      setApproval(previousApproval);
       setError(e instanceof Error ? e.message : String(e));
       resetToCenter();
+    } finally {
+      skipSnapshotSaveRef.current = false;
     }
   }
 
@@ -1541,7 +1562,7 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   toolChips: {
-    flex: 1,
+    flexGrow: 1,
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
@@ -1559,6 +1580,7 @@ const styles = StyleSheet.create({
   toolChipDot: { width: 6, height: 6, borderRadius: 3 },
   toolChipText: { fontSize: 11 },
   contextBody: { gap: 6 },
+  loadingIndicator: { alignItems: 'center', minWidth: 120 },
   thinkingText: { fontSize: 12, fontStyle: 'italic' },
   toolCall: {
     borderRadius: 10,
