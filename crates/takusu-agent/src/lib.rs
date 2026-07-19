@@ -173,6 +173,7 @@ pub struct AgentSession {
     pub(crate) config: AgentConfig,
     registry: ToolRegistry,
     client: takusu_client::Client,
+    tz_cache: crate::tools::takusu::TimeZoneCache,
     llm: Arc<dyn llm::LlmClient + Send + Sync>,
     history: Mutex<Vec<llm::Message>>,
     /// Ensures only one turn mutates the session at a time.
@@ -189,6 +190,10 @@ pub struct AgentSession {
 }
 
 impl AgentSession {
+    /// Test-only constructor that creates its own `Client` and
+    /// `TimeZoneCache`. Production code should use
+    /// [`Self::new_with_client_and_cache`].
+    #[cfg(test)]
     pub fn new(
         config: AgentConfig,
         registry: ToolRegistry,
@@ -198,9 +203,26 @@ impl AgentSession {
         Self::new_with_client(config, client, registry, llm)
     }
 
+    /// Test-only constructor. Production code should use
+    /// [`Self::new_with_client_and_cache`].
+    #[cfg(test)]
     pub fn new_with_client(
         config: AgentConfig,
         client: takusu_client::Client,
+        registry: ToolRegistry,
+        llm: impl llm::LlmClient + 'static,
+    ) -> Self {
+        let tz_cache = crate::tools::takusu::TimeZoneCache::new(client.clone());
+        Self::new_with_client_and_cache(config, client, tz_cache, registry, llm)
+    }
+
+    /// Recommended constructor for production code. The supplied
+    /// `TimeZoneCache` is shared with the tool registry so that
+    /// `get_settings()` is called at most once per `AgentSession`.
+    pub fn new_with_client_and_cache(
+        config: AgentConfig,
+        client: takusu_client::Client,
+        tz_cache: crate::tools::takusu::TimeZoneCache,
         registry: ToolRegistry,
         llm: impl llm::LlmClient + 'static,
     ) -> Self {
@@ -208,6 +230,7 @@ impl AgentSession {
             config,
             registry,
             client,
+            tz_cache,
             llm: Arc::new(llm),
             history: Mutex::new(Vec::new()),
             turn_lock: tokio::sync::Mutex::new(()),
@@ -941,11 +964,7 @@ impl AgentSession {
     }
 
     async fn load_server_timezone(&self) -> jiff::tz::TimeZone {
-        match self.client.get_settings().await {
-            Ok(s) => jiff::tz::TimeZone::get(&s.tz)
-                .unwrap_or_else(|_| jiff::Zoned::now().time_zone().clone()),
-            Err(_) => jiff::Zoned::now().time_zone().clone(),
-        }
+        self.tz_cache.get_with_fallback().await
     }
 
     async fn sync_built_in_skills(&self) -> Result<(), AgentError> {
