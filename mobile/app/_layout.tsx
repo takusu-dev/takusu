@@ -10,6 +10,8 @@ import { router } from 'expo-router';
 import * as Sentry from '@sentry/react-native';
 import type { TakusuClient } from '@/src/api/client';
 import { ServerProvider, useServer } from '@/src/api/ServerProvider';
+import { VoiceProvider } from '@/src/api/VoiceContext';
+import { FloatingVoiceButton } from '@/src/components/FloatingVoiceButton';
 import { installGlobalErrorHandler } from '@/src/api/installGlobalErrorHandler';
 import {
   ThemeProvider,
@@ -380,6 +382,7 @@ function ThemedApp() {
           <Stack.Screen name="import-ical" />
         </Stack>
         <UndoRedoToast />
+        <FloatingVoiceButton />
       </PaperProvider>
     </ThemeProvider>
   );
@@ -396,7 +399,9 @@ function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ServerProvider>
-          <ThemedApp />
+          <VoiceProvider>
+            <ThemedApp />
+          </VoiceProvider>
         </ServerProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
