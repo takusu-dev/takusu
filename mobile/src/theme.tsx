@@ -6,7 +6,12 @@ export const BRAND_COLOR = '#7261A3';
 export const BRAND_COLOR_LIGHT = '#9B8BC4';
 export const BRAND_COLOR_DARK = '#5A4A85';
 
-export const APP_THEMES = ['light', 'dark', 'catppuccin'] as const;
+export const APP_THEMES = [
+  'light',
+  'dark',
+  'catppuccin',
+  'aura-soft-dark',
+] as const;
 export type AppTheme = (typeof APP_THEMES)[number];
 
 // abandonability → background color mapping for task cards
@@ -36,6 +41,17 @@ export function abandonabilityColorCatppuccin(abandonability: number): string {
   return '#6A495A'; // dark red — must do
 }
 
+// Aura Soft Dark variant (issue #729).
+// Palette: https://github.com/daltonmenezes/aura-theme
+export function abandonabilityColorAuraSoftDark(
+  abandonability: number,
+): string {
+  if (abandonability >= 0.75) return '#3d375e'; // calm purple
+  if (abandonability >= 0.5) return '#29263c'; // neutral dark
+  if (abandonability >= 0.25) return '#463a32'; // warm dark amber
+  return '#462e2e'; // dark red — must do
+}
+
 // Theme-aware helper: picks the palette for the active theme.
 export function abandonabilityColorFor(
   abandonability: number,
@@ -46,6 +62,8 @@ export function abandonabilityColorFor(
       return abandonabilityColorDark(abandonability);
     case 'catppuccin':
       return abandonabilityColorCatppuccin(abandonability);
+    case 'aura-soft-dark':
+      return abandonabilityColorAuraSoftDark(abandonability);
     default:
       return abandonabilityColor(abandonability);
   }
@@ -90,6 +108,17 @@ const HABIT_COLORS_CATPPUCCIN: readonly string[] = [
   '#5D517C', // macchiato mauve
 ];
 
+const HABIT_COLORS_AURA_SOFT_DARK: readonly string[] = [
+  '#3d375e', // muted purple
+  '#2e464b', // muted teal
+  '#3b4632', // muted green
+  '#46402e', // muted amber
+  '#463a32', // muted orange
+  '#462e3a', // muted pink
+  '#2e3a46', // muted blue
+  '#462e2e', // muted red
+];
+
 export const HABIT_PALETTE_SIZE = 8;
 
 // Pick a habit color from the palette by habit display_id.
@@ -99,7 +128,9 @@ export function habitColorFor(habitDisplayId: number, theme: AppTheme): string {
       ? HABIT_COLORS_DARK
       : theme === 'catppuccin'
         ? HABIT_COLORS_CATPPUCCIN
-        : HABIT_COLORS_LIGHT;
+        : theme === 'aura-soft-dark'
+          ? HABIT_COLORS_AURA_SOFT_DARK
+          : HABIT_COLORS_LIGHT;
   const idx =
     ((habitDisplayId % HABIT_PALETTE_SIZE) + HABIT_PALETTE_SIZE) %
     HABIT_PALETTE_SIZE;
@@ -184,6 +215,25 @@ export const CATPPUCCIN_COLORS = {
   surfaceTint: '#494D64',
 } as const;
 
+// Aura Soft Dark theme colors (issue #729).
+// Palette: https://github.com/daltonmenezes/aura-theme
+export const AURA_SOFT_DARK_COLORS = {
+  brand: '#8464c6',
+  brandLight: '#a48bd6',
+  brandDark: '#6a509f',
+  white: '#141414', // app background (accent11)
+  black: '#bdbdbd', // foreground (accent7)
+  gray: '#b4b4b4',
+  grayLight: '#6d6d6d',
+  grayDark: '#29263c',
+  separator: '#2e2b38',
+  done: '#6d6d6d',
+  red: '#c55858',
+  green: '#54c59f',
+  surface: '#21202e', // elevated surface (accent12)
+  surfaceTint: '#3d375e', // brand-tinted surface (accent20)
+} as const;
+
 export type ColorSet = {
   brand: string;
   brandLight: string;
@@ -207,6 +257,8 @@ function colorsForTheme(theme: AppTheme): ColorSet {
       return DARK_COLORS;
     case 'catppuccin':
       return CATPPUCCIN_COLORS;
+    case 'aura-soft-dark':
+      return AURA_SOFT_DARK_COLORS;
     default:
       return COLORS;
   }

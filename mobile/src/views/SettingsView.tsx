@@ -781,7 +781,9 @@ export function SettingsDetailView({
                           ? 'Light'
                           : t === 'dark'
                             ? 'Dark'
-                            : 'Catppuccin'}
+                            : t === 'catppuccin'
+                              ? 'Catppuccin'
+                              : 'Aura Soft'}
                       </Text>
                     </Pressable>
                   ))}

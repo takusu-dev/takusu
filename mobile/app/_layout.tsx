@@ -16,6 +16,7 @@ import {
   COLORS,
   DARK_COLORS,
   CATPPUCCIN_COLORS,
+  AURA_SOFT_DARK_COLORS,
 } from '@/src/theme';
 import { UndoRedoToast } from '@/src/components/UndoRedoToast';
 import { haptic } from '@/src/components/haptics';
@@ -274,9 +275,11 @@ function ThemedApp() {
   const stackBg =
     theme === 'catppuccin'
       ? CATPPUCCIN_COLORS.white
-      : isDark
-        ? DARK_COLORS.white
-        : COLORS.white;
+      : theme === 'aura-soft-dark'
+        ? AURA_SOFT_DARK_COLORS.white
+        : isDark
+          ? DARK_COLORS.white
+          : COLORS.white;
 
   const paperTheme =
     theme === 'catppuccin'
@@ -316,9 +319,46 @@ function ThemedApp() {
             backdrop: 'rgba(24,25,38,0.5)',
           },
         }
-      : isDark
-        ? MD3DarkTheme
-        : MD3LightTheme;
+      : theme === 'aura-soft-dark'
+        ? {
+            ...MD3DarkTheme,
+            colors: {
+              ...MD3DarkTheme.colors,
+              primary: AURA_SOFT_DARK_COLORS.brand,
+              onPrimary: AURA_SOFT_DARK_COLORS.white,
+              primaryContainer: AURA_SOFT_DARK_COLORS.surfaceTint,
+              onPrimaryContainer: AURA_SOFT_DARK_COLORS.black,
+              secondary: AURA_SOFT_DARK_COLORS.gray,
+              onSecondary: AURA_SOFT_DARK_COLORS.black,
+              secondaryContainer: AURA_SOFT_DARK_COLORS.surface,
+              onSecondaryContainer: AURA_SOFT_DARK_COLORS.black,
+              tertiary: AURA_SOFT_DARK_COLORS.brandLight,
+              onTertiary: AURA_SOFT_DARK_COLORS.black,
+              tertiaryContainer: AURA_SOFT_DARK_COLORS.surfaceTint,
+              onTertiaryContainer: AURA_SOFT_DARK_COLORS.black,
+              surface: AURA_SOFT_DARK_COLORS.surface,
+              onSurface: AURA_SOFT_DARK_COLORS.black,
+              surfaceVariant: AURA_SOFT_DARK_COLORS.surfaceTint,
+              onSurfaceVariant: AURA_SOFT_DARK_COLORS.grayLight,
+              background: AURA_SOFT_DARK_COLORS.white,
+              onBackground: AURA_SOFT_DARK_COLORS.black,
+              outline: AURA_SOFT_DARK_COLORS.separator,
+              outlineVariant: AURA_SOFT_DARK_COLORS.grayDark,
+              error: AURA_SOFT_DARK_COLORS.red,
+              onError: '#FFFFFF',
+              errorContainer: '#4D2A32',
+              onErrorContainer: AURA_SOFT_DARK_COLORS.black,
+              inverseSurface: AURA_SOFT_DARK_COLORS.black,
+              inverseOnSurface: AURA_SOFT_DARK_COLORS.white,
+              inversePrimary: AURA_SOFT_DARK_COLORS.brandLight,
+              shadow: '#000000',
+              scrim: '#000000',
+              backdrop: 'rgba(20,20,30,0.5)',
+            },
+          }
+        : isDark
+          ? MD3DarkTheme
+          : MD3LightTheme;
 
   return (
     <ThemeProvider theme={theme}>
