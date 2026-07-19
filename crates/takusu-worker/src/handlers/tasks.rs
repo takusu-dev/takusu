@@ -9,6 +9,12 @@ use crate::models::{CreateTask, TaskRow, UpdateTask};
 use crate::validate::validate_minutes;
 
 const TASK_COLS: &str = "id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, created_at, updated_at";
+/// SQL predicate for tasks whose deadline has passed but are not finished.
+const OVERDUE_SQL: &str =
+    "status NOT IN ('completed', 'skipped') AND datetime(end_at) < datetime('now')";
+/// SQL predicate that excludes overdue tasks (completed/skipped or end_at is now or later).
+const NOT_OVERDUE_SQL: &str =
+    "(status IN ('completed', 'skipped') OR datetime(end_at) >= datetime('now'))";
 
 fn select_tasks() -> String {
     format!("SELECT {TASK_COLS} FROM tasks")
@@ -22,8 +28,13 @@ pub async fn list(req: Request, env: Env) -> Result<Response, WorkerError> {
     for (k, v) in url.query_pairs() {
         match k.as_ref() {
             "status" => {
-                sql.push_str(" AND status = ?");
-                bindings.push(JsValue::from_str(&v));
+                if v == "overdue" {
+                    sql.push_str(" AND ");
+                    sql.push_str(OVERDUE_SQL);
+                } else {
+                    sql.push_str(" AND status = ?");
+                    bindings.push(JsValue::from_str(&v));
+                }
             }
             "from" => {
                 // end_at is NOT NULL, so a simple >= is safe.
@@ -36,6 +47,12 @@ pub async fn list(req: Request, env: Env) -> Result<Response, WorkerError> {
                 // range queries don't silently drop them.
                 sql.push_str(" AND (start_at IS NULL OR start_at <= ?)");
                 bindings.push(JsValue::from_str(&v));
+            }
+            "no_overdue" => {
+                if v.parse::<bool>().unwrap_or(false) {
+                    sql.push_str(" AND ");
+                    sql.push_str(NOT_OVERDUE_SQL);
+                }
             }
             "habit_id" => {
                 sql.push_str(" AND habit_id = ?");

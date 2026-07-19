@@ -116,6 +116,13 @@ async fn verify(State(state): State<MockState>, headers: axum::http::HeaderMap) 
     }
 }
 
+/// SQL predicate for tasks whose deadline has passed but are not finished.
+const OVERDUE_SQL: &str =
+    "status NOT IN ('completed', 'skipped') AND datetime(end_at) < datetime('now')";
+/// SQL predicate that excludes overdue tasks (completed/skipped or end_at is now or later).
+const NOT_OVERDUE_SQL: &str =
+    "(status IN ('completed', 'skipped') OR datetime(end_at) >= datetime('now'))";
+
 async fn list_tasks(
     State(state): State<MockState>,
     axum::extract::Query(q): axum::extract::Query<TaskQuery>,
@@ -123,14 +130,26 @@ async fn list_tasks(
     let mut sql = String::from(
         "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, created_at, updated_at FROM tasks WHERE 1=1",
     );
-    if q.status.is_some() {
-        sql.push_str(" AND status = ?");
+    if let Some(ref status) = q.status {
+        if status == "overdue" {
+            sql.push_str(" AND ");
+            sql.push_str(OVERDUE_SQL);
+        } else {
+            sql.push_str(" AND status = ?");
+        }
     }
     if q.from.is_some() {
         sql.push_str(" AND end_at >= ?");
     }
     if q.until.is_some() {
-        sql.push_str(" AND start_at <= ?");
+        // start_at is nullable: NULL <= value evaluates to NULL
+        // (excluded). Include tasks with no explicit start time so
+        // range queries don't silently drop them.
+        sql.push_str(" AND (start_at IS NULL OR start_at <= ?)");
+    }
+    if q.no_overdue == Some(true) {
+        sql.push_str(" AND ");
+        sql.push_str(NOT_OVERDUE_SQL);
     }
     if q.habit_id.is_some() {
         sql.push_str(" AND habit_id = ?");
@@ -140,7 +159,9 @@ async fn list_tasks(
     }
     sql.push_str(" ORDER BY created_at DESC");
     let mut query = sqlx::query_as::<_, TaskRow>(sqlx::AssertSqlSafe(sql.as_str()));
-    if let Some(s) = &q.status {
+    if let Some(s) = &q.status
+        && s != "overdue"
+    {
         query = query.bind(s);
     }
     if let Some(f) = &q.from {

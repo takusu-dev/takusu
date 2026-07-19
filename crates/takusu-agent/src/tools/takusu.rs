@@ -87,6 +87,19 @@ fn optional_string(
     }
 }
 
+fn optional_bool(
+    args: &serde_json::Map<String, Value>,
+    name: &str,
+) -> Result<Option<bool>, ToolError> {
+    match args.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_bool()
+            .map(Some)
+            .ok_or_else(|| ToolError::InvalidArgs(format!("{name} must be a boolean"))),
+    }
+}
+
 fn summary_string(args: &serde_json::Map<String, Value>, name: &str) -> Option<String> {
     args.get(name)
         .and_then(Value::as_str)
@@ -209,6 +222,18 @@ fn format_datetime_for_display(s: &str, tz: &jiff::tz::TimeZone) -> String {
         }
     }
     s.to_string()
+}
+
+/// Returns true if the task is not completed/skipped and its `end_at` has
+/// passed relative to the current time.
+fn is_overdue(task: &TaskRow, tz: &jiff::tz::TimeZone) -> bool {
+    if task.status == "completed" || task.status == "skipped" {
+        return false;
+    }
+    let Ok(end) = takusu_util::parse_datetime_to_timestamp(&task.end_at, tz) else {
+        return false;
+    };
+    end < jiff::Timestamp::now()
 }
 
 /// Convert any absolute datetime fields in the display `args` map from the
@@ -518,11 +543,12 @@ impl Tool for ListTasks {
             "properties": {
                 "status": {
                     "type": "string",
-                    "enum": ["pending", "scheduled", "in_progress", "completed", "skipped"],
-                    "description": "Task status filter. Use 'completed' for done tasks."
+                    "enum": ["pending", "scheduled", "in_progress", "completed", "skipped", "overdue"],
+                    "description": "Task status filter. Use 'completed' for done tasks, 'overdue' for tasks whose end_at has passed but are not completed or skipped."
                 },
                 "from": {"type": "string", "description": "Start of range; interpreted in server timezone."},
                 "until": {"type": "string", "description": "End of range; interpreted in server timezone."},
+                "no_overdue": {"type": "boolean", "description": "If true, exclude tasks whose end_at has passed. Do not use together with status='overdue'."},
                 "habit_id": {"type": "string", "description": "Habit reference such as h1."},
             },
             "additionalProperties": false,
@@ -545,6 +571,7 @@ impl Tool for ListTasks {
             status: optional_string(&args, "status")?.map(|s| normalize_status(&s)),
             from: normalize_datetime(optional_string(&args, "from")?, &tz, "from")?,
             until: normalize_datetime(optional_string(&args, "until")?, &tz, "until")?,
+            no_overdue: optional_bool(&args, "no_overdue")?,
             habit_id: habit.as_ref().map(|habit| habit.habit.id.clone()),
             ical_uid: None,
         };
@@ -697,17 +724,23 @@ impl Tool for GetSchedule {
         "get_schedule"
     }
     fn description(&self) -> &'static str {
-        "Get the current generated schedule with absolute timestamps."
+        "Get the current generated schedule with absolute timestamps. Includes overdue tasks by default."
     }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
-            "properties": {},
+            "properties": {
+                "no_overdue": {
+                    "type": "boolean",
+                    "description": "If true, omit the overdue tasks section from the response."
+                }
+            },
             "additionalProperties": false,
         })
     }
     async fn call(&self, args: Value) -> Result<ToolOutput, ToolError> {
-        let _ = object(args)?;
+        let args = object(args)?;
+        let no_overdue = optional_bool(&args, "no_overdue")?.unwrap_or(false);
 
         let tz = server_timezone(&self.tz_cache).await;
         let default_query = TaskQuery::default();
@@ -733,14 +766,46 @@ impl Tool for GetSchedule {
             .map(|entry| schedule_entry_value(entry, &ctx, Some(&tz)))
             .collect::<Vec<_>>();
 
+        let mut content = json!({
+            "id": schedule.id,
+            "created_at": format_datetime_for_display(&schedule.created_at, &tz),
+            "updated_at": format_datetime_for_display(&schedule.updated_at, &tz),
+            "entries": entries,
+        });
+
+        if !no_overdue {
+            let overdue: Vec<Value> = tasks
+                .iter()
+                .filter(|task| is_overdue(task, &tz))
+                .map(|task| {
+                    let (reference, display_id, title) = match ctx.ref_by_id(&task.id) {
+                        Some(r) => (
+                            Value::String(r.reference.clone()),
+                            json!(r.display_id),
+                            Value::String(r.title.clone()),
+                        ),
+                        None => (
+                            Value::String("unknown".into()),
+                            Value::Null,
+                            Value::String("unknown task".into()),
+                        ),
+                    };
+                    json!({
+                        "reference": reference,
+                        "display_id": display_id,
+                        "title": title,
+                        "end_at": format_datetime_for_display(&task.end_at, &tz),
+                    })
+                })
+                .collect();
+            content
+                .as_object_mut()
+                .unwrap()
+                .insert("overdue".into(), Value::Array(overdue));
+        }
+
         Ok(ToolOutput {
-            content: serde_json::to_string(&json!({
-                "id": schedule.id,
-                "created_at": format_datetime_for_display(&schedule.created_at, &tz),
-                "updated_at": format_datetime_for_display(&schedule.updated_at, &tz),
-                "entries": entries,
-            }))
-            .unwrap(),
+            content: serde_json::to_string(&content).unwrap(),
             ..Default::default()
         })
     }
@@ -1659,6 +1724,7 @@ mod tests {
             serde_json::from_value(schema["properties"]["status"]["enum"].clone()).unwrap();
         assert!(values.contains(&"completed".to_string()));
         assert!(values.contains(&"pending".to_string()));
+        assert!(values.contains(&"overdue".to_string()));
     }
 
     #[test]

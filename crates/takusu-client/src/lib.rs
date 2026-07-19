@@ -114,6 +114,9 @@ impl Client {
         if let Some(ref v) = query.until {
             params.push(("until", v));
         }
+        if let Some(v) = query.no_overdue {
+            params.push(("no_overdue", if v { "true" } else { "false" }));
+        }
         if let Some(ref v) = query.habit_id {
             params.push(("habit_id", v));
         }
@@ -954,6 +957,7 @@ pub struct TaskQuery {
     pub status: Option<String>,
     pub from: Option<String>,
     pub until: Option<String>,
+    pub no_overdue: Option<bool>,
     pub habit_id: Option<String>,
     pub ical_uid: Option<String>,
 }

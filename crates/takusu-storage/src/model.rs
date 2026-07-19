@@ -137,6 +137,7 @@ pub struct TaskQuery {
     pub status: Option<String>,
     pub from: Option<String>,
     pub until: Option<String>,
+    pub no_overdue: Option<bool>,
     pub habit_id: Option<String>,
     pub ical_uid: Option<String>,
 }

@@ -11,6 +11,13 @@ use takusu_storage::{
 
 use crate::config::LocalConfig;
 
+/// SQL predicate for tasks whose deadline has passed but are not finished.
+const OVERDUE_SQL: &str =
+    "status NOT IN ('completed', 'skipped') AND datetime(end_at) < datetime('now')";
+/// SQL predicate that excludes overdue tasks (completed/skipped or end_at is now or later).
+const NOT_OVERDUE_SQL: &str =
+    "(status IN ('completed', 'skipped') OR datetime(end_at) >= datetime('now'))";
+
 const MIGRATION_001: &str = include_str!("../migrations/001_init.sql");
 const MIGRATION_002: &str = include_str!("../migrations/002_google_cal.sql");
 const MIGRATION_003: &str = include_str!("../migrations/003_settings.sql");
@@ -322,8 +329,13 @@ impl Storage for SqliteStorage {
         let mut sql = String::from("SELECT * FROM tasks WHERE 1=1");
         let mut bindings: Vec<String> = Vec::new();
         if let Some(ref v) = query.status {
-            sql.push_str(" AND status = ?");
-            bindings.push(v.clone());
+            if v == "overdue" {
+                sql.push_str(" AND ");
+                sql.push_str(OVERDUE_SQL);
+            } else {
+                sql.push_str(" AND status = ?");
+                bindings.push(v.clone());
+            }
         }
         if let Some(ref v) = query.from {
             sql.push_str(" AND end_at >= ?");
@@ -335,6 +347,10 @@ impl Storage for SqliteStorage {
             // range queries don't silently drop them.
             sql.push_str(" AND (start_at IS NULL OR start_at <= ?)");
             bindings.push(v.clone());
+        }
+        if query.no_overdue == Some(true) {
+            sql.push_str(" AND ");
+            sql.push_str(NOT_OVERDUE_SQL);
         }
         if let Some(ref v) = query.habit_id {
             sql.push_str(" AND habit_id = ?");

@@ -3246,3 +3246,54 @@ async fn delete_all_gcal_events_returns_zero_when_no_mappings() {
     assert_eq!(body["deleted"], 0);
     assert!(body["failed"].as_array().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn list_tasks_overdue_status_returns_unfinished_past_deadline() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let overdue = create_task_simple(&app, "overdue task").await;
+    let completed = create_task_simple(&app, "completed overdue").await;
+    let completed_patch = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{completed}"),
+        json!({"status": "completed"}),
+    );
+    let res = app.clone().oneshot(completed_patch).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let future_req = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "future task",
+            "end_at": "2030-01-01T00:00:00Z",
+            "avg_minutes": 30,
+            "depends": [],
+            "abandonability": 0.5
+        }),
+    );
+    let res = app.clone().oneshot(future_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let future = body["id"].as_str().unwrap().to_string();
+
+    let req = auth_req(Method::GET, "/api/tasks?status=overdue");
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let list: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let ids: Vec<&str> = list.iter().filter_map(|t| t["id"].as_str()).collect();
+    assert_eq!(ids, vec![overdue.as_str()]);
+
+    let req = auth_req(Method::GET, "/api/tasks?no_overdue=true");
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let list: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let ids: std::collections::HashSet<&str> =
+        list.iter().filter_map(|t| t["id"].as_str()).collect();
+    assert_eq!(ids.len(), 2);
+    assert!(ids.contains(future.as_str()));
+    assert!(ids.contains(completed.as_str()));
+}
