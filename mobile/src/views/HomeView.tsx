@@ -5,6 +5,7 @@
 // Pull-down-to-reveal past days
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Constants from 'expo-constants';
 import {
   ActivityIndicator,
   Alert,
@@ -312,20 +313,29 @@ export function HomeView() {
       setServerTz(settings?.tz);
       // Push a fresh snapshot to the home screen widget so it shows
       // current data immediately (without waiting for WorkManager).
-      // Mirror the HomeView upcoming list: include scheduled and in_progress
-      // tasks regardless of their end time, and sort by scheduled start time
-      // (with end_at as a fallback). Completed/skipped tasks are excluded.
+      // The native side separates the in-progress task as `doing` and keeps
+      // scheduled tasks as `upcoming`, sorted by scheduled start time.
       try {
         const schedEntries = sched ? parseSchedule(sched.schedule) : [];
         const schedMap = new Map(schedEntries.map((e) => [e.task_id, e]));
-        const doingTitles: string[] = [];
         let unscheduledCount = 0;
-        const upcoming: {
+        const scheduled: {
           id: string;
           title: string;
           startAt: string | null;
           endAt: string;
+          abandonability: number;
+          fixed: boolean;
         }[] = [];
+        let doing: {
+          id: string;
+          title: string;
+          startAt: string | null;
+          endAt: string;
+          abandonability: number;
+          fixed: boolean;
+        } | null = null;
+
         for (const t of taskList) {
           if (t.status === 'pending') {
             unscheduledCount++;
@@ -333,18 +343,35 @@ export function HomeView() {
             const entry = schedMap.get(t.id);
             const startAt = entry?.start_at ?? t.start_at ?? null;
             const endAt = entry?.end_at ?? t.end_at;
-            upcoming.push({ id: t.id, title: t.title, startAt, endAt });
+            const task = {
+              id: t.id,
+              title: t.title,
+              startAt,
+              endAt,
+              abandonability: t.abandonability,
+              fixed: t.fixed,
+            };
+            if (t.status === 'in_progress' && doing == null) {
+              doing = task;
+            } else {
+              scheduled.push(task);
+            }
           }
         }
-        upcoming.sort((a, b) => {
+
+        scheduled.sort((a, b) => {
           const ta = new Date(a.startAt ?? a.endAt).getTime();
           const tb = new Date(b.startAt ?? b.endAt).getTime();
           return ta - tb;
         });
+
+        const scheme = Constants.expoConfig?.scheme;
         TakusuWidgetModule.saveSnapshot({
-          doingTitles,
-          upcoming,
+          doing,
+          upcoming: scheduled,
           unscheduledCount,
+          serverTz,
+          scheme: Array.isArray(scheme) ? scheme[0] : scheme,
         });
       } catch {
         // widget module not available (non-Android) — ignore
@@ -354,7 +381,7 @@ export function HomeView() {
     } finally {
       setRefreshing(false);
     }
-  }, [client]);
+  }, [client, serverTz]);
 
   const { startScheduleOperation } = useScheduleOperation({
     client,

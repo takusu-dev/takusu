@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Catppuccin Macchiato palette used as the default widget theme -->
+  <color name="takusu_widget_bg">#24273A</color>
+  <color name="takusu_widget_surface">#363A4F</color>
+  <color name="takusu_widget_surface_tint">#494D64</color>
+  <color name="takusu_widget_border">#494D64</color>
+  <color name="takusu_widget_text">#CAD3F5</color>
+  <color name="takusu_widget_text_muted">#8087A2</color>
+  <color name="takusu_widget_text_disabled">#6E738D</color>
+  <color name="takusu_widget_brand">#7261A3</color>
+  <color name="takusu_widget_brand_light">#A48BD6</color>
+  <color name="takusu_widget_brand_dark">#5A4A85</color>
+  <color name="takusu_widget_must">#ED8796</color>
+  <color name="takusu_widget_must_12">#1FED8796</color>
+  <color name="takusu_widget_caution">#F5A97F</color>
+  <color name="takusu_widget_calm">#A6DA95</color>
+  <color name="takusu_widget_white">#FFFFFF</color>
+</resources>

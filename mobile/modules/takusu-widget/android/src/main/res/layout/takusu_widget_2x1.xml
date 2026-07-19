@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:id="@+id/widget_root"
+  android:layout_width="match_parent"
+  android:layout_height="match_parent"
+  android:background="@drawable/widget_background_small"
+  android:gravity="center"
+  android:orientation="vertical"
+  android:paddingLeft="12dp"
+  android:paddingRight="12dp"
+  android:paddingTop="10dp"
+  android:paddingBottom="10dp">
+
+  <LinearLayout
+    android:id="@+id/widget_top_row"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:orientation="horizontal">
+
+    <TextView
+      android:id="@+id/widget_brand_icon"
+      android:layout_width="22dp"
+      android:layout_height="22dp"
+      android:background="@drawable/brand_icon_bg"
+      android:gravity="center"
+      android:text="t"
+      android:textColor="@color/takusu_widget_white"
+      android:textSize="12sp"
+      android:textStyle="bold" />
+
+    <TextView
+      android:id="@+id/widget_title"
+      android:layout_width="0dp"
+      android:layout_height="wrap_content"
+      android:layout_marginStart="8dp"
+      android:layout_weight="1"
+      android:ellipsize="end"
+      android:maxLines="1"
+      android:textColor="@color/takusu_widget_text"
+      android:textSize="15sp"
+      android:textStyle="bold" />
+  </LinearLayout>
+
+  <LinearLayout
+    android:id="@+id/widget_bottom_row"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginStart="30dp"
+    android:layout_marginTop="4dp"
+    android:gravity="center_vertical"
+    android:orientation="horizontal">
+
+    <TextView
+      android:id="@+id/widget_time"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:background="@drawable/time_chip_bg"
+      android:paddingLeft="6dp"
+      android:paddingRight="6dp"
+      android:paddingTop="2dp"
+      android:paddingBottom="2dp"
+      android:textColor="@color/takusu_widget_text"
+      android:textSize="10sp"
+      android:textStyle="bold" />
+
+    <ImageView
+      android:id="@+id/widget_dot"
+      android:layout_width="7dp"
+      android:layout_height="7dp"
+      android:layout_marginStart="6dp"
+      android:scaleType="centerCrop"
+      android:src="@drawable/dot_brand" />
+
+    <TextView
+      android:id="@+id/widget_remaining"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:layout_marginStart="6dp"
+      android:background="@drawable/remaining_chip_bg"
+      android:paddingLeft="7dp"
+      android:paddingRight="7dp"
+      android:paddingTop="2dp"
+      android:paddingBottom="2dp"
+      android:textColor="@color/takusu_widget_white"
+      android:textSize="10sp"
+      android:textStyle="bold" />
+  </LinearLayout>
+</LinearLayout>
