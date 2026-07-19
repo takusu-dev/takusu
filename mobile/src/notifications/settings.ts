@@ -20,7 +20,7 @@ export interface NotificationSettings {
   unscheduledIdleHours: number; // 24
   // 実行中通知: in_progress のタスク (done/cancel アクション付き)
   inProgress: boolean;
-  // 終了時間通知: タスクの end_at に到着したとき (#417)
+  // 終了時間通知: in_progress のタスクの end_at に到着したとき (#417, #725)
   endTime: boolean;
 }
 

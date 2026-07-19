@@ -231,15 +231,10 @@ export async function rescheduleNotifications(
     }
   }
 
-  // ── 3.5 End time notification (#417) — independent of start time ──
+  // ── 3.5 End time notification (#417, #725) — only for in-progress tasks ──
   if (settings.endTime) {
     const endingTasks = tasks
-      .filter(
-        (t) =>
-          t.status !== 'completed' &&
-          t.status !== 'skipped' &&
-          scheduleMap.has(t.id),
-      )
+      .filter((t) => t.status === 'in_progress' && scheduleMap.has(t.id))
       .map((t) => ({
         task: t,
         entry: scheduleMap.get(t.id)!,
