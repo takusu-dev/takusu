@@ -199,6 +199,69 @@ fn dt_to_timestamp(
     Ok(zdt.timestamp())
 }
 
+/// Parse a flexible date expression into a timestamp.
+///
+/// Supported inputs:
+/// - `"now"` -> current time.
+/// - `"today"` -> start or end of today in the configured timezone.
+/// - `"7d"` or `"+7d"` or `"-7d"` -> start or end of the date N days from today.
+/// - `"2026-07-20"` -> start or end of that date in the configured timezone.
+/// - Full RFC 3339 / ISO 8601 timestamps or naive datetimes are passed through.
+///
+/// `end_of_day` controls whether date-only expressions resolve to the start
+/// (`00:00:00`) or end (`23:59:59`) of the day. It is ignored for absolute
+/// timestamps and `now`.
+pub fn parse_date_expression(
+    s: &str,
+    tz: &jiff::tz::TimeZone,
+    end_of_day: bool,
+) -> Result<jiff::Timestamp, String> {
+    let s = s.trim();
+
+    if s.eq_ignore_ascii_case("now") {
+        return Ok(jiff::Timestamp::now());
+    }
+
+    let today = jiff::Timestamp::now().to_zoned(tz.clone()).date();
+
+    if s.eq_ignore_ascii_case("today") {
+        let dt = if end_of_day {
+            today.at(23, 59, 59, 0)
+        } else {
+            today.at(0, 0, 0, 0)
+        };
+        return dt_to_timestamp(dt, tz);
+    }
+
+    // Relative days: "7d", "+7d", "-7d".
+    if let Some(days_str) = s.strip_suffix('d').or_else(|| s.strip_suffix('D'))
+        && let Ok(days) = days_str.trim().parse::<i64>()
+    {
+        let date = today
+            .checked_add(jiff::Span::new().days(days))
+            .map_err(|_| format!("day offset out of range: {s}"))?;
+        let dt = if end_of_day {
+            date.at(23, 59, 59, 0)
+        } else {
+            date.at(0, 0, 0, 0)
+        };
+        return dt_to_timestamp(dt, tz);
+    }
+
+    // Absolute date: "2026-07-20".
+    if let Ok(date) = jiff::civil::Date::from_str(s) {
+        let dt = if end_of_day {
+            date.at(23, 59, 59, 0)
+        } else {
+            date.at(0, 0, 0, 0)
+        };
+        return dt_to_timestamp(dt, tz);
+    }
+
+    // Fallback to full datetime parsing.
+    parse_datetime_to_timestamp(s, tz)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,5 +465,128 @@ mod tests {
         assert!(t.starts_with("tsk_"), "token must start with tsk_: {t}");
         // UUID v7 is 36 chars including dashes; prefix is 4 chars.
         assert_eq!(t.len(), 4 + 36);
+    }
+
+    // ── parse_date_expression ───────────────────────────────────────────
+
+    #[test]
+    fn parse_date_expression_now() {
+        let now = jiff::Timestamp::now();
+        let tz = jiff::tz::TimeZone::UTC;
+        let result = parse_date_expression("now", &tz, false).unwrap();
+        assert!((result.as_second() - now.as_second()).abs() <= 2);
+    }
+
+    #[test]
+    fn parse_date_expression_today_start_and_end() {
+        let tz = jiff::tz::TimeZone::UTC;
+        let today = jiff::Timestamp::now().to_zoned(tz.clone()).date();
+        let start = parse_date_expression("today", &tz, false).unwrap();
+        let end = parse_date_expression("today", &tz, true).unwrap();
+        assert_eq!(
+            start.to_zoned(tz.clone()).date().to_string(),
+            today.to_string()
+        );
+        assert_eq!(start.to_zoned(tz.clone()).time().to_string(), "00:00:00");
+        assert_eq!(
+            end.to_zoned(tz.clone()).date().to_string(),
+            today.to_string()
+        );
+        assert_eq!(end.to_zoned(tz.clone()).time().to_string(), "23:59:59");
+    }
+
+    #[test]
+    fn parse_date_expression_relative_days() {
+        let tz = jiff::tz::TimeZone::UTC;
+        let today = jiff::Timestamp::now().to_zoned(tz.clone()).date();
+        let expected = today.checked_add(jiff::Span::new().days(7)).unwrap();
+        let start = parse_date_expression("7d", &tz, false).unwrap();
+        let end = parse_date_expression("7d", &tz, true).unwrap();
+        assert_eq!(
+            start.to_zoned(tz.clone()).date().to_string(),
+            expected.to_string()
+        );
+        assert_eq!(start.to_zoned(tz.clone()).time().to_string(), "00:00:00");
+        assert_eq!(
+            end.to_zoned(tz.clone()).date().to_string(),
+            expected.to_string()
+        );
+        assert_eq!(end.to_zoned(tz.clone()).time().to_string(), "23:59:59");
+
+        // "+7d" must produce the same timestamp as "7d".
+        assert_eq!(parse_date_expression("+7d", &tz, false).unwrap(), start);
+        assert_eq!(parse_date_expression("+7d", &tz, true).unwrap(), end);
+    }
+
+    #[test]
+    fn parse_date_expression_today_and_relative_in_non_utc_timezone() {
+        let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
+        let today = jiff::Timestamp::now().to_zoned(tz.clone()).date();
+
+        let start = parse_date_expression("today", &tz, false).unwrap();
+        let end = parse_date_expression("today", &tz, true).unwrap();
+        assert_eq!(
+            start.to_zoned(tz.clone()).date().to_string(),
+            today.to_string()
+        );
+        assert_eq!(start.to_zoned(tz.clone()).time().to_string(), "00:00:00");
+        assert_eq!(
+            end.to_zoned(tz.clone()).date().to_string(),
+            today.to_string()
+        );
+        assert_eq!(end.to_zoned(tz.clone()).time().to_string(), "23:59:59");
+
+        let expected = today.checked_add(jiff::Span::new().days(7)).unwrap();
+        let start = parse_date_expression("7d", &tz, false).unwrap();
+        let end = parse_date_expression("7d", &tz, true).unwrap();
+        assert_eq!(
+            start.to_zoned(tz.clone()).date().to_string(),
+            expected.to_string()
+        );
+        assert_eq!(start.to_zoned(tz.clone()).time().to_string(), "00:00:00");
+        assert_eq!(
+            end.to_zoned(tz.clone()).date().to_string(),
+            expected.to_string()
+        );
+        assert_eq!(end.to_zoned(tz.clone()).time().to_string(), "23:59:59");
+    }
+
+    #[test]
+    fn parse_date_expression_negative_days() {
+        let tz = jiff::tz::TimeZone::UTC;
+        let today = jiff::Timestamp::now().to_zoned(tz.clone()).date();
+        let expected = today.checked_add(jiff::Span::new().days(-3)).unwrap();
+        let start = parse_date_expression("-3d", &tz, false).unwrap();
+        assert_eq!(
+            start.to_zoned(tz.clone()).date().to_string(),
+            expected.to_string()
+        );
+        assert_eq!(start.to_zoned(tz.clone()).time().to_string(), "00:00:00");
+    }
+
+    #[test]
+    fn parse_date_expression_absolute_date() {
+        let tz = jiff::tz::TimeZone::UTC;
+        let start = parse_date_expression("2026-07-20", &tz, false).unwrap();
+        let end = parse_date_expression("2026-07-20", &tz, true).unwrap();
+        assert_eq!(start.to_zoned(tz.clone()).date().to_string(), "2026-07-20");
+        assert_eq!(start.to_zoned(tz.clone()).time().to_string(), "00:00:00");
+        assert_eq!(end.to_zoned(tz.clone()).date().to_string(), "2026-07-20");
+        assert_eq!(end.to_zoned(tz.clone()).time().to_string(), "23:59:59");
+    }
+
+    #[test]
+    fn parse_date_expression_full_datetime_passthrough() {
+        let tz = jiff::tz::TimeZone::UTC;
+        let expected = jiff::Timestamp::from_str("2026-07-20T12:34:56Z").unwrap();
+        let result = parse_date_expression("2026-07-20T12:34:56Z", &tz, true).unwrap();
+        assert_eq!(result.as_second(), expected.as_second());
+    }
+
+    #[test]
+    fn parse_date_expression_invalid_errors() {
+        let tz = jiff::tz::TimeZone::UTC;
+        assert!(parse_date_expression("hello", &tz, false).is_err());
+        assert!(parse_date_expression("", &tz, false).is_err());
     }
 }

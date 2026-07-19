@@ -6,7 +6,7 @@ use std::sync::Arc;
 use takusu_client::{
     Client, HabitDetail, HabitRow, HabitStepRow, SchedulePreviewRequest, TaskQuery, TaskRow,
 };
-use takusu_util::parse_datetime_tz;
+use takusu_util::{parse_date_expression, parse_datetime_to_timestamp, parse_datetime_tz};
 
 use crate::{Tool, ToolError, ToolOutput, ToolRegistry, UserInputProvider};
 
@@ -230,10 +230,119 @@ fn is_overdue(task: &TaskRow, tz: &jiff::tz::TimeZone) -> bool {
     if task.status == "completed" || task.status == "skipped" {
         return false;
     }
-    let Ok(end) = takusu_util::parse_datetime_to_timestamp(&task.end_at, tz) else {
+    let Ok(end) = parse_datetime_to_timestamp(&task.end_at, tz) else {
         return false;
     };
     end < jiff::Timestamp::now()
+}
+
+/// Returns true if a schedule entry overlaps the optional [from, to] range.
+///
+/// Missing or unparseable timestamps are treated conservatively: if a bound
+/// required to verify overlap is unavailable, the entry is excluded from
+/// ranged results.
+fn entry_in_range(
+    entry: &Value,
+    from: Option<jiff::Timestamp>,
+    to: Option<jiff::Timestamp>,
+    tz: &jiff::tz::TimeZone,
+) -> bool {
+    if from.is_none() && to.is_none() {
+        return true;
+    }
+
+    if let (Some(from), Some(to)) = (from, to)
+        && from > to
+    {
+        return false;
+    }
+
+    let parse = |v: Option<&str>| {
+        v.and_then(|s| {
+            jiff::Timestamp::from_str(s)
+                .ok()
+                .or_else(|| parse_datetime_to_timestamp(s, tz).ok())
+        })
+    };
+    let entry_start = parse(entry.get("start_at").and_then(Value::as_str));
+    let entry_end = parse(entry.get("end_at").and_then(Value::as_str));
+
+    match (entry_start, entry_end) {
+        (Some(start), Some(end)) => {
+            if let Some(to) = to
+                && start > to
+            {
+                return false;
+            }
+            if let Some(from) = from
+                && end < from
+            {
+                return false;
+            }
+            true
+        }
+        (None, Some(end)) => {
+            // The entry ends at `end`; without a start we can only exclude
+            // entries that definitely fall outside the range.
+            if let Some(from) = from
+                && end < from
+            {
+                return false;
+            }
+            if let Some(to) = to
+                && end > to
+            {
+                return false;
+            }
+            true
+        }
+        (Some(start), None) => {
+            // The entry starts at `start`; without an end we can only exclude
+            // entries that definitely fall outside the range.
+            if let Some(to) = to
+                && start > to
+            {
+                return false;
+            }
+            if let Some(from) = from
+                && start < from
+            {
+                return false;
+            }
+            true
+        }
+        (None, None) => false,
+    }
+}
+
+/// Returns true if an overdue task's deadline falls inside the optional range.
+fn overdue_in_range(
+    task: &TaskRow,
+    from: Option<jiff::Timestamp>,
+    to: Option<jiff::Timestamp>,
+    tz: &jiff::tz::TimeZone,
+) -> bool {
+    if let (Some(from), Some(to)) = (from, to)
+        && from > to
+    {
+        return false;
+    }
+
+    let Ok(end) = parse_datetime_to_timestamp(&task.end_at, tz) else {
+        // Cannot verify the deadline; fail closed.
+        return false;
+    };
+    if let Some(from) = from
+        && end < from
+    {
+        return false;
+    }
+    if let Some(to) = to
+        && end > to
+    {
+        return false;
+    }
+    true
 }
 
 /// Convert any absolute datetime fields in the display `args` map from the
@@ -724,12 +833,20 @@ impl Tool for GetSchedule {
         "get_schedule"
     }
     fn description(&self) -> &'static str {
-        "Get the current generated schedule with absolute timestamps. Includes overdue tasks by default."
+        "Get the current generated schedule with absolute timestamps. Optionally filter by a date range using from/to (e.g. 2026-07-20, 7d, today, now). Includes overdue tasks by default."
     }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
+                "from": {
+                    "type": "string",
+                    "description": "Start of the range; omitted means unbounded. Accepts absolute date (YYYY-MM-DD), relative days (e.g. '7d' for 7 days from now), 'today', or 'now'."
+                },
+                "to": {
+                    "type": "string",
+                    "description": "End of the range; omitted means unbounded. Accepts absolute date (YYYY-MM-DD), relative days (e.g. '7d' for 7 days from now), 'today', or 'now'."
+                },
                 "no_overdue": {
                     "type": "boolean",
                     "description": "If true, omit the overdue tasks section from the response."
@@ -743,6 +860,25 @@ impl Tool for GetSchedule {
         let no_overdue = optional_bool(&args, "no_overdue")?.unwrap_or(false);
 
         let tz = server_timezone(&self.tz_cache).await;
+        let from = optional_string(&args, "from")?;
+        let to = optional_string(&args, "to")?;
+        let from_ts = from
+            .map(|s| parse_date_expression(&s, &tz, false))
+            .transpose()
+            .map_err(|e| ToolError::InvalidArgs(format!("invalid from: {e}")))?;
+        let to_ts = to
+            .map(|s| parse_date_expression(&s, &tz, true))
+            .transpose()
+            .map_err(|e| ToolError::InvalidArgs(format!("invalid to: {e}")))?;
+
+        if let (Some(from), Some(to)) = (from_ts, to_ts)
+            && from > to
+        {
+            return Err(ToolError::InvalidArgs(
+                "from must not be later than to".into(),
+            ));
+        }
+
         let default_query = TaskQuery::default();
         let c1 = self.client.clone();
         let c2 = self.client.clone();
@@ -763,6 +899,7 @@ impl Tool for GetSchedule {
         };
         let entries = entries
             .iter()
+            .filter(|entry| entry_in_range(entry, from_ts, to_ts, &tz))
             .map(|entry| schedule_entry_value(entry, &ctx, Some(&tz)))
             .collect::<Vec<_>>();
 
@@ -777,6 +914,7 @@ impl Tool for GetSchedule {
             let overdue: Vec<Value> = tasks
                 .iter()
                 .filter(|task| is_overdue(task, &tz))
+                .filter(|task| overdue_in_range(task, from_ts, to_ts, &tz))
                 .map(|task| {
                     let (reference, display_id, title) = match ctx.ref_by_id(&task.id) {
                         Some(r) => (
@@ -798,10 +936,12 @@ impl Tool for GetSchedule {
                     })
                 })
                 .collect();
-            content
-                .as_object_mut()
-                .unwrap()
-                .insert("overdue".into(), Value::Array(overdue));
+            if !overdue.is_empty() {
+                content
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("overdue".into(), Value::Array(overdue));
+            }
         }
 
         Ok(ToolOutput {
@@ -1931,5 +2071,121 @@ mod tests {
                 .contains("2025-06-05T20:00:00")
         );
         assert_eq!(args["title"], "task");
+    }
+
+    // ── get_schedule range helpers ───────────────────────────────────────
+
+    #[test]
+    fn get_schedule_schema_has_from_to_and_no_overdue() {
+        let client = Client::new("http://localhost", "");
+        let tool = GetSchedule {
+            client: client.clone(),
+            tz_cache: TimeZoneCache::new(client),
+        };
+        let schema = tool.parameters_schema();
+        assert!(schema["properties"]["from"].is_object());
+        assert!(schema["properties"]["to"].is_object());
+        assert!(schema["properties"]["no_overdue"].is_object());
+        assert!(schema["required"].as_array().is_none_or(|v| v.is_empty()));
+    }
+
+    #[test]
+    fn entry_in_range_keeps_overlapping_entries() {
+        let tz = jiff::tz::TimeZone::UTC;
+        let entry = json!({
+            "task_id": "t1",
+            "start_at": "2026-07-20T10:00:00Z",
+            "end_at": "2026-07-20T11:00:00Z",
+        });
+
+        let from = jiff::Timestamp::from_str("2026-07-20T09:00:00Z").unwrap();
+        let to = jiff::Timestamp::from_str("2026-07-20T12:00:00Z").unwrap();
+        assert!(entry_in_range(&entry, Some(from), Some(to), &tz));
+        assert!(entry_in_range(&entry, None, None, &tz));
+
+        // Entry ends before the range starts.
+        assert!(!entry_in_range(
+            &entry,
+            Some(jiff::Timestamp::from_str("2026-07-20T12:00:00Z").unwrap()),
+            None,
+            &tz
+        ));
+
+        // Entry starts after the range ends.
+        assert!(!entry_in_range(
+            &entry,
+            None,
+            Some(jiff::Timestamp::from_str("2026-07-20T09:00:00Z").unwrap()),
+            &tz
+        ));
+
+        // Reversed range excludes everything.
+        assert!(!entry_in_range(&entry, Some(to), Some(from), &tz));
+    }
+
+    #[test]
+    fn entry_in_range_handles_missing_or_invalid_timestamps() {
+        let tz = jiff::tz::TimeZone::UTC;
+        let from = jiff::Timestamp::from_str("2026-07-20T09:00:00Z").unwrap();
+        let to = jiff::Timestamp::from_str("2026-07-20T12:00:00Z").unwrap();
+
+        // Missing start_at: decision is based on end_at.
+        let no_start_within = json!({
+            "task_id": "t1",
+            "end_at": "2026-07-20T10:00:00Z",
+        });
+        assert!(entry_in_range(&no_start_within, Some(from), Some(to), &tz));
+        let no_start_after = json!({
+            "task_id": "t1",
+            "end_at": "2026-07-20T13:00:00Z",
+        });
+        assert!(!entry_in_range(&no_start_after, Some(from), Some(to), &tz));
+
+        // Missing end_at: decision is based on start_at.
+        let no_end_within = json!({
+            "task_id": "t1",
+            "start_at": "2026-07-20T10:00:00Z",
+        });
+        assert!(entry_in_range(&no_end_within, Some(from), Some(to), &tz));
+        let no_end_before = json!({
+            "task_id": "t1",
+            "start_at": "2026-07-20T08:00:00Z",
+        });
+        assert!(!entry_in_range(&no_end_before, Some(from), Some(to), &tz));
+
+        // Both timestamps missing: fail closed when a range is supplied.
+        let no_times = json!({"task_id": "t1"});
+        assert!(!entry_in_range(&no_times, Some(from), Some(to), &tz));
+        assert!(entry_in_range(&no_times, None, None, &tz));
+
+        // Unparseable timestamps: fail closed when a range is supplied.
+        let invalid = json!({
+            "task_id": "t1",
+            "start_at": "not-a-date",
+            "end_at": "also-not",
+        });
+        assert!(!entry_in_range(&invalid, Some(from), Some(to), &tz));
+        assert!(entry_in_range(&invalid, None, None, &tz));
+    }
+
+    #[test]
+    fn overdue_in_range_filters_by_deadline() {
+        let tz = jiff::tz::TimeZone::UTC;
+        let mut task = task_row("t1", 1, "task", None, &[]);
+        task.end_at = "2026-07-20T10:00:00Z".to_string();
+
+        let before = jiff::Timestamp::from_str("2026-07-20T09:00:00Z").unwrap();
+        let after = jiff::Timestamp::from_str("2026-07-20T11:00:00Z").unwrap();
+
+        assert!(overdue_in_range(&task, Some(before), Some(after), &tz));
+        assert!(!overdue_in_range(&task, Some(after), None, &tz));
+        assert!(!overdue_in_range(&task, None, Some(before), &tz));
+
+        // Reversed range excludes everything.
+        assert!(!overdue_in_range(&task, Some(after), Some(before), &tz));
+
+        // Unparseable deadline fails closed.
+        task.end_at = "not-a-date".to_string();
+        assert!(!overdue_in_range(&task, Some(before), Some(after), &tz));
     }
 }
