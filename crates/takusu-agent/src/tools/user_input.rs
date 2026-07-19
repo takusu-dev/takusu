@@ -32,7 +32,7 @@ impl Tool for CorrectAsr {
     }
 
     fn description(&self) -> &'static str {
-        "Ask the user to correct ambiguous ASR text. Use only when the meaning cannot be inferred from context, such as unknown proper nouns or homonyms. Group multiple questions into one call."
+        "Ask the user to correct ambiguous ASR text. First state your interpretation. Infer obvious ASR errors from context without asking; use this tool only when context is insufficient to disambiguate proper nouns, homonyms, numbers, dates, days of the week, or the action target. Group multiple questions into one call."
     }
 
     fn parameters_schema(&self) -> Value {

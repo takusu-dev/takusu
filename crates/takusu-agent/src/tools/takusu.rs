@@ -1093,23 +1093,29 @@ impl MutationKind {
 
     fn description(self) -> &'static str {
         match self {
-            Self::CreateTask => "Propose creating a task. For example, 「演習30題追加」.",
-            Self::UpdateTask => "Propose updating a task; changes require user approval.",
-            Self::DeleteTask => "Propose deleting a task; changes require user approval.",
+            Self::CreateTask => {
+                "Create a task proposal. Calling this tool generates a pending approval request; it does not write immediately. For example, \"演習30題追加\"."
+            }
+            Self::UpdateTask => {
+                "Create a task update proposal. Calling this tool generates a pending approval request; it does not write immediately."
+            }
+            Self::DeleteTask => {
+                "Create a task deletion proposal. Calling this tool generates a pending approval request; it does not write immediately."
+            }
             Self::CreateHabit => {
-                "Propose creating a recurring habit; changes require user approval."
+                "Create a recurring habit proposal. Calling this tool generates a pending approval request; it does not write immediately."
             }
             Self::UpdateHabit => {
-                "Propose updating a recurring habit; changes require user approval."
+                "Create a recurring habit update proposal. Calling this tool generates a pending approval request; it does not write immediately."
             }
             Self::DeleteHabit => {
-                "Propose deleting a recurring habit; changes require user approval."
+                "Create a recurring habit deletion proposal. Calling this tool generates a pending approval request; it does not write immediately."
             }
             Self::GenerateSchedule => {
-                "Propose generating a schedule; it is not applied before approval."
+                "Create a schedule generation proposal. Calling this tool generates a pending approval request; it does not write immediately."
             }
             Self::Reschedule => {
-                "Propose rescheduling part of the plan; it is not applied before approval."
+                "Create a partial reschedule proposal. Calling this tool generates a pending approval request; it does not write immediately."
             }
         }
     }
