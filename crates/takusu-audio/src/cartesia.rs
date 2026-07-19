@@ -149,6 +149,11 @@ impl CartesiaSonic {
             reqwest::Client::builder()
                 .use_rustls_tls()
                 .tls_certs_only(certs)
+                // Bind to the IPv4 unspecified address so reqwest prefers IPv4
+                // when resolving dual-stack hosts. Some Android networks return
+                // unusable IPv6 records for api.cartesia.ai and reqwest can fail
+                // to fall back to IPv4, surfacing as "error sending request".
+                .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
                 .build()
                 .expect("failed to build Cartesia HTTP client")
         };
