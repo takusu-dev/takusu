@@ -1231,6 +1231,7 @@ export function AgentView() {
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.white }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      enabled={Platform.OS === 'ios' || keyboardVisible}
     >
       <Reanimated.View style={[styles.container, animatedStyle]}>
         <View
