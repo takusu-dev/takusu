@@ -40,7 +40,7 @@ impl MobileAudio {
             model: SherpaOnnxModel::SenseVoice,
             model_dir: root.join("sherpa-sense-voice-int8"),
             sample_rate: 16_000,
-            language: Some(language),
+            language: Some(language.clone()),
             use_itn: true,
             ..Default::default()
         })
@@ -49,6 +49,7 @@ impl MobileAudio {
         })?;
         let mut tts_config = CartesiaSonicConfig::new(api_key);
         tts_config.voice_id = voice_id.clone();
+        tts_config.language = Some(language);
         tts_config.output_format = CartesiaOutputFormat::mp3(sample_rate, 128_000);
         Ok(Self {
             hush: Mutex::new(hush),
