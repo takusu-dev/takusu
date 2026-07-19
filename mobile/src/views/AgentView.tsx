@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+} from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -8,6 +15,7 @@ import {
   KeyboardAvoidingView,
   PermissionsAndroid,
   Platform,
+  LayoutChangeEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -21,10 +29,12 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
+  cancelAnimation,
   Easing,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
+  withRepeat,
   withTiming,
 } from 'react-native-reanimated';
 import Markdown, {
@@ -147,6 +157,10 @@ function updateCollapsedGroup(message: Message, groupIndex: number): boolean[] {
   return next;
 }
 
+type ContextStage =
+  | { type: 'thinking'; text: string; active: boolean }
+  | { type: 'toolCall'; callIndex: number };
+
 interface TextItem {
   type: 'text';
   text: string;
@@ -154,14 +168,16 @@ interface TextItem {
 
 interface ContextItem {
   type: 'context';
-  thinking?: string;
-  callIndices: number[];
+  stages: ContextStage[];
   groupIndex: number;
 }
 
 type AssistantItem = TextItem | ContextItem;
 
-function buildAssistantItems(message: Message): AssistantItem[] {
+function buildAssistantItems(
+  message: Message,
+  isLatest: boolean,
+): AssistantItem[] {
   const segments = message.segments ?? buildFallbackSegments(message);
   const items: AssistantItem[] = [];
   let context: ContextItem | null = null;
@@ -185,20 +201,38 @@ function buildAssistantItems(message: Message): AssistantItem[] {
       text = null;
     }
     if (!context) {
-      context = {
-        type: 'context',
-        callIndices: [],
-        groupIndex: groupCount++,
-      };
+      context = { type: 'context', stages: [], groupIndex: groupCount++ };
     }
     if (segment.type === 'thinking') {
-      context.thinking = (context.thinking ?? '') + segment.text;
+      context.stages.push({
+        type: 'thinking',
+        text: segment.text,
+        active: false,
+      });
     } else {
-      context.callIndices.push(segment.callIndex);
+      context.stages.push({ type: 'toolCall', callIndex: segment.callIndex });
     }
   }
   if (text) items.push(text);
   if (context) items.push(context);
+
+  if (message.state === 'thinking' && isLatest) {
+    let activated = false;
+    for (let i = items.length - 1; i >= 0 && !activated; i--) {
+      const it = items[i];
+      if (it.type === 'context') {
+        for (let j = it.stages.length - 1; j >= 0; j--) {
+          const stage = it.stages[j];
+          if (stage.type === 'thinking') {
+            stage.active = true;
+            activated = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+
   return items;
 }
 
@@ -222,7 +256,12 @@ function ToolNameChip({ call, colors }: ToolNameChipProps) {
         style={[
           styles.toolChipDot,
           {
-            backgroundColor: call.isError ? colors.red : colors.green,
+            backgroundColor:
+              call.result === undefined
+                ? colors.gray
+                : call.isError
+                  ? colors.red
+                  : colors.green,
           },
         ]}
       />
@@ -294,12 +333,301 @@ function ToolCallCard({ call, colors }: ToolCallCardProps) {
   );
 }
 
+function PulsingDot({ color, size = 6 }: { color: string; size?: number }) {
+  const scale = useSharedValue(1);
+  const opacity = useSharedValue(1);
+
+  useEffect(() => {
+    scale.value = withRepeat(
+      withTiming(0.85, { duration: 700, easing: Easing.inOut(Easing.ease) }),
+      -1,
+      true,
+    );
+    opacity.value = withRepeat(
+      withTiming(0.5, { duration: 700, easing: Easing.inOut(Easing.ease) }),
+      -1,
+      true,
+    );
+    return () => {
+      cancelAnimation(scale);
+      cancelAnimation(opacity);
+    };
+  }, [scale, opacity]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    opacity: opacity.value,
+  }));
+
+  return (
+    <Reanimated.View
+      style={[
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: color,
+        },
+        animatedStyle,
+      ]}
+    />
+  );
+}
+
+function BouncingDots({ color, size = 4 }: { color: string; size?: number }) {
+  const progress = useSharedValue(0);
+
+  useEffect(() => {
+    progress.value = withRepeat(
+      withTiming(1, { duration: 600, easing: Easing.linear }),
+      -1,
+      false,
+    );
+    return () => {
+      cancelAnimation(progress);
+    };
+  }, [progress]);
+
+  const dot1Style = useAnimatedStyle(() => {
+    const t = progress.value % 1;
+    return {
+      transform: [{ translateY: -Math.abs(Math.sin(t * Math.PI)) * 4 }],
+    };
+  });
+  const dot2Style = useAnimatedStyle(() => {
+    const t = (progress.value + 1 / 3) % 1;
+    return {
+      transform: [{ translateY: -Math.abs(Math.sin(t * Math.PI)) * 4 }],
+    };
+  });
+  const dot3Style = useAnimatedStyle(() => {
+    const t = (progress.value + 2 / 3) % 1;
+    return {
+      transform: [{ translateY: -Math.abs(Math.sin(t * Math.PI)) * 4 }],
+    };
+  });
+
+  const dotStyle = {
+    width: size,
+    height: size,
+    borderRadius: size / 2,
+    backgroundColor: color,
+  };
+
+  return (
+    <View style={{ flexDirection: 'row', gap: 3, alignItems: 'center' }}>
+      <Reanimated.View style={[dotStyle, dot1Style]} />
+      <Reanimated.View style={[dotStyle, dot2Style]} />
+      <Reanimated.View style={[dotStyle, dot3Style]} />
+    </View>
+  );
+}
+
+interface ThinkingChipProps {
+  active: boolean;
+  colors: ColorSet;
+}
+
+function ThinkingChip({ active, colors }: ThinkingChipProps) {
+  return (
+    <View
+      style={[
+        styles.toolChip,
+        {
+          backgroundColor: colors.surface,
+          borderColor: active ? colors.brand : colors.separator,
+        },
+      ]}
+    >
+      {active ? (
+        <PulsingDot color={colors.brand} size={6} />
+      ) : (
+        <View style={[styles.toolChipDot, { backgroundColor: colors.gray }]} />
+      )}
+      <Text
+        style={[
+          styles.toolChipText,
+          { color: active ? colors.brand : colors.black },
+        ]}
+      >
+        考え中
+      </Text>
+    </View>
+  );
+}
+
+interface ThinkingCardProps {
+  text: string;
+  active: boolean;
+  colors: ColorSet;
+}
+
+function ThinkingCard({ text, active, colors }: ThinkingCardProps) {
+  return (
+    <View
+      style={[
+        styles.thinkingCard,
+        {
+          backgroundColor: colors.surface,
+          borderColor: colors.separator,
+        },
+      ]}
+    >
+      <View style={styles.thinkingHeader}>
+        <Text
+          style={[
+            styles.thinkingLabel,
+            { color: active ? colors.brand : colors.gray },
+          ]}
+        >
+          考え中
+        </Text>
+        {active && <BouncingDots color={colors.brand} size={4} />}
+      </View>
+      <Text style={[styles.thinkingText, { color: colors.gray }]}>{text}</Text>
+    </View>
+  );
+}
+
+interface ContextGroupProps {
+  context: ContextItem;
+  message: Message;
+  colors: ColorSet;
+  availableHeight: number;
+  onToggle: () => void;
+}
+
+function ContextGroup({
+  context,
+  message,
+  colors,
+  availableHeight,
+  onToggle,
+}: ContextGroupProps) {
+  const collapsed = getCollapsed(message, context.groupIndex);
+  const [isTall, setIsTall] = useState(false);
+  const bodyHeightRef = useRef(0);
+
+  const hasThinking = context.stages.some((s) => s.type === 'thinking');
+  const hasActiveThinking = context.stages.some(
+    (s) => s.type === 'thinking' && s.active,
+  );
+  const toolStages = context.stages.filter(
+    (s): s is { type: 'toolCall'; callIndex: number } => s.type === 'toolCall',
+  );
+
+  const chips: ReactElement[] = [];
+  if (hasThinking) {
+    chips.push(
+      <ThinkingChip
+        key="thinking"
+        active={hasActiveThinking}
+        colors={colors}
+      />,
+    );
+  }
+  for (let i = 0; i < toolStages.length && chips.length < 3; i++) {
+    const call = message.toolCalls?.[toolStages[i].callIndex];
+    if (call) {
+      chips.push(
+        <ToolNameChip key={`tool-${i}`} call={call} colors={colors} />,
+      );
+    }
+  }
+  const totalChips = (hasThinking ? 1 : 0) + toolStages.length;
+  const more =
+    totalChips > 3 ? (
+      <Text style={[styles.toolChipText, { color: colors.gray }]}>
+        +{totalChips - 3}
+      </Text>
+    ) : null;
+
+  const updateTall = useCallback(() => {
+    if (availableHeight <= 0) return;
+    setIsTall(bodyHeightRef.current > availableHeight * 0.6);
+  }, [availableHeight]);
+
+  useEffect(() => {
+    updateTall();
+  }, [updateTall]);
+
+  const handleBodyLayout = (event: LayoutChangeEvent) => {
+    bodyHeightRef.current = event.nativeEvent.layout.height;
+    updateTall();
+  };
+
+  return (
+    <View
+      style={[
+        styles.contextHeader,
+        {
+          backgroundColor: colors.surfaceTint,
+          borderColor: colors.separator,
+        },
+      ]}
+    >
+      <Pressable onPress={onToggle}>
+        <View style={styles.contextHeaderInner}>
+          <Ionicons
+            name={collapsed ? 'chevron-forward' : 'chevron-down'}
+            size={14}
+            color={colors.gray}
+          />
+          <View style={styles.toolChips}>
+            {chips}
+            {more}
+          </View>
+        </View>
+      </Pressable>
+      {!collapsed && (
+        <View style={styles.contextBody} onLayout={handleBodyLayout}>
+          {context.stages.map((stage, idx) => {
+            if (stage.type === 'thinking') {
+              return (
+                <ThinkingCard
+                  key={`s-${idx}`}
+                  text={stage.text}
+                  active={stage.active}
+                  colors={colors}
+                />
+              );
+            }
+            const call = message.toolCalls?.[stage.callIndex];
+            return call ? (
+              <ToolCallCard key={`s-${idx}`} call={call} colors={colors} />
+            ) : null;
+          })}
+          {isTall && (
+            <Pressable onPress={onToggle}>
+              <View
+                style={[
+                  styles.contextFooter,
+                  { borderTopColor: colors.separator },
+                ]}
+              >
+                <Ionicons name="chevron-up" size={14} color={colors.gray} />
+                <Text
+                  style={[styles.contextFooterText, { color: colors.gray }]}
+                >
+                  畳む
+                </Text>
+              </View>
+            </Pressable>
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
 interface AssistantMessageProps {
   item: Message;
   colors: ColorSet;
   markdownStyles: Partial<MarkdownStyles>;
   markdownIt: MarkdownIt;
   markdownRules: RenderRules;
+  availableHeight: number;
+  isLatest: boolean;
   onToggleGroupCollapsed: (messageId: string, groupIndex: number) => void;
 }
 
@@ -309,9 +637,14 @@ function AssistantMessage({
   markdownStyles,
   markdownIt,
   markdownRules,
+  availableHeight,
+  isLatest,
   onToggleGroupCollapsed,
 }: AssistantMessageProps) {
-  const items = useMemo(() => buildAssistantItems(item), [item]);
+  const items = useMemo(
+    () => buildAssistantItems(item, isLatest),
+    [item, isLatest],
+  );
   return (
     <View
       style={[
@@ -338,78 +671,24 @@ function AssistantMessage({
             </View>
           );
         }
-        const collapsed = getCollapsed(item, it.groupIndex);
-        const calls = it.callIndices
-          .map((i) => item.toolCalls?.[i])
-          .filter((c): c is ToolCallItem => c !== undefined);
-        const hasThinking = it.thinking && it.thinking.length > 0;
         return (
-          <View key={`c-${idx}`} style={{ gap: 6 }}>
-            <Pressable
-              onPress={() => onToggleGroupCollapsed(item.id, it.groupIndex)}
-              style={[
-                styles.contextHeader,
-                {
-                  backgroundColor: colors.surfaceTint,
-                  borderColor: colors.separator,
-                },
-              ]}
-            >
-              <View style={styles.contextHeaderInner}>
-                <Ionicons
-                  name={collapsed ? 'chevron-forward' : 'chevron-down'}
-                  size={14}
-                  color={colors.gray}
-                />
-                <View style={styles.toolChips}>
-                  {hasThinking && (
-                    <View
-                      style={[
-                        styles.toolChip,
-                        {
-                          backgroundColor: colors.surface,
-                          borderColor: colors.separator,
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[styles.toolChipText, { color: colors.black }]}
-                      >
-                        考え中
-                      </Text>
-                    </View>
-                  )}
-                  {calls.slice(0, 3).map((call, i) => (
-                    <ToolNameChip key={i} call={call} colors={colors} />
-                  ))}
-                  {calls.length > 3 && (
-                    <Text style={[styles.toolChipText, { color: colors.gray }]}>
-                      +{calls.length - 3}
-                    </Text>
-                  )}
-                </View>
-              </View>
-            </Pressable>
-            {!collapsed && (
-              <View style={styles.contextBody}>
-                {it.thinking && (
-                  <Text style={[styles.thinkingText, { color: colors.gray }]}>
-                    {it.thinking}
-                  </Text>
-                )}
-                {calls.map((call, i) => (
-                  <ToolCallCard key={i} call={call} colors={colors} />
-                ))}
-              </View>
-            )}
-          </View>
+          <ContextGroup
+            key={`c-${idx}`}
+            context={it}
+            message={item}
+            colors={colors}
+            availableHeight={availableHeight}
+            onToggle={() => onToggleGroupCollapsed(item.id, it.groupIndex)}
+          />
         );
       })}
-      {item.state !== 'done' && item.text.length === 0 && (
-        <View style={styles.loadingIndicator}>
-          <ActivityIndicator color={BRAND_COLOR} />
-        </View>
-      )}
+      {item.state !== 'done' &&
+        item.text.length === 0 &&
+        items.length === 0 && (
+          <View style={styles.loadingIndicator}>
+            <ActivityIndicator color={BRAND_COLOR} />
+          </View>
+        )}
     </View>
   );
 }
@@ -494,6 +773,7 @@ export function AgentView() {
   const [error, setError] = useState<string | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(Keyboard.isVisible());
   const [inputHeight, setInputHeight] = useState(44);
+  const [messagesHeight, setMessagesHeight] = useState(0);
   const [historyReady, setHistoryReady] = useState(false);
   const [isSwitching, setIsSwitching] = useState(false);
   const [userInput, setUserInput] = useState<{
@@ -1291,6 +1571,9 @@ export function AgentView() {
           contentContainerStyle={styles.messageContent}
           data={messages}
           keyExtractor={(item) => item.id}
+          onLayout={(event) =>
+            setMessagesHeight(event.nativeEvent.layout.height)
+          }
           renderItem={({ item }) => {
             if (item.role === 'user') {
               return (
@@ -1305,6 +1588,7 @@ export function AgentView() {
                 </View>
               );
             }
+            const isLatest = item.id === messages[messages.length - 1]?.id;
             return (
               <AssistantMessage
                 item={item}
@@ -1312,6 +1596,8 @@ export function AgentView() {
                 markdownStyles={markdownStyles}
                 markdownIt={markdownIt}
                 markdownRules={markdownRules}
+                availableHeight={messagesHeight}
+                isLatest={isLatest}
                 onToggleGroupCollapsed={toggleGroupCollapsed}
               />
             );
@@ -1606,7 +1892,29 @@ const styles = StyleSheet.create({
   toolChipText: { fontSize: 11 },
   contextBody: { gap: 6 },
   loadingIndicator: { alignItems: 'center', minWidth: 120 },
+  thinkingCard: {
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    gap: 4,
+  },
+  thinkingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  thinkingLabel: { fontSize: 11, fontWeight: '700' },
   thinkingText: { fontSize: 12, fontStyle: 'italic' },
+  contextFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingTop: 8,
+    marginTop: 8,
+    borderTopWidth: 1,
+  },
+  contextFooterText: { fontSize: 11 },
   toolCall: {
     borderRadius: 10,
     padding: 10,
