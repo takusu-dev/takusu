@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -22,6 +22,54 @@ interface Props {
   saving?: boolean;
 }
 
+export interface ModelPricing {
+  prompt?: string | number;
+  completion?: string | number;
+}
+
+interface ModelItem {
+  id?: string;
+  pricing?: ModelPricing;
+}
+
+interface ModelResponse {
+  data?: ModelItem[];
+}
+
+const moneyFormatter = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  maximumFractionDigits: 9,
+  minimumFractionDigits: 0,
+});
+
+function formatMoney(n: number): string {
+  return moneyFormatter.format(n);
+}
+
+function parsePrice(value: string | number | undefined): number | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return n;
+}
+
+export function formatCost(
+  pricing: ModelPricing | undefined,
+): string | undefined {
+  const prompt = parsePrice(pricing?.prompt);
+  const completion = parsePrice(pricing?.completion);
+  if (prompt === undefined && completion === undefined) return undefined;
+  if (prompt !== undefined && completion !== undefined) {
+    return `in ${formatMoney(prompt * 1000)}, out ${formatMoney(
+      completion * 1000,
+    )} / 1K tokens`;
+  }
+  if (prompt !== undefined) return `${formatMoney(prompt * 1000)} / 1K tokens`;
+  if (completion !== undefined)
+    return `${formatMoney(completion * 1000)} / 1K tokens`;
+}
+
 export function LlmProviderEditor({
   provider,
   apiKey,
@@ -35,6 +83,21 @@ export function LlmProviderEditor({
   const colors = useColors();
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelFilter, setModelFilter] = useState('');
+  const [modelCosts, setModelCosts] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    setModelCosts({});
+  }, [provider.id]);
+
+  useEffect(() => {
+    const { selectedModel, cost } = provider;
+    if (selectedModel && cost) {
+      setModelCosts((prev) => ({
+        ...prev,
+        [selectedModel]: cost,
+      }));
+    }
+  }, [provider.selectedModel, provider.cost]);
 
   const filteredModels = useMemo(() => {
     const query = modelFilter.trim().toLowerCase();
@@ -58,19 +121,32 @@ export function LlmProviderEditor({
         },
       );
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const body = (await response.json()) as { data?: Array<{ id?: string }> };
+      const body = (await response.json()) as ModelResponse;
+      const items = body.data ?? [];
       const models = [
         ...new Set(
-          (body.data ?? [])
+          items
             .map((item) => item.id)
             .filter((id): id is string => Boolean(id)),
         ),
       ].sort();
+      const costs: Record<string, string> = {};
+      for (const item of items) {
+        if (item.id) {
+          const cost = formatCost(item.pricing);
+          if (cost) {
+            costs[item.id] = cost;
+          }
+        }
+      }
+      setModelCosts(costs);
+      const nextSelected = provider.selectedModel || models[0] || '';
       onChangeProvider({
         ...provider,
         cachedModels: models,
-        selectedModel: provider.selectedModel || models[0] || '',
+        selectedModel: nextSelected,
         modelsFetchedAt: new Date().toISOString(),
+        cost: costs[nextSelected],
       });
       if (models.length === 0) {
         Alert.alert('モデルなし', 'モデルIDを手入力してください');
@@ -122,16 +198,6 @@ export function LlmProviderEditor({
         secureTextEntry
         placeholder="API key"
       />
-      <TextInput
-        style={[
-          styles.input,
-          { color: colors.black, borderColor: colors.separator },
-        ]}
-        value={provider.cost ?? ''}
-        onChangeText={(cost) => onChangeProvider({ ...provider, cost })}
-        autoCapitalize="none"
-        placeholder="Cost（例: $0.005 / 1K tokens）"
-      />
       <Pressable
         onPress={fetchModels}
         style={styles.secondary}
@@ -159,14 +225,25 @@ export function LlmProviderEditor({
         <Pressable
           key={model}
           onPress={() =>
-            onChangeProvider({ ...provider, selectedModel: model })
+            onChangeProvider({
+              ...provider,
+              selectedModel: model,
+              cost: modelCosts[model],
+            })
           }
           style={[styles.modelRow, { borderColor: colors.separator }]}
         >
-          <Text style={{ color: colors.black }}>
-            {provider.selectedModel === model ? '● ' : '○ '}
-            {model}
-          </Text>
+          <View style={styles.modelRowContent}>
+            <Text style={[styles.modelName, { color: colors.black }]}>
+              {provider.selectedModel === model ? '● ' : '○ '}
+              {model}
+            </Text>
+            {modelCosts[model] && (
+              <Text style={{ color: colors.gray, fontSize: 12 }}>
+                {modelCosts[model]}
+              </Text>
+            )}
+          </View>
         </Pressable>
       ))}
       <TextInput
@@ -176,7 +253,11 @@ export function LlmProviderEditor({
         ]}
         value={provider.selectedModel}
         onChangeText={(selectedModel) =>
-          onChangeProvider({ ...provider, selectedModel })
+          onChangeProvider({
+            ...provider,
+            selectedModel,
+            cost: modelCosts[selectedModel],
+          })
         }
         autoCapitalize="none"
         placeholder="モデルID（手入力可）"
@@ -225,6 +306,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   modelRow: { padding: 10, borderWidth: 1, borderRadius: 8 },
+  modelRowContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  modelName: { flex: 1 },
   actions: { flexDirection: 'row', gap: 8, marginTop: 4 },
   save: {
     flex: 1,
