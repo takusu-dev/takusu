@@ -63,9 +63,10 @@ export interface UpdateTask {
 }
 
 export interface TaskQuery {
-  status?: TaskStatus;
+  status?: TaskStatus | 'overdue';
   from?: string;
   until?: string;
+  no_overdue?: boolean;
   habit_id?: string;
   ical_uid?: string;
 }

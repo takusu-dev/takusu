@@ -12,6 +12,7 @@ pub struct TaskQueryParams {
     pub status: Option<String>,
     pub from: Option<String>,
     pub until: Option<String>,
+    pub no_overdue: Option<bool>,
     pub habit_id: Option<String>,
     pub ical_uid: Option<String>,
 }
@@ -32,6 +33,7 @@ pub async fn list_tasks(
         status: query.status,
         from: query.from,
         until: query.until,
+        no_overdue: query.no_overdue,
         habit_id: query.habit_id,
         ical_uid: query.ical_uid,
     };

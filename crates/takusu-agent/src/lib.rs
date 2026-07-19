@@ -900,11 +900,11 @@ impl AgentSession {
             ツールは「参照」と「変更提案」の2種類に分かれています。ツールの詳細なパラメーターは別途提供されます。
 
             ### 参照
-            - list_tasks: タスク一覧を取得（status フィルタあり。有効値: pending, scheduled, in_progress, completed, skipped）
+            - list_tasks: タスク一覧を取得（status フィルタあり。有効値: pending, scheduled, in_progress, completed, skipped, overdue。no_overdue で期限超過を除外。no_overdue と status='overdue' は同時に指定しないこと）
             - get_task: 指定したタスクの詳細を取得
             - list_habits: 習慣一覧を取得
             - get_habit: 指定した習慣の詳細を取得
-            - get_schedule: 現在のスケジュールを取得
+            - get_schedule: 現在のスケジュールを取得（overdue タスクもデフォルトで含まれる。no_overdue で省略）
             - get_settings: タイムゾーン・就寝・勤務時間設定を取得
             - skills_list: スキル一覧を取得
             - skills_read: 指定したスキルの詳細を取得

@@ -201,7 +201,10 @@ enum TaskCommands {
     /// List tasks
     #[command(visible_alias = "ls")]
     List {
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Filter by status (pending, scheduled, in_progress, completed, skipped, overdue)"
+        )]
         status: Option<String>,
         #[arg(
             long,
@@ -210,6 +213,11 @@ enum TaskCommands {
         from: Option<String>,
         #[arg(long, help = "Filter by end date (e.g. 2025-06-05, 2025-06-05T14:00)")]
         until: Option<String>,
+        #[arg(
+            long,
+            help = "Exclude tasks whose end_at has passed. Do not use with --status overdue"
+        )]
+        no_overdue: bool,
         #[arg(long)]
         habit_id: Option<String>,
         #[arg(long)]
@@ -927,6 +935,7 @@ async fn run_task(
             status,
             from,
             until,
+            no_overdue,
             habit_id,
             ical_uid,
         } => {
@@ -934,6 +943,7 @@ async fn run_task(
                 status,
                 from: from.map(|s| parse_dt(&s, tz)).transpose()?,
                 until: until.map(|s| parse_dt(&s, tz)).transpose()?,
+                no_overdue: Some(no_overdue).filter(|x| *x),
                 habit_id,
                 ical_uid,
             };
