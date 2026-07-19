@@ -29,6 +29,7 @@ import Reanimated, {
 } from 'react-native-reanimated';
 import Markdown, {
   MarkdownIt,
+  renderRules,
   type ASTNode,
   type MarkdownStyles,
   type RenderRules,
@@ -434,6 +435,16 @@ export function AgentView() {
         paddingVertical: 2,
         borderRadius: 4,
       },
+      listUnorderedItemIcon: {
+        color: colors.gray,
+        fontSize: 14,
+        lineHeight: 24,
+      },
+      listOrderedItemIcon: {
+        color: colors.gray,
+        fontSize: 14,
+        lineHeight: 24,
+      },
     }),
     [colors],
   );
@@ -445,6 +456,19 @@ export function AgentView() {
           {node.content}
         </Text>
       ),
+      list_item: (node, children, parent, styles) => {
+        if (parent.some((p) => p.type === 'bullet_list')) {
+          return (
+            <View key={node.key} style={styles.listUnorderedItem as any}>
+              <Text style={styles.listUnorderedItemIcon as any}>
+                {'\u2022'}
+              </Text>
+              <View style={styles.listItem as any}>{children}</View>
+            </View>
+          );
+        }
+        return renderRules.list_item(node, children, parent, styles);
+      },
     }),
     [colors.gray],
   );
