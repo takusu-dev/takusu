@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { Appearance, Platform } from 'react-native';
+import Constants from 'expo-constants';
 import { TakusuClient } from './client';
 import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
 import TakusuWidgetModule from '../../modules/takusu-widget/src/TakusuWidgetModule';
@@ -142,9 +143,11 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       // Persist credentials for the home screen widget so the
       // WorkManager worker can start the local server independently.
       try {
+        const scheme = Constants.expoConfig?.scheme;
         TakusuWidgetModule.saveConfig({
           workersUrl: finalUrl,
           token: finalToken,
+          scheme: Array.isArray(scheme) ? scheme[0] : scheme,
         });
       } catch {
         // widget module not available (e.g. non-Android) — ignore

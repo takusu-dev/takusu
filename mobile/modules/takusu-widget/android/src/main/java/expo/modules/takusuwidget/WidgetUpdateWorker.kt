@@ -9,6 +9,8 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import java.util.concurrent.TimeUnit
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Periodic worker that refreshes the widget.
@@ -26,31 +28,27 @@ class WidgetUpdateWorker(
         val prefs = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val token = prefs.getString(KEY_TOKEN, null)
         val workersUrl = prefs.getString(KEY_WORKERS_URL, null)
+        val serverTz = prefs.getString(KEY_SERVER_TZ, null)
+        val scheme = prefs.getString(KEY_SCHEME, null)
 
-        // If credentials are not configured, persist an empty snapshot so the
-        // widget shows the placeholder (#378).
         if (token == null || workersUrl == null) {
             persistEmptySnapshot(prefs)
             TakusuWidgetProvider.updateWidget(applicationContext)
             return Result.success()
         }
 
-        // Try fetching from the local server first (it may already be running
-        // if the app is in the foreground).
         var snapshot = WidgetFetcher.fetch(token)
 
         if (snapshot == null) {
-            // Local server not running — start it via UniFFI, fetch, then stop.
             snapshot = startServerAndFetch(workersUrl, token)
         }
 
         if (snapshot != null) {
-            persistSnapshot(prefs, snapshot)
+            persistSnapshot(prefs, snapshot, serverTz, scheme)
             TakusuWidgetProvider.updateWidget(applicationContext)
             return Result.success()
         }
 
-        // Fetch failed entirely — keep the last snapshot, just retry later.
         return Result.retry()
     }
 
@@ -62,7 +60,6 @@ class WidgetUpdateWorker(
             val server = uniffi.takusu_android.TakusuServer()
             try {
                 server.start(3838.toUShort(), workersUrl, token)
-                // Give the server a moment to bind
                 Thread.sleep(500)
                 WidgetFetcher.fetch(token)
             } finally {
@@ -84,35 +81,43 @@ class WidgetUpdateWorker(
         const val KEY_TOKEN = "token"
         const val KEY_WORKERS_URL = "workers_url"
         const val KEY_SNAPSHOT = "snapshot_json"
+        const val KEY_SERVER_TZ = "server_tz"
+        const val KEY_SCHEME = "scheme"
         const val KEY_UPDATED_AT = "updated_at"
         const val WORK_NAME = "takusu_widget_update"
 
         fun persistSnapshot(
             prefs: android.content.SharedPreferences,
             s: WidgetSnapshot,
+            serverTz: String? = null,
+            scheme: String? = null,
         ) {
-            val arr = org.json.JSONArray()
-            for (u in s.upcoming) {
-                val o = org.json.JSONObject()
-                o.put("id", u.id)
-                o.put("title", u.title)
-                o.put("start_at", u.startAt ?: org.json.JSONObject.NULL)
-                o.put("end_at", u.endAt)
-                arr.put(o)
-            }
-            val snap = org.json.JSONObject()
-            val doingArr = org.json.JSONArray()
-            for (title in s.doingTitles) {
-                doingArr.put(title)
-            }
-            snap.put("doing_titles", doingArr)
-            snap.put("upcoming", arr)
+            val snap = JSONObject()
+            snap.put("doing", s.doing?.let { taskJson(it) } ?: JSONObject.NULL)
+            snap.put("upcoming", JSONArray(s.upcoming.map { taskJson(it) }))
             snap.put("unscheduled_count", s.unscheduledCount)
-            prefs
-                .edit()
-                .putString(KEY_SNAPSHOT, snap.toString())
-                .putLong(KEY_UPDATED_AT, System.currentTimeMillis())
-                .apply()
+            serverTz?.let { snap.put("server_tz", it) }
+            scheme?.takeIf { it.isNotEmpty() }?.let { snap.put("scheme", it) }
+
+            val editor =
+                prefs
+                    .edit()
+                    .putString(KEY_SNAPSHOT, snap.toString())
+                    .putString(KEY_SERVER_TZ, serverTz)
+                    .putLong(KEY_UPDATED_AT, System.currentTimeMillis())
+            scheme?.takeIf { it.isNotEmpty() }?.let { editor.putString(KEY_SCHEME, it) }
+            editor.apply()
+        }
+
+        private fun taskJson(t: UpcomingTask): JSONObject {
+            val o = JSONObject()
+            o.put("id", t.id)
+            o.put("title", t.title)
+            o.put("start_at", t.startAt ?: JSONObject.NULL)
+            o.put("end_at", t.endAt)
+            o.put("abandonability", t.abandonability)
+            o.put("fixed", t.fixed)
+            return o
         }
 
         private fun persistEmptySnapshot(prefs: android.content.SharedPreferences) {

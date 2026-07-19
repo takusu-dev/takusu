@@ -12,17 +12,19 @@ import org.json.JSONObject
  * Returns null on any failure so the caller can fall back to the cached
  * snapshot in SharedPreferences.
  */
-data class WidgetSnapshot(
-    val doingTitles: List<String>,
-    val upcoming: List<UpcomingTask>,
-    val unscheduledCount: Int,
-)
-
 data class UpcomingTask(
     val id: String,
     val title: String,
     val startAt: String?,
     val endAt: String,
+    val abandonability: Double,
+    val fixed: Boolean,
+)
+
+data class WidgetSnapshot(
+    val doing: UpcomingTask?,
+    val upcoming: List<UpcomingTask>,
+    val unscheduledCount: Int,
 )
 
 object WidgetFetcher {
@@ -36,7 +38,7 @@ object WidgetFetcher {
             val schedule = fetchJsonObject("$BASE/api/schedule", token)
             val scheduleMap = parseScheduleMap(schedule)
 
-            val doing = emptyList<String>()
+            var doing: UpcomingTask? = null
             val upcoming = mutableListOf<UpcomingTask>()
             var unscheduled = 0
 
@@ -49,12 +51,12 @@ object WidgetFetcher {
                     }
 
                     "scheduled", "in_progress" -> {
-                        val entry = scheduleMap[t.getString("id")]
-                        // optString returns literal "null" for JSON null, so
-                        // check isNull first to get a real Kotlin null.
-                        val startAt = entry?.first ?: optStringOrNull(t, "start_at")
-                        val endAt = entry?.second ?: t.getString("end_at")
-                        upcoming.add(UpcomingTask(t.getString("id"), t.getString("title"), startAt, endAt))
+                        val task = buildTask(t, scheduleMap)
+                        if (status == "in_progress" && doing == null) {
+                            doing = task
+                        } else {
+                            upcoming.add(task)
+                        }
                     }
                 }
             }
@@ -62,13 +64,31 @@ object WidgetFetcher {
             upcoming.sortBy { parseIso(it.startAt ?: it.endAt) ?: Long.MAX_VALUE }
 
             WidgetSnapshot(
-                doingTitles = doing,
+                doing = doing,
                 upcoming = upcoming,
                 unscheduledCount = unscheduled,
             )
         } catch (e: Exception) {
             null
         }
+    }
+
+    private fun buildTask(
+        t: JSONObject,
+        scheduleMap: Map<String, Pair<String?, String>>,
+    ): UpcomingTask {
+        val id = t.getString("id")
+        val entry = scheduleMap[id]
+        val startAt = entry?.first ?: optStringOrNull(t, "start_at")
+        val endAt = entry?.second ?: t.getString("end_at")
+        return UpcomingTask(
+            id = id,
+            title = t.getString("title"),
+            startAt = startAt,
+            endAt = endAt,
+            abandonability = t.optDouble("abandonability", 0.75),
+            fixed = t.optBoolean("fixed", false),
+        )
     }
 
     private fun fetchJsonArray(
@@ -112,35 +132,27 @@ object WidgetFetcher {
     private fun parseScheduleMap(sched: JSONObject?): Map<String, Pair<String?, String>> {
         if (sched == null) return emptyMap()
         val map = mutableMapOf<String, Pair<String?, String>>()
-        // The API returns `schedule` as a JSON-encoded string (not a JSON
-        // array), so we need to parse the string value into a JSONArray.
-        // If the field is missing or null, return an empty map.
         val scheduleStr = sched.optString("schedule", "")
         if (scheduleStr.isEmpty()) return map
         val entries = JSONArray(scheduleStr)
         for (i in 0 until entries.length()) {
             val e = entries.getJSONObject(i)
             val id = e.getString("task_id")
-            val startAt = if (e.isNull("start_at")) null else e.optString("start_at", null)
+            val startAt = optStringOrNull(e, "start_at")
             val endAt = e.getString("end_at")
             map[id] = Pair(startAt, endAt)
         }
         return map
     }
 
-    // / Returns the string value of [key] from [obj], or null if the key
-    // / is absent or explicitly JSON null. Android's `optString(key, null)`
-    // / returns the literal string "null" for JSON null values, so this
-    // / helper checks `isNull` first.
     private fun optStringOrNull(
         obj: JSONObject,
         key: String,
-    ): String? = if (obj.isNull(key)) null else obj.optString(key, null)
+    ): String? = if (obj.isNull(key) || !obj.has(key)) null else obj.optString(key, "")
 
     private fun parseIso(iso: String?): Long? {
         if (iso == null) return null
         return try {
-            // Trim trailing 'Z' or fractional seconds for compatibility
             val s = iso.replace(Regex("\\.\\d+"), "").replace("Z", "+00:00")
             java.time.OffsetDateTime
                 .parse(s)

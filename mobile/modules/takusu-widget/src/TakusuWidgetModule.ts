@@ -3,17 +3,24 @@ import { NativeModule, requireNativeModule } from 'expo';
 export interface WidgetConfig {
   workersUrl: string;
   token: string;
+  scheme?: string;
+}
+
+export interface WidgetTaskData {
+  id: string;
+  title: string;
+  startAt: string | null;
+  endAt: string;
+  abandonability: number;
+  fixed: boolean;
 }
 
 export interface WidgetSnapshotData {
-  doingTitles: string[];
-  upcoming: {
-    id: string;
-    title: string;
-    startAt: string | null;
-    endAt: string;
-  }[];
+  doing: WidgetTaskData | null;
+  upcoming: WidgetTaskData[];
   unscheduledCount: number;
+  serverTz?: string;
+  scheme?: string;
 }
 
 interface TakusuWidgetModuleType extends NativeModule {

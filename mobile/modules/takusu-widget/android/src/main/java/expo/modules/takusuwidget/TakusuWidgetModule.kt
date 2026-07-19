@@ -12,9 +12,11 @@ class WidgetConfig : Record {
     @Field val workersUrl: String = ""
 
     @Field val token: String = ""
+
+    @Field val scheme: String? = null
 }
 
-class WidgetUpcomingTask : Record {
+class WidgetTask : Record {
     @Field val id: String = ""
 
     @Field val title: String = ""
@@ -22,18 +24,26 @@ class WidgetUpcomingTask : Record {
     @Field val startAt: String? = null
 
     @Field val endAt: String = ""
+
+    @Field val abandonability: Double = 0.75
+
+    @Field val fixed: Boolean = false
 }
 
 class WidgetSnapshotInput : Record {
-    @Field val doingTitles: List<String> = emptyList()
+    @Field val doing: WidgetTask? = null
 
-    @Field val upcoming: List<WidgetUpcomingTask> = emptyList()
+    @Field val upcoming: List<WidgetTask> = emptyList()
 
     @Field val unscheduledCount: Int = 0
+
+    @Field val serverTz: String? = null
+
+    @Field val scheme: String? = null
 }
 
 /**
- * Expo module that bridges JS → native for the home screen widget.
+ * Expo module that bridges JS -> native for the home screen widget.
  *
  * JS calls `saveConfig` to persist the Workers URL + token into
  * SharedPreferences (read by [WidgetUpdateWorker]).
@@ -53,12 +63,15 @@ class TakusuWidgetModule : Module() {
                 try {
                     val ctx = appContext.reactContext ?: return@Function false
                     val prefs = ctx.getSharedPreferences(WidgetUpdateWorker.PREFS_NAME, Context.MODE_PRIVATE)
-                    prefs
-                        .edit()
-                        .putString(WidgetUpdateWorker.KEY_WORKERS_URL, config.workersUrl)
-                        .putString(WidgetUpdateWorker.KEY_TOKEN, config.token)
-                        .apply()
-                    // Schedule periodic updates as soon as credentials are available.
+                    val editor =
+                        prefs
+                            .edit()
+                            .putString(WidgetUpdateWorker.KEY_WORKERS_URL, config.workersUrl)
+                            .putString(WidgetUpdateWorker.KEY_TOKEN, config.token)
+                    config.scheme?.takeIf { it.isNotEmpty() }?.let {
+                        editor.putString(WidgetUpdateWorker.KEY_SCHEME, it)
+                    }
+                    editor.apply()
                     WidgetUpdateWorker.schedule(ctx)
                     true
                 } catch (e: Exception) {
@@ -71,35 +84,23 @@ class TakusuWidgetModule : Module() {
                     val ctx = appContext.reactContext ?: return@Function false
                     val prefs = ctx.getSharedPreferences(WidgetUpdateWorker.PREFS_NAME, Context.MODE_PRIVATE)
 
-                    val arr = JSONArray()
-                    for (task in input.upcoming) {
-                        val o = JSONObject()
-                        o.put("id", task.id)
-                        o.put("title", task.title)
-                        if (task.startAt !=
-                            null
-                        ) {
-                            o.put("start_at", task.startAt)
-                        } else {
-                            o.put("start_at", JSONObject.NULL)
-                        }
-                        o.put("end_at", task.endAt)
-                        arr.put(o)
-                    }
                     val snap = JSONObject()
-                    val doingArr = JSONArray()
-                    for (title in input.doingTitles) {
-                        doingArr.put(title)
-                    }
-                    snap.put("doing_titles", doingArr)
-                    snap.put("upcoming", arr)
+                    input.doing?.let { snap.put("doing", taskJson(it)) } ?: snap.put("doing", JSONObject.NULL)
+                    snap.put("upcoming", JSONArray(input.upcoming.map { taskJson(it) }))
                     snap.put("unscheduled_count", input.unscheduledCount)
+                    input.serverTz?.let { snap.put("server_tz", it) }
+                    val scheme =
+                        input.scheme?.takeIf { it.isNotEmpty() } ?: prefs.getString(WidgetUpdateWorker.KEY_SCHEME, null)
+                    scheme?.let { snap.put("scheme", it) }
 
-                    prefs
-                        .edit()
-                        .putString(WidgetUpdateWorker.KEY_SNAPSHOT, snap.toString())
-                        .putLong(WidgetUpdateWorker.KEY_UPDATED_AT, System.currentTimeMillis())
-                        .apply()
+                    val editor =
+                        prefs
+                            .edit()
+                            .putString(WidgetUpdateWorker.KEY_SNAPSHOT, snap.toString())
+                            .putString(WidgetUpdateWorker.KEY_SERVER_TZ, input.serverTz)
+                            .putLong(WidgetUpdateWorker.KEY_UPDATED_AT, System.currentTimeMillis())
+                    scheme?.takeIf { it.isNotEmpty() }?.let { editor.putString(WidgetUpdateWorker.KEY_SCHEME, it) }
+                    editor.apply()
 
                     TakusuWidgetProvider.updateWidget(ctx)
                     true
@@ -118,4 +119,15 @@ class TakusuWidgetModule : Module() {
                 }
             }
         }
+
+    private fun taskJson(t: WidgetTask): JSONObject {
+        val o = JSONObject()
+        o.put("id", t.id)
+        o.put("title", t.title)
+        o.put("start_at", t.startAt ?: JSONObject.NULL)
+        o.put("end_at", t.endAt)
+        o.put("abandonability", t.abandonability)
+        o.put("fixed", t.fixed)
+        return o
+    }
 }
