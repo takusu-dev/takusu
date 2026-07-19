@@ -904,7 +904,7 @@ impl AgentSession {
             - get_task: 指定したタスクの詳細を取得
             - list_habits: 習慣一覧を取得
             - get_habit: 指定した習慣の詳細を取得
-            - get_schedule: 現在のスケジュールを取得（overdue タスクもデフォルトで含まれる。no_overdue で省略）
+            - get_schedule: 現在のスケジュールを取得（from/to で期間指定可能。7d、2026-07-20、today、now などを受け付ける。overdue タスクもデフォルトで含まれる。no_overdue で省略）
             - get_settings: タイムゾーン・就寝・勤務時間設定を取得
             - skills_list: スキル一覧を取得
             - skills_read: 指定したスキルの詳細を取得
