@@ -21,10 +21,10 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
+  Easing,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 import Markdown, {
@@ -53,7 +53,6 @@ import {
   deleteSessionSnapshot,
   loadSessionHistory,
   loadSessionSnapshot,
-  type AgentSessionSnapshot,
   type Message,
   type MessageSegment,
   type ToolCallItem,
@@ -1091,40 +1090,31 @@ export function AgentView() {
     isSwitchingRef.current = false;
   }
 
-  function finishSessionSwitch(
-    nextId: string,
-    nextIndex: number,
-    direction: number,
-    snapshot: AgentSessionSnapshot,
-  ) {
-    try {
-      sessionIdRef.current = nextId;
-      setActiveIndex(nextIndex);
-      activeIndexRef.current = nextIndex;
-      setText('');
-      viewOffset.value = direction * width;
-      autoScrollRef.current = true;
-      setMessages(snapshot.messages);
-      setApproval(snapshot.approval);
-      saveSessionHistory({
-        ids: sessionIdsRef.current,
-        activeIndex: nextIndex,
-      }).catch(() => {});
-      viewOffset.value = withSpring(0, { damping: 20, stiffness: 200 });
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-      viewOffset.value = withSpring(0, { damping: 20, stiffness: 200 });
-    } finally {
-      resetSwitchState();
-    }
+  function resetToCenter() {
+    viewOffset.value = withTiming(
+      0,
+      { duration: 200, easing: Easing.out(Easing.exp) },
+      (finished) => {
+        'worklet';
+        if (finished) runOnJS(resetSwitchState)();
+      },
+    );
   }
 
   async function switchSession(delta: number) {
-    if (isSwitchingRef.current || busy || !historyReady) return;
+    if (isSwitchingRef.current || busy || !historyReady) {
+      resetToCenter();
+      return;
+    }
     const nextIndex = activeIndexRef.current + delta;
-    if (nextIndex < 0 || nextIndex >= sessionIdsRef.current.length) return;
+    if (nextIndex < 0 || nextIndex >= sessionIdsRef.current.length) {
+      resetToCenter();
+      return;
+    }
     const nextId = sessionIdsRef.current[nextIndex];
     const currentId = sessionIdRef.current;
+    isSwitchingRef.current = true;
+    setIsSwitching(true);
     try {
       if (currentId) {
         await saveSessionSnapshot(currentId, { messages, approval }).catch(
@@ -1135,38 +1125,29 @@ export function AgentView() {
         messages: [],
         approval: null,
       };
+      sessionIdRef.current = nextId;
       setActiveIndex(nextIndex);
       activeIndexRef.current = nextIndex;
-      isSwitchingRef.current = true;
-      setIsSwitching(true);
-      const direction = delta;
-      viewOffset.value = withTiming(
-        -direction * width,
-        { duration: 120 },
-        (finished) => {
-          'worklet';
-          if (finished) {
-            runOnJS(finishSessionSwitch)(
-              nextId,
-              nextIndex,
-              direction,
-              snapshot,
-            );
-          } else {
-            runOnJS(resetSwitchState)();
-          }
-        },
-      );
+      setText('');
+      autoScrollRef.current = true;
+      setMessages(snapshot.messages);
+      setApproval(snapshot.approval);
+      saveSessionHistory({
+        ids: sessionIdsRef.current,
+        activeIndex: nextIndex,
+      }).catch(() => {});
+      resetToCenter();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
-      resetViewOffset();
-      resetSwitchState();
+      resetToCenter();
     }
   }
 
   async function startNewSession() {
     if (isSwitchingRef.current || busy || !historyReady) return;
     setError(null);
+    isSwitchingRef.current = true;
+    setIsSwitching(true);
     const currentId = sessionIdRef.current;
     try {
       const created = await client.createSession();
@@ -1185,52 +1166,43 @@ export function AgentView() {
       await Promise.all(removed.map((id) => deleteSessionSnapshot(id))).catch(
         () => {},
       );
-      sessionIdsRef.current = ids;
-      setSessionIds(ids);
-      setActiveIndex(nextIndex);
-      activeIndexRef.current = nextIndex;
       const snapshot = (await loadSessionSnapshot(created)) ?? {
         messages: [],
         approval: null,
       };
-      isSwitchingRef.current = true;
-      setIsSwitching(true);
-      const direction = 1;
-      viewOffset.value = withTiming(
-        -direction * width,
-        { duration: 120 },
-        (finished) => {
-          'worklet';
-          if (finished) {
-            runOnJS(finishSessionSwitch)(
-              created,
-              nextIndex,
-              direction,
-              snapshot,
-            );
-          } else {
-            runOnJS(resetSwitchState)();
-          }
-        },
-      );
+      sessionIdsRef.current = ids;
+      setSessionIds(ids);
+      setActiveIndex(nextIndex);
+      activeIndexRef.current = nextIndex;
+      sessionIdRef.current = created;
+      setText('');
+      autoScrollRef.current = true;
+      setMessages(snapshot.messages);
+      setApproval(snapshot.approval);
+      saveSessionHistory({ ids, activeIndex: nextIndex }).catch(() => {});
+      resetToCenter();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
-      resetViewOffset();
-      resetSwitchState();
+      resetToCenter();
     }
-  }
-
-  function resetViewOffset() {
-    viewOffset.value = withSpring(0, { damping: 20, stiffness: 200 });
   }
 
   const switcherGesture = Gesture.Pan()
     .minDistance(20)
+    .onUpdate((e) => {
+      const x = e.translationX;
+      viewOffset.value = Math.max(-width, Math.min(width, x));
+    })
     .onEnd((e) => {
       if (e.translationX > SWIPE_THRESHOLD) {
         runOnJS(switchSession)(-1);
       } else if (e.translationX < -SWIPE_THRESHOLD) {
         runOnJS(switchSession)(1);
+      } else {
+        viewOffset.value = withTiming(0, {
+          duration: 200,
+          easing: Easing.out(Easing.exp),
+        });
       }
     });
 
