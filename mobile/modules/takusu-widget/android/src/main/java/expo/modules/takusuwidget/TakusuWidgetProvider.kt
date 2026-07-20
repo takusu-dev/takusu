@@ -1,6 +1,5 @@
 package expo.modules.takusuwidget
 
-import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
@@ -411,43 +410,27 @@ class TakusuWidgetProvider : AppWidgetProvider() {
             views: RemoteViews,
             size: WidgetSize,
         ) {
-            val templateIntent =
-                Intent(Intent.ACTION_VIEW).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                    setPackage(context.packageName)
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+            if (launchIntent?.component == null) return
+
+            val listViewId =
+                when (size) {
+                    WidgetSize.W4x2 -> R.id.widget_upcoming_list
+                    WidgetSize.W2x2 -> R.id.widget_mini_list
+                    else -> null
                 }
-            val templatePi =
-                PendingIntent.getActivity(
-                    context,
-                    0,
-                    templateIntent,
-                    PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            if (listViewId != null) {
+                views.setPendingIntentTemplate(
+                    listViewId,
+                    WidgetClickIntents.createListPendingIntent(context, launchIntent),
                 )
-            when (size) {
-                WidgetSize.W4x2 -> {
-                    views.setPendingIntentTemplate(R.id.widget_upcoming_list, templatePi)
-                }
-
-                WidgetSize.W2x2 -> {
-                    views.setPendingIntentTemplate(R.id.widget_mini_list, templatePi)
-                }
-
-                else -> { /* no list in 4x1 or 2x1 */ }
             }
 
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-            if (launchIntent != null) {
-                val pi =
-                    PendingIntent.getActivity(
-                        context,
-                        0,
-                        launchIntent,
-                        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-                    )
-                views.setOnClickPendingIntent(R.id.widget_root, pi)
-                if (size == WidgetSize.W4x2) {
-                    views.setOnClickPendingIntent(R.id.widget_open_btn, pi)
-                }
+            val launchPendingIntent =
+                WidgetClickIntents.createRootPendingIntent(context, launchIntent)
+            views.setOnClickPendingIntent(R.id.widget_root, launchPendingIntent)
+            if (size == WidgetSize.W4x2) {
+                views.setOnClickPendingIntent(R.id.widget_open_btn, launchPendingIntent)
             }
         }
 

@@ -173,4 +173,5 @@ output) is also excluded.
   - `android-build` job builds `.so` for aarch64
   - `expo-check` job runs oxlint, oxfmt (`--check`), and TypeScript typecheck
   - `kotlin-check` job runs ktlint on `modules/**/*.kt` (independent of `expo-check`)
+  - `kotlin-test` job runs Robolectric unit tests via `nix run .#test-android-unit`
 - `release.yaml`: `build-android-apk` job builds all ABIs, prebuilds, and uploads APK to GitHub Releases on tag push

@@ -439,7 +439,7 @@
                 androidComposition.ndk-bundle
                 androidComposition.androidsdk
               ];
-              makeAndroidApkBuildText = androidLibs: abiDir: ''
+              makeAndroidBuildText = finalStep: androidLibs: abiDir: ''
                 export ANDROID_NDK_HOME="${androidNdkHome}"
                 export ANDROID_HOME="${androidComposition.androidsdk}/libexec/android-sdk"
                 # React Native's Gradle plugin errors out when ANDROID_HOME and
@@ -469,8 +469,12 @@
 
                 # 1. Copy pre-built .so from Nix store into jniLibs/
                 echo "── Step 1: Copy native libraries from Nix store ──"
+                if [ -d "$JNILIBS_DIR" ]; then
+                  chmod -R +w "$JNILIBS_DIR"
+                fi
                 rm -rf "$JNILIBS_DIR"
-                cp -r "${androidLibs}/jniLibs" "$JNILIBS_DIR"
+                mkdir -p "$JNILIBS_DIR"
+                cp -r --no-preserve=mode "${androidLibs}/jniLibs/." "$JNILIBS_DIR/"
                 echo "  copied .so files to $JNILIBS_DIR"
 
                 # 2. Generate UniFFI Kotlin bindings from the .so
@@ -505,17 +509,29 @@
                 echo "── Step 4: Post-prebuild fixes ──"
                 "$REPO_ROOT/scripts/post-prebuild-android.sh" android
 
-                # 5. Build the release APK
+                # 5. ${finalStep.label}
                 echo ""
-                echo "── Step 5: Gradle assembleRelease ──"
+                echo "── Step 5: ${finalStep.label} ──"
                 cd android
-                ./gradlew :app:assembleRelease --stacktrace
+                ${finalStep.command}
 
                 echo ""
-                echo "✅ APK built: $(pwd)/app/build/outputs/apk/release/app-release.apk"
+                echo "${finalStep.success}"
               '';
+              apkFinalStep = {
+                label = "Gradle assembleRelease";
+                command = "./gradlew :app:assembleRelease --stacktrace";
+                success = "✅ APK built: $(pwd)/app/build/outputs/apk/release/app-release.apk";
+              };
+              unitTestFinalStep = {
+                label = "Gradle unit tests";
+                command = "./gradlew :takusu-widget:testDebugUnitTest --stacktrace";
+                success = "✅ Unit tests passed";
+              };
+              makeAndroidApkBuildText = makeAndroidBuildText apkFinalStep;
               androidApkBuildText = makeAndroidApkBuildText takusu-android-libs "arm64-v8a";
               androidApkEmulatorBuildText = makeAndroidApkBuildText takusu-android-libs-emulator "x86_64";
+              androidUnitTestText = makeAndroidBuildText unitTestFinalStep takusu-android-libs "arm64-v8a";
             in
             {
               inherit
@@ -563,6 +579,17 @@
                   export TAKUSU_ANDROID_ABIS=x86_64
                   ${androidApkEmulatorBuildText}
                 '';
+              };
+
+              # Android library unit tests (Robolectric/JUnit4). Run with:
+              #   nix run .#test-android-unit
+              #
+              # Prebuilds Expo, generates UniFFI bindings, and runs
+              # :takusu-widget:testDebugUnitTest.
+              test-android-unit = pkgs.writeShellApplication {
+                name = "test-android-unit";
+                runtimeInputs = androidApkRuntimeInputs;
+                text = androidUnitTestText;
               };
 
               # Android emulator for local development. Creates an AVD on first
