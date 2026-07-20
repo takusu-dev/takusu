@@ -295,6 +295,47 @@ mod tests {
         async fn delete_skill(&self, _: &str) -> Result<(), takusu_storage::StorageError> {
             unimplemented()
         }
+        async fn get_memory(
+            &self,
+            _: &str,
+        ) -> Result<takusu_storage::MemoryRow, takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn create_memory(
+            &self,
+            _: &takusu_storage::CreateMemory,
+            _: Option<&str>,
+        ) -> Result<takusu_storage::MemoryRow, takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn update_memory(
+            &self,
+            _: &str,
+            _: &takusu_storage::UpdateMemory,
+            _: Option<&str>,
+        ) -> Result<takusu_storage::MemoryRow, takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn delete_memory(
+            &self,
+            _: &str,
+            _: i64,
+            _: Option<&str>,
+        ) -> Result<(), takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn search_memories(
+            &self,
+            _: &takusu_storage::MemoryQuery,
+        ) -> Result<Vec<takusu_storage::MemoryRow>, takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn find_similar_tasks(
+            &self,
+            _: &takusu_storage::SimilarTaskQuery,
+        ) -> Result<Vec<takusu_storage::SimilarTaskRow>, takusu_storage::StorageError> {
+            unimplemented()
+        }
     }
 
     #[tokio::test]

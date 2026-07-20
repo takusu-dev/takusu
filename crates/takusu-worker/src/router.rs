@@ -54,7 +54,7 @@ fn build_cors(env: &Env) -> Cors {
             Method::Patch,
             Method::Delete,
         ])
-        .with_allowed_headers(["authorization", "content-type"]);
+        .with_allowed_headers(["authorization", "content-type", "idempotency-key"]);
     if let Ok(allowed) = env.var("TAKUSU_ALLOWED_ORIGIN") {
         let list: Vec<String> = allowed
             .to_string()
@@ -97,6 +97,7 @@ async fn dispatch(req: Request, env: Env) -> Result<Response, crate::error::Work
         (Method::Delete, ["tokens", id]) => handlers::tokens::revoke(req, env, id).await,
         (Method::Get, ["tasks"]) => handlers::tasks::list(req, env).await,
         (Method::Post, ["tasks"]) => handlers::tasks::create(req, env).await,
+        (Method::Get, ["tasks", "similar"]) => handlers::memory::similar_tasks(req, env).await,
         (Method::Get, ["tasks", id]) => handlers::tasks::get(req, env, id).await,
         (Method::Patch, ["tasks", id]) => handlers::tasks::update(req, env, id).await,
         (Method::Put, ["tasks", id]) => handlers::tasks::replace(req, env, id).await,
@@ -136,6 +137,11 @@ async fn dispatch(req: Request, env: Env) -> Result<Response, crate::error::Work
         (Method::Get, ["skills", id]) => handlers::skills::get(req, env, id).await,
         (Method::Patch, ["skills", id]) => handlers::skills::update(req, env, id).await,
         (Method::Delete, ["skills", id]) => handlers::skills::delete(req, env, id).await,
+        (Method::Post, ["memory"]) => handlers::memory::create(req, env).await,
+        (Method::Get, ["memory", "search"]) => handlers::memory::search(req, env).await,
+        (Method::Get, ["memory", id]) => handlers::memory::get(req, env, id).await,
+        (Method::Patch, ["memory", id]) => handlers::memory::update(req, env, id).await,
+        (Method::Delete, ["memory", id]) => handlers::memory::delete(req, env, id).await,
         (Method::Get, ["sync", "settings"]) => handlers::sync::get_settings(req, env).await,
         (Method::Put, ["sync", "settings"]) => handlers::sync::update_settings(req, env).await,
         (Method::Get, ["sync", "mappings"]) => handlers::sync::list_mappings(req, env).await,

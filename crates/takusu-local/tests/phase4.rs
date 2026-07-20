@@ -222,6 +222,39 @@ impl Storage for CountingStorage {
     async fn delete_skill(&self, _id: &str) -> StorageResult<()> {
         Ok(())
     }
+    async fn get_memory(&self, _id: &str) -> StorageResult<takusu_storage::MemoryRow> {
+        Err(StorageError::NotFound("n/a".into()))
+    }
+    async fn create_memory(
+        &self,
+        _b: &takusu_storage::CreateMemory,
+        _op: Option<&str>,
+    ) -> StorageResult<takusu_storage::MemoryRow> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn update_memory(
+        &self,
+        _id: &str,
+        _b: &takusu_storage::UpdateMemory,
+        _op: Option<&str>,
+    ) -> StorageResult<takusu_storage::MemoryRow> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn delete_memory(&self, _id: &str, _rev: i64, _op: Option<&str>) -> StorageResult<()> {
+        Ok(())
+    }
+    async fn search_memories(
+        &self,
+        _q: &takusu_storage::MemoryQuery,
+    ) -> StorageResult<Vec<takusu_storage::MemoryRow>> {
+        Ok(vec![])
+    }
+    async fn find_similar_tasks(
+        &self,
+        _q: &takusu_storage::SimilarTaskQuery,
+    ) -> StorageResult<Vec<takusu_storage::SimilarTaskRow>> {
+        Ok(vec![])
+    }
 }
 
 #[tokio::test]

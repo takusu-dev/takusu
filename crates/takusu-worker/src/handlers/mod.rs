@@ -2,6 +2,7 @@ pub mod auth;
 pub mod d1;
 pub mod habits;
 pub mod health;
+pub mod memory;
 pub mod schedule;
 pub mod settings;
 pub mod skills;

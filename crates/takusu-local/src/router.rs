@@ -18,6 +18,9 @@ pub fn router(state: AppState) -> Router {
             "/tasks/dependency-analysis",
             get(handlers::task::dependency_analysis),
         )
+        // `/tasks/similar` must be declared before `/tasks/{id}` so axum
+        // matches the literal segment instead of treating "similar" as an id.
+        .route("/tasks/similar", get(handlers::memory::find_similar_tasks))
         .route("/tasks/{id}", get(handlers::task::get_task))
         .route("/tasks/{id}", put(handlers::task::replace_task))
         .route("/tasks/{id}", patch(handlers::task::update_task))
@@ -96,6 +99,11 @@ pub fn router(state: AppState) -> Router {
         .route("/skills/{slug}", get(handlers::skills::get_skill))
         .route("/skills/{slug}", patch(handlers::skills::update_skill))
         .route("/skills/{slug}", delete(handlers::skills::delete_skill))
+        .route("/memory", post(handlers::memory::create_memory))
+        .route("/memory/search", get(handlers::memory::search_memory))
+        .route("/memory/{id}", get(handlers::memory::get_memory))
+        .route("/memory/{id}", patch(handlers::memory::update_memory))
+        .route("/memory/{id}", delete(handlers::memory::delete_memory))
         .route("/workers/health", get(handlers::settings::workers_health))
         .layer(middleware::from_fn_with_state(
             state.clone(),

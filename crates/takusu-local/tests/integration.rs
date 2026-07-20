@@ -3297,3 +3297,121 @@ async fn list_tasks_overdue_status_returns_unfinished_past_deadline() {
     assert!(ids.contains(future.as_str()));
     assert!(ids.contains(completed.as_str()));
 }
+
+#[tokio::test]
+async fn memory_crud_and_search() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let create_req = auth_req_body(
+        Method::POST,
+        "/api/memory",
+        json!({
+            "kind": "proper_noun",
+            "key": "研究室",
+            "content": "大学の研究室"
+        }),
+    );
+    let res = app.clone().oneshot(create_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let row: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let id = row["id"].as_str().unwrap().to_owned();
+    assert_eq!(row["key"], "研究室");
+
+    let get_req = auth_req(Method::GET, &format!("/api/memory/{id}"));
+    let res = app.clone().oneshot(get_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let got: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(got["content"], "大学の研究室");
+
+    let update_req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/memory/{id}"),
+        json!({
+            "observed_revision": got["revision"],
+            "content": "大学の研究室（更新）"
+        }),
+    );
+    let res = app.clone().oneshot(update_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let updated: serde_json::Value =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(updated["content"], "大学の研究室（更新）");
+
+    let search_req = auth_req(Method::GET, "/api/memory/search?q=大学&limit=10");
+    let res = app.clone().oneshot(search_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let found: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0]["id"], id);
+
+    let rev = updated["revision"].as_i64().unwrap();
+    let delete_req = auth_req(
+        Method::DELETE,
+        &format!("/api/memory/{id}?observed_revision={rev}"),
+    );
+    let res = app.clone().oneshot(delete_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+    let get_req = auth_req(Method::GET, &format!("/api/memory/{id}"));
+    let res = app.oneshot(get_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn find_similar_tasks_orders_completed_tasks() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    // Create and complete two tasks with distinct titles.
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "数学の演習問題",
+            "end_at": "2026-06-05T18:00:00+09:00",
+            "avg_minutes": 30,
+            "depends": [],
+            "parallelizable": false,
+            "allows_parallel": false,
+            "abandonability": 0.5
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let math_id = body["id"].as_str().unwrap().to_owned();
+
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "読書",
+            "end_at": "2026-06-05T18:00:00+09:00",
+            "avg_minutes": 30,
+            "depends": [],
+            "parallelizable": false,
+            "allows_parallel": false,
+            "abandonability": 0.5
+        }),
+    );
+    let _res = app.clone().oneshot(create).await.unwrap();
+
+    // Complete the math task.
+    let patch = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{math_id}"),
+        json!({ "status": "completed" }),
+    );
+    let res = app.clone().oneshot(patch).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let req = auth_req(Method::GET, "/api/tasks/similar?q=数学&limit=5");
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let similar: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(!similar.is_empty());
+    assert_eq!(similar[0]["title"], "数学の演習問題");
+    assert!(similar[0]["similarity"].as_str().is_some());
+}

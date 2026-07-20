@@ -7,14 +7,15 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get};
+use axum::routing::{delete, get, post};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 use takusu_local_lib::storage_workers::WorkersStorage;
 use takusu_storage::{
-    CreateHabit, CreateHabitScheduledSpan, CreateTask, HabitRow, HabitScheduledSpanRow, Storage,
-    TaskQuery, TaskRow, TokenCreateResponse, TokenRow, UpdateHabit, UpdateTask,
+    CreateHabit, CreateHabitScheduledSpan, CreateMemory, CreateTask, HabitRow,
+    HabitScheduledSpanRow, MemoryQuery, MemoryRow, SimilarTaskQuery, SimilarTaskRow, Storage,
+    TaskQuery, TaskRow, TokenCreateResponse, TokenRow, UpdateHabit, UpdateMemory, UpdateTask,
 };
 use tokio::net::TcpListener;
 
@@ -47,6 +48,9 @@ async fn setup_mock_db() -> SqlitePool {
         include_str!("../../takusu-local-lib/migrations/011_habit_steps.sql"),
         include_str!("../../takusu-local-lib/migrations/012_window_mode.sql"),
         include_str!("../../takusu-local-lib/migrations/013_habit_task_display_id.sql"),
+        include_str!("../../takusu-local-lib/migrations/014_workload.sql"),
+        include_str!("../../takusu-local-lib/migrations/015_skills.sql"),
+        include_str!("../../takusu-local-lib/migrations/016_memory.sql"),
     ];
     for s in sqls {
         sqlx::raw_sql(*s).execute(&pool).await.unwrap();
@@ -86,6 +90,13 @@ fn mock_router(state: MockState) -> Router {
         )
         .route("/api/tokens", get(list_tokens).post(create_token))
         .route("/api/tokens/{id}", delete(revoke_token))
+        .route("/api/memory", post(create_memory))
+        .route("/api/memory/search", get(list_memories))
+        .route(
+            "/api/memory/{id}",
+            get(get_memory).patch(update_memory).delete(delete_memory),
+        )
+        .route("/api/tasks/similar", get(similar_tasks))
         .with_state(state)
 }
 
@@ -743,4 +754,193 @@ async fn workers_storage_e2e() {
     storage.revoke_token(resp.id).await.unwrap();
     let tokens_after = storage.list_tokens().await.unwrap();
     assert!(tokens_after[0].revoked_at.is_some());
+}
+
+// ── Memory handlers (mock worker) ──
+
+async fn create_memory(
+    State(state): State<MockState>,
+    Json(body): Json<CreateMemory>,
+) -> Result<(StatusCode, Json<MemoryRow>), StatusCode> {
+    let id = uuid::Uuid::now_v7().to_string();
+    let subject_type = body.subject_type.clone().unwrap_or_default();
+    let subject_id = body.subject_id.clone().unwrap_or_default();
+    let normalized_key = body.key.clone();
+    let normalized_content = body.content.clone();
+    sqlx::query(
+        "INSERT INTO memories (id, kind, key, normalized_key, content, normalized_content, subject_type, subject_id, source, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'user_confirmed', 1)"
+    )
+    .bind(&id)
+    .bind(&body.kind)
+    .bind(&body.key)
+    .bind(&normalized_key)
+    .bind(&body.content)
+    .bind(&normalized_content)
+    .bind(&subject_type)
+    .bind(&subject_id)
+    .execute(&state.pool)
+    .await
+    .map_err(|_| StatusCode::CONFLICT)?;
+
+    let row: MemoryRow = sqlx::query_as::<_, MemoryRow>(
+        "SELECT id, kind, key, normalized_key, content, normalized_content, subject_type, subject_id, source, revision, created_at, updated_at, last_used_at FROM memories WHERE id = ?",
+    )
+    .bind(&id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok((StatusCode::CREATED, Json(row)))
+}
+
+async fn get_memory(
+    State(state): State<MockState>,
+    Path(id): Path<String>,
+) -> Result<Json<MemoryRow>, StatusCode> {
+    let row: Option<MemoryRow> = sqlx::query_as::<_, MemoryRow>(
+        "SELECT id, kind, key, normalized_key, content, normalized_content, subject_type, subject_id, source, revision, created_at, updated_at, last_used_at FROM memories WHERE id = ?",
+    )
+    .bind(&id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    row.map(Json).ok_or(StatusCode::NOT_FOUND)
+}
+
+async fn update_memory(
+    State(state): State<MockState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateMemory>,
+) -> Result<Json<MemoryRow>, StatusCode> {
+    let content = body.content.as_deref().unwrap_or_default();
+    let normalized_content = content.to_string();
+    let row: Option<MemoryRow> = sqlx::query_as::<_, MemoryRow>(
+        "UPDATE memories SET content = ?, normalized_content = ?, revision = revision + 1, updated_at = datetime('now') WHERE id = ? AND revision = ? RETURNING id, kind, key, normalized_key, content, normalized_content, subject_type, subject_id, source, revision, created_at, updated_at, last_used_at",
+    )
+    .bind(content)
+    .bind(&normalized_content)
+    .bind(&id)
+    .bind(body.observed_revision)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    row.map(Json).ok_or(StatusCode::CONFLICT)
+}
+
+async fn delete_memory(
+    State(state): State<MockState>,
+    Path(id): Path<String>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> StatusCode {
+    let observed = params
+        .get("observed_revision")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
+    let result = sqlx::query("DELETE FROM memories WHERE id = ? AND revision = ?")
+        .bind(&id)
+        .bind(observed)
+        .execute(&state.pool)
+        .await;
+    match result {
+        Ok(r) if r.rows_affected() > 0 => StatusCode::NO_CONTENT,
+        _ => StatusCode::NOT_FOUND,
+    }
+}
+
+async fn list_memories(
+    State(state): State<MockState>,
+    axum::extract::Query(q): axum::extract::Query<MemoryQuery>,
+) -> Json<Vec<MemoryRow>> {
+    let pattern = format!("%{}%", q.q);
+    let mut sql = String::from(
+        "SELECT id, kind, key, normalized_key, content, normalized_content, subject_type, subject_id, source, revision, created_at, updated_at, last_used_at FROM memories WHERE (normalized_key LIKE ? OR normalized_content LIKE ?)",
+    );
+    let mut binds: Vec<String> = vec![pattern.clone(), pattern];
+    if let Some(ref kind) = q.kind {
+        sql.push_str(" AND kind = ?");
+        binds.push(kind.clone());
+    }
+    if let Some(ref st) = q.subject_type {
+        sql.push_str(" AND subject_type = ?");
+        binds.push(st.clone());
+    }
+    if let Some(ref sid) = q.subject_id {
+        sql.push_str(" AND subject_id = ?");
+        binds.push(sid.clone());
+    }
+    sql.push_str(" ORDER BY updated_at DESC");
+    let limit = q.limit.unwrap_or(10).clamp(1, 50) as usize;
+    sql.push_str(&format!(" LIMIT {limit}"));
+
+    let mut query = sqlx::query_as::<_, MemoryRow>(sqlx::AssertSqlSafe(sql.as_str()));
+    for b in binds {
+        query = query.bind(b);
+    }
+    let rows = query.fetch_all(&state.pool).await.unwrap_or_default();
+    Json(rows)
+}
+
+async fn similar_tasks(
+    State(state): State<MockState>,
+    axum::extract::Query(q): axum::extract::Query<SimilarTaskQuery>,
+) -> Json<Vec<SimilarTaskRow>> {
+    let limit = q.limit.unwrap_or(10).clamp(1, 50);
+    let rows: Vec<SimilarTaskRow> = sqlx::query_as::<_, SimilarTaskRow>(
+        "SELECT id AS task_id, display_id, title, avg_minutes, sigma_minutes, NULL AS actual_minutes, NULL AS completed_at, updated_at, 'title_overlap' AS similarity FROM tasks WHERE status = 'completed' ORDER BY updated_at DESC LIMIT ?"
+    )
+    .bind(limit)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    Json(rows)
+}
+
+#[tokio::test]
+async fn workers_storage_memory_e2e() {
+    let base_url = spawn_mock_worker().await;
+    let storage = WorkersStorage::new_with(base_url, ROOT_TOKEN.to_string());
+
+    let create = CreateMemory {
+        kind: "proper_noun".into(),
+        key: "研究室".into(),
+        content: "大学の研究室".into(),
+        subject_type: None,
+        subject_id: None,
+        upsert: false,
+    };
+    let row = storage.create_memory(&create, None).await.unwrap();
+    let id = row.id.clone();
+    assert_eq!(row.key, "研究室");
+
+    let fetched = storage.get_memory(&id).await.unwrap();
+    assert_eq!(fetched.id, id);
+
+    let update = UpdateMemory {
+        observed_revision: row.revision,
+        content: Some("大学の研究室（更新）".into()),
+    };
+    let updated = storage.update_memory(&id, &update, None).await.unwrap();
+    assert_eq!(updated.content, "大学の研究室（更新）");
+
+    let found = storage
+        .search_memories(&MemoryQuery {
+            q: "研究室".into(),
+            kind: None,
+            subject_type: None,
+            subject_id: None,
+            limit: Some(10),
+        })
+        .await
+        .unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].id, id);
+
+    storage
+        .delete_memory(&id, updated.revision, None)
+        .await
+        .unwrap();
+    let after = storage.get_memory(&id).await;
+    assert!(matches!(
+        after,
+        Err(takusu_storage::StorageError::NotFound(_))
+    ));
 }

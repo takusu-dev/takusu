@@ -20,3 +20,4 @@ wasm-bindgen = "0.2"
 log = "0.4"
 wasm-logger = "0.2"
 console_error_panic_hook = "0.1"
+takusu-util.workspace = true

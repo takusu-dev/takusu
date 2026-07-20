@@ -22,9 +22,10 @@ use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use takusu_client::{
-    ClientError, CreateHabit, CreateSkill, CreateTask, SaveScheduleRequest, ScheduleEntry,
-    UpdateHabit, UpdateSkill, UpdateTask,
+    ClientError, CreateHabit, CreateMemory, CreateSkill, CreateTask, SaveScheduleRequest,
+    ScheduleEntry, UpdateHabit, UpdateMemory, UpdateSkill, UpdateTask,
 };
+use tools::memory::client_error;
 use uuid::Uuid;
 
 use jiff::Unit;
@@ -144,6 +145,10 @@ pub struct TurnResult {
     pub approval_request: Option<ApprovalRequest>,
 }
 
+fn new_session_id() -> String {
+    uuid::Uuid::now_v7().to_string()
+}
+
 /// Events emitted while a streaming turn is in progress.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", content = "data")]
@@ -183,6 +188,7 @@ pub struct AgentSession {
     /// Estimated tokens of the last built system prompt, used for consistent history trimming.
     last_system_estimate: Mutex<Option<usize>>,
     pending_approval: Mutex<Option<ApprovalRequest>>,
+    session_id: String,
     approval_sequence: Mutex<u64>,
     schedule_dirty: Mutex<bool>,
     bundled_skills_synced: std::sync::atomic::AtomicBool,
@@ -237,6 +243,7 @@ impl AgentSession {
             last_prompt_tokens: Mutex::new(None),
             last_system_estimate: Mutex::new(None),
             pending_approval: Mutex::new(None),
+            session_id: new_session_id(),
             approval_sequence: Mutex::new(0),
             schedule_dirty: Mutex::new(false),
             bundled_skills_synced: std::sync::atomic::AtomicBool::new(false),
@@ -463,7 +470,7 @@ impl AgentSession {
         let mut sequence = self.approval_sequence.lock().unwrap();
         *sequence += 1;
         let request = ApprovalRequest {
-            id: format!("approval-{}", *sequence),
+            id: format!("{}-approval-{}", self.session_id, *sequence),
             why: why.unwrap_or_else(|| "ユーザーの承認が必要な変更です".to_owned()),
             changes,
             inferred_fields,
@@ -628,9 +635,13 @@ impl AgentSession {
         let mut receipts = Vec::new();
         let mut schedule_dirty = *self.schedule_dirty.lock().unwrap();
         let mut execution_error = None;
-        for change in request.changes {
+        for (idx, change) in request.changes.into_iter().enumerate() {
             let args = change.arguments.clone().unwrap_or_default();
-            match self.execute_proposed_change(&change, args).await {
+            let operation_id = format!("{}:{idx}", request.id);
+            match self
+                .execute_proposed_change(&change, args, Some(&operation_id))
+                .await
+            {
                 Ok(receipt) => {
                     schedule_dirty |= matches!(
                         change.target_label.split_whitespace().next(),
@@ -673,85 +684,77 @@ impl AgentSession {
         &self,
         change: &ProposedChange,
         args: Value,
+        operation_id: Option<&str>,
     ) -> Result<ChangeReceipt, AgentError> {
         let args = args.as_object().cloned().unwrap_or_default();
         let target = args
             .get("task_ref")
             .or_else(|| args.get("habit_ref"))
+            .or_else(|| args.get("memory_ref"))
             .or_else(|| args.get("slug"))
             .and_then(Value::as_str)
             .unwrap_or("schedule")
             .to_owned();
-        let target_id =
+        let (target_id, current_updated_at) =
             if change.operation == "create" || change.target_label.starts_with("schedule") {
-                String::new()
+                (String::new(), None)
             } else if change.target_label.starts_with("task") {
-                self.client
+                let task = self
+                    .client
                     .get_task(&target)
                     .await
-                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
-                    .id
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?;
+                (task.id, Some(task.updated_at))
             } else if change.target_label.starts_with("habit") {
-                self.client
+                let habit = self
+                    .client
                     .get_habit(&target)
                     .await
-                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
-                    .habit
-                    .id
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?;
+                (habit.habit.id, Some(habit.habit.updated_at))
             } else if change.target_label.starts_with("skill") {
-                self.client
+                let skill = self
+                    .client
                     .get_skill(&target)
                     .await
-                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
-                    .slug
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?;
+                (skill.slug, Some(skill.updated_at))
+            } else if change.target_label.starts_with("memory") {
+                let memory = self
+                    .client
+                    .get_memory(&target)
+                    .await
+                    .map_err(|e| AgentError::Tool(client_error(e)))?;
+                (memory.id, Some(memory.updated_at))
             } else {
-                target.clone()
+                (target.clone(), None)
             };
-        if let Some(observed) = &change.observed_updated_at {
-            let current = if change.target_label.starts_with("task") {
-                self.client
-                    .get_task(&target)
-                    .await
-                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
-                    .updated_at
-            } else if change.target_label.starts_with("habit") {
-                self.client
-                    .get_habit(&target)
-                    .await
-                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
-                    .habit
-                    .updated_at
-            } else if change.target_label.starts_with("skill") {
-                self.client
-                    .get_skill(&target)
-                    .await
-                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
-                    .updated_at
-            } else {
-                String::new()
-            };
-            if &current != observed {
-                return Err(AgentError::Tool(ToolError::Conflict(
-                    "target changed after proposal".into(),
-                )));
-            }
+        if let Some(observed) = &change.observed_updated_at
+            && current_updated_at.as_ref() != Some(observed)
+        {
+            return Err(AgentError::Tool(ToolError::Conflict(
+                "target changed after proposal".into(),
+            )));
         }
-        let result = match (
+        let (result, before, after, target_revision) = match (
             change.target_label.split_whitespace().next(),
             change.operation.as_str(),
         ) {
             (Some("task"), "create") => {
-                self.client
+                let id = self
+                    .client
                     .create_task(
                         &serde_json::from_value::<CreateTask>(Value::Object(args))
                             .map_err(|e| AgentError::Tool(ToolError::InvalidArgs(e.to_string())))?,
                     )
                     .await
                     .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
-                    .id
+                    .id;
+                (id, None, None, None)
             }
             (Some("task"), "update") => {
-                self.client
+                let id = self
+                    .client
                     .update_task(
                         &target_id,
                         &serde_json::from_value::<UpdateTask>(Value::Object(args))
@@ -759,27 +762,31 @@ impl AgentSession {
                     )
                     .await
                     .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
-                    .id
+                    .id;
+                (id, None, None, None)
             }
             (Some("task"), "delete") => {
                 self.client
                     .delete_task(&target_id)
                     .await
                     .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?;
-                target_id.clone()
+                (target_id.clone(), None, None, None)
             }
             (Some("habit"), "create") => {
-                self.client
+                let id = self
+                    .client
                     .create_habit(
                         &serde_json::from_value::<CreateHabit>(Value::Object(args))
                             .map_err(|e| AgentError::Tool(ToolError::InvalidArgs(e.to_string())))?,
                     )
                     .await
                     .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
-                    .id
+                    .id;
+                (id, None, None, None)
             }
             (Some("habit"), "update") => {
-                self.client
+                let id = self
+                    .client
                     .update_habit(
                         &target_id,
                         &serde_json::from_value::<UpdateHabit>(Value::Object(args))
@@ -787,27 +794,31 @@ impl AgentSession {
                     )
                     .await
                     .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
-                    .id
+                    .id;
+                (id, None, None, None)
             }
             (Some("habit"), "delete") => {
                 self.client
                     .delete_habit(&target_id)
                     .await
                     .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?;
-                target_id.clone()
+                (target_id.clone(), None, None, None)
             }
             (Some("skill"), "create") => {
-                self.client
+                let slug = self
+                    .client
                     .create_skill(
                         &serde_json::from_value::<CreateSkill>(Value::Object(args))
                             .map_err(|e| AgentError::Tool(ToolError::InvalidArgs(e.to_string())))?,
                     )
                     .await
                     .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
-                    .slug
+                    .slug;
+                (slug, None, None, None)
             }
             (Some("skill"), "update") => {
-                self.client
+                let slug = self
+                    .client
                     .update_skill(
                         &target_id,
                         &serde_json::from_value::<UpdateSkill>(Value::Object(args))
@@ -815,7 +826,67 @@ impl AgentSession {
                     )
                     .await
                     .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
-                    .slug
+                    .slug;
+                (slug, None, None, None)
+            }
+            (Some("memory"), "create") => {
+                let row = self
+                    .client
+                    .create_memory(
+                        &serde_json::from_value::<CreateMemory>(Value::Object(args))
+                            .map_err(|e| AgentError::Tool(ToolError::InvalidArgs(e.to_string())))?,
+                        operation_id,
+                    )
+                    .await
+                    .map_err(|e| AgentError::Tool(client_error(e)))?;
+                let after = serde_json::to_value(&row)
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?;
+                (row.id, None, Some(after), Some(row.revision))
+            }
+            (Some("memory"), "update") => {
+                let observed_revision = args
+                    .get("observed_revision")
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| {
+                        AgentError::Tool(ToolError::InvalidArgs("missing observed_revision".into()))
+                    })?;
+                let content = args
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .map(|s| s.to_owned());
+                let row = self
+                    .client
+                    .update_memory(
+                        &target_id,
+                        &UpdateMemory {
+                            observed_revision,
+                            content,
+                        },
+                        operation_id,
+                    )
+                    .await
+                    .map_err(|e| AgentError::Tool(client_error(e)))?;
+                let after = serde_json::to_value(&row)
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?;
+                (
+                    row.id,
+                    change.before.clone(),
+                    Some(after),
+                    Some(row.revision),
+                )
+            }
+            (Some("memory"), "delete") => {
+                let observed_revision = args
+                    .get("observed_revision")
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| {
+                        AgentError::Tool(ToolError::InvalidArgs("missing observed_revision".into()))
+                    })?;
+                self.client
+                    .delete_memory(&target_id, observed_revision, operation_id)
+                    .await
+                    .map_err(|e| AgentError::Tool(client_error(e)))?;
+                (target_id.clone(), change.before.clone(), None, None)
             }
             (_, "generate") | (_, "reschedule") => {
                 let entries = args.get("_preview_entries").cloned().ok_or_else(|| {
@@ -835,11 +906,13 @@ impl AgentSession {
                         })
                         .unwrap_or_default(),
                 };
-                self.client
+                let id = self
+                    .client
                     .replace_schedule(&request)
                     .await
                     .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?
-                    .id
+                    .id;
+                (id, None, None, None)
             }
             _ => {
                 return Err(AgentError::Tool(ToolError::InvalidArgs(
@@ -859,6 +932,9 @@ impl AgentSession {
                 .unwrap_or("schedule")
                 .to_owned(),
             target_id: result,
+            before,
+            after,
+            target_revision,
             ..Default::default()
         })
     }
@@ -876,10 +952,6 @@ impl AgentSession {
         let tz_name = now.time_zone().iana_name().unwrap_or("unknown");
         let skills = self.build_skills_index().await;
 
-        // TODO: 以下の指示は `similar_tasks`（memory-based estimation）と `memory_save`
-        //       （memory tools）が実装されたら system prompt に復活させる。
-        //       - 推定値が明示されていない場合は `create_task` を呼ぶ前に `similar_tasks` を呼んで見積もりを調整してください。
-        //       - ユーザーの入力に含まれる不明な固有名詞は `memory_save` で保存してください。
         let prompt = format!(
             r####"## 役割
             あなたは takusu（タクス）の音声アシスタントです。
@@ -908,6 +980,8 @@ impl AgentSession {
             - get_settings: タイムゾーン・就寝・勤務時間設定を取得
             - skills_list: スキル一覧を取得
             - skills_read: 指定したスキルの詳細を取得
+            - memory_search: 保存された記憶を検索
+            - similar_tasks: タイトルに似た完了タスクを探して見積もりの参考にする
 
             ### 確認
             - correct_asr: 音声認識（ASR）の誤認識をユーザーに確認して訂正する。
@@ -929,24 +1003,28 @@ impl AgentSession {
             - preview_schedule: スケジュール変更の影響を試算
             - skills_propose_add: 新しいスキル作成の提案を生成
             - skills_propose_edit: 既存のスキル更新の提案を生成
+            - memory_save: 固有名詞・事実・タスク備考を保存する提案を生成
+            - memory_update: 既存の記憶を更新する提案を生成
+            - memory_delete: 既存の記憶を削除する提案を生成
 
             ## Proposal / 承認フロー（最重要）
-            - `create_task` / `update_task` / `delete_task` / `create_habit` / `update_habit` / `delete_habit` / `generate_schedule` / `reschedule` / `skills_propose_add` / `skills_propose_edit` を呼ぶと、システムは自動的に承認要求（Proposal）を生成します。
+            - `create_task` / `update_task` / `delete_task` / `create_habit` / `update_habit` / `delete_habit` / `generate_schedule` / `reschedule` / `skills_propose_add` / `skills_propose_edit` / `memory_save` / `memory_update` / `memory_delete` を呼ぶと、システムは自動的に承認要求（Proposal）を生成します。
             - これらのツールを呼ぶこと自体が「変更を提案する」行為です。ツールを呼ぶ前に「～してもよいですか？」と口頭でユーザーに確認を挟まないでください。
             - 情報が揃っていれば躊躇せずツールを呼び出し、最後に変更内容とその理由を提示してください。ユーザーは Proposal を承認または否認できます。否認なら何も書き換わりません。
 
             ## 行動指針
             1. 調査してから行動してください。タスク・習慣・スケジュールの変更を提案する前は、必ず関連する情報を取得してください。
             2. スケジュールに影響を与える変更を提案する前は、原則として `preview_schedule` を使って影響を確認してください。
-            3. タスクや習慣を作成・更新する場合、必須情報が不足していればユーザーに確認してください。ただし「明日」「3時間」など明確な言及は推定して構いません。
-            4. タスク・習慣を参照・作成・更新する際は、`display_id`（`#42` や `h1#3` など）を使用してください。UUID や内部 ID は使わないでください。
-            5. 不明な固有名詞やユーザー固有の情報は、推測せずに確認するか、既存のタスク・習慣を検索して一致するものを探してください。
-            6. ツールの結果に基づいて応答してください。データがない場合は正直に「データがありません」と伝えてください。
-            7. ユーザーの入力は音声認識（ASR）の結果の場合があります。まず自分がどう解釈したかを提示し、文脈から明らかな誤りは推測で修正してください。不自然で不確実な単語や文脈があれば、`correct_asr` を使って確認または修整を促してください。
-            8. ユーザーから明確な指示を受けた場合や必要な情報が揃っている場合は、『提案してもよいですか』のような中間確認を挟まず、承認フローが自動的に確認するのでそのまま変更ツールを呼び出してください。音声対話では余分なターンを避えてください。
-            9. ツールの存在を忘れないでください。応答前に、必要な情報を取得するためのツールがないか簡潔に確認し、適切なツールを順番に呼び出してください。
-            10. 複雑なタスクでは、推論のステップを簡潔に整理してから行動してください。
-            11. `inferred_fields` には、明らかな単位換算（例：「1時間」→ 60 分）や現在日時から補完した値は含めないでください。不自然な推定やユーザーにとって分かりにくい推論だけを記載してください。
+            3. タスクや習慣を作成・更新する場合、必須情報が不足していればユーザーに確認してください。ただし「明日」「3時間」など明確な言及は推定して構いません。推定値が明示されていない場合は `create_task` を呼ぶ前に `similar_tasks` を呼んで見積もりを調整してください。
+            4. ユーザーの入力に含まれる不明な固有名詞やユーザー固有の情報は、推測せず `memory_save` で保存するか、既存の `memory_search` で確認してください。
+            5. タスク・習慣を参照・作成・更新する際は、`display_id`（`#42` や `h1#3` など）を使用してください。UUID や内部 ID は使わないでください。
+            6. 不明な固有名詞やユーザー固有の情報は、推測せずに確認するか、既存のタスク・習慣を検索して一致するものを探してください。
+            7. ツールの結果に基づいて応答してください。データがない場合は正直に「データがありません」と伝えてください。
+            8. ユーザーの入力は音声認識（ASR）の結果の場合があります。まず自分がどう解釈したかを提示し、文脈から明らかな誤りは推測で修正してください。不自然で不確実な単語や文脈があれば、`correct_asr` を使って確認または修整を促してください。
+            9. ユーザーから明確な指示を受けた場合や必要な情報が揃っている場合は、『提案してもよいですか』のような中間確認を挟まず、承認フローが自動的に確認するのでそのまま変更ツールを呼び出してください。音声対話では余分なターンを避えてください。
+            10. ツールの存在を忘れないでください。応答前に、必要な情報を取得するためのツールがないか簡潔に確認し、適切なツールを順番に呼び出してください。
+            11. 複雑なタスクでは、推論のステップを簡潔に整理してから行動してください。
+            12. `inferred_fields` には、明らかな単位換算（例：「1時間」→ 60 分）や現在日時から補完した値は含めないでください。不自然な推定やユーザーにとって分かりにくい推論だけを記載してください。
 
             ## 応答のルール
             - 日本語で応答すること。
@@ -1575,7 +1653,7 @@ mod tests {
             responses: Mutex::new(mock_responses),
         };
         let mut cfg = AgentConfig::default();
-        cfg.llm.max_context_tokens = 1024;
+        cfg.llm.max_context_tokens = 1300;
         let agent = AgentSession::new(cfg, registry, mock);
         for i in 0..100 {
             let _ = agent.run_turn(&format!("turn {i}")).await.unwrap();
@@ -1620,7 +1698,7 @@ mod tests {
             responses: Mutex::new(responses),
         };
         let mut cfg = AgentConfig::default();
-        cfg.llm.max_context_tokens = 1024;
+        cfg.llm.max_context_tokens = 1300;
         let agent = AgentSession::new(cfg, registry, mock);
 
         for i in 0..5 {
