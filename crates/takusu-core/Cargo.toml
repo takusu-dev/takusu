@@ -30,6 +30,10 @@ harness = false
 name = "quality"
 required-features = ["quality-benchmark"]
 
+[[example]]
+name = "compare_solvers"
+required-features = ["quality-benchmark"]
+
 [features]
 default = ["jemalloc"]
 jemalloc = ["dep:tikv-jemallocator"]

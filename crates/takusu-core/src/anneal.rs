@@ -45,6 +45,9 @@ use rand::{Rng, RngExt};
 use rustc_hash::FxHashSet;
 
 use super::*;
+#[cfg(feature = "quality-benchmark")]
+use crate::decoder::{DecodeInput, RepairMode, decode};
+use crate::placement::{Placement, compute_earliest, try_place};
 #[cfg(test)]
 use evaluate::evaluate;
 use evaluate::evaluate_with_scratch;
@@ -121,131 +124,27 @@ fn topological_order(planner: &Planner, active: &FxHashSet<usize>) -> Vec<usize>
     result
 }
 
-fn compute_earliest(planner: &Planner, schedules: &[(Point, Point, usize)], task: &Task) -> Point {
-    // 固定タスクは start があれば now 以前の配置も許可する (学校など)。
-    // start がない固定タスクは通常タスクと同様に now から配置する。
-    let mut earliest = if task.fixed && task.start.is_some() {
-        Point(i64::MIN)
-    } else {
-        planner.now
-    };
-    if let Some(start) = task.start {
-        earliest = earliest.max(start);
-    }
-    for dep_id in &task.depends {
-        if let Some((_, dep_end, _)) = schedules.iter().find(|(_, _, id)| id == dep_id) {
-            earliest = earliest.max(*dep_end);
-        }
-    }
-    earliest
-}
-
-/// `[start, end)` と重なる睡眠窓があれば、その窓の終端スロットを返す。
-fn sleep_window_conflict(planner: &Planner, start: i64, end: i64) -> Option<i64> {
-    let sleep = &planner.sleep;
-    if !sleep.enabled {
-        return None;
-    }
-    let slots_per_day: i64 = (24 * 60) / planner.per as i64;
-    let mut day = sleep.day_start
-        + (start - sleep.day_start).div_euclid(slots_per_day) * slots_per_day
-        - slots_per_day;
-    while day + sleep.start < end {
-        let w_start = day + sleep.start;
-        let w_end = day + sleep.end;
-        if w_start < end && w_end > start {
-            return Some(w_end);
-        }
-        day += slots_per_day;
-    }
-    None
-}
-
-fn try_place(
-    planner: &Planner,
-    schedules: &[(Point, Point, usize)],
-    task: &Task,
-    earliest: Point,
-    dur: i64,
-) -> Option<(Point, Point)> {
-    if dur <= 0 {
-        return None;
-    }
-    let awake_len = if planner.sleep.enabled {
-        (24 * 60) / planner.per as i64 - (planner.sleep.end - planner.sleep.start)
-    } else {
-        i64::MAX
-    };
-    let avoid_sleep = dur <= awake_len;
-    let mut cursor = earliest;
-    let mut guard = 0u32;
-
-    loop {
-        guard += 1;
-        if guard > 10_000 {
-            break;
-        }
-        let candidate_end = Point(cursor.0 + dur);
-
-        if avoid_sleep
-            && let Some(w_end) = sleep_window_conflict(planner, cursor.0, candidate_end.0)
-        {
-            cursor = Point(w_end);
-            continue;
-        }
-
-        let overlapping: Vec<_> = schedules
-            .iter()
-            .filter(|(s, e, _)| s.0 < candidate_end.0 && e.0 > cursor.0)
-            .collect();
-
-        if overlapping.is_empty() {
-            return Some((cursor, candidate_end));
-        }
-
-        let can_parallel = task.parallelizable;
-        let can_host = task.allows_parallel;
-
-        if can_parallel {
-            let all_hosting = overlapping
-                .iter()
-                .all(|(_, _, oid)| planner.tasks[*oid].allows_parallel);
-            if all_hosting {
-                return Some((cursor, candidate_end));
-            }
-        }
-
-        if can_host {
-            let all_guesting = overlapping
-                .iter()
-                .all(|(_, _, oid)| planner.tasks[*oid].parallelizable);
-            if all_guesting {
-                return Some((cursor, candidate_end));
-            }
-        }
-
-        let next_start = overlapping
-            .iter()
-            .map(|(_, e, _)| e.0)
-            .max()
-            .unwrap_or(cursor.0);
-        if next_start <= cursor.0 {
-            break;
-        }
-        cursor = Point(next_start);
-    }
-
-    None
-}
-
 /// 貪欲法で初期解を構築。
 ///
 /// 方針: 切迫したタスク (freeness 低い) から順に、依存を満たす最も早い位置に配置。
-/// 挿入できない場合は末尾に fallback 配置。
+/// SA 初期解構築用の fallback 配置。
 ///
-/// これは単なるヒューリスティック: 必ずしも実行可能解とは限らない
-/// (依存サイクルや容量超過で配置できないケースがある)。
-/// SA がその後、評価関数の勾配に従って改善する。
+/// 末尾に配置し、必ず earliest / now を尊重する。容量チェックは行わない。
+/// SA はその後、評価関数の勾配に従って改善する。
+fn push_fallback(
+    planner: &Planner,
+    schedules: &mut Vec<Placement>,
+    earliest: Point,
+    dur: i64,
+    task_id: usize,
+    last_end: Point,
+) -> Point {
+    let start = last_end.max(planner.now).max(earliest);
+    let end = Point(start.0 + dur);
+    schedules.push((start, end, task_id));
+    end
+}
+
 fn build_initial(planner: &Planner) -> Plan {
     let all: FxHashSet<usize> = planner.tasks.iter().map(|t| t.id).collect();
     let order = topological_order(planner, &all);
@@ -258,7 +157,7 @@ fn build_initial(planner: &Planner) -> Plan {
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    let mut schedules: Vec<(Point, Point, usize)> = Vec::new();
+    let mut schedules: Vec<Placement> = Vec::new();
     let mut last_end = planner.now;
 
     // 固定タスクを先に配置して、通常タスクの try_place が重複を避けられるようにする
@@ -285,18 +184,570 @@ fn build_initial(planner: &Planner) -> Plan {
         }
 
         let earliest = compute_earliest(planner, &schedules, task);
-        if let Some((start, end)) = try_place(planner, &schedules, task, earliest, dur) {
+        if let Ok((start, end)) = try_place::<false>(planner, &schedules, task, earliest, dur, None)
+        {
             schedules.push((start, end, task_id));
             last_end = last_end.max(end);
         } else {
-            let fallback_start = last_end.max(planner.now);
-            let fallback_end = Point(fallback_start.0 + dur);
-            schedules.push((fallback_start, fallback_end, task_id));
-            last_end = fallback_end;
+            last_end = push_fallback(planner, &mut schedules, earliest, dur, task_id, last_end);
         }
     }
 
     Plan { schedules }
+}
+
+#[cfg(all(test, feature = "quality-benchmark"))]
+pub(crate) fn priority_order_search(planner: &Planner, rng: &mut impl Rng) -> Plan {
+    let mut priority: Vec<_> = planner.tasks.iter().map(|task| task.id).collect();
+    priority.sort_by(|a, b| planner.freeness(*a).total_cmp(&planner.freeness(*b)));
+
+    let mut sorted = Vec::with_capacity(planner.tasks.len());
+    let mut index = Vec::with_capacity(planner.tasks.len());
+    let mut habit_entries = Vec::with_capacity(planner.tasks.len());
+    let mut current = decode(
+        planner,
+        DecodeInput {
+            priority: &priority,
+            duration_choices: &[],
+            pinned: &[],
+            repair_mode: RepairMode::Earliest,
+        },
+    )
+    .plan;
+    let mut current_score = evaluate_with_scratch(
+        planner,
+        &current,
+        0.0,
+        1.0,
+        &mut sorted,
+        &mut index,
+        &mut habit_entries,
+    );
+    let mut best = current.clone();
+    let mut best_score = current_score;
+    let movable: Vec<_> = priority
+        .iter()
+        .enumerate()
+        .filter(|(_, id)| !planner.tasks[**id].fixed)
+        .map(|(position, _)| position)
+        .collect();
+    if movable.len() < 2 {
+        return best;
+    }
+
+    let iterations = planner.tasks.len().max(1) * 100;
+    let initial_temperature = planner.tasks.len().max(1) as f64;
+    for iteration in 0..iterations {
+        let a_index = rng.random_range(0..movable.len());
+        let mut b_index = rng.random_range(0..movable.len());
+        if a_index == b_index {
+            b_index = (b_index + 1) % movable.len();
+        }
+        let a = movable[a_index];
+        let b = movable[b_index];
+        priority.swap(a, b);
+        let candidate = decode(
+            planner,
+            DecodeInput {
+                priority: &priority,
+                duration_choices: &[],
+                pinned: &[],
+                repair_mode: RepairMode::Earliest,
+            },
+        )
+        .plan;
+        let candidate_score = evaluate_with_scratch(
+            planner,
+            &candidate,
+            0.0,
+            1.0,
+            &mut sorted,
+            &mut index,
+            &mut habit_entries,
+        );
+        let temperature = initial_temperature * (1.0 - iteration as f64 / iterations as f64);
+        let delta = candidate_score - current_score;
+        if delta > 0.0 || rng.random::<f64>() < (delta / temperature.max(0.01)).exp() {
+            current = candidate;
+            current_score = candidate_score;
+            if current_score > best_score {
+                best = current.clone();
+                best_score = current_score;
+            }
+        } else {
+            priority.swap(a, b);
+        }
+    }
+
+    best
+}
+
+// ── ALNS (Adaptive Large Neighborhood Search) for priority decoder ─────────
+
+#[cfg(feature = "quality-benchmark")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DestroyOperator {
+    Random,
+    Worst,
+    Related,
+}
+
+#[cfg(feature = "quality-benchmark")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum RepairOperator {
+    Earliest,
+    Deadline,
+    Regret2,
+    LowestDelta,
+    Random,
+}
+
+#[cfg(feature = "quality-benchmark")]
+struct AlnsConfig {
+    iterations: usize,
+    initial_temperature: f64,
+    segment_size: usize,
+    reaction_factor: f64,
+    destroy_min_frac: f64,
+    destroy_max_frac: f64,
+    destroy_operators: Vec<DestroyOperator>,
+    repair_operators: Vec<RepairOperator>,
+}
+
+#[cfg(feature = "quality-benchmark")]
+impl Default for AlnsConfig {
+    fn default() -> Self {
+        Self {
+            // 0 は "task 数に応じて自動決定" を意味する。
+            iterations: 0,
+            initial_temperature: 10.0,
+            // 0 は iterations/10 で自動決定。
+            segment_size: 0,
+            reaction_factor: 0.1,
+            destroy_min_frac: 0.05,
+            destroy_max_frac: 0.2,
+            destroy_operators: vec![
+                DestroyOperator::Random,
+                DestroyOperator::Worst,
+                DestroyOperator::Related,
+            ],
+            // 初期設定は軽量な repair のみ。Regret2/LowestDelta はオプション。
+            repair_operators: vec![
+                RepairOperator::Earliest,
+                RepairOperator::Deadline,
+                RepairOperator::Random,
+            ],
+        }
+    }
+}
+
+#[cfg(feature = "quality-benchmark")]
+pub(crate) fn alns_search(planner: &Planner, rng: &mut impl Rng) -> Plan {
+    let config = AlnsConfig::default();
+    let n = planner.tasks.len();
+
+    // 初期解: freeness 昇順
+    let mut priority: Vec<_> = planner.tasks.iter().map(|task| task.id).collect();
+    priority.sort_by(|a, b| planner.freeness(*a).total_cmp(&planner.freeness(*b)));
+
+    let mut sorted = Vec::with_capacity(n);
+    let mut index = Vec::with_capacity(n);
+    let mut habit_entries = Vec::with_capacity(n);
+
+    let decode_plan = |priority: &[usize], mode: RepairMode| {
+        decode(
+            planner,
+            DecodeInput {
+                priority,
+                duration_choices: &[],
+                pinned: &[],
+                repair_mode: mode,
+            },
+        )
+        .plan
+    };
+
+    let mut current_plan = decode_plan(&priority, RepairMode::Earliest);
+    let mut current_score = evaluate_with_scratch(
+        planner,
+        &current_plan,
+        0.0,
+        1.0,
+        &mut sorted,
+        &mut index,
+        &mut habit_entries,
+    );
+    let mut best_plan = current_plan.clone();
+    let mut best_score = current_score;
+
+    if n <= 1 {
+        return current_plan;
+    }
+
+    let d_ops = config.destroy_operators;
+    let r_ops = config.repair_operators;
+    let mut d_weights = vec![1.0; d_ops.len()];
+    let mut r_weights = vec![1.0; r_ops.len()];
+    let mut d_scores = vec![0.0; d_ops.len()];
+    let mut r_scores = vec![0.0; r_ops.len()];
+    let mut d_usages = vec![0usize; d_ops.len()];
+    let mut r_usages = vec![0usize; r_ops.len()];
+
+    let iterations = if config.iterations == 0 {
+        n.max(1) * 50
+    } else {
+        config.iterations
+    };
+    let segment_size = if config.segment_size == 0 {
+        (iterations / 10).max(1)
+    } else {
+        config.segment_size
+    };
+
+    for iteration in 0..iterations {
+        let d_i = select_operator_index(&d_weights, rng);
+        let r_i = select_operator_index(&r_weights, rng);
+        let destroy_op = d_ops[d_i];
+        let repair_op = r_ops[r_i];
+
+        let destroy_count = destroy_count(n, config.destroy_min_frac, config.destroy_max_frac, rng);
+        let removed = destroy_priority(
+            planner,
+            &priority,
+            &current_plan,
+            rng,
+            destroy_op,
+            destroy_count,
+        );
+
+        let removed_set: FxHashSet<usize> = removed.iter().copied().collect();
+        let mut partial = priority.clone();
+        partial.retain(|id| !removed_set.contains(id));
+
+        let new_priority = repair_priority(planner, &partial, &removed, repair_op, rng);
+        let repair_mode = repair_mode_for(repair_op);
+        let candidate_plan = decode_plan(&new_priority, repair_mode);
+        let candidate_score = evaluate_with_scratch(
+            planner,
+            &candidate_plan,
+            0.0,
+            1.0,
+            &mut sorted,
+            &mut index,
+            &mut habit_entries,
+        );
+
+        let temperature = config.initial_temperature * (1.0 - iteration as f64 / iterations as f64);
+        let delta = candidate_score - current_score;
+
+        let old_current_score = current_score;
+        let mut accepted = false;
+        let mut new_best = false;
+
+        if delta > 0.0 || rng.random::<f64>() < (delta / temperature.max(0.01)).exp() {
+            current_plan = candidate_plan;
+            current_score = candidate_score;
+            priority = new_priority;
+            accepted = true;
+
+            if current_score > best_score {
+                best_plan = current_plan.clone();
+                best_score = current_score;
+                new_best = true;
+            }
+        }
+
+        let reward = if new_best {
+            33.0
+        } else if candidate_score > old_current_score {
+            9.0
+        } else if accepted {
+            3.0
+        } else {
+            0.0
+        };
+
+        d_scores[d_i] += reward;
+        r_scores[r_i] += reward;
+        d_usages[d_i] += 1;
+        r_usages[r_i] += 1;
+
+        if iteration > 0 && iteration % segment_size == 0 {
+            update_operator_weights(&mut d_weights, &d_scores, &d_usages, config.reaction_factor);
+            update_operator_weights(&mut r_weights, &r_scores, &r_usages, config.reaction_factor);
+            d_scores.fill(0.0);
+            r_scores.fill(0.0);
+            d_usages.fill(0);
+            r_usages.fill(0);
+        }
+    }
+
+    best_plan
+}
+
+#[cfg(feature = "quality-benchmark")]
+fn select_operator_index(weights: &[f64], rng: &mut impl Rng) -> usize {
+    let total: f64 = weights.iter().sum();
+    if total <= 0.0 {
+        return rng.random_range(0..weights.len());
+    }
+    let mut r = rng.random::<f64>() * total;
+    for (i, w) in weights.iter().enumerate() {
+        r -= *w;
+        if r <= 0.0 {
+            return i;
+        }
+    }
+    weights.len() - 1
+}
+
+#[cfg(feature = "quality-benchmark")]
+pub(crate) fn update_operator_weights(
+    weights: &mut [f64],
+    scores: &[f64],
+    usages: &[usize],
+    reaction_factor: f64,
+) {
+    for i in 0..weights.len() {
+        let usage = usages[i].max(1);
+        let avg = scores[i] / usage as f64;
+        weights[i] = (1.0 - reaction_factor) * weights[i] + reaction_factor * avg;
+    }
+    normalize_weights(weights, 0.1);
+}
+
+#[cfg(feature = "quality-benchmark")]
+fn normalize_weights(weights: &mut [f64], min: f64) {
+    let n = weights.len();
+    if n == 0 {
+        return;
+    }
+    for _ in 0..n {
+        let sum: f64 = weights.iter().sum();
+        if sum <= 0.0 {
+            return;
+        }
+        let mut clamped = false;
+        for w in weights.iter_mut() {
+            let normalized = *w / sum * n as f64;
+            *w = normalized.max(min);
+            if normalized < min {
+                clamped = true;
+            }
+        }
+        if !clamped {
+            break;
+        }
+    }
+}
+
+#[cfg(feature = "quality-benchmark")]
+fn destroy_count(n: usize, min_frac: f64, max_frac: f64, rng: &mut impl Rng) -> usize {
+    if n <= 1 {
+        return 0;
+    }
+    let min = (n as f64 * min_frac).ceil() as usize;
+    let max = (n as f64 * max_frac).ceil() as usize;
+    let min = min.clamp(1, n - 1);
+    let max = max.clamp(min, n - 1);
+    rng.random_range(min..=max)
+}
+
+#[cfg(feature = "quality-benchmark")]
+pub(crate) fn destroy_priority(
+    planner: &Planner,
+    priority: &[usize],
+    plan: &Plan,
+    rng: &mut impl Rng,
+    op: DestroyOperator,
+    count: usize,
+) -> Vec<usize> {
+    let movable: Vec<_> = priority
+        .iter()
+        .copied()
+        .filter(|id| !planner.tasks[*id].fixed)
+        .collect();
+    if movable.is_empty() || count == 0 {
+        return vec![];
+    }
+    let count = count.min(movable.len());
+
+    let scheduled = |id: usize| -> (Point, Point) {
+        plan.schedules
+            .iter()
+            .find(|(_, _, sid)| *sid == id)
+            .map(|(s, e, _)| (*s, *e))
+            .unwrap_or((Point(0), Point(0)))
+    };
+
+    match op {
+        DestroyOperator::Random => {
+            let mut chosen = FxHashSet::default();
+            while chosen.len() < count {
+                let idx = rng.random_range(0..movable.len());
+                chosen.insert(movable[idx]);
+            }
+            chosen.into_iter().collect()
+        }
+        DestroyOperator::Worst => {
+            let mut badness: Vec<(usize, i64)> = movable
+                .iter()
+                .map(|&id| {
+                    let (s, e) = scheduled(id);
+                    let task = &planner.tasks[id];
+                    let mut bad = 0i64;
+                    if e.0 > task.end.0 {
+                        bad += e.0 - task.end.0;
+                    }
+                    if let Some(min_start) = task.start
+                        && s.0 < min_start.0
+                    {
+                        bad += min_start.0 - s.0;
+                    }
+                    for (s2, e2, id2) in &plan.schedules {
+                        if *id2 == id {
+                            continue;
+                        }
+                        if s2.0 >= e.0 || s.0 >= e2.0 {
+                            continue;
+                        }
+                        let other = &planner.tasks[*id2];
+                        if !(task.parallelizable && other.allows_parallel
+                            || task.allows_parallel && other.parallelizable)
+                        {
+                            bad += e2.0.min(e.0) - s2.0.max(s.0);
+                        }
+                    }
+                    (id, bad)
+                })
+                .collect();
+            badness.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            badness.into_iter().map(|(id, _)| id).take(count).collect()
+        }
+        DestroyOperator::Related => {
+            if movable.is_empty() {
+                return vec![];
+            }
+            let seed_idx = rng.random_range(0..movable.len());
+            let seed = movable[seed_idx];
+            let (seed_s, seed_e) = scheduled(seed);
+            let window = (planner.tasks[seed].cost_estimate.avg as i64).max(5);
+
+            let mut scored: Vec<(usize, i64)> = movable
+                .iter()
+                .map(|&id| {
+                    if id == seed {
+                        return (id, 1);
+                    }
+                    let task = &planner.tasks[id];
+                    let (s, e) = scheduled(id);
+                    let time_dist = if e.0 <= seed_s.0 {
+                        seed_s.0 - e.0
+                    } else if s.0 >= seed_e.0 {
+                        s.0 - seed_e.0
+                    } else {
+                        0
+                    };
+                    let mut tie = 0;
+                    if task.habit_group.is_some()
+                        && task.habit_group == planner.tasks[seed].habit_group
+                    {
+                        tie -= 1000;
+                    }
+                    if task.depends.contains(&seed) || planner.tasks[seed].depends.contains(&id) {
+                        tie -= 500;
+                    }
+                    (id, time_dist + tie)
+                })
+                .collect();
+            scored.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+
+            let mut removed = vec![seed];
+            for (id, dist) in scored {
+                if removed.len() >= count {
+                    break;
+                }
+                if id == seed {
+                    continue;
+                }
+                if dist <= window || dist < 0 {
+                    removed.push(id);
+                }
+            }
+            // 足りなければランダムで補完
+            while removed.len() < count {
+                let candidate = movable[rng.random_range(0..movable.len())];
+                if !removed.contains(&candidate) {
+                    removed.push(candidate);
+                }
+            }
+            removed.truncate(count);
+            removed
+        }
+    }
+}
+
+#[cfg(feature = "quality-benchmark")]
+pub(crate) fn repair_priority(
+    planner: &Planner,
+    partial: &[usize],
+    removed: &[usize],
+    op: RepairOperator,
+    rng: &mut impl Rng,
+) -> Vec<usize> {
+    let mut result = partial.to_vec();
+    let remaining: Vec<usize> = match op {
+        RepairOperator::Deadline => {
+            let mut v = removed.to_vec();
+            v.sort_by_key(|&id| planner.tasks[id].end);
+            v
+        }
+        RepairOperator::Random => {
+            let mut v = removed.to_vec();
+            for i in (1..v.len()).rev() {
+                let j = rng.random_range(0..=i);
+                v.swap(i, j);
+            }
+            v
+        }
+        RepairOperator::Earliest | RepairOperator::Regret2 | RepairOperator::LowestDelta => {
+            removed.to_vec()
+        }
+    };
+
+    if matches!(op, RepairOperator::Regret2 | RepairOperator::LowestDelta) {
+        result.extend(remaining);
+        return result;
+    }
+
+    for id in remaining {
+        let pos = earliest_valid_position(planner, &result, id);
+        result.insert(pos, id);
+    }
+    result
+}
+
+#[cfg(feature = "quality-benchmark")]
+fn earliest_valid_position(planner: &Planner, priority: &[usize], id: usize) -> usize {
+    let mut max_dep_pos: Option<usize> = None;
+    for &dep in &planner.tasks[id].depends {
+        match priority.iter().position(|&x| x == dep) {
+            Some(pos) => max_dep_pos = Some(max_dep_pos.map_or(pos, |m| m.max(pos))),
+            None => return priority.len(),
+        }
+    }
+    max_dep_pos.map_or(0, |p| p + 1)
+}
+
+#[cfg(feature = "quality-benchmark")]
+fn repair_mode_for(op: RepairOperator) -> RepairMode {
+    match op {
+        RepairOperator::Earliest | RepairOperator::Random => RepairMode::Earliest,
+        RepairOperator::Deadline => RepairMode::Deadline,
+        RepairOperator::Regret2 => RepairMode::Regret2,
+        RepairOperator::LowestDelta => RepairMode::LowestDelta,
+    }
 }
 
 /// 改善なしの温度レベルがこの回数続いたら current を best に戻す (intensification)。
@@ -464,11 +915,7 @@ pub fn sa_lns(planner: &Planner, rng: &mut impl Rng) -> Plan {
     repair_polish(planner, best, None)
 }
 
-pub fn sa_lns_partial(
-    planner: &Planner,
-    pinned: &[(Point, Point, usize)],
-    rng: &mut impl Rng,
-) -> Plan {
+pub fn sa_lns_partial(planner: &Planner, pinned: &[Placement], rng: &mut impl Rng) -> Plan {
     if pinned.is_empty() {
         return sa_lns(planner, rng);
     }
@@ -707,7 +1154,7 @@ fn repair_polish(planner: &Planner, best: Plan, pinned_ids: Option<&FxHashSet<us
     }
 }
 
-fn build_initial_partial(planner: &Planner, pinned: &[(Point, Point, usize)]) -> Plan {
+fn build_initial_partial(planner: &Planner, pinned: &[Placement]) -> Plan {
     let pinned_ids: FxHashSet<usize> = pinned.iter().map(|(_, _, id)| *id).collect();
 
     let mut unpinned: Vec<usize> = planner
@@ -724,7 +1171,7 @@ fn build_initial_partial(planner: &Planner, pinned: &[(Point, Point, usize)]) ->
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    let mut schedules: Vec<(Point, Point, usize)> = pinned.to_vec();
+    let mut schedules: Vec<Placement> = pinned.to_vec();
 
     // 固定タスクを先に配置して、通常タスクの try_place が重複を避けられるようにする
     // (#391)。pinned に含まれない固定タスクを先に処理する。
@@ -749,7 +1196,8 @@ fn build_initial_partial(planner: &Planner, pinned: &[(Point, Point, usize)]) ->
         }
 
         let earliest = compute_earliest(planner, &schedules, task);
-        if let Some((start, end)) = try_place(planner, &schedules, task, earliest, dur) {
+        if let Ok((start, end)) = try_place::<false>(planner, &schedules, task, earliest, dur, None)
+        {
             schedules.push((start, end, task_id));
         } else {
             let last_end = schedules
@@ -757,9 +1205,14 @@ fn build_initial_partial(planner: &Planner, pinned: &[(Point, Point, usize)]) ->
                 .map(|(_, e, _)| e.0)
                 .max()
                 .unwrap_or(planner.now.0);
-            let fallback_start = Point(last_end).max(planner.now);
-            let fallback_end = Point(fallback_start.0 + dur);
-            schedules.push((fallback_start, fallback_end, task_id));
+            let _ = push_fallback(
+                planner,
+                &mut schedules,
+                earliest,
+                dur,
+                task_id,
+                Point(last_end),
+            );
         }
     }
 
@@ -1229,11 +1682,7 @@ fn neighbor_lns(planner: &Planner, current: &Plan, rng: &mut impl Rng) -> Option
     Some(Plan { schedules: rebuilt })
 }
 
-fn greedy_rebuild(
-    planner: &Planner,
-    existing: &[(Point, Point, usize)],
-    task_ids: &[usize],
-) -> Vec<(Point, Point, usize)> {
+fn greedy_rebuild(planner: &Planner, existing: &[Placement], task_ids: &[usize]) -> Vec<Placement> {
     let mut scheds = existing.to_vec();
 
     let mut pending: Vec<usize> = task_ids.to_vec();
@@ -1291,7 +1740,7 @@ fn greedy_rebuild(
     scheds
 }
 
-fn place_one(planner: &Planner, scheds: &mut Vec<(Point, Point, usize)>, task_id: usize) {
+fn place_one(planner: &Planner, scheds: &mut Vec<Placement>, task_id: usize) {
     let task = &planner.tasks[task_id];
     // build_initial と同様、avg=0 のタスクは dur=1 として配置する。
     // さもないと iCal 由来の avg=0 タスクが LNS/repair_polish の再構築で
@@ -1306,7 +1755,7 @@ fn place_one(planner: &Planner, scheds: &mut Vec<(Point, Point, usize)>, task_id
         return;
     }
     let earliest = compute_earliest(planner, scheds, task);
-    if let Some((start, end)) = try_place(planner, scheds, task, earliest, dur) {
+    if let Ok((start, end)) = try_place::<false>(planner, scheds, task, earliest, dur, None) {
         scheds.push((start, end, task_id));
     } else {
         // build_initial と同様、配置できない場合は末尾に fallback してタスクを落とさない。
@@ -1315,8 +1764,7 @@ fn place_one(planner: &Planner, scheds: &mut Vec<(Point, Point, usize)>, task_id
             .map(|(_, e, _)| e.0)
             .max()
             .unwrap_or(planner.now.0);
-        let fallback_start = Point(last_end).max(planner.now).max(earliest);
-        scheds.push((fallback_start, Point(fallback_start.0 + dur), task_id));
+        let _ = push_fallback(planner, scheds, earliest, dur, task_id, Point(last_end));
     }
 }
 
@@ -1334,6 +1782,41 @@ mod tests {
             workload: WorkloadConfig::default(),
             previous_schedule: vec![],
         }
+    }
+
+    #[cfg(feature = "quality-benchmark")]
+    #[test]
+    fn priority_decoder_respects_dependency_order() {
+        let first = Task {
+            id: 0,
+            start: Some(Point(0)),
+            end: Point(100),
+            cost_estimate: NormalDist { avg: 4, sigma: 0 },
+            depends: vec![],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: false,
+            habit_group: None,
+        };
+        let second = Task {
+            id: 1,
+            depends: vec![0],
+            ..first.clone()
+        };
+        let planner = test_planner(vec![first, second]);
+        let result = crate::decoder::decode(
+            &planner,
+            crate::decoder::DecodeInput {
+                priority: &[1, 0],
+                duration_choices: &[],
+                pinned: &[],
+                repair_mode: crate::decoder::RepairMode::Earliest,
+            },
+        );
+        let plan = result.plan;
+        assert_eq!(plan.schedules.len(), 2);
+        assert!(plan.task_end(0).unwrap() <= plan.task_start(1).unwrap());
     }
 
     #[test]
@@ -1713,5 +2196,178 @@ mod tests {
             polished.schedules
         );
         assert!(polished.schedules.iter().any(|(_, _, id)| *id == 1));
+    }
+
+    #[cfg(feature = "quality-benchmark")]
+    mod alns_tests {
+        use super::*;
+        use rand::SeedableRng;
+        use rand::rngs::StdRng;
+
+        fn test_planner(tasks: Vec<Task>) -> Planner {
+            Planner {
+                tasks,
+                now: Point(0),
+                per: 5,
+                sleep: SleepConfig::disabled(),
+                workload: WorkloadConfig::default(),
+                previous_schedule: vec![],
+            }
+        }
+
+        #[test]
+        fn alns_search_schedules_all_tasks() {
+            let a = Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(100),
+                cost_estimate: NormalDist { avg: 5, sigma: 0 },
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            };
+            let b = Task {
+                id: 1,
+                start: Some(Point(0)),
+                end: Point(100),
+                cost_estimate: NormalDist { avg: 5, sigma: 0 },
+                depends: vec![0],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            };
+            let planner = test_planner(vec![a, b]);
+            let mut rng = StdRng::seed_from_u64(42);
+            let plan = alns_search(&planner, &mut rng);
+            assert_eq!(plan.schedules.len(), planner.tasks.len());
+        }
+
+        #[test]
+        fn alns_search_finds_better_plan_than_priority_order() {
+            let a = Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(100),
+                cost_estimate: NormalDist { avg: 10, sigma: 0 },
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            };
+            let b = Task {
+                id: 1,
+                start: Some(Point(0)),
+                end: Point(30),
+                cost_estimate: NormalDist { avg: 10, sigma: 0 },
+                depends: vec![0],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            };
+            let planner = test_planner(vec![a, b]);
+            let mut rng = StdRng::seed_from_u64(42);
+            let alns_plan = alns_search(&planner, &mut rng);
+            let priority_plan = priority_order_search(&planner, &mut StdRng::seed_from_u64(42));
+            let alns_score = evaluate(&planner, &alns_plan, 0.0, 1.0);
+            let priority_score = evaluate(&planner, &priority_plan, 0.0, 1.0);
+            assert!(
+                alns_score >= priority_score,
+                "ALNS should at least match priority decoder: alns={alns_score}, priority={priority_score}"
+            );
+        }
+
+        #[test]
+        fn alns_destroy_random_returns_expected_count() {
+            let tasks: Vec<_> = (0..10)
+                .map(|id| Task {
+                    id,
+                    start: Some(Point(0)),
+                    end: Point(100),
+                    cost_estimate: NormalDist { avg: 2, sigma: 0 },
+                    depends: vec![],
+                    parallelizable: false,
+                    allows_parallel: false,
+                    abandonability: 0.5,
+                    fixed: false,
+                    habit_group: None,
+                })
+                .collect();
+            let planner = test_planner(tasks);
+            let priority: Vec<_> = planner.tasks.iter().map(|t| t.id).collect();
+            let plan = decode(
+                &planner,
+                DecodeInput {
+                    priority: &priority,
+                    duration_choices: &[],
+                    pinned: &[],
+                    repair_mode: RepairMode::Earliest,
+                },
+            )
+            .plan;
+            let mut rng = StdRng::seed_from_u64(7);
+            let removed = destroy_priority(
+                &planner,
+                &priority,
+                &plan,
+                &mut rng,
+                DestroyOperator::Random,
+                4,
+            );
+            assert_eq!(removed.len(), 4);
+            assert!(removed.iter().all(|id| *id < planner.tasks.len()));
+        }
+
+        #[test]
+        fn alns_repair_reinserts_all_removed() {
+            let tasks: Vec<_> = (0..5)
+                .map(|id| Task {
+                    id,
+                    start: Some(Point(0)),
+                    end: Point(100),
+                    cost_estimate: NormalDist { avg: 2, sigma: 0 },
+                    depends: vec![],
+                    parallelizable: false,
+                    allows_parallel: false,
+                    abandonability: 0.5,
+                    fixed: false,
+                    habit_group: None,
+                })
+                .collect();
+            let planner = test_planner(tasks);
+            let partial = vec![0, 1];
+            let removed = vec![2, 3, 4];
+            let repaired = repair_priority(
+                &planner,
+                &partial,
+                &removed,
+                RepairOperator::Earliest,
+                &mut StdRng::seed_from_u64(0),
+            );
+            assert_eq!(repaired.len(), planner.tasks.len());
+            let mut sorted = repaired.clone();
+            sorted.sort();
+            assert_eq!(sorted, (0..planner.tasks.len()).collect::<Vec<_>>());
+        }
+
+        #[test]
+        fn alns_weights_update_without_panic() {
+            let mut weights = vec![1.0; 3];
+            let mut scores = vec![0.0; 3];
+            let usages = vec![1, 2, 0];
+            scores[0] = 33.0;
+            scores[1] = 9.0;
+            update_operator_weights(&mut weights, &scores, &usages, 0.1);
+            assert!(weights.iter().all(|w| *w > 0.0));
+            assert!((weights.iter().sum::<f64>() - 3.0).abs() < 1e-6);
+        }
     }
 }

@@ -59,37 +59,40 @@
 //! - スケジュールされているタスクごとに `+W_INCLUSION`
 //!
 //! ## 重み設計
-//! |W_PARALLEL_VIOL| ≫ |W_DEPEND_BASE| ≫ |W_LATE| ≫ |W_START| > W_BUFFER > W_INCLUSION
+//! |W_PARALLEL_VIOL| ≫ |W_DEPEND_BASE| ≫ |W_START| ≫ |W_LATE| > W_BUFFER > W_INCLUSION
 //!
 //! ## 重みの根拠
 //!
-//! - W_DEPEND_BASE=100: 依存違反は絶対に避けたい。T→0で最大100に収束。
+//! - W_PARALLEL_VIOL=2000: 人間は並列可能タスク以外は同時に実行できないため、
+//!   時間重複は実質的に硬制約。並列違反は最も強く罰する。
+//! - W_DEPEND_BASE=500: 依存違反は絶対に避けたい。T→0で最大500に収束。
 //!   温度比(1-T/T0)を乗じるので、実際のペナルティは温度依存。
+//! - W_START=100: 開始可能時刻より前に開始するのは硬違反。W_LATEより重い。
 //! - W_LATE=20: 締切超過は許容されるが重い。abandonability=1.0で0になる。
 //! - W_EARLY=1, cap=50: 早期完了は緩やかに報酬。上限で過学習防止。
-//! - W_START=5: 早すぎる開始を防ぐ。deadlineより優先度は低い。
 //! - W_BUFFER=2: sigma大→多めにバッファ。高sigmaタスクを後ろに倒す誘因。
 //! - W_SHORT=3 (2次): 見積り不足は2次ペナルティ。avgに近づける効果。
 //! - W_OVER=0.5 (線形): 取りすぎは軽微。最適化よりタスク詰め込み優先。
 //! - W_SLEEP_NORMAL=4, W_SLEEP_SEVERE=15 (2次): 3h硬閾値の意図。
 //!   睡眠3h未満は2次で急峻に。設計思想: 徹夜よりタスク削減。
-//! - W_PARALLEL_VIOL=500: 人間は並列可能タスク以外は同時に実行できないため、
-//!   時間重複は実質的に硬制約。W_DEPEND_BASE(100)の5倍で、依存違反より
-//!   強く罰することで、SAが重複を避けてタスクを分散させる。
+//! - W_DAILY_NORMAL=0.01: 同じ総作業時間なら複数日に分散を弱く奨励。
+//! - W_DAILY_OVERLOAD=0.5 (2次): 快適容量超過を緩やかに抑制。
+//! - W_DAILY_MAXIMUM=2 (2次): 最大容量超過を強めに抑制。
 //! - W_INCLUSION=10: タスクをスケジュールから外さない誘因十分。
 
 use super::*;
+use crate::placement::Placement;
 
 const W_EARLY: f64 = 1.0;
 const W_LATE: f64 = 20.0;
-const W_START: f64 = 5.0;
-const W_DEPEND_BASE: f64 = 100.0;
+const W_START: f64 = 100.0;
+const W_DEPEND_BASE: f64 = 500.0;
 const W_BUFFER: f64 = 2.0;
 const W_SHORT: f64 = 3.0;
 const W_OVER: f64 = 0.5;
 const W_SLEEP_NORMAL: f64 = 4.0;
 const W_SLEEP_SEVERE: f64 = 15.0;
-const W_PARALLEL_VIOL: f64 = 500.0;
+const W_PARALLEL_VIOL: f64 = 2000.0;
 const W_INCLUSION: f64 = 10.0;
 const MIN_SLEEP: i64 = 36;
 /// #211: 直近タスクの移動ペナルティ。前回位置からの差分スロット × 重み。
@@ -134,7 +137,7 @@ pub(crate) fn evaluate_with_scratch(
     plan: &Plan,
     temperature: f64,
     t0: f64,
-    sorted: &mut Vec<(Point, Point, usize)>,
+    sorted: &mut Vec<Placement>,
     index: &mut Vec<Option<(Point, Point)>>,
     habit_entries: &mut Vec<(usize, i64)>,
 ) -> f64 {
@@ -166,7 +169,7 @@ pub(crate) fn evaluate_with_scratch(
 /// 同時にスケジュール全体の [plan_start, plan_end) も返す。
 fn build_index_into(
     planner: &Planner,
-    schedules: &[(Point, Point, usize)],
+    schedules: &[Placement],
     index: &mut Vec<Option<(Point, Point)>>,
 ) -> (Point, Point) {
     index.clear();
@@ -199,10 +202,7 @@ fn build_index_into(
 }
 
 #[cfg(test)]
-fn build_index(
-    planner: &Planner,
-    schedules: &[(Point, Point, usize)],
-) -> Vec<Option<(Point, Point)>> {
+fn build_index(planner: &Planner, schedules: &[Placement]) -> Vec<Option<(Point, Point)>> {
     let mut index = Vec::with_capacity(planner.tasks.len());
     build_index_into(planner, schedules, &mut index);
     index
@@ -301,7 +301,7 @@ fn buffer_score(planner: &Planner, index: &[Option<(Point, Point)>]) -> f64 {
 /// 全ウィンドウ通しで O(n + windows * active) に近づける。
 #[inline(always)]
 fn union_length_in_window(
-    sorted: &[(Point, Point, usize)],
+    sorted: &[Placement],
     window_start: Point,
     window_end: Point,
     start_idx: &mut usize,
@@ -342,7 +342,7 @@ fn union_length_in_window(
 
 fn sleep_score(
     planner: &Planner,
-    sorted: &[(Point, Point, usize)],
+    sorted: &[Placement],
     (plan_start, plan_end): (Point, Point),
 ) -> f64 {
     if !planner.sleep.enabled {
@@ -403,7 +403,7 @@ fn sleep_score(
 ///   最大容量超過に対する強いペナルティ。
 fn daily_load_score(
     planner: &Planner,
-    sorted: &[(Point, Point, usize)],
+    sorted: &[Placement],
     (plan_start, plan_end): (Point, Point),
 ) -> f64 {
     if planner.workload.comfortable_slots_per_day == 0
@@ -465,7 +465,7 @@ fn union_length(intervals: &mut [(Point, Point)]) -> i64 {
     total
 }
 
-fn parallel_violation_score(planner: &Planner, sorted: &[(Point, Point, usize)]) -> f64 {
+fn parallel_violation_score(planner: &Planner, sorted: &[Placement]) -> f64 {
     let mut penalty_slots = 0i64;
     let n = sorted.len();
     let tasks = &planner.tasks;
@@ -491,7 +491,7 @@ fn parallel_violation_score(planner: &Planner, sorted: &[(Point, Point, usize)])
     -(penalty_slots as f64) * W_PARALLEL_VIOL
 }
 
-fn inclusion_bonus(_planner: &Planner, schedules: &[(Point, Point, usize)]) -> f64 {
+fn inclusion_bonus(_planner: &Planner, schedules: &[Placement]) -> f64 {
     schedules.len() as f64 * W_INCLUSION
 }
 
@@ -602,6 +602,7 @@ fn habit_consistency_score(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::placement::Placement;
 
     fn make_planner() -> Planner {
         let mut p = Planner::new(Point(0), SleepConfig::disabled());
@@ -625,7 +626,7 @@ mod tests {
         .unwrap()
     }
 
-    fn plan_with(schedules: Vec<(Point, Point, usize)>) -> Plan {
+    fn plan_with(schedules: Vec<Placement>) -> Plan {
         Plan { schedules }
     }
 
@@ -1297,16 +1298,16 @@ mod tests {
 
         let score_hot = evaluate(&p, &violated, 10.0, 10.0);
         let score_cold = evaluate(&p, &violated, 0.0, 10.0);
-        // At T=T0: weight = 100*(1-1) = 0 → no depend penalty.
-        // At T=0:  weight = 100*(1-0) = 100 → penalty = -2*100 = -200.
+        // At T=T0: depend_weight = W_DEPEND_BASE*(1-1) = 0 → no depend penalty.
+        // At T=0:  depend_weight = W_DEPEND_BASE*(1-0) = W_DEPEND_BASE → penalty = -2*W_DEPEND_BASE.
         assert!(
             score_cold < score_hot,
             "cold should penalize violation more: hot={score_hot} cold={score_cold}"
         );
-        // The difference should be ~200 (the annealed-in penalty).
+        let expected_penalty = 2.0 * W_DEPEND_BASE;
         assert!(
-            (score_hot - score_cold - 200.0).abs() < 1e-6,
-            "annealed penalty magnitude: hot={score_hot} cold={score_cold}"
+            (score_hot - score_cold - expected_penalty).abs() < 1e-6,
+            "annealed penalty magnitude: hot={score_hot} cold={score_cold} expected={expected_penalty}"
         );
         // unused warning suppression
         let _ = b;

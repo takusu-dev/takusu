@@ -29,6 +29,7 @@ fn main() {
         .and_then(|value| value.parse().ok())
         .unwrap_or(DEFAULT_SEEDS);
     let only_fixture = std::env::var("TAKUSU_QUALITY_FIXTURE").ok();
+    let alns_solver = std::env::var("TAKUSU_QUALITY_SOLVER").as_deref() == Ok("alns");
     let merge_path = std::env::var("TAKUSU_QUALITY_MERGE")
         .or_else(|_| std::env::var("merge"))
         .ok();
@@ -73,7 +74,14 @@ fn main() {
         .copied()
         .collect();
 
-    let modes = ["full", "partial", "range"];
+    // ALNS solver は Stage 1 prototype で full solve のみ対応。
+    // partial / range は roadmap で production 採用条件に含まれるが、
+    // 現時点では未実装（design/priority-decoder-production-roadmap.md 参照）。
+    let modes: &[&str] = if alns_solver {
+        &["full"]
+    } else {
+        &["full", "partial", "range"]
+    };
     let planned_runs: Vec<_> = active_fixtures
         .iter()
         .flat_map(|(name, _)| modes.iter().map(|mode| (*name, *mode)))
@@ -137,7 +145,11 @@ fn main() {
 
         let planner = builder();
         eprintln!("[quality] {name}: computing baseline plan (seed 0)...");
-        let baseline = planner.plan_with_seed(0);
+        let baseline = if alns_solver {
+            planner.plan_alns_with_seed(0)
+        } else {
+            planner.plan_with_seed(0)
+        };
         eprintln!("[quality] {name}: baseline completed");
 
         let pinned: Vec<_> = baseline.schedules.iter().take(5).copied().collect();
@@ -156,7 +168,13 @@ fn main() {
                 fixture_count,
                 &overall_completed,
                 total_runs,
-                |seed| planner.plan_with_seed(seed),
+                |seed| {
+                    if alns_solver {
+                        planner.plan_alns_with_seed(seed)
+                    } else {
+                        planner.plan_with_seed(seed)
+                    }
+                },
             );
         } else {
             eprintln!("[quality] {name}/full: already present in merge file, skipping");
