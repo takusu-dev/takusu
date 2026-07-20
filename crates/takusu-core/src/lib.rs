@@ -43,7 +43,10 @@
 //! `SleepConfig::disabled()` で睡眠制約なし。
 
 mod anneal;
+#[cfg(feature = "quality-benchmark")]
+mod decoder;
 pub mod evaluate;
+mod placement;
 mod solver;
 
 use jiff::Timestamp;
@@ -450,6 +453,12 @@ impl Planner {
     #[cfg(feature = "quality-benchmark")]
     pub fn plan_with_seed(&self, seed: u64) -> Plan {
         solver::solve_with_seed(self, seed)
+    }
+
+    #[doc(hidden)]
+    #[cfg(feature = "quality-benchmark")]
+    pub fn plan_alns_with_seed(&self, seed: u64) -> Plan {
+        solver::solve_alns_with_seed(self, seed)
     }
 
     /// #211: 前回スケジュールを設定し、安定性ペナルティを有効化する。

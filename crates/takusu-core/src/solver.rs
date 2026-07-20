@@ -27,6 +27,8 @@ use rand::rngs::StdRng;
 use rayon::prelude::*;
 
 use super::*;
+#[cfg(feature = "quality-benchmark")]
+use anneal::alns_search;
 use anneal::{sa_lns, sa_lns_partial};
 use evaluate::evaluate;
 
@@ -49,6 +51,11 @@ pub fn solve(planner: &Planner) -> Plan {
 #[cfg(feature = "quality-benchmark")]
 pub fn solve_with_seed(planner: &Planner, seed: u64) -> Plan {
     sa_lns(planner, &mut StdRng::seed_from_u64(seed))
+}
+
+#[cfg(feature = "quality-benchmark")]
+pub fn solve_alns_with_seed(planner: &Planner, seed: u64) -> Plan {
+    alns_search(planner, &mut StdRng::seed_from_u64(seed))
 }
 
 #[cfg(feature = "quality-benchmark")]

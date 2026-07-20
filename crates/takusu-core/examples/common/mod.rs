@@ -29,6 +29,7 @@ struct TaskFixture {
     habit_group: Option<usize>,
 }
 
+#[allow(dead_code)]
 pub fn build_planner() -> Planner {
     build_planner_from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -36,6 +37,7 @@ pub fn build_planner() -> Planner {
     )))
 }
 
+#[allow(dead_code)]
 pub fn build_planner_7d() -> Planner {
     build_planner_from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -43,6 +45,7 @@ pub fn build_planner_7d() -> Planner {
     )))
 }
 
+#[allow(dead_code)]
 pub fn build_planner_30d() -> Planner {
     build_planner_from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -50,6 +53,7 @@ pub fn build_planner_30d() -> Planner {
     )))
 }
 
+#[allow(dead_code)]
 pub fn build_planner_small() -> Planner {
     build_planner_from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -57,6 +61,7 @@ pub fn build_planner_small() -> Planner {
     )))
 }
 
+#[allow(dead_code)]
 pub fn build_stress_30d() -> Planner {
     build_planner_from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -64,6 +69,7 @@ pub fn build_stress_30d() -> Planner {
     )))
 }
 
+#[allow(dead_code)]
 pub fn build_stress_30d_dense() -> Planner {
     build_planner_from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -71,6 +77,7 @@ pub fn build_stress_30d_dense() -> Planner {
     )))
 }
 
+#[allow(dead_code)]
 pub fn build_stress_30d_mixed() -> Planner {
     build_planner_from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -78,6 +85,7 @@ pub fn build_stress_30d_mixed() -> Planner {
     )))
 }
 
+#[allow(dead_code)]
 pub fn build_stress_90d() -> Planner {
     build_planner_from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -85,6 +93,7 @@ pub fn build_stress_90d() -> Planner {
     )))
 }
 
+#[allow(dead_code)]
 pub fn build_planner_from_str(input: &str) -> Planner {
     let fixture: Fixture = serde_json::from_str(input).unwrap();
 
