@@ -484,7 +484,7 @@ export function HabitView({ client }: HabitViewProps) {
                             <Text
                               style={[styles.chipText, { color: COLORS.red }]}
                             >
-                              ⏸ 〜{formatSpanShort(span!.end_date)}
+                              〜{formatSpanShort(span!.end_date)}
                             </Text>
                           </>
                         );
@@ -501,7 +501,7 @@ export function HabitView({ client }: HabitViewProps) {
                             style={[styles.chipText, { color: BRAND_COLOR }]}
                           >
                             {span
-                              ? `▶ scheduled 〜${formatSpanShort(span.end_date)}`
+                              ? `scheduled 〜${formatSpanShort(span.end_date)}`
                               : 'scheduled'}
                           </Text>
                         </>
