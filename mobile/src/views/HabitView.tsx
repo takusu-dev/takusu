@@ -31,32 +31,7 @@ import { haptic } from '@/src/components/haptics';
 import { undoRedo } from '@/src/api/undoRedo';
 import { parseRule, summarizeRule } from '@/src/api/rrule';
 import { stepRowToDraft, saveHabitSteps } from '@/src/utils/habitSteps';
-
-/// Convert a UTC ISO timestamp to a YYYY-MM-DD string in the configured
-/// timezone (or the device timezone if none is provided). Matches the server
-/// side `sync_habit_tasks` date keys so active span checks are consistent.
-function dateKey(iso: string, tz?: string): string {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso.slice(0, 10);
-  try {
-    const fmt = new Intl.DateTimeFormat('en-CA', {
-      timeZone: tz || undefined,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    });
-    return fmt.format(d);
-  } catch {
-    const y = d.getFullYear();
-    const m = (d.getMonth() + 1).toString().padStart(2, '0');
-    const day = d.getDate().toString().padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  }
-}
-
-function todayDateKey(tz?: string): string {
-  return dateKey(new Date().toISOString(), tz);
-}
+import { todayDateKey } from '@/src/utils/dateKey';
 
 interface HabitViewProps {
   client: TakusuClient | null;
@@ -350,6 +325,7 @@ export function HabitView({ client }: HabitViewProps) {
         <ContextMenu
           hasSelection={selected.size > 0}
           onSettings={() => router.push('/settings')}
+          onStats={() => router.push('/stats')}
           onUndo={() =>
             undoRedo
               .undo()

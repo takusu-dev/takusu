@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Button, IconButton } from 'react-native-paper';
-import { useFocusEffect } from 'expo-router';
+import { useIsFocused } from 'expo-router';
 import type { TakusuClient } from '@/src/api/client';
 import { showError } from '@/src/api/errors';
 import type { TaskRow, HabitRow, RedundantDependency } from '@/src/api/types';
@@ -120,17 +120,14 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
     setGraphEdges(edges);
   }, [client, theme]);
 
+  // Refresh when focused and the client is ready. This covers both the
+  // initial mount and returning from TaskDetailView after editing edges (#386).
+  const isFocused = useIsFocused();
   useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  // Refresh on focus (#386): when returning from TaskDetailView after
-  // editing edges, GraphView needs to re-fetch to show the latest state.
-  useFocusEffect(
-    useCallback(() => {
+    if (client && isFocused) {
       refresh();
-    }, [refresh]),
-  );
+    }
+  }, [client, isFocused, refresh]);
 
   function handleTapNode(taskId: string) {
     haptic.light();
