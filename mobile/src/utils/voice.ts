@@ -5,7 +5,23 @@ import TakusuAudioModule from '../../modules/takusu-server/src/TakusuAudioModule
 let configurePromise: Promise<void> | null = null;
 let lastConfigKey = '';
 let isRecording = false;
+let onRecordingChange: ((recording: boolean) => void) | null = null;
 let stopPromise: Promise<string> | null = null;
+
+function notifyRecordingChanged(recording: boolean) {
+  onRecordingChange?.(recording);
+}
+
+export function setRecordingChangeListener(
+  listener: ((recording: boolean) => void) | null,
+): () => void {
+  onRecordingChange = listener;
+  return () => {
+    if (onRecordingChange === listener) {
+      onRecordingChange = null;
+    }
+  };
+}
 
 async function doConfigure(): Promise<void> {
   const settings = await loadSettings();
@@ -48,6 +64,7 @@ export async function startRecording(): Promise<void> {
     throw new Error('既に録音中です');
   }
   isRecording = true;
+  notifyRecordingChanged(true);
   try {
     if (Platform.OS === 'android') {
       const permission = await PermissionsAndroid.request(
@@ -55,16 +72,21 @@ export async function startRecording(): Promise<void> {
       );
       if (permission !== PermissionsAndroid.RESULTS.GRANTED) {
         isRecording = false;
+        notifyRecordingChanged(false);
         throw new Error('マイク権限が許可されていません');
       }
     }
     // Another stopAndTranscribe may have cancelled this start while permission was pending.
     if (!isRecording) {
+      notifyRecordingChanged(false);
       throw new Error('録音がキャンセルされました');
     }
     TakusuAudioModule.startRecording();
   } catch (e) {
-    isRecording = false;
+    if (isRecording) {
+      isRecording = false;
+      notifyRecordingChanged(false);
+    }
     throw e;
   }
 }
@@ -79,6 +101,7 @@ export async function stopAndTranscribe(): Promise<string> {
       return transcript.trim();
     } finally {
       isRecording = false;
+      notifyRecordingChanged(false);
       stopPromise = null;
     }
   })();

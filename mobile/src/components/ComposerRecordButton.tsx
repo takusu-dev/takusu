@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -9,9 +9,12 @@ import Reanimated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { startRecording, stopAndTranscribe } from '@/src/utils/voice';
+import { useVoice } from '@/src/api/VoiceContext';
 import { BRAND_COLOR, COLORS } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
 
+const LONG_PRESS_MS = 350;
+const AXIS_LOCK_THRESHOLD = 15;
 const LOCK_THRESHOLD = 80;
 const CANCEL_THRESHOLD = 80;
 
@@ -28,34 +31,47 @@ export function ComposerRecordButton({
   busy,
   onAppend,
 }: ComposerRecordButtonProps) {
-  const [isRecording, setIsRecording] = useState(false);
+  const { isRecording } = useVoice();
 
   const recordingRef = useRef(false);
-  const willCancelRef = useRef(false);
-  const willLockRef = useRef(false);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
   const willCancelShared = useSharedValue(false);
   const willLockShared = useSharedValue(false);
   const isLockedShared = useSharedValue(false);
+  const longPressFired = useSharedValue(false);
+  const gestureAxis = useSharedValue<'none' | 'vertical' | 'horizontal'>(
+    'none',
+  );
 
   useEffect(() => {
     recordingRef.current = isRecording;
   }, [isRecording]);
 
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
   const reset = useCallback(() => {
+    clearLongPressTimer();
     recordingRef.current = false;
-    willCancelRef.current = false;
-    willLockRef.current = false;
     isLockedShared.value = false;
     willCancelShared.value = false;
     willLockShared.value = false;
-    setIsRecording(false);
+    longPressFired.value = false;
+    gestureAxis.value = 'none';
     translateX.value = withSpring(0);
     translateY.value = withSpring(0);
   }, [
+    clearLongPressTimer,
     isLockedShared,
+    longPressFired,
+    gestureAxis,
     translateX,
     translateY,
     willCancelShared,
@@ -89,50 +105,58 @@ export function ComposerRecordButton({
 
   const beginRecording = useCallback(() => {
     if (busy || !historyReady || !audioReady) return;
+    if (recordingRef.current) return;
     recordingRef.current = true;
-    startRecording().then(
-      () => setIsRecording(true),
-      () => {
-        recordingRef.current = false;
-        setIsRecording(false);
-      },
-    );
+    startRecording().catch(() => {
+      recordingRef.current = false;
+    });
   }, [audioReady, busy, historyReady]);
 
-  const handleBegin = useCallback(() => {
-    willCancelRef.current = false;
-    willLockRef.current = false;
+  const handleBegin = useCallback(async () => {
+    clearLongPressTimer();
     willCancelShared.value = false;
     willLockShared.value = false;
+    gestureAxis.value = 'none';
+    longPressFired.value = false;
+
     if (recordingRef.current) {
-      // Already locked: tapping the close icon stops and appends.
+      // Already recording: only a locked tap stops and appends.
       if (isLockedShared.value) {
-        stopAndAppend();
+        await stopAndAppend();
       }
       return;
     }
-    beginRecording();
+
+    longPressTimerRef.current = setTimeout(() => {
+      longPressFired.value = true;
+      beginRecording();
+    }, LONG_PRESS_MS);
   }, [
     beginRecording,
+    clearLongPressTimer,
     isLockedShared,
+    longPressFired,
+    gestureAxis,
     stopAndAppend,
     willCancelShared,
     willLockShared,
   ]);
 
   const handleLock = useCallback(() => {
-    if (willLockRef.current || willCancelRef.current || isLockedShared.value) {
+    if (
+      willLockShared.value ||
+      willCancelShared.value ||
+      isLockedShared.value
+    ) {
       return;
     }
-    willLockRef.current = true;
     willLockShared.value = true;
     isLockedShared.value = true;
     haptic.light();
-  }, [isLockedShared, willLockShared]);
+  }, [isLockedShared, willLockShared, willCancelShared]);
 
   const handleCancel = useCallback(() => {
-    if (willCancelRef.current) return;
-    willCancelRef.current = true;
+    if (willCancelShared.value) return;
     willCancelShared.value = true;
     if (isLockedShared.value) {
       isLockedShared.value = false;
@@ -141,20 +165,25 @@ export function ComposerRecordButton({
   }, [isLockedShared, willCancelShared]);
 
   const handleEnd = useCallback(async () => {
-    if (willCancelRef.current) {
+    clearLongPressTimer();
+    if (isLockedShared.value) {
+      // Locked: keep recording until the user taps the mic again.
+      return;
+    }
+    if (!longPressFired.value) {
+      // Short tap without starting recording.
+      reset();
+      return;
+    }
+    if (willCancelShared.value) {
       await discardCurrent();
       return;
     }
-    if (willLockRef.current) {
+    if (willLockShared.value) {
       // Lock confirmed: keep recording, hide lock-hint bounce and reset position.
-      willLockRef.current = false;
       willLockShared.value = false;
       translateX.value = withSpring(0);
       translateY.value = withSpring(0);
-      return;
-    }
-    if (isLockedShared.value) {
-      // Already locked; keep recording until the user taps the close icon.
       return;
     }
     if (recordingRef.current) {
@@ -164,35 +193,71 @@ export function ComposerRecordButton({
     // Nothing started (permission denied or very quick tap); just reset.
     reset();
   }, [
+    clearLongPressTimer,
     discardCurrent,
     isLockedShared,
+    longPressFired,
     reset,
     stopAndAppend,
     translateX,
     translateY,
+    willCancelShared,
     willLockShared,
   ]);
 
   const panGesture = Gesture.Pan()
+    .activeOffsetY([-AXIS_LOCK_THRESHOLD, AXIS_LOCK_THRESHOLD])
+    .activeOffsetX([-AXIS_LOCK_THRESHOLD, AXIS_LOCK_THRESHOLD])
     .onBegin(() => {
       runOnJS(handleBegin)();
     })
     .onUpdate((e) => {
-      translateX.value = e.translationX;
-      translateY.value = e.translationY;
-      if (
-        e.translationY < -LOCK_THRESHOLD &&
-        !isLockedShared.value &&
-        e.translationX > -CANCEL_THRESHOLD &&
-        !willCancelShared.value &&
-        !willLockShared.value
-      ) {
-        runOnJS(handleLock)();
-      } else if (
-        e.translationX < -CANCEL_THRESHOLD &&
-        !willCancelShared.value
-      ) {
-        runOnJS(handleCancel)();
+      if (isLockedShared.value) {
+        return;
+      }
+
+      const absX = Math.abs(e.translationX);
+      const absY = Math.abs(e.translationY);
+      const moved = absX > AXIS_LOCK_THRESHOLD || absY > AXIS_LOCK_THRESHOLD;
+
+      if (!longPressFired.value && moved) {
+        runOnJS(clearLongPressTimer)();
+        longPressFired.value = true;
+        runOnJS(beginRecording)();
+      }
+
+      if (gestureAxis.value === 'none' && moved) {
+        // Lock to one axis (x xor y) like Discord.
+        if (absY >= AXIS_LOCK_THRESHOLD && absX < AXIS_LOCK_THRESHOLD) {
+          gestureAxis.value = 'vertical';
+        } else if (absX >= AXIS_LOCK_THRESHOLD && absY < AXIS_LOCK_THRESHOLD) {
+          gestureAxis.value = 'horizontal';
+        } else if (absX >= AXIS_LOCK_THRESHOLD && absY >= AXIS_LOCK_THRESHOLD) {
+          gestureAxis.value = absY > absX ? 'vertical' : 'horizontal';
+        }
+      }
+
+      if (gestureAxis.value === 'vertical') {
+        translateY.value = Math.min(0, e.translationY);
+        translateX.value = withSpring(0);
+        if (
+          e.translationY < -LOCK_THRESHOLD &&
+          !isLockedShared.value &&
+          !willCancelShared.value &&
+          !willLockShared.value
+        ) {
+          runOnJS(handleLock)();
+        }
+      } else if (gestureAxis.value === 'horizontal') {
+        translateX.value = Math.min(0, e.translationX);
+        translateY.value = withSpring(0);
+        if (e.translationX < -CANCEL_THRESHOLD && !willCancelShared.value) {
+          runOnJS(handleCancel)();
+        }
+      } else {
+        // Axis not locked yet: follow the finger freely for visual feedback.
+        translateX.value = e.translationX;
+        translateY.value = e.translationY;
       }
     })
     .onEnd(() => {
@@ -221,8 +286,12 @@ export function ComposerRecordButton({
   );
 
   const lockHintStyle = useAnimatedStyle(() => ({
-    opacity: willLockShared.value ? 1 : 0,
-    transform: [{ translateY: willLockShared.value ? -8 : 0 }],
+    opacity: isLockedShared.value || willLockShared.value ? 1 : 0,
+    transform: [
+      {
+        translateY: isLockedShared.value || willLockShared.value ? -8 : 0,
+      },
+    ],
   }));
 
   const cancelHintStyle = useAnimatedStyle(() => ({

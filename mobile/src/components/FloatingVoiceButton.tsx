@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
@@ -9,9 +9,11 @@ import Reanimated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { usePathname, useRouter } from 'expo-router';
+import * as Sentry from '@sentry/react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useServer } from '@/src/api/ServerProvider';
+import { useServer, DEFAULT_PORT } from '@/src/api/ServerProvider';
 import { useVoice } from '@/src/api/VoiceContext';
+import { AgentClient } from '@/src/api/agentClient';
 import {
   startRecording,
   stopAndTranscribe,
@@ -31,7 +33,12 @@ export function FloatingVoiceButton() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { ready, workersToken } = useServer();
-  const { showInAgent } = useVoice();
+  const { isRecording: isRecordingContext, setPendingSessionId } = useVoice();
+
+  const agentClient = useMemo(
+    () => new AgentClient(`http://127.0.0.1:${DEFAULT_PORT}`, workersToken),
+    [workersToken],
+  );
 
   const [state, setState] = useState<ButtonState>('idle');
   const stateRef = useRef<ButtonState>('idle');
@@ -49,6 +56,10 @@ export function FloatingVoiceButton() {
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  useEffect(() => {
+    isRecordingActiveRef.current = isRecordingContext;
+  }, [isRecordingContext]);
 
   useEffect(() => {
     return () => {
@@ -77,13 +88,25 @@ export function FloatingVoiceButton() {
     transitionedRef.current = false;
     buttonY.value = withSpring(0);
     maxAbsY.value = 0;
-  }, [buttonY, cancelDecisionTimer, maxAbsY]);
+    setPendingSessionId(null);
+  }, [cancelDecisionTimer, maxAbsY, buttonY, setPendingSessionId]);
 
-  const pushAgent = useCallback(() => {
+  const pushAgent = useCallback(async () => {
     if (transitionedRef.current || pathname === '/agent') return;
+    let sessionId: string | null = null;
+    try {
+      sessionId = await agentClient.createSession();
+    } catch (e) {
+      // If creating a session fails we still open Agent; the user can start a
+      // new session from the composer.
+      Sentry.captureException(e);
+    }
+    if (sessionId) {
+      setPendingSessionId(sessionId);
+    }
     transitionedRef.current = true;
     router.push('/agent');
-  }, [pathname, router]);
+  }, [agentClient, pathname, router, setPendingSessionId]);
 
   const pushTaskAdd = useCallback(() => {
     if (transitionedRef.current) return;
@@ -102,6 +125,15 @@ export function FloatingVoiceButton() {
       reset();
     }
   }, [reset]);
+
+  // If the user navigates back home while the button is in a non-idle
+  // recording state, abort the recording and reset immediately so the
+  // button becomes responsive again as a normal "+" button.
+  useEffect(() => {
+    if (pathname === '/' && stateRef.current !== 'idle') {
+      stopAndDiscard();
+    }
+  }, [pathname, stopAndDiscard]);
 
   const stopAndAppend = useCallback(async () => {
     if (!isRecordingActiveRef.current) {
@@ -139,11 +171,11 @@ export function FloatingVoiceButton() {
     }
   }, [reset]);
 
-  const enterToggle = useCallback(() => {
+  const enterToggle = useCallback(async () => {
     cancelDecisionTimer();
     stateRef.current = 'toggle';
     setState('toggle');
-    pushAgent();
+    await pushAgent();
     isSlideRef.current = false;
     maxAbsY.value = 0;
     buttonY.value = withSpring(0);
@@ -161,7 +193,7 @@ export function FloatingVoiceButton() {
     slideResetTimerRef.current = setTimeout(reset, 100);
   }, [cancelDecisionTimer, pushTaskAdd, reset, stopAndDiscard]);
 
-  const commitVoice = useCallback(() => {
+  const commitVoice = useCallback(async () => {
     if (
       stateRef.current !== 'pending' ||
       isSlideRef.current ||
@@ -171,17 +203,23 @@ export function FloatingVoiceButton() {
     }
     stateRef.current = 'voice';
     setState('voice');
-    pushAgent();
+    await pushAgent();
   }, [pushAgent, maxAbsY]);
 
   const handlePressIn = useCallback(async () => {
     if (!ready || !workersToken) return;
 
     if (stateRef.current === 'toggle') {
-      stopAndAppend();
+      await stopAndAppend();
       return;
     }
-    if (stateRef.current !== 'idle') return;
+    if (stateRef.current !== 'idle') {
+      // We are already recording in another state (e.g. user navigated back
+      // home from /agent while voice was active). Abort the recording and
+      // reset so the next tap starts fresh.
+      await stopAndDiscard();
+      return;
+    }
 
     setState('pending');
     stateRef.current = 'pending';
@@ -205,21 +243,22 @@ export function FloatingVoiceButton() {
     ready,
     workersToken,
     stopAndAppend,
+    stopAndDiscard,
     commitVoice,
     reset,
     buttonY,
     maxAbsY,
   ]);
 
-  const handleRelease = useCallback(() => {
+  const handleRelease = useCallback(async () => {
     cancelDecisionTimer();
     const current = stateRef.current;
     if (current === 'voice') {
-      stopAndSend();
+      await stopAndSend();
     } else if (current === 'pending') {
-      enterToggle();
+      await enterToggle();
     } else if (current === 'toggle') {
-      stopAndAppend();
+      await stopAndAppend();
     } else {
       reset();
     }
@@ -271,11 +310,11 @@ export function FloatingVoiceButton() {
 
   const isHome = pathname === '/' || pathname === '' || pathname === '/index';
   const isAgent = pathname === '/agent';
-  if (!isHome && !(isAgent && showInAgent && isRecording)) {
+  if (!isHome && !(isAgent && isRecordingContext)) {
     return null;
   }
 
-  const iconName = state === 'toggle' ? 'close' : 'mic';
+  const iconName = state === 'idle' ? 'add' : 'close';
 
   return (
     <View
