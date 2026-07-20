@@ -6,7 +6,7 @@
 // Slide actions show a background preview with icon
 // Done tasks: strikethrough + gray
 
-import { memo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import {
   Pressable,
   StyleSheet,
@@ -32,10 +32,10 @@ interface TaskCardProps {
   scheduleStart?: string;
   scheduleEnd?: string;
   isDone: boolean;
-  onPress: () => void;
-  onDone?: () => void | Promise<void>;
-  onDelete?: () => void | Promise<void>;
-  onLongPress?: () => void;
+  onPress: (task: TaskRow) => void;
+  onDone?: (task: TaskRow) => void | Promise<void>;
+  onDelete?: (task: TaskRow) => void | Promise<void>;
+  onLongPress?: (task: TaskRow) => void;
   selected?: boolean;
   // Habit display_id for habit-based coloring (#309). Undefined when the
   // task has no habit or the habit map is unavailable.
@@ -146,7 +146,7 @@ function TaskCardImpl({
           translateX.value = withSpring(-DELETE_REVEAL_WIDTH);
         }
       } else if (e.translationX > 80 && onDone) {
-        runOnJS(onDone)();
+        runOnJS(onDone)(task);
         translateX.value = withSpring(0);
       } else if (e.translationX < -80 && onDelete) {
         // #393: reveal the delete button instead of deleting immediately.
@@ -223,7 +223,7 @@ function TaskCardImpl({
       return;
     }
     haptic.light();
-    onPress();
+    onPress(task);
   };
   const handleLongPress = onLongPress
     ? () => {
@@ -235,7 +235,7 @@ function TaskCardImpl({
           return;
         }
         haptic.medium();
-        onLongPress();
+        onLongPress(task);
       }
     : undefined;
 
@@ -267,7 +267,7 @@ function TaskCardImpl({
             deleteRevealedSV.value = false;
             setDeleteRevealed(false);
             translateX.value = withSpring(0);
-            onDelete();
+            onDelete(task);
           }}
         >
           <Ionicons name="trash" size={24} color={COLORS.white} />
@@ -478,9 +478,9 @@ interface ParallelGroupCardProps {
   guestScheduleStarts: (string | undefined)[];
   guestScheduleEnds: (string | undefined)[];
   selected?: boolean;
-  onHostPress: () => void;
-  onGuestPress: (index: number) => void;
-  onLongPress: () => void;
+  onHostPress: (host: TaskRow) => void;
+  onGuestPress: (guest: TaskRow) => void;
+  onToggle: (allIds: string[]) => void;
   onDone?: (task: TaskRow) => void | Promise<void>;
   onDelete?: (task: TaskRow) => void | Promise<void>;
   // habit_id → display_id map for habit-based coloring (#309).
@@ -499,7 +499,7 @@ function ParallelGroupCardImpl({
   selected,
   onHostPress,
   onGuestPress,
-  onLongPress,
+  onToggle,
   onDone,
   onDelete,
   habitDisplayIdMap,
@@ -516,6 +516,18 @@ function ParallelGroupCardImpl({
     theme,
   );
   const outlineColor = dark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
+
+  const allIds = useMemo(
+    () => [host.id, ...guests.map((g) => g.id)],
+    [host.id, guests],
+  );
+
+  const handleGroupLongPress = useCallback(
+    (_task: TaskRow) => {
+      onToggle(allIds);
+    },
+    [onToggle, allIds],
+  );
 
   return (
     <View
@@ -534,9 +546,9 @@ function ParallelGroupCardImpl({
           scheduleEnd={hostScheduleEnd}
           isDone={host.status === 'completed' || host.status === 'skipped'}
           onPress={onHostPress}
-          onDone={onDone ? () => onDone(host) : undefined}
-          onDelete={onDelete ? () => onDelete(host) : undefined}
-          onLongPress={onLongPress}
+          onDone={onDone}
+          onDelete={onDelete}
+          onLongPress={handleGroupLongPress}
           habitDisplayId={hostHabitDisplayId}
           dependentCount={dependentCountMap?.get(host.id)}
           containerStyle={groupStyles.groupCard}
@@ -554,10 +566,10 @@ function ParallelGroupCardImpl({
               isDone={
                 guest.status === 'completed' || guest.status === 'skipped'
               }
-              onPress={() => onGuestPress(idx)}
-              onDone={onDone ? () => onDone(guest) : undefined}
-              onDelete={onDelete ? () => onDelete(guest) : undefined}
-              onLongPress={onLongPress}
+              onPress={onGuestPress}
+              onDone={onDelete}
+              onDelete={onDelete}
+              onLongPress={handleGroupLongPress}
               habitDisplayId={guestHabitDisplayId}
               dependentCount={dependentCountMap?.get(guest.id)}
               containerStyle={groupStyles.groupCard}

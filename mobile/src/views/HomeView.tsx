@@ -16,6 +16,9 @@ import {
   View,
   RefreshControl,
   type ViewStyle,
+  type NativeSyntheticEvent,
+  type NativeScrollEvent,
+  type LayoutChangeEvent,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -134,6 +137,10 @@ export function HomeView() {
     }
     return counts;
   }, [tasks]);
+  const habitDisplayIdMapRef = useRef(habitDisplayIdMap);
+  habitDisplayIdMapRef.current = habitDisplayIdMap;
+  const dependentCountMapRef = useRef(dependentCountMap);
+  dependentCountMapRef.current = dependentCountMap;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [refreshing, setRefreshing] = useState(false);
   // Server-configured timezone (from GET /api/settings). Used by dateKey
@@ -161,6 +168,18 @@ export function HomeView() {
   // onViewableItemsChanged. Used by scrollByDay to find the next/previous
   // day separator relative to the current scroll position.
   const visibleTopIndexRef = useRef(0);
+
+  // Stable refs for state values that callbacks need to read without
+  // becoming dependencies of those callbacks. Updated synchronously during
+  // render so handlers always see the latest value in the current render.
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+  const notificationsRef = useRef(notifications);
+  notificationsRef.current = notifications;
+  const clientRef = useRef(client);
+  clientRef.current = client;
 
   // Navigation buttons visibility — shown when scrolling, hidden when idle
   // (#308). Uses a shared value for smooth opacity animation.
@@ -221,7 +240,7 @@ export function HomeView() {
   const chevronStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${chevronRotate.value}deg` }],
   }));
-  function togglePast() {
+  const togglePast = useCallback(() => {
     haptic.select();
     setShowPast((v) => {
       const next = !v;
@@ -229,7 +248,7 @@ export function HomeView() {
       if (!next) setPastWeeks(1); // reset pagination when collapsing
       return next;
     });
-  }
+  }, [chevronRotate]);
 
   const refresh = useCallback(async () => {
     if (!client) return;
@@ -322,6 +341,8 @@ export function HomeView() {
       setRefreshing(false);
     }
   }, [client, serverTz]);
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
 
   const { startScheduleOperation } = useScheduleOperation({
     client,
@@ -411,6 +432,19 @@ export function HomeView() {
     }
     return { parallelGroups: groups, groupedGuestIds: guestIds };
   }, [tasks, scheduleMap]);
+  const parallelGroupsRef = useRef(parallelGroups);
+  parallelGroupsRef.current = parallelGroups;
+  const guestToAllIdsRef = useRef(new Map<string, string[]>());
+  guestToAllIdsRef.current = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const [hostId, groupGuests] of parallelGroups) {
+      const allIds = [hostId, ...groupGuests.map((g) => g.id)];
+      for (const g of groupGuests) {
+        map.set(g.id, allIds);
+      }
+    }
+    return map;
+  }, [parallelGroups]);
 
   const items: ListItem[] = useMemo(() => {
     const filtered = searchQuery
@@ -666,17 +700,19 @@ export function HomeView() {
     scrollToDateKey(key);
   }
 
-  function toggleSelection(id: string) {
+  const toggleSelection = useCallback((id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  }
+  }, []);
 
-  async function markDone(task: TaskRow) {
-    if (!client) return;
+  const markDone = useCallback(async (task: TaskRow) => {
+    const currentClient = clientRef.current;
+    const currentNotifications = notificationsRef.current;
+    if (!currentClient) return;
     // Pending tasks: swipe-right completes directly (pending → completed).
     // After completion, the task enters the 3-state cycle (scheduled →
     // in_progress → completed → scheduled). Undo restores the original
@@ -708,7 +744,7 @@ export function HomeView() {
       errorLabel = 'タスクの開始に失敗';
     }
     try {
-      await client.updateTask(task.id, { status: newStatus });
+      await currentClient.updateTask(task.id, { status: newStatus });
     } catch (e) {
       showError(e, errorLabel);
       return;
@@ -734,19 +770,22 @@ export function HomeView() {
       );
     }
     // Post in-progress notification when starting via swipe (#312)
-    if (newStatus === 'in_progress' && notifications.inProgress) {
+    if (newStatus === 'in_progress' && currentNotifications.inProgress) {
       postInProgressNotification(task).catch((e) => logError('通知の投稿', e));
     }
     undoRedo.push({
       description: `${actionLabel}: ${task.title}`,
       undo: async () => {
-        await client.updateTask(task.id, { status: prevStatus });
+        const undoClient = clientRef.current;
+        if (!undoClient) return;
+        const undoNotifications = notificationsRef.current;
+        await undoClient.updateTask(task.id, { status: prevStatus });
         if (newStatus === 'in_progress') {
           dismissInProgressNotification(task.id).catch((e) =>
             logError('通知の消去', e),
           );
         }
-        if (prevStatus === 'in_progress' && notifications.inProgress) {
+        if (prevStatus === 'in_progress' && undoNotifications.inProgress) {
           postInProgressNotification(task).catch((e) =>
             logError('通知の投稿', e),
           );
@@ -757,11 +796,14 @@ export function HomeView() {
             logError('通知のキャンセル', e),
           );
         }
-        await refresh();
+        await refreshRef.current();
       },
       redo: async () => {
-        await client.updateTask(task.id, { status: newStatus });
-        if (newStatus === 'in_progress' && notifications.inProgress) {
+        const redoClient = clientRef.current;
+        if (!redoClient) return;
+        const redoNotifications = notificationsRef.current;
+        await redoClient.updateTask(task.id, { status: newStatus });
+        if (newStatus === 'in_progress' && redoNotifications.inProgress) {
           postInProgressNotification(task).catch((e) =>
             logError('通知の投稿', e),
           );
@@ -777,19 +819,21 @@ export function HomeView() {
             logError('通知のキャンセル', e),
           );
         }
-        await refresh();
+        await refreshRef.current();
       },
     });
-    await refresh();
-  }
+    await refreshRef.current();
+  }, []);
 
-  async function deleteTask(task: TaskRow) {
-    if (!client) return;
+  const deleteTask = useCallback(async (task: TaskRow) => {
+    const currentClient = clientRef.current;
+    const currentTasks = tasksRef.current;
+    if (!currentClient) return;
     // Remove the deleted task from any other task's depends before deleting,
     // so a deleted host doesn't leave guests with an invalid dependency.
     // Keep the original depends arrays so undo can restore them.
     const dependents: { id: string; original: string[] }[] = [];
-    for (const t of tasks) {
+    for (const t of currentTasks) {
       if (t.id === task.id) continue;
       const deps = parseDepends(t.depends);
       if (deps.includes(task.id)) {
@@ -798,7 +842,7 @@ export function HomeView() {
     }
     try {
       for (const d of dependents) {
-        await client.updateTask(d.id, {
+        await currentClient.updateTask(d.id, {
           depends: d.original.filter((id) => id !== task.id),
         });
       }
@@ -807,14 +851,16 @@ export function HomeView() {
       return;
     }
     try {
-      await client.deleteTask(task.id);
+      await currentClient.deleteTask(task.id);
     } catch (e) {
       showError(e, 'タスクの削除に失敗');
       // Best-effort rollback of dependency updates.
       for (const d of dependents) {
-        await client.updateTask(d.id, { depends: d.original }).catch((err) => {
-          logError('依存関係の復元に失敗', err);
-        });
+        await currentClient
+          .updateTask(d.id, { depends: d.original })
+          .catch((err) => {
+            logError('依存関係の復元に失敗', err);
+          });
       }
       return;
     }
@@ -822,8 +868,10 @@ export function HomeView() {
     undoRedo.push({
       description: `delete: ${task.title}`,
       undo: async () => {
+        const undoClient = clientRef.current;
+        if (!undoClient) return;
         // Re-create with same fields
-        const recreated = await client.createTask({
+        const recreated = await undoClient.createTask({
           title: task.title,
           description: task.description,
           start_at: task.start_at,
@@ -840,29 +888,31 @@ export function HomeView() {
         });
         // CreateTask does not accept `status`; restore it via update.
         if (task.status !== 'pending') {
-          await client.updateTask(recreated.id, { status: task.status });
+          await undoClient.updateTask(recreated.id, { status: task.status });
         }
         currentId = recreated.id;
         // Restore dependents to point to the recreated task.
         for (const d of dependents) {
-          await client.updateTask(d.id, {
+          await undoClient.updateTask(d.id, {
             depends: d.original.map((id) => (id === task.id ? currentId : id)),
           });
         }
-        await refresh();
+        await refreshRef.current();
       },
       redo: async () => {
-        await client.deleteTask(currentId);
+        const redoClient = clientRef.current;
+        if (!redoClient) return;
+        await redoClient.deleteTask(currentId);
         for (const d of dependents) {
-          await client.updateTask(d.id, {
+          await redoClient.updateTask(d.id, {
             depends: d.original.filter((id) => id !== task.id),
           });
         }
-        await refresh();
+        await refreshRef.current();
       },
     });
-    await refresh();
-  }
+    await refreshRef.current();
+  }, []);
 
   function rescheduleSelected() {
     if (!client) return;
@@ -1105,109 +1155,212 @@ export function HomeView() {
     await refresh();
   }
 
-  function renderItem(item: ListItem) {
-    if (item.type === 'separator') {
-      // "Load more past" separator is tappable (#206)
-      if (item.label.startsWith('過去をさらに読み込む')) {
+  const toggleGroupSelection = useCallback((allIds: string[]) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const allSel = allIds.every((id) => prev.has(id));
+      if (allSel) {
+        for (const id of allIds) next.delete(id);
+      } else {
+        for (const id of allIds) next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleTaskPress = useCallback(
+    (task: TaskRow) => {
+      if (selectedRef.current.size > 0) {
+        toggleSelection(task.id);
+      } else {
+        router.push(`/task/${task.id}`);
+      }
+    },
+    [toggleSelection, router],
+  );
+
+  const handleTaskLongPress = useCallback(
+    (task: TaskRow) => {
+      toggleSelection(task.id);
+    },
+    [toggleSelection],
+  );
+
+  const handleHostPress = useCallback(
+    (host: TaskRow) => {
+      if (selectedRef.current.size > 0) {
+        const groupGuests = parallelGroupsRef.current.get(host.id) ?? [];
+        toggleGroupSelection([host.id, ...groupGuests.map((g) => g.id)]);
+      } else {
+        router.push(`/task/${host.id}`);
+      }
+    },
+    [toggleGroupSelection, router],
+  );
+
+  const handleGuestPress = useCallback(
+    (guest: TaskRow) => {
+      if (selectedRef.current.size > 0) {
+        const allIds = guestToAllIdsRef.current.get(guest.id) ?? [guest.id];
+        toggleGroupSelection(allIds);
+      } else {
+        router.push(`/task/${guest.id}`);
+      }
+    },
+    [toggleGroupSelection, router],
+  );
+
+  const handleGroupToggle = useCallback(
+    (allIds: string[]) => {
+      toggleGroupSelection(allIds);
+    },
+    [toggleGroupSelection],
+  );
+
+  const renderListItem = useCallback(
+    ({ item }: { item: ListItem }) => {
+      if (item.type === 'separator') {
+        // "Load more past" separator is tappable (#206)
+        if (item.label.startsWith('過去をさらに読み込む')) {
+          return (
+            <Pressable
+              style={styles.separator}
+              onPress={() => {
+                haptic.light();
+                setPastWeeks((w) => w + 1);
+              }}
+            >
+              <View style={styles.separatorBar} />
+              <Text style={[styles.separatorText, { color: BRAND_COLOR }]}>
+                {item.label}
+              </Text>
+              <View style={styles.separatorBar} />
+            </Pressable>
+          );
+        }
         return (
-          <Pressable
-            style={styles.separator}
-            onPress={() => {
-              haptic.light();
-              setPastWeeks((w) => w + 1);
-            }}
-          >
+          <View style={styles.separator}>
             <View style={styles.separatorBar} />
-            <Text style={[styles.separatorText, { color: BRAND_COLOR }]}>
-              {item.label}
-            </Text>
+            <Text style={styles.separatorText}>{item.label}</Text>
             <View style={styles.separatorBar} />
-          </Pressable>
+          </View>
         );
       }
-      return (
-        <View style={styles.separator}>
-          <View style={styles.separatorBar} />
-          <Text style={styles.separatorText}>{item.label}</Text>
-          <View style={styles.separatorBar} />
-        </View>
-      );
-    }
-    if (item.type === 'parallelGroup') {
-      const allIds = [item.host.id, ...item.guests.map((g) => g.id)];
-      const isSelected = allIds.some((id) => selected.has(id));
-      // Toggle all group IDs atomically: derive add-vs-remove from the
-      // latest state inside the updater to avoid stale closure bugs.
-      function toggleGroupSelection() {
-        setSelected((prev) => {
-          const next = new Set(prev);
-          const allSel = allIds.every((id) => prev.has(id));
-          if (allSel) {
-            for (const id of allIds) next.delete(id);
-          } else {
-            for (const id of allIds) next.add(id);
-          }
-          return next;
-        });
+      const currentSelected = selectedRef.current;
+      if (item.type === 'parallelGroup') {
+        const allIds = [item.host.id, ...item.guests.map((g) => g.id)];
+        const isSelected = allIds.some((id) => currentSelected.has(id));
+        return (
+          <ParallelGroupCard
+            host={item.host}
+            guests={item.guests}
+            hostScheduleStart={item.hostScheduleStart}
+            hostScheduleEnd={item.hostScheduleEnd}
+            guestScheduleStarts={item.guestScheduleStarts}
+            guestScheduleEnds={item.guestScheduleEnds}
+            selected={isSelected}
+            habitDisplayIdMap={habitDisplayIdMapRef.current}
+            dependentCountMap={dependentCountMapRef.current}
+            onHostPress={handleHostPress}
+            onGuestPress={handleGuestPress}
+            onToggle={handleGroupToggle}
+            onDone={markDone}
+            onDelete={deleteTask}
+          />
+        );
       }
+      const isSelected = currentSelected.has(item.task.id);
       return (
-        <ParallelGroupCard
-          host={item.host}
-          guests={item.guests}
-          hostScheduleStart={item.hostScheduleStart}
-          hostScheduleEnd={item.hostScheduleEnd}
-          guestScheduleStarts={item.guestScheduleStarts}
-          guestScheduleEnds={item.guestScheduleEnds}
+        <TaskCard
+          task={item.task}
+          scheduleStart={item.scheduleStart}
+          scheduleEnd={item.scheduleEnd}
+          isDone={item.isDone}
           selected={isSelected}
-          habitDisplayIdMap={habitDisplayIdMap}
-          dependentCountMap={dependentCountMap}
-          onHostPress={() => {
-            if (selected.size > 0) {
-              toggleGroupSelection();
-            } else {
-              router.push(`/task/${item.host.id}`);
-            }
-          }}
-          onGuestPress={(idx) => {
-            if (selected.size > 0) {
-              toggleGroupSelection();
-            } else {
-              router.push(`/task/${item.guests[idx].id}`);
-            }
-          }}
-          onLongPress={toggleGroupSelection}
+          habitDisplayId={
+            item.task.habit_id
+              ? habitDisplayIdMapRef.current.get(item.task.habit_id)
+              : undefined
+          }
+          dependentCount={dependentCountMapRef.current.get(item.task.id)}
+          onPress={handleTaskPress}
+          onLongPress={handleTaskLongPress}
           onDone={markDone}
           onDelete={deleteTask}
         />
       );
-    }
-    const isSelected = selected.has(item.task.id);
-    return (
-      <TaskCard
-        task={item.task}
-        scheduleStart={item.scheduleStart}
-        scheduleEnd={item.scheduleEnd}
-        isDone={item.isDone}
-        selected={isSelected}
-        habitDisplayId={
-          item.task.habit_id
-            ? habitDisplayIdMap.get(item.task.habit_id)
-            : undefined
-        }
-        dependentCount={dependentCountMap.get(item.task.id)}
-        onPress={() => {
-          if (selected.size > 0) {
-            toggleSelection(item.task.id);
-          } else {
-            router.push(`/task/${item.task.id}`);
-          }
-        }}
-        onLongPress={() => toggleSelection(item.task.id)}
-        onDone={() => markDone(item.task)}
-        onDelete={() => deleteTask(item.task)}
-      />
-    );
-  }
+    },
+    [
+      handleTaskPress,
+      handleTaskLongPress,
+      handleHostPress,
+      handleGuestPress,
+      handleGroupToggle,
+      markDone,
+      deleteTask,
+    ],
+  );
+
+  const keyExtractor = useCallback(
+    (item: ListItem, index: number) =>
+      item.type === 'separator'
+        ? `sep-${index}`
+        : item.type === 'parallelGroup'
+          ? `group-${item.host.id}`
+          : `task-${item.task.id}`,
+    [],
+  );
+
+  const listHeader = useMemo(
+    () =>
+      pastCount > 0 ? (
+        <Pressable style={styles.pastToggle} onPress={togglePast}>
+          <Reanimated.View style={chevronStyle}>
+            <Ionicons name="chevron-down" size={16} color={BRAND_COLOR} />
+          </Reanimated.View>
+          <Text style={styles.pastToggleText}>
+            {showPast ? '過去を隠す' : '過去を表示'}
+          </Text>
+          <View style={[styles.pastBadge, { backgroundColor: BRAND_COLOR }]}>
+            <Text style={styles.pastBadgeText}>{pastCount}</Text>
+          </View>
+        </Pressable>
+      ) : null,
+    [pastCount, showPast, chevronStyle, togglePast],
+  );
+
+  const handleScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
+    },
+    [],
+  );
+
+  const handleListLayout = useCallback((e: LayoutChangeEvent) => {
+    listLayoutHeightRef.current = e.nativeEvent.layout.height;
+  }, []);
+
+  const handleScrollToIndexFailed = useCallback(
+    ({
+      index,
+      averageItemLength,
+    }: {
+      index: number;
+      averageItemLength: number;
+    }) => {
+      // Fallback: scroll to approximate offset
+      listRef.current?.scrollToOffset({
+        offset: index * averageItemLength,
+        animated: true,
+      });
+    },
+    [],
+  );
+
+  const contentContainerStyle = useMemo(
+    () => [styles.listContent, { paddingBottom: 100 + insets.bottom }],
+    [insets.bottom],
+  );
 
   if (view === 'graph') {
     return (
@@ -1325,58 +1478,27 @@ export function HomeView() {
       <FlatList
         ref={listRef}
         data={items}
-        keyExtractor={(item, i) =>
-          item.type === 'separator'
-            ? `sep-${i}`
-            : item.type === 'parallelGroup'
-              ? `group-${item.host.id}`
-              : `task-${item.task.id}`
-        }
-        renderItem={({ item }) => renderItem(item)}
-        ListHeaderComponent={
-          pastCount > 0 ? (
-            <Pressable style={styles.pastToggle} onPress={togglePast}>
-              <Reanimated.View style={chevronStyle}>
-                <Ionicons name="chevron-down" size={16} color={BRAND_COLOR} />
-              </Reanimated.View>
-              <Text style={styles.pastToggleText}>
-                {showPast ? '過去を隠す' : '過去を表示'}
-              </Text>
-              <View
-                style={[styles.pastBadge, { backgroundColor: BRAND_COLOR }]}
-              >
-                <Text style={styles.pastBadgeText}>{pastCount}</Text>
-              </View>
-            </Pressable>
-          ) : null
-        }
+        keyExtractor={keyExtractor}
+        renderItem={renderListItem}
+        ListHeaderComponent={listHeader}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={refresh} />
         }
-        onScroll={(e) => {
-          scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
-        }}
+        onScroll={handleScroll}
         onScrollBeginDrag={showNavButtons}
         onScrollEndDrag={scheduleHideNavButtons}
         onMomentumScrollBegin={showNavButtons}
         onMomentumScrollEnd={scheduleHideNavButtons}
         scrollEventThrottle={16}
-        onLayout={(e) => {
-          listLayoutHeightRef.current = e.nativeEvent.layout.height;
-        }}
+        onLayout={handleListLayout}
         onViewableItemsChanged={handleViewableItemsChanged}
         viewabilityConfig={VIEWABILITY_CONFIG}
-        onScrollToIndexFailed={({ index, averageItemLength }) => {
-          // Fallback: scroll to approximate offset
-          listRef.current?.scrollToOffset({
-            offset: index * averageItemLength,
-            animated: true,
-          });
-        }}
-        contentContainerStyle={[
-          styles.listContent,
-          { paddingBottom: 100 + insets.bottom },
-        ]}
+        onScrollToIndexFailed={handleScrollToIndexFailed}
+        contentContainerStyle={contentContainerStyle}
+        extraData={selected}
+        initialNumToRender={12}
+        maxToRenderPerBatch={12}
+        windowSize={7}
       />
 
       {/* Bottom bar */}

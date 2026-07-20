@@ -1,7 +1,7 @@
 // HabitView — list of habit cards with add button
 // Habits are selectable, context menu (left) changes with selection
 
-import { useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -44,6 +44,8 @@ export function HabitView({ client }: HabitViewProps) {
   const [habits, setHabits] = useState<HabitRow[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
   // Badge data: step counts per habit id, and active scheduled span per habit id.
   const [stepCounts, setStepCounts] = useState<Map<string, number>>(new Map());
   const [activeSpans, setActiveSpans] = useState<
@@ -310,14 +312,76 @@ export function HabitView({ client }: HabitViewProps) {
     await refresh();
   }
 
-  function toggleSelection(id: string) {
+  const toggleSelection = useCallback((id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  }
+  }, []);
+
+  const handleHabitPress = useCallback(
+    (habit: HabitRow) => {
+      if (selectedRef.current.size > 0) {
+        haptic.light();
+        toggleSelection(habit.id);
+      } else {
+        haptic.light();
+        router.push(`/habit/${habit.id}`);
+      }
+    },
+    [toggleSelection, router],
+  );
+
+  const handleHabitLongPress = useCallback(
+    (habit: HabitRow) => {
+      haptic.medium();
+      toggleSelection(habit.id);
+    },
+    [toggleSelection],
+  );
+
+  const keyExtractor = useCallback((h: HabitRow) => h.id, []);
+
+  const contentContainerStyle = useMemo(
+    () => [styles.listContent, { paddingBottom: 100 + insets.bottom }],
+    [insets.bottom],
+  );
+
+  const renderItem = useCallback(
+    ({ item: h }: { item: HabitRow }) => {
+      const isSelected = selectedRef.current.has(h.id);
+      const hasSpan = activeSpans.has(h.id);
+      const isActive = h.active || hasSpan;
+      const span = activeSpans.get(h.id);
+      const stepCount = stepCounts.get(h.id) ?? 0;
+      const isScheduled =
+        (h.active && hasSpan) || (!h.active && spanHabits.has(h.id));
+
+      return (
+        <HabitCard
+          habit={h}
+          selected={isSelected}
+          isActive={isActive}
+          isScheduled={isScheduled}
+          span={span}
+          stepCount={stepCount}
+          colors={colors}
+          onPress={handleHabitPress}
+          onLongPress={handleHabitLongPress}
+        />
+      );
+    },
+    [
+      activeSpans,
+      spanHabits,
+      stepCounts,
+      colors,
+      handleHabitPress,
+      handleHabitLongPress,
+    ],
+  );
 
   return (
     <View style={[styles.container, { backgroundColor: colors.white }]}>
@@ -360,188 +424,159 @@ export function HabitView({ client }: HabitViewProps) {
 
       <FlatList
         data={habits}
-        keyExtractor={(h) => h.id}
-        renderItem={({ item: h }) => (
-          <Pressable
-            style={[
-              styles.habitCard,
-              {
-                backgroundColor: colors.surface,
-                borderColor: colors.separator,
-              },
-              selected.has(h.id) && styles.habitCardSelected,
-              h.active && activeSpans.has(h.id) && styles.habitCardPaused,
-            ]}
-            onPress={() => {
-              if (selected.size > 0) {
-                haptic.light();
-                toggleSelection(h.id);
-              } else {
-                haptic.light();
-                router.push(`/habit/${h.id}`);
-              }
-            }}
-            onLongPress={() => {
-              haptic.medium();
-              toggleSelection(h.id);
-            }}
-          >
-            <View style={styles.habitHeader}>
-              <Text
-                style={[
-                  styles.habitTitle,
-                  {
-                    color:
-                      h.active || activeSpans.has(h.id)
-                        ? colors.black
-                        : colors.gray,
-                    textDecorationLine:
-                      h.active || activeSpans.has(h.id)
-                        ? 'none'
-                        : 'line-through',
-                  },
-                ]}
-              >
-                {h.title}
-              </Text>
-              <View style={styles.badgeRow}>
-                {h.window_mode === WINDOW_MODE_PERIOD && (
-                  <View
-                    style={[
-                      styles.chip,
-                      { backgroundColor: colors.surfaceTint },
-                    ]}
-                  >
-                    <Ionicons
-                      name="calendar-number-outline"
-                      size={11}
-                      color={BRAND_COLOR}
-                    />
-                    <Text style={[styles.chipText, { color: BRAND_COLOR }]}>
-                      自由枠
-                    </Text>
-                  </View>
-                )}
-                {(stepCounts.get(h.id) ?? 0) > 0 && (
-                  <View
-                    style={[
-                      styles.chip,
-                      { backgroundColor: colors.surfaceTint },
-                    ]}
-                  >
-                    <Ionicons
-                      name="layers-outline"
-                      size={11}
-                      color={BRAND_COLOR}
-                    />
-                    <Text style={[styles.chipText, { color: BRAND_COLOR }]}>
-                      {stepCounts.get(h.id)} steps
-                    </Text>
-                  </View>
-                )}
-                {((h.active && activeSpans.has(h.id)) ||
-                  (!h.active && spanHabits.has(h.id))) && (
-                  <View
-                    style={[
-                      styles.chip,
-                      { backgroundColor: colors.surfaceTint },
-                    ]}
-                  >
-                    {(() => {
-                      const span = activeSpans.get(h.id);
-                      if (h.active) {
-                        return (
-                          <>
-                            <Ionicons
-                              name="pause-circle"
-                              size={11}
-                              color={COLORS.red}
-                            />
-                            <Text
-                              style={[styles.chipText, { color: COLORS.red }]}
-                            >
-                              〜{formatSpanShort(span!.end_date)}
-                            </Text>
-                          </>
-                        );
-                      }
-                      // disabled habit with scheduled span(s)
-                      return (
-                        <>
-                          <Ionicons
-                            name="play-circle"
-                            size={11}
-                            color={BRAND_COLOR}
-                          />
-                          <Text
-                            style={[styles.chipText, { color: BRAND_COLOR }]}
-                          >
-                            {span
-                              ? `scheduled 〜${formatSpanShort(span.end_date)}`
-                              : 'scheduled'}
-                          </Text>
-                        </>
-                      );
-                    })()}
-                  </View>
-                )}
-              </View>
-            </View>
-            {(() => {
-              const hasSteps = (stepCounts.get(h.id) ?? 0) > 0;
-              return (
-                <>
-                  {!hasSteps && (
-                    <Text style={[styles.habitTime, { color: colors.gray }]}>
-                      時間: {h.start_time} → {h.end_time}
-                    </Text>
-                  )}
-                  <Text
-                    style={[styles.habitRecurrence, { color: colors.gray }]}
-                  >
-                    周期: {summarizeRule(parseRule(h.recurrence))}
-                  </Text>
-                  {!hasSteps && (
-                    <>
-                      <Text style={[styles.habitCost, { color: colors.gray }]}>
-                        {h.avg_minutes}m ±{h.sigma_minutes}
-                      </Text>
-                      <Text
-                        style={[styles.habitParallel, { color: colors.gray }]}
-                      >
-                        parallel:{' '}
-                        {h.parallelizable && h.allows_parallel
-                          ? 'host+guest'
-                          : h.parallelizable
-                            ? 'guest'
-                            : h.allows_parallel
-                              ? 'host'
-                              : 'none'}
-                        {h.fixed ? ' · fixed' : ''}
-                      </Text>
-                      <Text
-                        style={[styles.habitAbandon, { color: colors.gray }]}
-                      >
-                        abandon: {h.abandonability.toFixed(2)}
-                      </Text>
-                    </>
-                  )}
-                </>
-              );
-            })()}
-          </Pressable>
-        )}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={refresh} />
         }
-        contentContainerStyle={[
-          styles.listContent,
-          { paddingBottom: 100 + insets.bottom },
-        ]}
+        contentContainerStyle={contentContainerStyle}
+        extraData={selected}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={7}
       />
     </View>
   );
 }
+
+interface HabitCardProps {
+  habit: HabitRow;
+  selected: boolean;
+  isActive: boolean;
+  isScheduled: boolean;
+  span: HabitScheduledSpanRow | undefined;
+  stepCount: number;
+  colors: ReturnType<typeof useColors>;
+  onPress: (habit: HabitRow) => void;
+  onLongPress: (habit: HabitRow) => void;
+}
+
+const HabitCard = memo(function HabitCardImpl({
+  habit,
+  selected,
+  isActive,
+  isScheduled,
+  span,
+  stepCount,
+  colors,
+  onPress,
+  onLongPress,
+}: HabitCardProps) {
+  return (
+    <Pressable
+      style={[
+        styles.habitCard,
+        {
+          backgroundColor: colors.surface,
+          borderColor: colors.separator,
+        },
+        selected && styles.habitCardSelected,
+        habit.active && span && styles.habitCardPaused,
+      ]}
+      onPress={() => onPress(habit)}
+      onLongPress={() => onLongPress(habit)}
+    >
+      <View style={styles.habitHeader}>
+        <Text
+          style={[
+            styles.habitTitle,
+            {
+              color: isActive ? colors.black : colors.gray,
+              textDecorationLine: isActive ? 'none' : 'line-through',
+            },
+          ]}
+        >
+          {habit.title}
+        </Text>
+        <View style={styles.badgeRow}>
+          {habit.window_mode === WINDOW_MODE_PERIOD && (
+            <View
+              style={[styles.chip, { backgroundColor: colors.surfaceTint }]}
+            >
+              <Ionicons
+                name="calendar-number-outline"
+                size={11}
+                color={BRAND_COLOR}
+              />
+              <Text style={[styles.chipText, { color: BRAND_COLOR }]}>
+                自由枠
+              </Text>
+            </View>
+          )}
+          {stepCount > 0 && (
+            <View
+              style={[styles.chip, { backgroundColor: colors.surfaceTint }]}
+            >
+              <Ionicons name="layers-outline" size={11} color={BRAND_COLOR} />
+              <Text style={[styles.chipText, { color: BRAND_COLOR }]}>
+                {stepCount} steps
+              </Text>
+            </View>
+          )}
+          {isScheduled && (
+            <View
+              style={[styles.chip, { backgroundColor: colors.surfaceTint }]}
+            >
+              {habit.active ? (
+                <>
+                  <Ionicons name="pause-circle" size={11} color={COLORS.red} />
+                  <Text style={[styles.chipText, { color: COLORS.red }]}>
+                    〜{span ? formatSpanShort(span.end_date) : ''}
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="play-circle" size={11} color={BRAND_COLOR} />
+                  <Text style={[styles.chipText, { color: BRAND_COLOR }]}>
+                    {span
+                      ? `scheduled 〜${formatSpanShort(span.end_date)}`
+                      : 'scheduled'}
+                  </Text>
+                </>
+              )}
+            </View>
+          )}
+        </View>
+      </View>
+      {(() => {
+        const hasSteps = stepCount > 0;
+        return (
+          <>
+            {!hasSteps && (
+              <Text style={[styles.habitTime, { color: colors.gray }]}>
+                時間: {habit.start_time} → {habit.end_time}
+              </Text>
+            )}
+            <Text style={[styles.habitRecurrence, { color: colors.gray }]}>
+              周期: {summarizeRule(parseRule(habit.recurrence))}
+            </Text>
+            {!hasSteps && (
+              <>
+                <Text style={[styles.habitCost, { color: colors.gray }]}>
+                  {habit.avg_minutes}m ±{habit.sigma_minutes}
+                </Text>
+                <Text style={[styles.habitParallel, { color: colors.gray }]}>
+                  parallel:{' '}
+                  {habit.parallelizable && habit.allows_parallel
+                    ? 'host+guest'
+                    : habit.parallelizable
+                      ? 'guest'
+                      : habit.allows_parallel
+                        ? 'host'
+                        : 'none'}
+                  {habit.fixed ? ' · fixed' : ''}
+                </Text>
+                <Text style={[styles.habitAbandon, { color: colors.gray }]}>
+                  abandon: {habit.abandonability.toFixed(2)}
+                </Text>
+              </>
+            )}
+          </>
+        );
+      })()}
+    </Pressable>
+  );
+});
 
 // YYYY-MM-DD → M/D
 function formatSpanShort(s: string): string {

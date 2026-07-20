@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -14,7 +15,7 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   Platform,
-  LayoutChangeEvent,
+  type LayoutChangeEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -636,7 +637,7 @@ interface AssistantMessageProps {
   onToggleGroupCollapsed: (messageId: string, groupIndex: number) => void;
 }
 
-function AssistantMessage({
+const AssistantMessage = memo(function AssistantMessageImpl({
   item,
   colors,
   markdownStyles,
@@ -696,7 +697,21 @@ function AssistantMessage({
         )}
     </View>
   );
-}
+});
+
+const UserMessage = memo(function UserMessageImpl({ text }: { text: string }) {
+  return (
+    <View
+      style={[
+        styles.bubble,
+        styles.userBubble,
+        { backgroundColor: BRAND_COLOR },
+      ]}
+    >
+      <Text style={{ color: COLORS.white }}>{text}</Text>
+    </View>
+  );
+});
 
 const SWIPE_THRESHOLD = 40;
 const SCROLL_THRESHOLD = 40;
@@ -1350,6 +1365,51 @@ export function AgentView() {
     }
   }, []);
 
+  const keyExtractor = useCallback((item: Message) => item.id, []);
+
+  const handleMessagesLayout = useCallback((event: LayoutChangeEvent) => {
+    setMessagesHeight(event.nativeEvent.layout.height);
+  }, []);
+
+  const renderItem = useCallback(
+    ({ item }: { item: Message }) => {
+      if (item.role === 'user') {
+        return <UserMessage text={item.text} />;
+      }
+      const isLatest = item.id === messages[messages.length - 1]?.id;
+      return (
+        <AssistantMessage
+          item={item}
+          colors={colors}
+          markdownStyles={markdownStyles}
+          markdownIt={markdownIt}
+          markdownRules={markdownRules}
+          availableHeight={messagesHeight}
+          isLatest={isLatest}
+          onToggleGroupCollapsed={toggleGroupCollapsed}
+        />
+      );
+    },
+    [
+      messages,
+      colors,
+      markdownStyles,
+      markdownIt,
+      markdownRules,
+      messagesHeight,
+      toggleGroupCollapsed,
+    ],
+  );
+
+  const listEmpty = useMemo(
+    () => (
+      <Text style={[styles.empty, { color: colors.gray }]}>
+        何を予定しますか？
+      </Text>
+    ),
+    [colors.gray],
+  );
+
   async function resolve(approve: boolean) {
     if (!sessionIdRef.current || !approval || busy || isSwitchingRef.current)
       return;
@@ -1565,46 +1625,16 @@ export function AgentView() {
           style={styles.messages}
           contentContainerStyle={styles.messageContent}
           data={messages}
-          keyExtractor={(item) => item.id}
-          onLayout={(event) =>
-            setMessagesHeight(event.nativeEvent.layout.height)
-          }
-          renderItem={({ item }) => {
-            if (item.role === 'user') {
-              return (
-                <View
-                  style={[
-                    styles.bubble,
-                    styles.userBubble,
-                    { backgroundColor: BRAND_COLOR },
-                  ]}
-                >
-                  <Text style={{ color: COLORS.white }}>{item.text}</Text>
-                </View>
-              );
-            }
-            const isLatest = item.id === messages[messages.length - 1]?.id;
-            return (
-              <AssistantMessage
-                item={item}
-                colors={colors}
-                markdownStyles={markdownStyles}
-                markdownIt={markdownIt}
-                markdownRules={markdownRules}
-                availableHeight={messagesHeight}
-                isLatest={isLatest}
-                onToggleGroupCollapsed={toggleGroupCollapsed}
-              />
-            );
-          }}
+          keyExtractor={keyExtractor}
+          onLayout={handleMessagesLayout}
+          renderItem={renderItem}
           onScroll={handleScroll}
           scrollEventThrottle={16}
           onContentSizeChange={handleMessagesContentSizeChange}
-          ListEmptyComponent={
-            <Text style={[styles.empty, { color: colors.gray }]}>
-              何を予定しますか？
-            </Text>
-          }
+          ListEmptyComponent={listEmpty}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
         />
         {approval && (
           <ApprovalPanel
