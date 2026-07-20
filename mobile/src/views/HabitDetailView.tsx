@@ -49,6 +49,7 @@ import {
   stepRowToDraft,
   saveHabitSteps,
 } from '@/src/utils/habitSteps';
+import { dateKey, todayDateKey } from '@/src/utils/dateKey';
 
 export function HabitDetailView() {
   const { client } = useServer();
@@ -109,33 +110,8 @@ export function HabitDetailView() {
     return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
   }
 
-  // Date → YYYY-MM-DD in the configured timezone (or device timezone).
-  // The server uses the same timezone for its scheduled span date keys.
   function dateToYMD(d: Date): string {
     return dateKey(d.toISOString(), serverTz);
-  }
-
-  function todayDateKey(): string {
-    return dateKey(new Date().toISOString(), serverTz);
-  }
-
-  function dateKey(iso: string, tz?: string): string {
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return iso.slice(0, 10);
-    try {
-      const fmt = new Intl.DateTimeFormat('en-CA', {
-        timeZone: tz || undefined,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      });
-      return fmt.format(d);
-    } catch {
-      const y = d.getFullYear();
-      const m = (d.getMonth() + 1).toString().padStart(2, '0');
-      const day = d.getDate().toString().padStart(2, '0');
-      return `${y}-${m}-${day}`;
-    }
   }
 
   const refresh = useCallback(async () => {
@@ -693,7 +669,7 @@ export function HabitDetailView() {
 
   // Is today within a scheduled span? (for highlighting the active span.)
   function spanIsActive(p: HabitScheduledSpanRow): boolean {
-    const todayStr = todayDateKey();
+    const todayStr = todayDateKey(serverTz);
     return p.start_date <= todayStr && todayStr <= p.end_date;
   }
 

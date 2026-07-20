@@ -37,6 +37,7 @@ import Reanimated, {
 } from 'react-native-reanimated';
 import { useColors, COLORS, BRAND_COLOR } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
+import { dateKey, todayDateKey } from '@/src/utils/dateKey';
 import TakusuWidgetModule from '../../modules/takusu-widget/src/TakusuWidgetModule';
 import { useScheduleOperation } from '@/src/hooks/useScheduleOperation';
 import {
@@ -76,31 +77,6 @@ interface DateSeparator {
 
 type ListItem = TaskItem | ParallelGroupItem | DateSeparator;
 
-function dateKey(iso: string, tz?: string): string {
-  // Convert UTC ISO string to the configured timezone's local date
-  // (YYYY-MM-DD). The server's sync_habit_tasks uses the same configured
-  // tz for its date keys, so we must match it here to keep date
-  // separators consistent with the server's grouping.
-  // Falls back to the device timezone if the server tz is unavailable.
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso.slice(0, 10);
-  try {
-    const fmt = new Intl.DateTimeFormat('en-CA', {
-      timeZone: tz || undefined,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    });
-    return fmt.format(d);
-  } catch {
-    // Invalid tz string — fall back to device-local date
-    const y = d.getFullYear();
-    const m = (d.getMonth() + 1).toString().padStart(2, '0');
-    const day = d.getDate().toString().padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  }
-}
-
 function dateLabel(key: string, tz?: string): string {
   // Compare the date key (already in server tz) against "today" in the
   // same server tz, so the 今日/明日/昨日 labels are consistent with the
@@ -115,13 +91,6 @@ function dateLabel(key: string, tz?: string): string {
   if (diff === 1) return '明日';
   if (diff === -1) return '昨日';
   return `${d.getMonth() + 1}/${d.getDate()}`;
-}
-
-/// Returns today's date as YYYY-MM-DD in the given timezone (or the
-/// device timezone if tz is undefined/invalid). Mirrors dateKey so the
-/// "today" used by dateLabel matches the server's date grouping.
-function todayDateKey(tz?: string): string {
-  return dateKey(new Date().toISOString(), tz);
 }
 
 // A separator that marks a real day boundary (今日 / 明日 / M/D). Excludes
@@ -1262,6 +1231,7 @@ export function HomeView() {
         <ContextMenu
           hasSelection={selected.size > 0}
           onSettings={() => router.push('/settings')}
+          onStats={() => router.push('/stats')}
           onUndo={() =>
             undoRedo
               .undo()

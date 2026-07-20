@@ -380,6 +380,7 @@ function ThemedApp() {
           <Stack.Screen name="habit/[id]" />
           <Stack.Screen name="habit/add" />
           <Stack.Screen name="settings" />
+          <Stack.Screen name="stats" />
           <Stack.Screen name="import-ical" />
         </Stack>
         <UndoRedoToast />

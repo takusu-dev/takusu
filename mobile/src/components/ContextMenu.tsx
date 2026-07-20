@@ -1,5 +1,5 @@
 // ContextMenu — hamburger menu button + dropdown
-// Always available: Settings, Undo/Redo
+// Always available: Settings, Stats (when onStats is provided), Undo/Redo
 // When items are selected: Delete, Clear selection (and Select all when
 //   onSelectAll is provided). Task-specific actions (Reschedule selected,
 //   Reschedule others, Create dependent task) are only shown when their
@@ -16,6 +16,7 @@ import type { TaskStatus } from '@/src/api/types';
 interface ContextMenuProps {
   hasSelection: boolean;
   onSettings: () => void;
+  onStats?: () => void;
   onUndo: () => void;
   onRedo: () => void;
   onClearSelection: () => void;
@@ -39,6 +40,7 @@ type MenuItem = {
 export function ContextMenu({
   hasSelection,
   onSettings,
+  onStats,
   onUndo,
   onRedo,
   onClearSelection,
@@ -55,6 +57,15 @@ export function ContextMenu({
 
   const alwaysItems: MenuItem[] = [
     { label: '設定', icon: 'settings-outline', onPress: onSettings },
+    ...(onStats
+      ? [
+          {
+            label: '統計',
+            icon: 'stats-chart-outline' as const,
+            onPress: onStats,
+          },
+        ]
+      : []),
     {
       label: `元に戻す${undoRedo.canUndo() ? '' : ' (なし)'}`,
       icon: 'arrow-undo-outline',
