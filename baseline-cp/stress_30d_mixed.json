@@ -1,0 +1,10 @@
+{
+  "fixture": "crates/takusu-core/benches/fixtures/stress_30d_mixed.json",
+  "status": "UNKNOWN",
+  "objective": null,
+  "best_bound": null,
+  "wall_time_seconds": 60.000495694,
+  "num_conflicts": 566,
+  "num_branches": 280911,
+  "schedule": []
+}

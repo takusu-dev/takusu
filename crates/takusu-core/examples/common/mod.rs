@@ -30,11 +30,63 @@ struct TaskFixture {
 }
 
 pub fn build_planner() -> Planner {
-    let fixture: Fixture = serde_json::from_str(include_str!(concat!(
+    build_planner_from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/benches/fixtures/realworld_tasks.json"
     )))
-    .unwrap();
+}
+
+pub fn build_planner_7d() -> Planner {
+    build_planner_from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/benches/fixtures/realworld_tasks_7d.json"
+    )))
+}
+
+pub fn build_planner_30d() -> Planner {
+    build_planner_from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/benches/fixtures/realworld_tasks_30d.json"
+    )))
+}
+
+pub fn build_planner_small() -> Planner {
+    build_planner_from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/benches/fixtures/quality_small.json"
+    )))
+}
+
+pub fn build_stress_30d() -> Planner {
+    build_planner_from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/benches/fixtures/stress_30d.json"
+    )))
+}
+
+pub fn build_stress_30d_dense() -> Planner {
+    build_planner_from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/benches/fixtures/stress_30d_dense.json"
+    )))
+}
+
+pub fn build_stress_30d_mixed() -> Planner {
+    build_planner_from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/benches/fixtures/stress_30d_mixed.json"
+    )))
+}
+
+pub fn build_stress_90d() -> Planner {
+    build_planner_from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/benches/fixtures/stress_90d.json"
+    )))
+}
+
+pub fn build_planner_from_str(input: &str) -> Planner {
+    let fixture: Fixture = serde_json::from_str(input).unwrap();
 
     let sleep = SleepConfig {
         day_start: fixture.sleep.day_start,

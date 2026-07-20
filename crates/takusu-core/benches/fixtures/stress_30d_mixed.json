@@ -1,0 +1,1992 @@
+{
+  "name": "stress_30d_mixed",
+  "now": 0,
+  "horizon": 8640,
+  "sleep": {
+    "day_start": 0,
+    "start": 264,
+    "end": 360,
+    "enabled": true
+  },
+  "tasks": [
+    {
+      "start": 24,
+      "end": 489,
+      "avg": 6,
+      "sigma": 2,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.48,
+      "fixed": true,
+      "habit_group": null
+    },
+    {
+      "start": 124,
+      "end": 858,
+      "avg": 31,
+      "sigma": 2,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.26,
+      "fixed": false,
+      "habit_group": 1
+    },
+    {
+      "start": 102,
+      "end": 852,
+      "avg": 17,
+      "sigma": 3,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.36,
+      "fixed": false,
+      "habit_group": 2
+    },
+    {
+      "start": null,
+      "end": 654,
+      "avg": 27,
+      "sigma": 5,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.31,
+      "fixed": false,
+      "habit_group": 3
+    },
+    {
+      "start": null,
+      "end": 605,
+      "avg": 18,
+      "sigma": 1,
+      "depends": [
+        3
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.25,
+      "fixed": false,
+      "habit_group": 4
+    },
+    {
+      "start": null,
+      "end": 1199,
+      "avg": 12,
+      "sigma": 2,
+      "depends": [
+        3
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.82,
+      "fixed": false,
+      "habit_group": null
+    },
+    {
+      "start": 318,
+      "end": 556,
+      "avg": 5,
+      "sigma": 2,
+      "depends": [
+        4,
+        5
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.58,
+      "fixed": false,
+      "habit_group": 6
+    },
+    {
+      "start": null,
+      "end": 1048,
+      "avg": 5,
+      "sigma": 2,
+      "depends": [
+        6
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.0,
+      "fixed": false,
+      "habit_group": 7
+    },
+    {
+      "start": null,
+      "end": 1186,
+      "avg": 23,
+      "sigma": 1,
+      "depends": [
+        7
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.22,
+      "fixed": false,
+      "habit_group": 8
+    },
+    {
+      "start": null,
+      "end": 1116,
+      "avg": 13,
+      "sigma": 4,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.44,
+      "fixed": false,
+      "habit_group": 9
+    },
+    {
+      "start": 624,
+      "end": 1446,
+      "avg": 19,
+      "sigma": 5,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.55,
+      "fixed": true,
+      "habit_group": null
+    },
+    {
+      "start": 703,
+      "end": 1461,
+      "avg": 6,
+      "sigma": 2,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.0,
+      "fixed": false,
+      "habit_group": 11
+    },
+    {
+      "start": null,
+      "end": 1098,
+      "avg": 23,
+      "sigma": 4,
+      "depends": [
+        11
+      ],
+      "parallelizable": true,
+      "allows_parallel": true,
+      "abandonability": 0.46,
+      "fixed": false,
+      "habit_group": 12
+    },
+    {
+      "start": null,
+      "end": 1156,
+      "avg": 17,
+      "sigma": 3,
+      "depends": [
+        4,
+        12
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.19,
+      "fixed": false,
+      "habit_group": 13
+    },
+    {
+      "start": 671,
+      "end": 1061,
+      "avg": 30,
+      "sigma": 7,
+      "depends": [
+        1
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.31,
+      "fixed": false,
+      "habit_group": 14
+    },
+    {
+      "start": null,
+      "end": 1233,
+      "avg": 10,
+      "sigma": 2,
+      "depends": [
+        3
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.6,
+      "fixed": false,
+      "habit_group": null
+    },
+    {
+      "start": null,
+      "end": 1206,
+      "avg": 31,
+      "sigma": 10,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.38,
+      "fixed": false,
+      "habit_group": 16
+    },
+    {
+      "start": null,
+      "end": 1664,
+      "avg": 17,
+      "sigma": 5,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.68,
+      "fixed": false,
+      "habit_group": 17
+    },
+    {
+      "start": null,
+      "end": 1354,
+      "avg": 19,
+      "sigma": 4,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.5,
+      "fixed": false,
+      "habit_group": 18
+    },
+    {
+      "start": null,
+      "end": 1348,
+      "avg": 9,
+      "sigma": 1,
+      "depends": [
+        18
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.96,
+      "fixed": false,
+      "habit_group": 19
+    },
+    {
+      "start": 1224,
+      "end": 1934,
+      "avg": 7,
+      "sigma": 1,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.79,
+      "fixed": true,
+      "habit_group": null
+    },
+    {
+      "start": null,
+      "end": 2029,
+      "avg": 10,
+      "sigma": 3,
+      "depends": [
+        20
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.85,
+      "fixed": false,
+      "habit_group": 21
+    },
+    {
+      "start": null,
+      "end": 1935,
+      "avg": 16,
+      "sigma": 3,
+      "depends": [
+        18,
+        21
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.02,
+      "fixed": false,
+      "habit_group": 22
+    },
+    {
+      "start": 1166,
+      "end": 2060,
+      "avg": 29,
+      "sigma": 8,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.51,
+      "fixed": false,
+      "habit_group": 23
+    },
+    {
+      "start": 1223,
+      "end": 1885,
+      "avg": 14,
+      "sigma": 3,
+      "depends": [
+        11
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.87,
+      "fixed": false,
+      "habit_group": 0
+    },
+    {
+      "start": 1507,
+      "end": 2297,
+      "avg": 26,
+      "sigma": 3,
+      "depends": [
+        16
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.19,
+      "fixed": false,
+      "habit_group": null
+    },
+    {
+      "start": null,
+      "end": 1749,
+      "avg": 18,
+      "sigma": 5,
+      "depends": [
+        25
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.81,
+      "fixed": false,
+      "habit_group": 2
+    },
+    {
+      "start": null,
+      "end": 1959,
+      "avg": 4,
+      "sigma": 1,
+      "depends": [
+        26
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.23,
+      "fixed": false,
+      "habit_group": 3
+    },
+    {
+      "start": null,
+      "end": 1961,
+      "avg": 6,
+      "sigma": 2,
+      "depends": [
+        14
+      ],
+      "parallelizable": false,
+      "allows_parallel": true,
+      "abandonability": 0.4,
+      "fixed": false,
+      "habit_group": 4
+    },
+    {
+      "start": 1440,
+      "end": 2382,
+      "avg": 23,
+      "sigma": 6,
+      "depends": [
+        28
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.37,
+      "fixed": false,
+      "habit_group": 5
+    },
+    {
+      "start": 1824,
+      "end": 2167,
+      "avg": 24,
+      "sigma": 7,
+      "depends": [
+        17
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.19,
+      "fixed": true,
+      "habit_group": null
+    },
+    {
+      "start": 1843,
+      "end": 2457,
+      "avg": 10,
+      "sigma": 1,
+      "depends": [
+        22
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.75,
+      "fixed": false,
+      "habit_group": 7
+    },
+    {
+      "start": null,
+      "end": 2293,
+      "avg": 10,
+      "sigma": 2,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.25,
+      "fixed": false,
+      "habit_group": 8
+    },
+    {
+      "start": null,
+      "end": 2599,
+      "avg": 4,
+      "sigma": 1,
+      "depends": [
+        32
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.59,
+      "fixed": false,
+      "habit_group": 9
+    },
+    {
+      "start": null,
+      "end": 2585,
+      "avg": 6,
+      "sigma": 1,
+      "depends": [
+        33
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.65,
+      "fixed": false,
+      "habit_group": 10
+    },
+    {
+      "start": 2101,
+      "end": 2923,
+      "avg": 24,
+      "sigma": 2,
+      "depends": [
+        34
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.02,
+      "fixed": false,
+      "habit_group": null
+    },
+    {
+      "start": null,
+      "end": 2744,
+      "avg": 17,
+      "sigma": 4,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.52,
+      "fixed": false,
+      "habit_group": 12
+    },
+    {
+      "start": null,
+      "end": 2770,
+      "avg": 19,
+      "sigma": 4,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.86,
+      "fixed": false,
+      "habit_group": 13
+    },
+    {
+      "start": 2030,
+      "end": 2620,
+      "avg": 21,
+      "sigma": 7,
+      "depends": [
+        22,
+        37
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.54,
+      "fixed": false,
+      "habit_group": 14
+    },
+    {
+      "start": 2042,
+      "end": 2312,
+      "avg": 21,
+      "sigma": 6,
+      "depends": [
+        27,
+        38
+      ],
+      "parallelizable": false,
+      "allows_parallel": true,
+      "abandonability": 0.26,
+      "fixed": false,
+      "habit_group": 15
+    },
+    {
+      "start": 2424,
+      "end": 2676,
+      "avg": 9,
+      "sigma": 3,
+      "depends": [],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.17,
+      "fixed": true,
+      "habit_group": null
+    },
+    {
+      "start": 2325,
+      "end": 2699,
+      "avg": 8,
+      "sigma": 2,
+      "depends": [],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.02,
+      "fixed": false,
+      "habit_group": 17
+    },
+    {
+      "start": null,
+      "end": 2856,
+      "avg": 5,
+      "sigma": 2,
+      "depends": [
+        41
+      ],
+      "parallelizable": true,
+      "allows_parallel": true,
+      "abandonability": 0.44,
+      "fixed": false,
+      "habit_group": 18
+    },
+    {
+      "start": 2324,
+      "end": 2738,
+      "avg": 11,
+      "sigma": 3,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.13,
+      "fixed": false,
+      "habit_group": 19
+    },
+    {
+      "start": 2357,
+      "end": 3003,
+      "avg": 20,
+      "sigma": 6,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.02,
+      "fixed": false,
+      "habit_group": 20
+    },
+    {
+      "start": 2682,
+      "end": 3176,
+      "avg": 29,
+      "sigma": 6,
+      "depends": [
+        44
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.27,
+      "fixed": false,
+      "habit_group": null
+    },
+    {
+      "start": 2723,
+      "end": 3081,
+      "avg": 26,
+      "sigma": 8,
+      "depends": [],
+      "parallelizable": true,
+      "allows_parallel": true,
+      "abandonability": 0.72,
+      "fixed": false,
+      "habit_group": 22
+    },
+    {
+      "start": 2608,
+      "end": 3294,
+      "avg": 15,
+      "sigma": 2,
+      "depends": [
+        37,
+        46
+      ],
+      "parallelizable": false,
+      "allows_parallel": true,
+      "abandonability": 0.8,
+      "fixed": false,
+      "habit_group": 23
+    },
+    {
+      "start": null,
+      "end": 3530,
+      "avg": 27,
+      "sigma": 6,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.22,
+      "fixed": false,
+      "habit_group": 0
+    },
+    {
+      "start": null,
+      "end": 3076,
+      "avg": 17,
+      "sigma": 3,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.16,
+      "fixed": false,
+      "habit_group": 1
+    },
+    {
+      "start": 3024,
+      "end": 3374,
+      "avg": 7,
+      "sigma": 1,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.11,
+      "fixed": true,
+      "habit_group": null
+    },
+    {
+      "start": 2903,
+      "end": 3389,
+      "avg": 18,
+      "sigma": 5,
+      "depends": [
+        38,
+        50
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.03,
+      "fixed": false,
+      "habit_group": 3
+    },
+    {
+      "start": null,
+      "end": 3737,
+      "avg": 6,
+      "sigma": 2,
+      "depends": [
+        38
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.92,
+      "fixed": false,
+      "habit_group": 4
+    },
+    {
+      "start": null,
+      "end": 3790,
+      "avg": 19,
+      "sigma": 4,
+      "depends": [
+        52
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.02,
+      "fixed": false,
+      "habit_group": 5
+    },
+    {
+      "start": null,
+      "end": 3784,
+      "avg": 17,
+      "sigma": 2,
+      "depends": [
+        41,
+        53
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.07,
+      "fixed": false,
+      "habit_group": 6
+    },
+    {
+      "start": null,
+      "end": 3977,
+      "avg": 6,
+      "sigma": 2,
+      "depends": [
+        41,
+        54
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.08,
+      "fixed": false,
+      "habit_group": null
+    },
+    {
+      "start": 3280,
+      "end": 4062,
+      "avg": 27,
+      "sigma": 4,
+      "depends": [
+        55
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.01,
+      "fixed": false,
+      "habit_group": 8
+    },
+    {
+      "start": null,
+      "end": 3671,
+      "avg": 20,
+      "sigma": 3,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.43,
+      "fixed": false,
+      "habit_group": 9
+    },
+    {
+      "start": 3299,
+      "end": 4057,
+      "avg": 10,
+      "sigma": 1,
+      "depends": [
+        49
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.43,
+      "fixed": false,
+      "habit_group": 10
+    },
+    {
+      "start": null,
+      "end": 3925,
+      "avg": 6,
+      "sigma": 1,
+      "depends": [
+        58
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.97,
+      "fixed": false,
+      "habit_group": 11
+    },
+    {
+      "start": 3624,
+      "end": 4375,
+      "avg": 20,
+      "sigma": 1,
+      "depends": [
+        47
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.43,
+      "fixed": true,
+      "habit_group": null
+    },
+    {
+      "start": 3571,
+      "end": 4393,
+      "avg": 18,
+      "sigma": 2,
+      "depends": [],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.2,
+      "fixed": false,
+      "habit_group": 13
+    },
+    {
+      "start": null,
+      "end": 3950,
+      "avg": 7,
+      "sigma": 2,
+      "depends": [],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.42,
+      "fixed": false,
+      "habit_group": 14
+    },
+    {
+      "start": null,
+      "end": 3960,
+      "avg": 5,
+      "sigma": 2,
+      "depends": [],
+      "parallelizable": true,
+      "allows_parallel": true,
+      "abandonability": 0.6,
+      "fixed": false,
+      "habit_group": 15
+    },
+    {
+      "start": 3492,
+      "end": 4306,
+      "avg": 31,
+      "sigma": 5,
+      "depends": [],
+      "parallelizable": true,
+      "allows_parallel": true,
+      "abandonability": 0.21,
+      "fixed": false,
+      "habit_group": 16
+    },
+    {
+      "start": null,
+      "end": 4251,
+      "avg": 4,
+      "sigma": 1,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": true,
+      "abandonability": 0.67,
+      "fixed": false,
+      "habit_group": null
+    },
+    {
+      "start": null,
+      "end": 4061,
+      "avg": 26,
+      "sigma": 5,
+      "depends": [
+        65
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.77,
+      "fixed": false,
+      "habit_group": 18
+    },
+    {
+      "start": 3833,
+      "end": 4671,
+      "avg": 12,
+      "sigma": 2,
+      "depends": [],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.86,
+      "fixed": false,
+      "habit_group": 19
+    },
+    {
+      "start": 3870,
+      "end": 4636,
+      "avg": 25,
+      "sigma": 3,
+      "depends": [
+        67
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.35,
+      "fixed": false,
+      "habit_group": 20
+    },
+    {
+      "start": 3879,
+      "end": 4525,
+      "avg": 10,
+      "sigma": 2,
+      "depends": [
+        56
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.95,
+      "fixed": false,
+      "habit_group": 21
+    },
+    {
+      "start": 4224,
+      "end": 4873,
+      "avg": 18,
+      "sigma": 6,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.5,
+      "fixed": true,
+      "habit_group": null
+    },
+    {
+      "start": 4158,
+      "end": 4636,
+      "avg": 25,
+      "sigma": 3,
+      "depends": [
+        70
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.83,
+      "fixed": false,
+      "habit_group": 23
+    },
+    {
+      "start": null,
+      "end": 4429,
+      "avg": 30,
+      "sigma": 3,
+      "depends": [
+        71
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.85,
+      "fixed": false,
+      "habit_group": 0
+    },
+    {
+      "start": null,
+      "end": 4575,
+      "avg": 24,
+      "sigma": 7,
+      "depends": [],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.59,
+      "fixed": false,
+      "habit_group": 1
+    },
+    {
+      "start": 4107,
+      "end": 4689,
+      "avg": 26,
+      "sigma": 3,
+      "depends": [
+        73
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.99,
+      "fixed": false,
+      "habit_group": 2
+    },
+    {
+      "start": null,
+      "end": 4829,
+      "avg": 26,
+      "sigma": 5,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.49,
+      "fixed": false,
+      "habit_group": null
+    },
+    {
+      "start": 4441,
+      "end": 4767,
+      "avg": 8,
+      "sigma": 2,
+      "depends": [
+        75
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.94,
+      "fixed": false,
+      "habit_group": 4
+    },
+    {
+      "start": null,
+      "end": 4572,
+      "avg": 21,
+      "sigma": 7,
+      "depends": [
+        76
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.88,
+      "fixed": false,
+      "habit_group": 5
+    },
+    {
+      "start": null,
+      "end": 4950,
+      "avg": 23,
+      "sigma": 6,
+      "depends": [
+        67
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.01,
+      "fixed": false,
+      "habit_group": 6
+    },
+    {
+      "start": null,
+      "end": 4815,
+      "avg": 24,
+      "sigma": 7,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.07,
+      "fixed": false,
+      "habit_group": 7
+    },
+    {
+      "start": 4632,
+      "end": 5201,
+      "avg": 18,
+      "sigma": 2,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.86,
+      "fixed": true,
+      "habit_group": null
+    },
+    {
+      "start": null,
+      "end": 5476,
+      "avg": 9,
+      "sigma": 2,
+      "depends": [
+        80
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.84,
+      "fixed": false,
+      "habit_group": 9
+    },
+    {
+      "start": null,
+      "end": 5214,
+      "avg": 7,
+      "sigma": 2,
+      "depends": [],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.82,
+      "fixed": false,
+      "habit_group": 10
+    },
+    {
+      "start": null,
+      "end": 5384,
+      "avg": 17,
+      "sigma": 3,
+      "depends": [
+        82
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.16,
+      "fixed": false,
+      "habit_group": 11
+    },
+    {
+      "start": null,
+      "end": 5474,
+      "avg": 15,
+      "sigma": 3,
+      "depends": [
+        83
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.26,
+      "fixed": false,
+      "habit_group": 12
+    },
+    {
+      "start": null,
+      "end": 5212,
+      "avg": 5,
+      "sigma": 2,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.48,
+      "fixed": false,
+      "habit_group": null
+    },
+    {
+      "start": null,
+      "end": 5670,
+      "avg": 27,
+      "sigma": 1,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.82,
+      "fixed": false,
+      "habit_group": 14
+    },
+    {
+      "start": 5010,
+      "end": 5280,
+      "avg": 17,
+      "sigma": 5,
+      "depends": [
+        86
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.59,
+      "fixed": false,
+      "habit_group": 15
+    },
+    {
+      "start": null,
+      "end": 5601,
+      "avg": 18,
+      "sigma": 1,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.41,
+      "fixed": false,
+      "habit_group": 16
+    },
+    {
+      "start": 4973,
+      "end": 5219,
+      "avg": 28,
+      "sigma": 5,
+      "depends": [
+        88
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.22,
+      "fixed": false,
+      "habit_group": 17
+    },
+    {
+      "start": 5232,
+      "end": 5584,
+      "avg": 29,
+      "sigma": 4,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.45,
+      "fixed": true,
+      "habit_group": null
+    },
+    {
+      "start": 5233,
+      "end": 5431,
+      "avg": 8,
+      "sigma": 2,
+      "depends": [
+        90
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.66,
+      "fixed": false,
+      "habit_group": 19
+    },
+    {
+      "start": 5238,
+      "end": 5508,
+      "avg": 29,
+      "sigma": 1,
+      "depends": [
+        84
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.82,
+      "fixed": false,
+      "habit_group": 20
+    },
+    {
+      "start": null,
+      "end": 5584,
+      "avg": 9,
+      "sigma": 1,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.88,
+      "fixed": false,
+      "habit_group": 21
+    },
+    {
+      "start": null,
+      "end": 6074,
+      "avg": 7,
+      "sigma": 2,
+      "depends": [
+        93
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.14,
+      "fixed": false,
+      "habit_group": 22
+    },
+    {
+      "start": 5510,
+      "end": 5780,
+      "avg": 25,
+      "sigma": 2,
+      "depends": [
+        87
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.22,
+      "fixed": false,
+      "habit_group": null
+    },
+    {
+      "start": null,
+      "end": 6288,
+      "avg": 17,
+      "sigma": 2,
+      "depends": [
+        91
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.47,
+      "fixed": false,
+      "habit_group": 0
+    },
+    {
+      "start": 5595,
+      "end": 6129,
+      "avg": 10,
+      "sigma": 2,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.88,
+      "fixed": false,
+      "habit_group": 1
+    },
+    {
+      "start": null,
+      "end": 6406,
+      "avg": 23,
+      "sigma": 5,
+      "depends": [
+        97
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.98,
+      "fixed": false,
+      "habit_group": 2
+    },
+    {
+      "start": 5586,
+      "end": 6352,
+      "avg": 21,
+      "sigma": 7,
+      "depends": [
+        95
+      ],
+      "parallelizable": false,
+      "allows_parallel": true,
+      "abandonability": 0.62,
+      "fixed": false,
+      "habit_group": 3
+    },
+    {
+      "start": 5832,
+      "end": 6364,
+      "avg": 29,
+      "sigma": 4,
+      "depends": [],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.25,
+      "fixed": true,
+      "habit_group": null
+    },
+    {
+      "start": null,
+      "end": 6371,
+      "avg": 4,
+      "sigma": 1,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.47,
+      "fixed": false,
+      "habit_group": 5
+    },
+    {
+      "start": null,
+      "end": 6053,
+      "avg": 18,
+      "sigma": 2,
+      "depends": [
+        92
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.16,
+      "fixed": false,
+      "habit_group": 6
+    },
+    {
+      "start": null,
+      "end": 6586,
+      "avg": 23,
+      "sigma": 3,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.62,
+      "fixed": false,
+      "habit_group": 7
+    },
+    {
+      "start": 5766,
+      "end": 6516,
+      "avg": 29,
+      "sigma": 4,
+      "depends": [
+        96,
+        103
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.42,
+      "fixed": false,
+      "habit_group": 8
+    },
+    {
+      "start": null,
+      "end": 6432,
+      "avg": 13,
+      "sigma": 3,
+      "depends": [
+        100,
+        104
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.39,
+      "fixed": false,
+      "habit_group": null
+    },
+    {
+      "start": 6059,
+      "end": 6497,
+      "avg": 30,
+      "sigma": 8,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.36,
+      "fixed": false,
+      "habit_group": 10
+    },
+    {
+      "start": null,
+      "end": 6774,
+      "avg": 15,
+      "sigma": 4,
+      "depends": [
+        106
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.22,
+      "fixed": false,
+      "habit_group": 11
+    },
+    {
+      "start": 6098,
+      "end": 6352,
+      "avg": 21,
+      "sigma": 1,
+      "depends": [
+        107
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.27,
+      "fixed": false,
+      "habit_group": 12
+    },
+    {
+      "start": null,
+      "end": 6337,
+      "avg": 10,
+      "sigma": 3,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.85,
+      "fixed": false,
+      "habit_group": 13
+    },
+    {
+      "start": 6432,
+      "end": 7043,
+      "avg": 20,
+      "sigma": 6,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.08,
+      "fixed": true,
+      "habit_group": null
+    },
+    {
+      "start": 6400,
+      "end": 7182,
+      "avg": 19,
+      "sigma": 3,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": true,
+      "abandonability": 0.77,
+      "fixed": false,
+      "habit_group": 15
+    },
+    {
+      "start": null,
+      "end": 6903,
+      "avg": 24,
+      "sigma": 7,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.95,
+      "fixed": false,
+      "habit_group": 16
+    },
+    {
+      "start": null,
+      "end": 6697,
+      "avg": 18,
+      "sigma": 1,
+      "depends": [
+        112
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.85,
+      "fixed": false,
+      "habit_group": 17
+    },
+    {
+      "start": null,
+      "end": 7291,
+      "avg": 24,
+      "sigma": 2,
+      "depends": [
+        98
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.02,
+      "fixed": false,
+      "habit_group": 18
+    },
+    {
+      "start": 6730,
+      "end": 7480,
+      "avg": 21,
+      "sigma": 3,
+      "depends": [
+        114
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.43,
+      "fixed": false,
+      "habit_group": null
+    },
+    {
+      "start": null,
+      "end": 7177,
+      "avg": 10,
+      "sigma": 1,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": true,
+      "abandonability": 0.89,
+      "fixed": false,
+      "habit_group": 20
+    },
+    {
+      "start": null,
+      "end": 7195,
+      "avg": 8,
+      "sigma": 1,
+      "depends": [],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.19,
+      "fixed": false,
+      "habit_group": 21
+    },
+    {
+      "start": null,
+      "end": 6989,
+      "avg": 10,
+      "sigma": 2,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.13,
+      "fixed": false,
+      "habit_group": 22
+    },
+    {
+      "start": null,
+      "end": 7535,
+      "avg": 4,
+      "sigma": 2,
+      "depends": [
+        115
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.7,
+      "fixed": false,
+      "habit_group": 23
+    },
+    {
+      "start": 7032,
+      "end": 7756,
+      "avg": 25,
+      "sigma": 8,
+      "depends": [
+        114
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.72,
+      "fixed": true,
+      "habit_group": null
+    },
+    {
+      "start": 6936,
+      "end": 7830,
+      "avg": 31,
+      "sigma": 9,
+      "depends": [
+        120
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.77,
+      "fixed": false,
+      "habit_group": 1
+    },
+    {
+      "start": null,
+      "end": 7407,
+      "avg": 8,
+      "sigma": 1,
+      "depends": [
+        121
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.31,
+      "fixed": false,
+      "habit_group": 2
+    },
+    {
+      "start": null,
+      "end": 7473,
+      "avg": 22,
+      "sigma": 5,
+      "depends": [
+        117
+      ],
+      "parallelizable": false,
+      "allows_parallel": true,
+      "abandonability": 0.52,
+      "fixed": false,
+      "habit_group": 3
+    },
+    {
+      "start": null,
+      "end": 7542,
+      "avg": 19,
+      "sigma": 4,
+      "depends": [
+        123
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.22,
+      "fixed": false,
+      "habit_group": 4
+    },
+    {
+      "start": 7298,
+      "end": 7808,
+      "avg": 9,
+      "sigma": 2,
+      "depends": [
+        124
+      ],
+      "parallelizable": false,
+      "allows_parallel": true,
+      "abandonability": 0.87,
+      "fixed": false,
+      "habit_group": null
+    },
+    {
+      "start": 7307,
+      "end": 7569,
+      "avg": 22,
+      "sigma": 1,
+      "depends": [
+        125
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.96,
+      "fixed": false,
+      "habit_group": 6
+    },
+    {
+      "start": 7208,
+      "end": 7814,
+      "avg": 31,
+      "sigma": 7,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.01,
+      "fixed": false,
+      "habit_group": 7
+    },
+    {
+      "start": 7337,
+      "end": 7583,
+      "avg": 24,
+      "sigma": 6,
+      "depends": [
+        127
+      ],
+      "parallelizable": false,
+      "allows_parallel": true,
+      "abandonability": 0.58,
+      "fixed": false,
+      "habit_group": 8
+    },
+    {
+      "start": null,
+      "end": 8044,
+      "avg": 13,
+      "sigma": 3,
+      "depends": [
+        128
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.07,
+      "fixed": false,
+      "habit_group": 9
+    },
+    {
+      "start": 7632,
+      "end": 8445,
+      "avg": 18,
+      "sigma": 4,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.22,
+      "fixed": true,
+      "habit_group": null
+    },
+    {
+      "start": null,
+      "end": 7984,
+      "avg": 5,
+      "sigma": 2,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.52,
+      "fixed": false,
+      "habit_group": 11
+    },
+    {
+      "start": 7596,
+      "end": 7754,
+      "avg": 7,
+      "sigma": 1,
+      "depends": [
+        131
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.37,
+      "fixed": false,
+      "habit_group": 12
+    },
+    {
+      "start": null,
+      "end": 8419,
+      "avg": 28,
+      "sigma": 3,
+      "depends": [
+        132
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.07,
+      "fixed": false,
+      "habit_group": 13
+    },
+    {
+      "start": 7615,
+      "end": 7733,
+      "avg": 22,
+      "sigma": 4,
+      "depends": [
+        133
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.76,
+      "fixed": false,
+      "habit_group": 14
+    },
+    {
+      "start": null,
+      "end": 8394,
+      "avg": 15,
+      "sigma": 5,
+      "depends": [],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.54,
+      "fixed": false,
+      "habit_group": null
+    },
+    {
+      "start": null,
+      "end": 8640,
+      "avg": 17,
+      "sigma": 5,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": true,
+      "abandonability": 0.6,
+      "fixed": false,
+      "habit_group": 16
+    },
+    {
+      "start": 7792,
+      "end": 8254,
+      "avg": 27,
+      "sigma": 4,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.93,
+      "fixed": false,
+      "habit_group": 17
+    },
+    {
+      "start": 7889,
+      "end": 8039,
+      "avg": 20,
+      "sigma": 6,
+      "depends": [],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.66,
+      "fixed": false,
+      "habit_group": 18
+    },
+    {
+      "start": null,
+      "end": 8436,
+      "avg": 21,
+      "sigma": 4,
+      "depends": [
+        138
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.16,
+      "fixed": false,
+      "habit_group": 19
+    },
+    {
+      "start": 8232,
+      "end": 8430,
+      "avg": 23,
+      "sigma": 3,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.11,
+      "fixed": true,
+      "habit_group": null
+    },
+    {
+      "start": null,
+      "end": 8640,
+      "avg": 14,
+      "sigma": 1,
+      "depends": [
+        140
+      ],
+      "parallelizable": true,
+      "allows_parallel": true,
+      "abandonability": 0.57,
+      "fixed": false,
+      "habit_group": 21
+    },
+    {
+      "start": null,
+      "end": 8640,
+      "avg": 12,
+      "sigma": 3,
+      "depends": [
+        141
+      ],
+      "parallelizable": false,
+      "allows_parallel": true,
+      "abandonability": 0.39,
+      "fixed": false,
+      "habit_group": 22
+    },
+    {
+      "start": null,
+      "end": 8640,
+      "avg": 18,
+      "sigma": 1,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.21,
+      "fixed": false,
+      "habit_group": 23
+    },
+    {
+      "start": 8093,
+      "end": 8515,
+      "avg": 20,
+      "sigma": 2,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.94,
+      "fixed": false,
+      "habit_group": 0
+    },
+    {
+      "start": null,
+      "end": 8640,
+      "avg": 9,
+      "sigma": 3,
+      "depends": [
+        144
+      ],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.8,
+      "fixed": false,
+      "habit_group": null
+    },
+    {
+      "start": null,
+      "end": 8640,
+      "avg": 31,
+      "sigma": 10,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.82,
+      "fixed": false,
+      "habit_group": 2
+    },
+    {
+      "start": null,
+      "end": 8640,
+      "avg": 17,
+      "sigma": 4,
+      "depends": [
+        146
+      ],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.28,
+      "fixed": false,
+      "habit_group": 3
+    },
+    {
+      "start": null,
+      "end": 8640,
+      "avg": 11,
+      "sigma": 3,
+      "depends": [],
+      "parallelizable": true,
+      "allows_parallel": false,
+      "abandonability": 0.18,
+      "fixed": false,
+      "habit_group": 4
+    },
+    {
+      "start": 8458,
+      "end": 8640,
+      "avg": 21,
+      "sigma": 3,
+      "depends": [],
+      "parallelizable": false,
+      "allows_parallel": false,
+      "abandonability": 0.67,
+      "fixed": false,
+      "habit_group": 5
+    }
+  ]
+}

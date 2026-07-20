@@ -46,6 +46,20 @@ pub fn solve(planner: &Planner) -> Plan {
         .unwrap_or_else(|| Plan { schedules: vec![] })
 }
 
+#[cfg(feature = "quality-benchmark")]
+pub fn solve_with_seed(planner: &Planner, seed: u64) -> Plan {
+    sa_lns(planner, &mut StdRng::seed_from_u64(seed))
+}
+
+#[cfg(feature = "quality-benchmark")]
+pub fn solve_partial_with_seed(
+    planner: &Planner,
+    pinned: &[(Point, Point, usize)],
+    seed: u64,
+) -> Plan {
+    sa_lns_partial(planner, pinned, &mut StdRng::seed_from_u64(seed))
+}
+
 /// 範囲外のタスク ID は無視し、有効な pinned が空の場合は solve (sa_lns) に委譲する。
 /// sa_lns と sa_lns_partial は pinned_ids のフィルタリング以外は同一アルゴリズムのため、
 /// 空 pinned の場合はオーバーヘッドを避けてフル SA にフォールバック。

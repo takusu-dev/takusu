@@ -1,0 +1,13 @@
+{
+  "horizon": 96,
+  "now": 0,
+  "sleep": {"day_start": 0, "start": 0, "end": 0, "enabled": false},
+  "tasks": [
+    {"start": 0, "end": 40, "avg": 8, "sigma": 0, "depends": [], "parallelizable": false, "allows_parallel": false, "abandonability": 0.0, "fixed": false, "habit_group": null},
+    {"start": 0, "end": 48, "avg": 6, "sigma": 0, "depends": [0], "parallelizable": false, "allows_parallel": false, "abandonability": 0.0, "fixed": false, "habit_group": null},
+    {"start": 12, "end": 72, "avg": 10, "sigma": 0, "depends": [], "parallelizable": false, "allows_parallel": false, "abandonability": 0.0, "fixed": false, "habit_group": null},
+    {"start": 0, "end": 60, "avg": 4, "sigma": 0, "depends": [1, 2], "parallelizable": false, "allows_parallel": false, "abandonability": 0.0, "fixed": false, "habit_group": null},
+    {"start": 24, "end": 80, "avg": 5, "sigma": 0, "depends": [], "parallelizable": false, "allows_parallel": false, "abandonability": 0.0, "fixed": true, "habit_group": null},
+    {"start": 0, "end": 90, "avg": 7, "sigma": 0, "depends": [], "parallelizable": true, "allows_parallel": false, "abandonability": 0.0, "fixed": false, "habit_group": null}
+  ]
+}

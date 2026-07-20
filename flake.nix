@@ -883,6 +883,7 @@
                   wrangler
                   openjdk_headless
                   ktlint
+                  (python3.withPackages (pythonPackages: [ pythonPackages.ortools ]))
                 ]
                 ++ lib.optional pkgs.stdenv.isLinux pkgs.perf;
 

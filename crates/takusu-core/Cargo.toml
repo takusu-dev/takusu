@@ -26,6 +26,11 @@ harness = false
 name = "realworld"
 harness = false
 
+[[example]]
+name = "quality"
+required-features = ["quality-benchmark"]
+
 [features]
 default = ["jemalloc"]
 jemalloc = ["dep:tikv-jemallocator"]
+quality-benchmark = []

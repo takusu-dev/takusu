@@ -1,0 +1,41 @@
+{
+  "fixture": "crates/takusu-core/benches/fixtures/quality_small.json",
+  "status": "OPTIMAL",
+  "objective": 148.0,
+  "best_bound": 148.0,
+  "wall_time_seconds": 0.0053547560000000004,
+  "num_conflicts": 5,
+  "num_branches": 54,
+  "schedule": [
+    {
+      "id": 0,
+      "start": 0,
+      "end": 8
+    },
+    {
+      "id": 1,
+      "start": 8,
+      "end": 14
+    },
+    {
+      "id": 2,
+      "start": 14,
+      "end": 24
+    },
+    {
+      "id": 3,
+      "start": 29,
+      "end": 33
+    },
+    {
+      "id": 4,
+      "start": 24,
+      "end": 29
+    },
+    {
+      "id": 5,
+      "start": 33,
+      "end": 40
+    }
+  ]
+}

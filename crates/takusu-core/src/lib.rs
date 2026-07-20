@@ -445,6 +445,13 @@ impl Planner {
         solver::solve(self)
     }
 
+    /// 指定した seed の単一 SA chain で計画する。
+    #[doc(hidden)]
+    #[cfg(feature = "quality-benchmark")]
+    pub fn plan_with_seed(&self, seed: u64) -> Plan {
+        solver::solve_with_seed(self, seed)
+    }
+
     /// #211: 前回スケジュールを設定し、安定性ペナルティを有効化する。
     /// `schedule` は (start, end, task_id) のリスト。
     /// 設定後、plan() は前回位置からの移動を嫌うようになる。
@@ -463,6 +470,18 @@ impl Planner {
         &self.previous_schedule
     }
 
+    #[doc(hidden)]
+    #[cfg(feature = "quality-benchmark")]
+    pub fn workload(&self) -> WorkloadConfig {
+        self.workload
+    }
+
+    #[doc(hidden)]
+    #[cfg(feature = "quality-benchmark")]
+    pub fn sleep_config(&self) -> SleepConfig {
+        self.sleep
+    }
+
     /// #459: 1 日あたりの作業負荷設定を上書きする。
     ///
     /// 指定しない場合は `WorkloadConfig::default()` が使われる。
@@ -476,6 +495,12 @@ impl Planner {
     /// 未固定タスクのみがSAで配置される。評価関数は固定・未固定両方を考慮する。
     pub fn plan_partial(&self, pinned: &[(Point, Point, usize)]) -> Plan {
         solver::solve_partial(self, pinned)
+    }
+
+    #[doc(hidden)]
+    #[cfg(feature = "quality-benchmark")]
+    pub fn plan_partial_with_seed(&self, pinned: &[(Point, Point, usize)], seed: u64) -> Plan {
+        solver::solve_partial_with_seed(self, pinned, seed)
     }
 
     /// 指定期間内のタスクのみ再スケジュール。
@@ -502,6 +527,25 @@ impl Planner {
         }
 
         solver::solve_partial(self, &pinned)
+    }
+
+    #[doc(hidden)]
+    #[cfg(feature = "quality-benchmark")]
+    pub fn plan_in_range_with_seed(
+        &self,
+        range: &RescheduleRange,
+        current_schedule: &[(Point, Point, usize)],
+        extra_pinned: &[usize],
+        seed: u64,
+    ) -> Plan {
+        let pinned: Vec<_> = current_schedule
+            .iter()
+            .filter(|(s, e, id)| {
+                (e.0 <= range.from.0 || s.0 >= range.until.0) || extra_pinned.contains(id)
+            })
+            .copied()
+            .collect();
+        solver::solve_partial_with_seed(self, &pinned, seed)
     }
 
     /// 登録された全タスクを返す。
