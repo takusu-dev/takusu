@@ -276,6 +276,14 @@ enum TaskCommands {
         allows_parallel: Option<bool>,
         #[arg(long, help = "Lock start time (scheduler cannot move)")]
         fixed: Option<bool>,
+        #[arg(long)]
+        quantity_total: Option<i64>,
+        #[arg(long)]
+        quantity_done: Option<i64>,
+        #[arg(long)]
+        quantity_unit: Option<String>,
+        #[arg(long)]
+        original_quantity_total: Option<i64>,
     },
 
     /// Edit a task in $EDITOR
@@ -308,6 +316,14 @@ enum TaskCommands {
         status: Option<String>,
         #[arg(long, help = "Lock start time (scheduler cannot move)")]
         fixed: Option<bool>,
+        #[arg(long)]
+        quantity_total: Option<i64>,
+        #[arg(long)]
+        quantity_done: Option<i64>,
+        #[arg(long)]
+        quantity_unit: Option<String>,
+        #[arg(long)]
+        original_quantity_total: Option<i64>,
     },
 
     /// Full replace a task (PUT)
@@ -343,6 +359,14 @@ enum TaskCommands {
         allows_parallel: Option<bool>,
         #[arg(long, help = "Lock start time (scheduler cannot move)")]
         fixed: Option<bool>,
+        #[arg(long)]
+        quantity_total: Option<i64>,
+        #[arg(long)]
+        quantity_done: Option<i64>,
+        #[arg(long)]
+        quantity_unit: Option<String>,
+        #[arg(long)]
+        original_quantity_total: Option<i64>,
     },
 
     /// Delete a task
@@ -1000,6 +1024,10 @@ async fn run_task(
             parallelizable,
             allows_parallel,
             fixed,
+            quantity_total,
+            quantity_done,
+            quantity_unit,
+            original_quantity_total,
         } => {
             let (title, end_at) = if is_interactive() && title.is_none() && end_at.is_none() {
                 let t = prompt("Title");
@@ -1029,6 +1057,10 @@ async fn run_task(
                 habit_id: None,
                 fixed,
                 habit_step_id: None,
+                quantity_total,
+                quantity_done,
+                quantity_unit,
+                original_quantity_total,
             };
             let task = app.create_task(&body).await?;
             match mode {
@@ -1063,6 +1095,10 @@ async fn run_task(
             abandonability,
             status,
             fixed,
+            quantity_total,
+            quantity_done,
+            quantity_unit,
+            original_quantity_total,
         } => {
             let avg_minutes = avg_time
                 .as_ref()
@@ -1090,6 +1126,10 @@ async fn run_task(
                 user_edited: None,
                 fixed,
                 habit_step_id: None,
+                quantity_total,
+                quantity_done,
+                quantity_unit,
+                original_quantity_total,
             };
             let task = app.update_task(&id, &body).await?;
             match mode {
@@ -1110,6 +1150,10 @@ async fn run_task(
             parallelizable,
             allows_parallel,
             fixed,
+            quantity_total,
+            quantity_done,
+            quantity_unit,
+            original_quantity_total,
         } => {
             let avg_minutes = parse_duration(&avg_time).map_err(AppError::BadRequest)?;
             let sigma_minutes: i64 = parse_duration(&sigma_time).map_err(AppError::BadRequest)?;
@@ -1132,6 +1176,10 @@ async fn run_task(
                 habit_id: None,
                 fixed,
                 habit_step_id: None,
+                quantity_total,
+                quantity_done,
+                quantity_unit,
+                original_quantity_total,
             };
             let task = app.replace_task(&id, &body).await?;
             match mode {

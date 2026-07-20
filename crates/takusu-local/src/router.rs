@@ -25,6 +25,27 @@ pub fn router(state: AppState) -> Router {
         .route("/tasks/{id}", put(handlers::task::replace_task))
         .route("/tasks/{id}", patch(handlers::task::update_task))
         .route("/tasks/{id}", delete(handlers::task::delete_task))
+        .route(
+            "/tasks/{id}/work/start",
+            post(handlers::task::start_task_work),
+        )
+        .route(
+            "/tasks/{id}/work/pause",
+            post(handlers::task::pause_task_work),
+        )
+        .route(
+            "/tasks/{id}/progress",
+            post(handlers::task::record_progress),
+        )
+        .route(
+            "/tasks/{id}/progress",
+            get(handlers::task::get_task_progress),
+        )
+        .route(
+            "/tasks/{id}/work/complete",
+            post(handlers::task::complete_task_work),
+        )
+        .route("/tasks/{id}/split", post(handlers::task::split_task))
         .route("/habits", post(handlers::habit::create_habit))
         .route("/habits", get(handlers::habit::list_habits))
         // `/habits/scheduled-spans` and `/habits/steps` must be declared before

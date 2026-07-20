@@ -255,6 +255,46 @@ impl Storage for CountingStorage {
     ) -> StorageResult<Vec<takusu_storage::SimilarTaskRow>> {
         Ok(vec![])
     }
+    async fn start_task_work(
+        &self,
+        _id: &str,
+        _operation_id: Option<&str>,
+    ) -> StorageResult<TaskRow> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn pause_task_work(
+        &self,
+        _id: &str,
+        _operation_id: Option<&str>,
+    ) -> StorageResult<TaskRow> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn record_progress(
+        &self,
+        _id: &str,
+        _body: &takusu_storage::RecordProgress,
+        _operation_id: Option<&str>,
+    ) -> StorageResult<takusu_storage::ProgressResult> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn complete_task_work(
+        &self,
+        _id: &str,
+        _operation_id: Option<&str>,
+    ) -> StorageResult<TaskRow> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn get_task_progress(&self, _id: &str) -> StorageResult<takusu_storage::TaskProgress> {
+        Err(StorageError::Internal("n/a".into()))
+    }
+    async fn split_task(
+        &self,
+        _id: &str,
+        _body: &takusu_storage::SplitTask,
+        _operation_id: Option<&str>,
+    ) -> StorageResult<takusu_storage::SplitResult> {
+        Err(StorageError::Internal("n/a".into()))
+    }
 }
 
 #[tokio::test]

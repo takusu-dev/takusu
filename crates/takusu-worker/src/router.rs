@@ -98,6 +98,24 @@ async fn dispatch(req: Request, env: Env) -> Result<Response, crate::error::Work
         (Method::Get, ["tasks"]) => handlers::tasks::list(req, env).await,
         (Method::Post, ["tasks"]) => handlers::tasks::create(req, env).await,
         (Method::Get, ["tasks", "similar"]) => handlers::memory::similar_tasks(req, env).await,
+        (Method::Post, ["tasks", id, "work", "start"]) => {
+            handlers::progress::start_task_work(req, env, id).await
+        }
+        (Method::Post, ["tasks", id, "work", "pause"]) => {
+            handlers::progress::pause_task_work(req, env, id).await
+        }
+        (Method::Post, ["tasks", id, "progress"]) => {
+            handlers::progress::record_progress(req, env, id).await
+        }
+        (Method::Get, ["tasks", id, "progress"]) => {
+            handlers::progress::get_task_progress(req, env, id).await
+        }
+        (Method::Post, ["tasks", id, "work", "complete"]) => {
+            handlers::progress::complete_task_work(req, env, id).await
+        }
+        (Method::Post, ["tasks", id, "split"]) => {
+            handlers::progress::split_task(req, env, id).await
+        }
         (Method::Get, ["tasks", id]) => handlers::tasks::get(req, env, id).await,
         (Method::Patch, ["tasks", id]) => handlers::tasks::update(req, env, id).await,
         (Method::Put, ["tasks", id]) => handlers::tasks::replace(req, env, id).await,

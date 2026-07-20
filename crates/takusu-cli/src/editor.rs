@@ -34,6 +34,10 @@ parallelizable: {par}
 allows_parallel: {apar}
 abandonability: {abandon}
 fixed: {fixed}
+quantity_total: {qtotal}
+quantity_done: {qdone}
+quantity_unit: {qunit}
+original_quantity_total: {oqtotal}
 depends: {depends}"#,
         title = task.title,
         desc = task.description.as_deref().unwrap_or(""),
@@ -46,6 +50,16 @@ depends: {depends}"#,
         apar = task.allows_parallel,
         abandon = task.abandonability,
         fixed = task.fixed,
+        qtotal = task
+            .quantity_total
+            .map(|n| n.to_string())
+            .unwrap_or_default(),
+        qdone = task.quantity_done,
+        qunit = task.quantity_unit.as_deref().unwrap_or(""),
+        oqtotal = task
+            .original_quantity_total
+            .map(|n| n.to_string())
+            .unwrap_or_default(),
     )
 }
 
@@ -61,6 +75,10 @@ pub fn parse_edited_task(content: &str) -> Result<UpdateTask, String> {
     let mut allows_parallel = None;
     let mut abandonability = None;
     let mut fixed = None;
+    let mut quantity_total = None;
+    let mut quantity_done = None;
+    let mut quantity_unit = None;
+    let mut original_quantity_total = None;
     let mut depends = None;
 
     for line in content.lines() {
@@ -143,6 +161,45 @@ pub fn parse_edited_task(content: &str) -> Result<UpdateTask, String> {
                         .map_err(|e| format!("invalid fixed '{value}': {e}"))?,
                 )
             }
+            "quantity_total" => {
+                quantity_total = if value.is_empty() {
+                    None
+                } else {
+                    Some(
+                        value
+                            .parse()
+                            .map_err(|e| format!("invalid quantity_total '{value}': {e}"))?,
+                    )
+                }
+            }
+            "quantity_done" => {
+                quantity_done = if value.is_empty() {
+                    None
+                } else {
+                    Some(
+                        value
+                            .parse()
+                            .map_err(|e| format!("invalid quantity_done '{value}': {e}"))?,
+                    )
+                }
+            }
+            "quantity_unit" => {
+                quantity_unit = if value.is_empty() {
+                    Some(None)
+                } else {
+                    Some(Some(value.to_string()))
+                }
+            }
+            "original_quantity_total" => {
+                original_quantity_total =
+                    if value.is_empty() {
+                        None
+                    } else {
+                        Some(value.parse().map_err(|e| {
+                            format!("invalid original_quantity_total '{value}': {e}")
+                        })?)
+                    }
+            }
             "depends" => {
                 let items: Vec<String> = if value.is_empty() {
                     vec![]
@@ -175,6 +232,10 @@ pub fn parse_edited_task(content: &str) -> Result<UpdateTask, String> {
         user_edited: None,
         fixed,
         habit_step_id: None,
+        quantity_total,
+        quantity_done,
+        quantity_unit: quantity_unit.flatten(),
+        original_quantity_total,
     })
 }
 

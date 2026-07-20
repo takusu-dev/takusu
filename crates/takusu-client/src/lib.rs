@@ -209,6 +209,151 @@ impl Client {
         Ok(())
     }
 
+    pub async fn start_task_work(
+        &self,
+        id: &str,
+        operation_id: Option<&str>,
+    ) -> Result<TaskRow, ClientError> {
+        let encoded_id = id.replace('#', "%23");
+        let mut req = self
+            .request(
+                reqwest::Method::POST,
+                &format!("/api/tasks/{encoded_id}/work/start"),
+            )
+            .await
+            .json(&serde_json::json!({}));
+        if let Some(op_id) = operation_id {
+            req = req.header("Idempotency-Key", op_id);
+        }
+        let resp = req.send().await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn pause_task_work(
+        &self,
+        id: &str,
+        operation_id: Option<&str>,
+    ) -> Result<TaskRow, ClientError> {
+        let encoded_id = id.replace('#', "%23");
+        let mut req = self
+            .request(
+                reqwest::Method::POST,
+                &format!("/api/tasks/{encoded_id}/work/pause"),
+            )
+            .await
+            .json(&serde_json::json!({}));
+        if let Some(op_id) = operation_id {
+            req = req.header("Idempotency-Key", op_id);
+        }
+        let resp = req.send().await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn record_progress(
+        &self,
+        id: &str,
+        body: &RecordProgress,
+        operation_id: Option<&str>,
+    ) -> Result<ProgressResult, ClientError> {
+        let encoded_id = id.replace('#', "%23");
+        let mut req = self
+            .request(
+                reqwest::Method::POST,
+                &format!("/api/tasks/{encoded_id}/progress"),
+            )
+            .await
+            .json(body);
+        if let Some(op_id) = operation_id {
+            req = req.header("Idempotency-Key", op_id);
+        }
+        let resp = req.send().await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn complete_task_work(
+        &self,
+        id: &str,
+        operation_id: Option<&str>,
+    ) -> Result<TaskRow, ClientError> {
+        let encoded_id = id.replace('#', "%23");
+        let mut req = self
+            .request(
+                reqwest::Method::POST,
+                &format!("/api/tasks/{encoded_id}/work/complete"),
+            )
+            .await
+            .json(&serde_json::json!({}));
+        if let Some(op_id) = operation_id {
+            req = req.header("Idempotency-Key", op_id);
+        }
+        let resp = req.send().await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn get_task_progress(&self, id: &str) -> Result<TaskProgress, ClientError> {
+        let encoded_id = id.replace('#', "%23");
+        let resp = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/api/tasks/{encoded_id}/progress"),
+            )
+            .await
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn split_task(
+        &self,
+        id: &str,
+        body: &SplitTask,
+        operation_id: Option<&str>,
+    ) -> Result<SplitResult, ClientError> {
+        let encoded_id = id.replace('#', "%23");
+        let mut req = self
+            .request(
+                reqwest::Method::POST,
+                &format!("/api/tasks/{encoded_id}/split"),
+            )
+            .await
+            .json(body);
+        if let Some(op_id) = operation_id {
+            req = req.header("Idempotency-Key", op_id);
+        }
+        let resp = req.send().await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
     pub async fn analyze_task_dependencies(
         &self,
     ) -> Result<DependencyAnalysisResponse, ClientError> {
@@ -1013,6 +1158,18 @@ pub struct TaskRow {
     pub fixed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub habit_step_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantity_total: Option<i64>,
+    #[serde(default)]
+    pub quantity_done: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantity_unit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_from_task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_quantity_total: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -1044,6 +1201,14 @@ pub struct CreateTask {
     pub fixed: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub habit_step_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub quantity_total: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub quantity_done: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub quantity_unit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub original_quantity_total: Option<i64>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -1078,6 +1243,14 @@ pub struct UpdateTask {
     pub fixed: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub habit_step_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub quantity_total: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub quantity_done: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub quantity_unit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub original_quantity_total: Option<i64>,
 }
 
 #[derive(Debug, Default)]
@@ -1499,6 +1672,71 @@ pub struct SimilarTaskQuery {
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+}
+
+// ── Active-session progress management (#WI-9) ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskWorkSessionRow {
+    pub id: String,
+    pub task_id: String,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProgressEventRow {
+    pub id: String,
+    pub task_id: String,
+    pub at: String,
+    pub quantity_done: Option<i64>,
+    pub delta_quantity: Option<i64>,
+    pub active_minutes: i64,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct RecordProgress {
+    pub quantity_done: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProgressResult {
+    pub task: TaskRow,
+    pub event: Option<ProgressEventRow>,
+    #[serde(default)]
+    pub suggests_completion: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskProgress {
+    pub task: TaskRow,
+    pub open_session: Option<TaskWorkSessionRow>,
+    pub sessions: Vec<TaskWorkSessionRow>,
+    pub events: Vec<ProgressEventRow>,
+    pub total_active_minutes: i64,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct SplitTask {
+    pub retained_quantity: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_dependency: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SplitResult {
+    pub original: TaskRow,
+    pub remainder: TaskRow,
 }
 
 // ── Settings types ──

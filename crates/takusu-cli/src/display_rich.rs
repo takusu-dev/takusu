@@ -45,6 +45,22 @@ pub fn display_task_detail(
     table
         .load_preset(UTF8_FULL)
         .set_content_arrangement(ContentArrangement::Dynamic);
+    let progress = if let Some(total) = task.quantity_total {
+        format!(
+            "{}/{} {}",
+            task.quantity_done,
+            total,
+            task.quantity_unit.as_deref().unwrap_or("")
+        )
+    } else {
+        "—".into()
+    };
+    let completed = task
+        .completed_at
+        .as_deref()
+        .map(|s| format_datetime(s, tz))
+        .unwrap_or_else(|| "—".into());
+
     table.set_header(vec![
         Cell::new("ID").fg(Color::Cyan),
         Cell::new("Title").fg(Color::Cyan),
@@ -56,6 +72,8 @@ pub fn display_task_detail(
         Cell::new("Parallel").fg(Color::Cyan),
         Cell::new("Host").fg(Color::Cyan),
         Cell::new("Abandon").fg(Color::Cyan),
+        Cell::new("Progress").fg(Color::Cyan),
+        Cell::new("Completed").fg(Color::Cyan),
     ]);
     table.add_row(vec![
         Cell::new(task_id_label(task, habit_map)),
@@ -73,6 +91,8 @@ pub fn display_task_detail(
         Cell::new(if task.parallelizable { "✓" } else { "✗" }),
         Cell::new(if task.allows_parallel { "✓" } else { "✗" }),
         Cell::new(format!("{:.1}", task.abandonability)),
+        Cell::new(progress),
+        Cell::new(completed),
     ]);
     println!("{table}");
 
@@ -348,6 +368,8 @@ pub fn display_tasks(
             Cell::new("Parallel").fg(Color::Cyan),
             Cell::new("Host").fg(Color::Cyan),
             Cell::new("Abandon").fg(Color::Cyan),
+            Cell::new("Progress").fg(Color::Cyan),
+            Cell::new("Completed").fg(Color::Cyan),
         ]);
 
     for t in tasks {
@@ -359,6 +381,21 @@ pub fn display_tasks(
             "skipped" => Color::DarkGrey,
             _ => Color::White,
         };
+        let progress = if let Some(total) = t.quantity_total {
+            format!(
+                "{}/{} {}",
+                t.quantity_done,
+                total,
+                t.quantity_unit.as_deref().unwrap_or("")
+            )
+        } else {
+            "—".into()
+        };
+        let completed = t
+            .completed_at
+            .as_deref()
+            .map(|s| format_datetime(s, tz))
+            .unwrap_or_else(|| "—".into());
         let short_id = task_id_label(t, habit_map);
         table.add_row(vec![
             Cell::new(short_id),
@@ -376,6 +413,8 @@ pub fn display_tasks(
             Cell::new(if t.parallelizable { "✓" } else { "✗" }),
             Cell::new(if t.allows_parallel { "✓" } else { "✗" }),
             Cell::new(format!("{:.1}", t.abandonability)),
+            Cell::new(progress),
+            Cell::new(completed),
         ]);
     }
     println!("{table}");

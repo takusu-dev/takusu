@@ -51,6 +51,8 @@ async fn setup_mock_db() -> SqlitePool {
         include_str!("../../takusu-local-lib/migrations/014_workload.sql"),
         include_str!("../../takusu-local-lib/migrations/015_skills.sql"),
         include_str!("../../takusu-local-lib/migrations/016_memory.sql"),
+        include_str!("../../takusu-local-lib/migrations/017_solver.sql"),
+        include_str!("../../takusu-local-lib/migrations/018_progress.sql"),
     ];
     for s in sqls {
         sqlx::raw_sql(*s).execute(&pool).await.unwrap();
@@ -139,7 +141,7 @@ async fn list_tasks(
     axum::extract::Query(q): axum::extract::Query<TaskQuery>,
 ) -> Json<Vec<TaskRow>> {
     let mut sql = String::from(
-        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, created_at, updated_at FROM tasks WHERE 1=1",
+        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at FROM tasks WHERE 1=1",
     );
     if let Some(ref status) = q.status {
         if status == "overdue" {
@@ -204,8 +206,9 @@ async fn create_task(
     let abandonability = body.abandonability.unwrap_or(0.5);
     let fixed = body.fixed.unwrap_or(false);
 
+    let quantity_done = body.quantity_done.unwrap_or(0);
     sqlx::query(
-        "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, fixed, habit_step_id) VALUES (?, (SELECT COALESCE(MAX(display_id), 0) + 1 FROM tasks), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)"
+        "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total) VALUES (?, (SELECT COALESCE(MAX(display_id), 0) + 1 FROM tasks), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .bind(&id)
     .bind(&body.title)
@@ -221,12 +224,18 @@ async fn create_task(
     .bind(&body.ical_uid)
     .bind(fixed)
     .bind(&body.habit_step_id)
+    .bind(body.quantity_total)
+    .bind(quantity_done)
+    .bind(&body.quantity_unit)
+    .bind(None::<String>)
+    .bind(None::<String>)
+    .bind(body.original_quantity_total)
     .execute(&state.pool)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row: TaskRow = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, created_at, updated_at FROM tasks WHERE id = ?",
+        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at FROM tasks WHERE id = ?",
     )
     .bind(&id)
     .fetch_one(&state.pool)
@@ -240,7 +249,7 @@ async fn get_task(
     Path(id): Path<String>,
 ) -> Result<Json<TaskRow>, StatusCode> {
     let row: Option<TaskRow> = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, created_at, updated_at FROM tasks WHERE id = ?",
+        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at FROM tasks WHERE id = ?",
     )
     .bind(&id)
     .fetch_optional(&state.pool)
@@ -272,7 +281,7 @@ async fn update_task(
         .map(|d| serde_json::to_string(d).unwrap_or_else(|_| "[]".into()));
 
     let existing: TaskRow = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, created_at, updated_at FROM tasks WHERE id = ?",
+        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at FROM tasks WHERE id = ?",
     )
     .bind(&id)
     .fetch_one(&state.pool)
@@ -281,7 +290,7 @@ async fn update_task(
     let final_status = body.status.clone().unwrap_or(existing.status);
 
     sqlx::query(
-        "UPDATE tasks SET title=COALESCE(?1,title), description=COALESCE(?2,description), start_at=COALESCE(?3,start_at), end_at=COALESCE(?4,end_at), avg_minutes=COALESCE(?5,avg_minutes), sigma_minutes=COALESCE(?6,sigma_minutes), depends=COALESCE(?7,depends), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), status=?11, user_edited=COALESCE(?13,user_edited), updated_at=datetime('now') WHERE id = ?12"
+        "UPDATE tasks SET title=COALESCE(?1,title), description=COALESCE(?2,description), start_at=COALESCE(?3,start_at), end_at=COALESCE(?4,end_at), avg_minutes=COALESCE(?5,avg_minutes), sigma_minutes=COALESCE(?6,sigma_minutes), depends=COALESCE(?7,depends), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), status=?11, user_edited=COALESCE(?13,user_edited), quantity_total=COALESCE(?14,quantity_total), quantity_done=COALESCE(?15,quantity_done), quantity_unit=COALESCE(?16,quantity_unit), original_quantity_total=COALESCE(?17,original_quantity_total), updated_at=datetime('now') WHERE id = ?12"
     )
     .bind(body.title.as_deref())
     .bind(body.description.as_deref())
@@ -296,12 +305,16 @@ async fn update_task(
     .bind(&final_status)
     .bind(&id)
     .bind(body.user_edited)
+    .bind(body.quantity_total)
+    .bind(body.quantity_done)
+    .bind(body.quantity_unit.as_deref())
+    .bind(body.original_quantity_total)
     .execute(&state.pool)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row: TaskRow = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, created_at, updated_at FROM tasks WHERE id = ?",
+        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at FROM tasks WHERE id = ?",
     )
     .bind(&id)
     .fetch_one(&state.pool)
@@ -321,9 +334,10 @@ async fn replace_task(
     let parallelizable = body.parallelizable.unwrap_or(false);
     let allows_parallel = body.allows_parallel.unwrap_or(false);
     let abandonability = body.abandonability.unwrap_or(0.5);
+    let quantity_done = body.quantity_done.unwrap_or(0);
 
     sqlx::query(
-        "UPDATE tasks SET title=?, description=?, start_at=?, end_at=?, avg_minutes=?, sigma_minutes=?, depends=?, parallelizable=?, allows_parallel=?, abandonability=?, updated_at=datetime('now') WHERE id = ?"
+        "UPDATE tasks SET title=?, description=?, start_at=?, end_at=?, avg_minutes=?, sigma_minutes=?, depends=?, parallelizable=?, allows_parallel=?, abandonability=?, quantity_total=?, quantity_done=?, quantity_unit=?, completed_at=?, split_from_task_id=?, original_quantity_total=?, updated_at=datetime('now') WHERE id = ?"
     )
     .bind(&body.title)
     .bind(&body.description)
@@ -335,13 +349,19 @@ async fn replace_task(
     .bind(parallelizable)
     .bind(allows_parallel)
     .bind(abandonability)
+    .bind(body.quantity_total)
+    .bind(quantity_done)
+    .bind(&body.quantity_unit)
+    .bind(None::<String>)
+    .bind(None::<String>)
+    .bind(body.original_quantity_total)
     .bind(&id)
     .execute(&state.pool)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row: TaskRow = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, created_at, updated_at FROM tasks WHERE id = ?",
+        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at FROM tasks WHERE id = ?",
     )
     .bind(&id)
     .fetch_one(&state.pool)
@@ -706,6 +726,10 @@ async fn workers_storage_e2e() {
         habit_id: None,
         fixed: None,
         habit_step_id: None,
+        quantity_total: None,
+        quantity_done: None,
+        quantity_unit: None,
+        original_quantity_total: None,
     };
     let task = storage.create_task(&create_body).await.unwrap();
     assert_eq!(task.title, "e2e task");
