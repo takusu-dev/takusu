@@ -586,7 +586,7 @@ pub async fn similar_tasks(req: Request, env: Env) -> Result<Response, WorkerErr
 
     let database = db(&env)?;
     let stmt = database.prepare(
-        "SELECT id AS task_id, display_id, title, avg_minutes, sigma_minutes, NULL AS actual_minutes, NULL AS completed_at, updated_at, 'title_overlap' AS similarity FROM tasks WHERE status = 'completed' ORDER BY updated_at DESC LIMIT 1000",
+        "SELECT id AS task_id, display_id, title, avg_minutes, sigma_minutes, NULL AS actual_minutes, completed_at, updated_at, 'title_overlap' AS similarity FROM tasks WHERE status = 'completed' ORDER BY updated_at DESC LIMIT 1000",
     );
     let rows: Vec<SimilarTaskRow> = safe_all(&stmt).await?;
 

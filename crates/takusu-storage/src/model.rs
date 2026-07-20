@@ -38,6 +38,24 @@ pub struct TaskRow {
     /// (step-less) habits and manually created tasks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub habit_step_id: Option<String>,
+    /// WI-9: total quantity for a quantitative task (e.g. 30 題).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantity_total: Option<i64>,
+    /// WI-9: quantity already done. Defaults to 0.
+    #[serde(default)]
+    pub quantity_done: i64,
+    /// WI-9: unit for the quantity (e.g. "題").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantity_unit: Option<String>,
+    /// WI-9: wall-clock completion time, set by `complete`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    /// WI-9: for a remainder task, the id of the task it was split from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_from_task_id: Option<String>,
+    /// WI-9: pre-split total quantity, kept for lineage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_quantity_total: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -70,6 +88,18 @@ pub struct CreateTask {
     /// habit step link (#95). Set by sync_habit_tasks for step-generated tasks.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub habit_step_id: Option<String>,
+    /// WI-9: total quantity for a quantitative task.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub quantity_total: Option<i64>,
+    /// WI-9: initial quantity already done (defaults to 0).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub quantity_done: Option<i64>,
+    /// WI-9: unit for the quantity.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub quantity_unit: Option<String>,
+    /// WI-9: pre-split total quantity, kept for lineage.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub original_quantity_total: Option<i64>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -104,6 +134,18 @@ pub struct UpdateTask {
     pub fixed: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub habit_step_id: Option<String>,
+    /// WI-9: total quantity for a quantitative task.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub quantity_total: Option<i64>,
+    /// WI-9: quantity already done.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub quantity_done: Option<i64>,
+    /// WI-9: unit for the quantity.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub quantity_unit: Option<String>,
+    /// WI-9: pre-split total quantity, kept for lineage.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub original_quantity_total: Option<i64>,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -545,6 +587,79 @@ pub struct UpdateSettings {
     pub warm_start: Option<bool>,
 }
 
+// ── WI-9 active-session progress management ─────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct TaskWorkSessionRow {
+    pub id: String,
+    pub task_id: String,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ProgressEventRow {
+    pub id: String,
+    pub task_id: String,
+    pub at: String,
+    pub quantity_done: Option<i64>,
+    pub delta_quantity: Option<i64>,
+    pub active_minutes: i64,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct RecordProgress {
+    pub quantity_done: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProgressResult {
+    pub task: TaskRow,
+    /// The recorded event, or `None` when the reported quantity_done has not
+    /// changed (no-op).
+    pub event: Option<ProgressEventRow>,
+    /// True when the reported quantity_done reaches or exceeds the task total.
+    #[serde(default)]
+    pub suggests_completion: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskProgress {
+    pub task: TaskRow,
+    pub open_session: Option<TaskWorkSessionRow>,
+    pub sessions: Vec<TaskWorkSessionRow>,
+    pub events: Vec<ProgressEventRow>,
+    pub total_active_minutes: i64,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct SplitTask {
+    /// Quantity to keep on the original task.
+    pub retained_quantity: i64,
+    /// If true, make the remainder depend on the original task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_dependency: Option<bool>,
+    /// Optional title for the remainder (defaults to the original title).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Optional description for the remainder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Optional deadline for the remainder (defaults to the original end_at).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SplitResult {
+    pub original: TaskRow,
+    pub remainder: TaskRow,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -663,6 +778,10 @@ mod tests {
             habit_id: None,
             fixed: None,
             habit_step_id: None,
+            quantity_total: None,
+            quantity_done: None,
+            quantity_unit: None,
+            original_quantity_total: None,
         };
         let json = serde_json::to_string(&c).unwrap();
         let back: CreateTask = serde_json::from_str(&json).unwrap();

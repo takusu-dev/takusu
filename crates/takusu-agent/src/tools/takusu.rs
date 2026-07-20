@@ -1594,6 +1594,12 @@ mod tests {
             user_edited: false,
             fixed: false,
             habit_step_id: None,
+            quantity_total: None,
+            quantity_done: 0,
+            quantity_unit: None,
+            completed_at: None,
+            split_from_task_id: None,
+            original_quantity_total: None,
             created_at: "2025-06-01T00:00:00Z".to_string(),
             updated_at: "2025-06-01T00:00:00Z".to_string(),
         }

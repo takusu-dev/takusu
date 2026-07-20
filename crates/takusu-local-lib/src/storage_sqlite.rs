@@ -4,11 +4,14 @@ use sqlx::sqlite::SqlitePoolOptions;
 use takusu_storage::{
     CreateHabit, CreateHabitScheduledSpan, CreateMemory, CreateSkill, CreateTask,
     GoogleCalEventRow, GoogleCalSettingsRow, HabitRow, HabitScheduledSpanRow, HabitStepInput,
-    HabitStepRow, MemoryQuery, MemoryRow, SaveScheduleRequest, ScheduleRow, SettingsRow,
-    SimilarTaskQuery, SimilarTaskRow, SkillRow, Storage, StorageError, TaskQuery, TaskRow,
-    TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateMemory,
-    UpdateSettings, UpdateSkill, UpdateTask, storage::StorageResult,
+    HabitStepRow, MemoryQuery, MemoryRow, ProgressEventRow, ProgressResult, RecordProgress,
+    SaveScheduleRequest, ScheduleRow, SettingsRow, SimilarTaskQuery, SimilarTaskRow, SkillRow,
+    SplitResult, SplitTask, Storage, StorageError, TaskProgress, TaskQuery, TaskRow,
+    TaskWorkSessionRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit,
+    UpdateMemory, UpdateSettings, UpdateSkill, UpdateTask, storage::StorageResult,
 };
+
+use std::str::FromStr;
 
 use crate::config::LocalConfig;
 
@@ -18,6 +21,10 @@ const OVERDUE_SQL: &str =
 /// SQL predicate that excludes overdue tasks (completed/skipped or end_at is now or later).
 const NOT_OVERDUE_SQL: &str =
     "(status IN ('completed', 'skipped') OR datetime(end_at) >= datetime('now'))";
+/// Static `SELECT ... FROM tasks` fragments for queries that require an
+/// audited `&'static str` (`SqlSafeStr`) and avoid `SELECT *` brittleness.
+const SELECT_TASKS: &str = "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at FROM tasks";
+const SELECT_TASK_BY_ID: &str = "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at FROM tasks WHERE id = ?";
 
 const MIGRATION_001: &str = include_str!("../migrations/001_init.sql");
 const MIGRATION_002: &str = include_str!("../migrations/002_google_cal.sql");
@@ -33,6 +40,7 @@ const MIGRATION_014: &str = include_str!("../migrations/014_workload.sql");
 const MIGRATION_015: &str = include_str!("../migrations/015_skills.sql");
 const MIGRATION_016: &str = include_str!("../migrations/016_memory.sql");
 const MIGRATION_017: &str = include_str!("../migrations/017_solver.sql");
+const MIGRATION_018: &str = include_str!("../migrations/018_progress.sql");
 // Migration 013 one-time backfill: drops the old global unique index, renumbers
 // existing habit tasks to start from 1 per habit, and seeds the per-habit
 // sequences. Non-idempotent (DROP + UPDATE renumber) — guarded by a check
@@ -297,6 +305,17 @@ impl SqliteStorage {
             sqlx::raw_sql(MIGRATION_017).execute(&pool).await?;
         }
 
+        // Migration 018 adds progress columns and tables (idempotent, guarded
+        // by a column check).
+        let has_quantity_total: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name = 'quantity_total'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        if !has_quantity_total {
+            sqlx::raw_sql(MIGRATION_018).execute(&pool).await?;
+        }
+
         Ok(Self { pool })
     }
 
@@ -343,7 +362,7 @@ impl Storage for SqliteStorage {
     }
 
     async fn list_tasks(&self, query: &TaskQuery) -> StorageResult<Vec<TaskRow>> {
-        let mut sql = String::from("SELECT * FROM tasks WHERE 1=1");
+        let mut sql = format!("{SELECT_TASKS} WHERE 1=1");
         let mut bindings: Vec<String> = Vec::new();
         if let Some(ref v) = query.status {
             if v == "overdue" {
@@ -397,7 +416,7 @@ impl Storage for SqliteStorage {
 
     async fn get_task(&self, id: &str) -> StorageResult<TaskRow> {
         let full = resolve_task_id(&self.pool, id).await?;
-        sqlx::query_as::<_, TaskRow>("SELECT * FROM tasks WHERE id = ?")
+        sqlx::query_as::<_, TaskRow>(SELECT_TASK_BY_ID)
             .bind(&full)
             .fetch_one(&self.pool)
             .await
@@ -408,6 +427,11 @@ impl Storage for SqliteStorage {
     }
 
     async fn create_task(&self, body: &CreateTask) -> StorageResult<TaskRow> {
+        validate_quantity(
+            body.quantity_total,
+            body.quantity_done,
+            body.original_quantity_total,
+        )?;
         let id = uuid::Uuid::now_v7().to_string();
         let resolved_depends = resolve_depends(&self.pool, body.depends.as_deref()).await?;
         let depends_json =
@@ -446,8 +470,12 @@ impl Storage for SqliteStorage {
             .await
             .map_err(map_err)?
         };
+        let quantity_total = body.quantity_total;
+        let quantity_done = body.quantity_done.unwrap_or(0);
+        let quantity_unit = body.quantity_unit.as_deref();
+        let original_quantity_total = body.original_quantity_total;
         sqlx::query(
-            "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)"
+            "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&id)
         .bind(display_id)
@@ -465,10 +493,16 @@ impl Storage for SqliteStorage {
         .bind(&body.habit_id)
         .bind(fixed)
         .bind(&body.habit_step_id)
+        .bind(quantity_total)
+        .bind(quantity_done)
+        .bind(quantity_unit)
+        .bind(None::<String>)
+        .bind(None::<String>)
+        .bind(original_quantity_total)
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
-        sqlx::query_as::<_, TaskRow>("SELECT * FROM tasks WHERE id = ?")
+        sqlx::query_as::<_, TaskRow>(SELECT_TASK_BY_ID)
             .bind(&id)
             .fetch_one(&self.pool)
             .await
@@ -477,7 +511,7 @@ impl Storage for SqliteStorage {
 
     async fn update_task(&self, id: &str, body: &UpdateTask) -> StorageResult<TaskRow> {
         let full = resolve_task_id(&self.pool, id).await?;
-        let existing = sqlx::query_as::<_, TaskRow>("SELECT * FROM tasks WHERE id = ?")
+        let existing = sqlx::query_as::<_, TaskRow>(SELECT_TASK_BY_ID)
             .bind(&full)
             .fetch_one(&self.pool)
             .await
@@ -485,6 +519,12 @@ impl Storage for SqliteStorage {
                 sqlx::Error::RowNotFound => StorageError::NotFound(format!("task {id} not found")),
                 other => StorageError::Internal(other.to_string()),
             })?;
+
+        validate_quantity(
+            body.quantity_total.or(existing.quantity_total),
+            body.quantity_done.or(Some(existing.quantity_done)),
+            body.original_quantity_total,
+        )?;
 
         let depends_json = if let Some(ref deps) = body.depends {
             let resolved = resolve_depends(&self.pool, Some(deps)).await?;
@@ -507,7 +547,7 @@ impl Storage for SqliteStorage {
         }
 
         sqlx::query(
-            "UPDATE tasks SET title=COALESCE(?,title), description=COALESCE(?,description), start_at=COALESCE(?,start_at), end_at=COALESCE(?,end_at), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), depends=COALESCE(?,depends), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), status=?, habit_id=COALESCE(?,habit_id), user_edited=COALESCE(?,user_edited), fixed=COALESCE(?,fixed), habit_step_id=COALESCE(?,habit_step_id), updated_at=datetime('now') WHERE id = ?"
+            "UPDATE tasks SET title=COALESCE(?,title), description=COALESCE(?,description), start_at=COALESCE(?,start_at), end_at=COALESCE(?,end_at), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), depends=COALESCE(?,depends), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), status=?, habit_id=COALESCE(?,habit_id), user_edited=COALESCE(?,user_edited), fixed=COALESCE(?,fixed), habit_step_id=COALESCE(?,habit_step_id), quantity_total=COALESCE(?,quantity_total), quantity_done=COALESCE(?,quantity_done), quantity_unit=COALESCE(?,quantity_unit), original_quantity_total=COALESCE(?,original_quantity_total), updated_at=datetime('now') WHERE id = ?"
         )
         .bind(body.title.as_ref())
         .bind(body.description.as_ref())
@@ -524,12 +564,37 @@ impl Storage for SqliteStorage {
         .bind(body.user_edited)
         .bind(body.fixed)
         .bind(body.habit_step_id.as_ref())
+        .bind(body.quantity_total)
+        .bind(body.quantity_done)
+        .bind(body.quantity_unit.as_ref())
+        .bind(body.original_quantity_total)
         .bind(&full)
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
 
-        sqlx::query_as::<_, TaskRow>("SELECT * FROM tasks WHERE id = ?")
+        // completed_at must follow explicit status transitions: set on
+        // completion, clear when leaving completed.
+        if body.status.is_some() {
+            let completed_at = if status == "completed" {
+                existing
+                    .completed_at
+                    .clone()
+                    .or(Some(jiff::Timestamp::now().to_string()))
+            } else if existing.status == "completed" {
+                None
+            } else {
+                existing.completed_at.clone()
+            };
+            sqlx::query("UPDATE tasks SET completed_at = ? WHERE id = ?")
+                .bind(&completed_at)
+                .bind(&full)
+                .execute(&self.pool)
+                .await
+                .map_err(map_err)?;
+        }
+
+        sqlx::query_as::<_, TaskRow>(SELECT_TASK_BY_ID)
             .bind(&full)
             .fetch_one(&self.pool)
             .await
@@ -537,6 +602,11 @@ impl Storage for SqliteStorage {
     }
 
     async fn replace_task(&self, id: &str, body: &CreateTask) -> StorageResult<TaskRow> {
+        validate_quantity(
+            body.quantity_total,
+            body.quantity_done,
+            body.original_quantity_total,
+        )?;
         let full = resolve_task_id(&self.pool, id).await?;
         let resolved_depends = resolve_depends(&self.pool, body.depends.as_deref()).await?;
         let depends_json = serde_json::to_string(&resolved_depends).unwrap_or_else(|_| "[]".into());
@@ -545,8 +615,12 @@ impl Storage for SqliteStorage {
         let allows_parallel = body.allows_parallel.unwrap_or(false);
         let abandonability = body.abandonability.unwrap_or(0.5);
         let fixed = body.fixed.unwrap_or(false);
+        let quantity_total = body.quantity_total;
+        let quantity_done = body.quantity_done;
+        let quantity_unit = body.quantity_unit.as_deref();
+        let original_quantity_total = body.original_quantity_total;
         sqlx::query(
-            "UPDATE tasks SET title=?, description=?, start_at=?, end_at=?, avg_minutes=?, sigma_minutes=?, depends=?, parallelizable=?, allows_parallel=?, abandonability=?, habit_id=COALESCE(?,habit_id), fixed=?, habit_step_id=?, updated_at=datetime('now') WHERE id = ?"
+            "UPDATE tasks SET title=?, description=?, start_at=?, end_at=?, avg_minutes=?, sigma_minutes=?, depends=?, parallelizable=?, allows_parallel=?, abandonability=?, habit_id=COALESCE(?,habit_id), fixed=?, habit_step_id=?, quantity_total=COALESCE(?, quantity_total), quantity_done=COALESCE(?, quantity_done), quantity_unit=COALESCE(?, quantity_unit), completed_at=COALESCE(?, completed_at), split_from_task_id=COALESCE(?, split_from_task_id), original_quantity_total=COALESCE(?, original_quantity_total), updated_at=datetime('now') WHERE id = ?"
         )
         .bind(&body.title)
         .bind(&body.description)
@@ -561,11 +635,17 @@ impl Storage for SqliteStorage {
         .bind(&body.habit_id)
         .bind(fixed)
         .bind(&body.habit_step_id)
+        .bind(quantity_total)
+        .bind(quantity_done)
+        .bind(quantity_unit)
+        .bind(None::<String>)
+        .bind(None::<String>)
+        .bind(original_quantity_total)
         .bind(&full)
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
-        sqlx::query_as::<_, TaskRow>("SELECT * FROM tasks WHERE id = ?")
+        sqlx::query_as::<_, TaskRow>(SELECT_TASK_BY_ID)
             .bind(&full)
             .fetch_one(&self.pool)
             .await
@@ -1545,7 +1625,7 @@ impl Storage for SqliteStorage {
         )
         .map_err(|e| StorageError::BadRequest(format!("invalid title: {e}")))?;
         let rows: Vec<SimilarTaskRow> = sqlx::query_as::<_, SimilarTaskRow>(
-            "SELECT id AS task_id, display_id, title, avg_minutes, sigma_minutes, NULL AS actual_minutes, NULL AS completed_at, updated_at, 'title_overlap' AS similarity FROM tasks WHERE status = 'completed' ORDER BY updated_at DESC LIMIT 1000",
+            "SELECT id AS task_id, display_id, title, avg_minutes, sigma_minutes, NULL AS actual_minutes, completed_at, updated_at, 'title_overlap' AS similarity FROM tasks WHERE status = 'completed' ORDER BY updated_at DESC LIMIT 1000",
         )
         .fetch_all(&self.pool)
         .await
@@ -1582,6 +1662,559 @@ impl Storage for SqliteStorage {
             .collect();
         out.truncate(limit);
         Ok(out)
+    }
+
+    async fn start_task_work(
+        &self,
+        id: &str,
+        operation_id: Option<&str>,
+    ) -> StorageResult<TaskRow> {
+        let payload = serde_json::json!({"op": "start", "id": id}).to_string();
+        let request_hash = progress_request_hash(&payload, operation_id);
+
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        if let Some(op_id) = operation_id
+            && let Some(stored) =
+                Self::check_progress_idempotency(&mut *tx, op_id, &request_hash).await?
+        {
+            return stored;
+        }
+
+        let full = resolve_task_id(&mut *tx, id).await?;
+
+        let status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
+            .bind(&full)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        if status == "completed" || status == "skipped" {
+            return Err(StorageError::BadRequest(format!(
+                "cannot start work on a {status} task"
+            )));
+        }
+
+        let session_id = uuid::Uuid::now_v7().to_string();
+        let now = jiff::Timestamp::now().to_string();
+        sqlx::query(
+            "INSERT OR IGNORE INTO task_work_sessions (id, task_id, started_at) VALUES (?, ?, ?)",
+        )
+        .bind(&session_id)
+        .bind(&full)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        sqlx::query(
+            "UPDATE tasks SET status = 'in_progress', updated_at = datetime('now') WHERE id = ?",
+        )
+        .bind(&full)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        let task: TaskRow = sqlx::query_as(SELECT_TASK_BY_ID)
+            .bind(&full)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_err)?;
+
+        if let Some(op_id) = operation_id {
+            Self::record_progress_operation(&mut *tx, op_id, &request_hash, &task).await?;
+        }
+        tx.commit().await.map_err(map_err)?;
+        Ok(task)
+    }
+
+    async fn pause_task_work(
+        &self,
+        id: &str,
+        operation_id: Option<&str>,
+    ) -> StorageResult<TaskRow> {
+        let payload = serde_json::json!({"op": "pause", "id": id}).to_string();
+        let request_hash = progress_request_hash(&payload, operation_id);
+
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        if let Some(op_id) = operation_id
+            && let Some(stored) =
+                Self::check_progress_idempotency(&mut *tx, op_id, &request_hash).await?
+        {
+            return stored;
+        }
+
+        let full = resolve_task_id(&mut *tx, id).await?;
+
+        let status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
+            .bind(&full)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        if status == "completed" || status == "skipped" {
+            return Err(StorageError::BadRequest(format!(
+                "cannot pause work on a {status} task"
+            )));
+        }
+
+        let now = jiff::Timestamp::now().to_string();
+        sqlx::query(
+            "UPDATE task_work_sessions SET ended_at = ? WHERE task_id = ? AND ended_at IS NULL",
+        )
+        .bind(&now)
+        .bind(&full)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        sqlx::query("UPDATE tasks SET updated_at = datetime('now') WHERE id = ?")
+            .bind(&full)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+
+        let task: TaskRow = sqlx::query_as(SELECT_TASK_BY_ID)
+            .bind(&full)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_err)?;
+
+        if let Some(op_id) = operation_id {
+            Self::record_progress_operation(&mut *tx, op_id, &request_hash, &task).await?;
+        }
+        tx.commit().await.map_err(map_err)?;
+        Ok(task)
+    }
+
+    async fn record_progress(
+        &self,
+        id: &str,
+        body: &RecordProgress,
+        operation_id: Option<&str>,
+    ) -> StorageResult<ProgressResult> {
+        if body.quantity_done < 0 {
+            return Err(StorageError::BadRequest(
+                "quantity_done cannot be negative".into(),
+            ));
+        }
+        let payload = serde_json::json!({"op": "progress", "id": id, "body": body}).to_string();
+        let request_hash = progress_request_hash(&payload, operation_id);
+
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        if let Some(op_id) = operation_id
+            && let Some(stored) =
+                Self::check_progress_idempotency(&mut *tx, op_id, &request_hash).await?
+        {
+            return stored;
+        }
+
+        let full = resolve_task_id(&mut *tx, id).await?;
+
+        let task: TaskRow = sqlx::query_as(SELECT_TASK_BY_ID)
+            .bind(&full)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::RowNotFound => StorageError::NotFound(format!("task {id} not found")),
+                other => StorageError::Internal(other.to_string()),
+            })?;
+
+        if task.status == "completed" || task.status == "skipped" {
+            return Err(StorageError::BadRequest(format!(
+                "cannot record progress on a {} task",
+                task.status
+            )));
+        }
+        if let Some(total) = task.quantity_total
+            && body.quantity_done > total
+        {
+            return Err(StorageError::BadRequest(format!(
+                "quantity_done cannot exceed quantity_total ({} > {})",
+                body.quantity_done, total
+            )));
+        }
+
+        let open: Option<TaskWorkSessionRow> = sqlx::query_as(
+            "SELECT id, task_id, started_at, ended_at, created_at FROM task_work_sessions WHERE task_id = ? AND ended_at IS NULL",
+        )
+        .bind(&full)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        if open.is_none() && body.quantity_done != task.quantity_done {
+            return Err(StorageError::BadRequest(
+                "no open work session; start work first".into(),
+            ));
+        }
+
+        let delta_quantity = body.quantity_done - task.quantity_done;
+
+        if delta_quantity == 0 {
+            let result = ProgressResult {
+                task: task.clone(),
+                event: None,
+                suggests_completion: false,
+            };
+            if let Some(op_id) = operation_id {
+                Self::record_progress_operation(&mut *tx, op_id, &request_hash, &result).await?;
+            }
+            tx.commit().await.map_err(map_err)?;
+            return Ok(result);
+        }
+
+        let now = jiff::Timestamp::now().to_string();
+
+        // Active minutes are measured from the later of the open session start
+        // and the most recent progress event, so repeated progress updates in
+        // the same session do not accumulate the same time.
+        let last_event: Option<ProgressEventRow> = sqlx::query_as(
+            "SELECT id, task_id, at, quantity_done, delta_quantity, active_minutes, note FROM progress_events WHERE task_id = ? ORDER BY id DESC LIMIT 1",
+        )
+        .bind(&full)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        let active_minutes = if let Some(ref session) = open {
+            let base = if let Some(ref ev) = last_event {
+                later_timestamp(&session.started_at, &ev.at)?
+            } else {
+                &session.started_at
+            };
+            minutes_between(base, &now)
+        } else {
+            0
+        };
+
+        let event_id = uuid::Uuid::now_v7().to_string();
+        sqlx::query(
+            "INSERT INTO progress_events (id, task_id, at, quantity_done, delta_quantity, active_minutes, note) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&event_id)
+        .bind(&full)
+        .bind(&now)
+        .bind(body.quantity_done)
+        .bind(delta_quantity)
+        .bind(active_minutes)
+        .bind(body.note.as_ref())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        let mut new_avg = task.avg_minutes;
+        let mut new_sigma = task.sigma_minutes;
+        if delta_quantity > 0 && active_minutes > 0 {
+            let (avg, sigma) = compute_updated_estimate(
+                &mut *tx,
+                &full,
+                task.avg_minutes,
+                task.sigma_minutes,
+                task.quantity_total,
+                active_minutes,
+                delta_quantity,
+            )
+            .await?;
+            new_avg = avg;
+            new_sigma = sigma;
+        }
+
+        let status = if task.status == "completed" {
+            "completed".to_string()
+        } else {
+            "in_progress".to_string()
+        };
+
+        let suggests_completion = task
+            .quantity_total
+            .map(|total| body.quantity_done >= total)
+            .unwrap_or(false);
+
+        sqlx::query(
+            "UPDATE tasks SET quantity_done = ?, avg_minutes = ?, sigma_minutes = ?, status = ?, updated_at = datetime('now') WHERE id = ?",
+        )
+        .bind(body.quantity_done)
+        .bind(new_avg)
+        .bind(new_sigma)
+        .bind(&status)
+        .bind(&full)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        let event: ProgressEventRow = sqlx::query_as("SELECT id, task_id, at, quantity_done, delta_quantity, active_minutes, note FROM progress_events WHERE id = ?")
+            .bind(&event_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        let task: TaskRow = sqlx::query_as(SELECT_TASK_BY_ID)
+            .bind(&full)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_err)?;
+
+        let result = ProgressResult {
+            task,
+            event: Some(event),
+            suggests_completion,
+        };
+        if let Some(op_id) = operation_id {
+            Self::record_progress_operation(&mut *tx, op_id, &request_hash, &result).await?;
+        }
+        tx.commit().await.map_err(map_err)?;
+        Ok(result)
+    }
+
+    async fn complete_task_work(
+        &self,
+        id: &str,
+        operation_id: Option<&str>,
+    ) -> StorageResult<TaskRow> {
+        let payload = serde_json::json!({"op": "complete", "id": id}).to_string();
+        let request_hash = progress_request_hash(&payload, operation_id);
+
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        if let Some(op_id) = operation_id
+            && let Some(stored) =
+                Self::check_progress_idempotency(&mut *tx, op_id, &request_hash).await?
+        {
+            return stored;
+        }
+
+        let full = resolve_task_id(&mut *tx, id).await?;
+
+        let status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = ?")
+            .bind(&full)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        if status == "completed" || status == "skipped" {
+            return Err(StorageError::BadRequest(format!(
+                "cannot complete a {status} task"
+            )));
+        }
+
+        let now = jiff::Timestamp::now().to_string();
+        sqlx::query(
+            "UPDATE task_work_sessions SET ended_at = ? WHERE task_id = ? AND ended_at IS NULL",
+        )
+        .bind(&now)
+        .bind(&full)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        let quantity_done: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(quantity_total, quantity_done) FROM tasks WHERE id = ?",
+        )
+        .bind(&full)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        sqlx::query(
+            "UPDATE tasks SET status = 'completed', completed_at = ?, quantity_done = ?, updated_at = datetime('now') WHERE id = ?",
+        )
+        .bind(&now)
+        .bind(quantity_done)
+        .bind(&full)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        let task: TaskRow = sqlx::query_as(SELECT_TASK_BY_ID)
+            .bind(&full)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_err)?;
+
+        if let Some(op_id) = operation_id {
+            Self::record_progress_operation(&mut *tx, op_id, &request_hash, &task).await?;
+        }
+        tx.commit().await.map_err(map_err)?;
+        Ok(task)
+    }
+
+    async fn get_task_progress(&self, id: &str) -> StorageResult<TaskProgress> {
+        let full = resolve_task_id(&self.pool, id).await?;
+        let task: TaskRow = sqlx::query_as(SELECT_TASK_BY_ID)
+            .bind(&full)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::RowNotFound => StorageError::NotFound(format!("task {id} not found")),
+                other => StorageError::Internal(other.to_string()),
+            })?;
+
+        let sessions: Vec<TaskWorkSessionRow> = sqlx::query_as(
+            "SELECT id, task_id, started_at, ended_at, created_at FROM task_work_sessions WHERE task_id = ? ORDER BY started_at ASC",
+        )
+        .bind(&full)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+
+        let events: Vec<ProgressEventRow> =
+            sqlx::query_as("SELECT id, task_id, at, quantity_done, delta_quantity, active_minutes, note FROM progress_events WHERE task_id = ? ORDER BY id ASC")
+                .bind(&full)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_err)?;
+
+        let open_session = sessions.iter().find(|s| s.ended_at.is_none()).cloned();
+        let total_active_minutes = sessions.iter().map(session_minutes).sum();
+
+        Ok(TaskProgress {
+            task,
+            open_session,
+            sessions,
+            events,
+            total_active_minutes,
+        })
+    }
+
+    async fn split_task(
+        &self,
+        id: &str,
+        body: &SplitTask,
+        operation_id: Option<&str>,
+    ) -> StorageResult<SplitResult> {
+        if body.retained_quantity < 0 {
+            return Err(StorageError::BadRequest(
+                "retained_quantity cannot be negative".into(),
+            ));
+        }
+
+        let payload = serde_json::json!({"op": "split", "id": id, "body": body}).to_string();
+        let request_hash = progress_request_hash(&payload, operation_id);
+
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        if let Some(op_id) = operation_id
+            && let Some(stored) =
+                Self::check_progress_idempotency(&mut *tx, op_id, &request_hash).await?
+        {
+            return stored;
+        }
+
+        let full = resolve_task_id(&mut *tx, id).await?;
+
+        let original: TaskRow = sqlx::query_as(SELECT_TASK_BY_ID)
+            .bind(&full)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::RowNotFound => StorageError::NotFound(format!("task {id} not found")),
+                other => StorageError::Internal(other.to_string()),
+            })?;
+
+        if original.status == "completed" || original.status == "skipped" {
+            return Err(StorageError::BadRequest(format!(
+                "cannot split a {} task",
+                original.status
+            )));
+        }
+
+        let total = original.quantity_total.ok_or_else(|| {
+            StorageError::BadRequest("cannot split a task with no quantity_total".into())
+        })?;
+        if body.retained_quantity <= 0 {
+            return Err(StorageError::BadRequest(
+                "retained_quantity must be greater than 0".into(),
+            ));
+        }
+        if body.retained_quantity > total {
+            return Err(StorageError::BadRequest(
+                "retained_quantity cannot exceed quantity_total".into(),
+            ));
+        }
+        if body.retained_quantity == total {
+            return Err(StorageError::BadRequest(
+                "retained_quantity must be less than quantity_total".into(),
+            ));
+        }
+        if body.retained_quantity < original.quantity_done {
+            return Err(StorageError::BadRequest(
+                "retained_quantity cannot be less than quantity_done".into(),
+            ));
+        }
+        let remainder_quantity = total - body.retained_quantity;
+        let original_quantity_total = original.original_quantity_total.unwrap_or(total);
+
+        // Allocate a display_id for the remainder task.
+        let display_id: i64 = sqlx::query_scalar(
+            "UPDATE task_display_id_seq SET next_id = next_id + 1 RETURNING next_id - 1",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        let remainder_id = uuid::Uuid::now_v7().to_string();
+        let depends = if body.set_dependency.unwrap_or(false) {
+            vec![full.clone()]
+        } else {
+            Vec::new()
+        };
+        let depends_json = serde_json::to_string(&depends).unwrap_or_else(|_| "[]".into());
+
+        sqlx::query(
+            "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+        )
+        .bind(&remainder_id)
+        .bind(display_id)
+        .bind(body.title.as_ref().unwrap_or(&original.title))
+        .bind(body.description.as_ref().or(original.description.as_ref()))
+        .bind(&original.start_at)
+        .bind(body.end_at.as_ref().unwrap_or(&original.end_at))
+        .bind(original.avg_minutes)
+        .bind(original.sigma_minutes)
+        .bind(&depends_json)
+        .bind(original.parallelizable)
+        .bind(original.allows_parallel)
+        .bind(original.abandonability)
+        .bind(None::<String>) // ical_uid
+        .bind(None::<String>) // habit_id
+        .bind(original.fixed)
+        .bind(None::<String>) // habit_step_id
+        .bind(remainder_quantity)
+        .bind(0i64)
+        .bind(original.quantity_unit.as_ref())
+        .bind(None::<String>) // completed_at
+        .bind(&full)
+        .bind(Some(original_quantity_total))
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        let new_done = original.quantity_done.min(body.retained_quantity);
+        sqlx::query(
+            "UPDATE tasks SET quantity_total = ?, quantity_done = ?, original_quantity_total = ?, updated_at = datetime('now') WHERE id = ?",
+        )
+        .bind(body.retained_quantity)
+        .bind(new_done)
+        .bind(Some(original_quantity_total))
+        .bind(&full)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        let original: TaskRow = sqlx::query_as(SELECT_TASK_BY_ID)
+            .bind(&full)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        let remainder: TaskRow = sqlx::query_as(SELECT_TASK_BY_ID)
+            .bind(&remainder_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_err)?;
+
+        let result = SplitResult {
+            original,
+            remainder,
+        };
+        if let Some(op_id) = operation_id {
+            Self::record_progress_operation(&mut *tx, op_id, &request_hash, &result).await?;
+        }
+        tx.commit().await.map_err(map_err)?;
+        Ok(result)
     }
 
     async fn health_check(&self) -> StorageResult<String> {
@@ -1664,13 +2297,202 @@ impl SqliteStorage {
         .map_err(map_err)?;
         Ok(())
     }
+
+    async fn check_progress_idempotency<'a, E, T: serde::de::DeserializeOwned>(
+        executor: E,
+        operation_id: &str,
+        request_hash: &str,
+    ) -> StorageResult<Option<StorageResult<T>>>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Sqlite>,
+    {
+        #[derive(sqlx::FromRow)]
+        struct OpRow {
+            request_hash: String,
+            response_json: String,
+        }
+        let row: Option<OpRow> = sqlx::query_as(
+            "SELECT request_hash, response_json FROM progress_operations WHERE operation_id = ?",
+        )
+        .bind(operation_id)
+        .fetch_optional(executor)
+        .await
+        .map_err(map_err)?;
+
+        if let Some(row) = row {
+            if row.request_hash != request_hash {
+                return Err(StorageError::Conflict(
+                    "idempotency key reused with different request".into(),
+                ));
+            }
+            let value: T = serde_json::from_str(&row.response_json).map_err(|e| {
+                StorageError::Internal(format!("corrupt idempotency response: {e}"))
+            })?;
+            return Ok(Some(Ok(value)));
+        }
+        Ok(None)
+    }
+
+    async fn record_progress_operation<'a, E, T: serde::Serialize>(
+        executor: E,
+        operation_id: &str,
+        request_hash: &str,
+        value: &T,
+    ) -> StorageResult<()>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Sqlite>,
+    {
+        let response_json = serde_json::to_string(value)
+            .map_err(|e| StorageError::Internal(format!("serialize idempotency response: {e}")))?;
+        sqlx::query(
+            "INSERT INTO progress_operations (operation_id, request_hash, response_json) VALUES (?, ?, ?)",
+        )
+        .bind(operation_id)
+        .bind(request_hash)
+        .bind(response_json)
+        .execute(executor)
+        .await
+        .map_err(map_err)?;
+        Ok(())
+    }
 }
 
 fn memory_request_hash(payload: &str, operation_id: Option<&str>) -> String {
     crate::auth::hash_token(&format!("{}:{}", payload, operation_id.unwrap_or("")))
 }
 
-async fn resolve_task_id(pool: &SqlitePool, id: &str) -> StorageResult<String> {
+fn progress_request_hash(payload: &str, operation_id: Option<&str>) -> String {
+    crate::auth::hash_token(&format!("{}:{}", payload, operation_id.unwrap_or("")))
+}
+
+/// Reject nonsensical quantity values and ensure `done <= total` when both
+/// sides are provided.
+fn validate_quantity(
+    total: Option<i64>,
+    done: Option<i64>,
+    original: Option<i64>,
+) -> StorageResult<()> {
+    if let Some(t) = total
+        && t < 0
+    {
+        return Err(StorageError::BadRequest(format!(
+            "quantity_total must be >= 0 (got {t})"
+        )));
+    }
+    if let Some(d) = done
+        && d < 0
+    {
+        return Err(StorageError::BadRequest(format!(
+            "quantity_done must be >= 0 (got {d})"
+        )));
+    }
+    if let Some(o) = original
+        && o < 0
+    {
+        return Err(StorageError::BadRequest(format!(
+            "original_quantity_total must be >= 0 (got {o})"
+        )));
+    }
+    if let (Some(t), Some(d)) = (total, done)
+        && d > t
+    {
+        return Err(StorageError::BadRequest(format!(
+            "quantity_done cannot exceed quantity_total ({d} > {t})"
+        )));
+    }
+    Ok(())
+}
+
+/// Return the later of two RFC 3339 timestamp strings.
+fn later_timestamp<'a>(a: &'a str, b: &'a str) -> StorageResult<&'a str> {
+    match (jiff::Timestamp::from_str(a), jiff::Timestamp::from_str(b)) {
+        (Ok(ta), Ok(tb)) => Ok(if ta >= tb { a } else { b }),
+        _ => Err(StorageError::Internal(
+            "invalid timestamp for comparison".into(),
+        )),
+    }
+}
+
+/// Minutes between two RFC 3339 timestamps. Returns at least 1 to avoid
+/// degenerate speed observations when the start and end are too close.
+fn minutes_between(start: &str, end: &str) -> i64 {
+    match (
+        jiff::Timestamp::from_str(start),
+        jiff::Timestamp::from_str(end),
+    ) {
+        (Ok(s), Ok(e)) => ((e.as_second() - s.as_second()) / 60).max(1),
+        _ => 1,
+    }
+}
+
+/// Active minutes for a work session (closed or open).
+fn session_minutes(session: &TaskWorkSessionRow) -> i64 {
+    match session.ended_at.as_deref() {
+        Some(end) => minutes_between(&session.started_at, end),
+        None => minutes_between(&session.started_at, &jiff::Timestamp::now().to_string()),
+    }
+}
+
+/// Compute updated avg_minutes / sigma_minutes from a new positive progress
+/// observation. See design/proposal.md WI-9 for the estimate-update formula.
+async fn compute_updated_estimate<'a, E>(
+    executor: E,
+    task_id: &str,
+    avg_minutes: i64,
+    sigma_minutes: i64,
+    quantity_total: Option<i64>,
+    active_minutes: i64,
+    delta_quantity: i64,
+) -> StorageResult<(i64, i64)>
+where
+    E: sqlx::Executor<'a, Database = sqlx::Sqlite>,
+{
+    const MIN_MINUTES: f64 = 5.0;
+    const MAX_MINUTES: f64 = 24.0 * 60.0;
+
+    let total = match quantity_total {
+        Some(t) if t > 0 => t as f64,
+        _ => return Ok((avg_minutes, sigma_minutes)),
+    };
+
+    let minutes_per_unit = active_minutes as f64 / delta_quantity as f64;
+    let projected = (minutes_per_unit * total).clamp(MIN_MINUTES, MAX_MINUTES);
+    let new_avg_f = 0.5 * avg_minutes as f64 + 0.5 * projected;
+    let new_avg = new_avg_f.round() as i64;
+
+    // Collect all positive progress observations for this task.
+    let events: Vec<ProgressEventRow> = sqlx::query_as(
+        "SELECT id, task_id, at, quantity_done, delta_quantity, active_minutes, note FROM progress_events WHERE task_id = ? AND delta_quantity > 0 AND active_minutes > 0 ORDER BY id ASC",
+    )
+    .bind(task_id)
+    .fetch_all(executor)
+    .await
+    .map_err(map_err)?;
+
+    let projections: Vec<f64> = events
+        .iter()
+        .map(|e| {
+            (e.active_minutes as f64 / e.delta_quantity.unwrap_or(1) as f64 * total)
+                .clamp(MIN_MINUTES, MAX_MINUTES)
+        })
+        .collect();
+    if projections.len() < 2 {
+        return Ok((new_avg, sigma_minutes));
+    }
+
+    let mean = projections.iter().sum::<f64>() / projections.len() as f64;
+    let variance = projections.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
+        / (projections.len() - 1) as f64;
+    let stddev = variance.sqrt().clamp(MIN_MINUTES, MAX_MINUTES);
+    let new_sigma = stddev.round() as i64;
+
+    Ok((new_avg, new_sigma.max(1)))
+}
+
+async fn resolve_task_id<'c, E>(executor: E, id: &str) -> StorageResult<String>
+where
+    E: sqlx::Executor<'c, Database = sqlx::Sqlite>,
+{
     // Allow display ids with a leading `#` (e.g. `#42`) written by the LLM.
     let id = id.strip_prefix('#').unwrap_or(id);
 
@@ -1685,7 +2507,7 @@ async fn resolve_task_id(pool: &SqlitePool, id: &str) -> StorageResult<String> {
         )
         .bind(hnum)
         .bind(tnum)
-        .fetch_optional(pool)
+        .fetch_optional(executor)
         .await
         .map_err(map_err)?
         .ok_or_else(|| StorageError::NotFound(format!("task {id} not found")));
@@ -1696,7 +2518,7 @@ async fn resolve_task_id(pool: &SqlitePool, id: &str) -> StorageResult<String> {
             "SELECT id FROM tasks WHERE display_id = ? AND habit_id IS NULL",
         )
         .bind(num)
-        .fetch_optional(pool)
+        .fetch_optional(executor)
         .await
         .map_err(map_err)?
         .ok_or_else(|| StorageError::NotFound(format!("task {id} not found")));
@@ -1704,7 +2526,7 @@ async fn resolve_task_id(pool: &SqlitePool, id: &str) -> StorageResult<String> {
     if id.contains('-') {
         let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM tasks WHERE id = ?")
             .bind(id)
-            .fetch_one(pool)
+            .fetch_one(executor)
             .await
             .map_err(map_err)?;
         if exists {
@@ -1714,7 +2536,7 @@ async fn resolve_task_id(pool: &SqlitePool, id: &str) -> StorageResult<String> {
         let matches: Vec<String> =
             sqlx::query_scalar("SELECT id FROM tasks WHERE id LIKE ? || '%'")
                 .bind(id)
-                .fetch_all(pool)
+                .fetch_all(executor)
                 .await
                 .map_err(map_err)?;
         match matches.len() {

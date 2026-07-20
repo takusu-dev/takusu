@@ -18,6 +18,10 @@ fn create_task_serialization() {
         habit_id: Some("habit-1".to_string()),
         fixed: None,
         habit_step_id: None,
+        quantity_total: None,
+        quantity_done: None,
+        quantity_unit: None,
+        original_quantity_total: None,
     };
 
     let json = serde_json::to_value(&ct).unwrap();
@@ -46,6 +50,10 @@ fn create_task_defaults_are_skipped() {
         habit_id: None,
         fixed: None,
         habit_step_id: None,
+        quantity_total: None,
+        quantity_done: None,
+        quantity_unit: None,
+        original_quantity_total: None,
     };
 
     let json = serde_json::to_value(&ct).unwrap();

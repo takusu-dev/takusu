@@ -336,6 +336,49 @@ mod tests {
         ) -> Result<Vec<takusu_storage::SimilarTaskRow>, takusu_storage::StorageError> {
             unimplemented()
         }
+        async fn start_task_work(
+            &self,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<takusu_storage::TaskRow, takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn pause_task_work(
+            &self,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<takusu_storage::TaskRow, takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn record_progress(
+            &self,
+            _: &str,
+            _: &takusu_storage::RecordProgress,
+            _: Option<&str>,
+        ) -> Result<takusu_storage::ProgressResult, takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn complete_task_work(
+            &self,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<takusu_storage::TaskRow, takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn get_task_progress(
+            &self,
+            _: &str,
+        ) -> Result<takusu_storage::TaskProgress, takusu_storage::StorageError> {
+            unimplemented()
+        }
+        async fn split_task(
+            &self,
+            _: &str,
+            _: &takusu_storage::SplitTask,
+            _: Option<&str>,
+        ) -> Result<takusu_storage::SplitResult, takusu_storage::StorageError> {
+            unimplemented()
+        }
     }
 
     #[tokio::test]

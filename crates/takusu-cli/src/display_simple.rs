@@ -51,6 +51,17 @@ pub fn display_task_detail(
     if let Some(ref desc) = task.description {
         println!("   {desc}");
     }
+    if let Some(total) = task.quantity_total {
+        println!(
+            "   progress: {}/{} {}",
+            task.quantity_done,
+            total,
+            task.quantity_unit.as_deref().unwrap_or("")
+        );
+    }
+    if let Some(ref completed) = task.completed_at {
+        println!("   completed: {}", fmt_simple(completed, tz));
+    }
 
     if let Some(entry) = entry {
         println!(
@@ -95,6 +106,17 @@ pub fn display_tasks(
         );
         if let Some(ref desc) = t.description {
             println!("   {desc}");
+        }
+        if let Some(total) = t.quantity_total {
+            println!(
+                "   progress: {}/{} {}",
+                t.quantity_done,
+                total,
+                t.quantity_unit.as_deref().unwrap_or("")
+            );
+        }
+        if let Some(ref completed) = t.completed_at {
+            println!("   completed: {}", fmt_simple(completed, tz));
         }
         println!();
     }

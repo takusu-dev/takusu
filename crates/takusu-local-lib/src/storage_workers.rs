@@ -8,10 +8,11 @@ use serde_json::json;
 use takusu_storage::{
     CreateHabit, CreateHabitScheduledSpan, CreateMemory, CreateSkill, CreateTask,
     GoogleCalEventRow, GoogleCalSettingsRow, HabitRow, HabitScheduledSpanRow, HabitStepInput,
-    HabitStepRow, MemoryQuery, MemoryRow, SaveScheduleRequest, ScheduleRow, SettingsRow,
-    SimilarTaskQuery, SimilarTaskRow, SkillRow, Storage, StorageError, TaskQuery, TaskRow,
-    TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateMemory,
-    UpdateSettings, UpdateSkill, UpdateTask, storage::StorageResult,
+    HabitStepRow, MemoryQuery, MemoryRow, ProgressResult, RecordProgress, SaveScheduleRequest,
+    ScheduleRow, SettingsRow, SimilarTaskQuery, SimilarTaskRow, SkillRow, SplitResult, SplitTask,
+    Storage, StorageError, TaskProgress, TaskQuery, TaskRow, TokenCreateResponse, TokenRow,
+    UpdateGoogleCalSettings, UpdateHabit, UpdateMemory, UpdateSettings, UpdateSkill, UpdateTask,
+    storage::StorageResult,
 };
 
 const RETRY_STATUSES: &[u16] = &[429, 500, 502, 503, 504];
@@ -614,6 +615,92 @@ impl Storage for WorkersStorage {
             path.push_str(&format!("&limit={limit}"));
         }
         self.request(reqwest::Method::GET, &path).await
+    }
+
+    async fn start_task_work(
+        &self,
+        id: &str,
+        operation_id: Option<&str>,
+    ) -> StorageResult<TaskRow> {
+        let full = self.resolve_task_id(id).await?;
+        let body = json!({});
+        self.request_body_idempotent(
+            reqwest::Method::POST,
+            &format!("/api/tasks/{full}/work/start"),
+            &body,
+            operation_id,
+        )
+        .await
+    }
+
+    async fn pause_task_work(
+        &self,
+        id: &str,
+        operation_id: Option<&str>,
+    ) -> StorageResult<TaskRow> {
+        let full = self.resolve_task_id(id).await?;
+        let body = json!({});
+        self.request_body_idempotent(
+            reqwest::Method::POST,
+            &format!("/api/tasks/{full}/work/pause"),
+            &body,
+            operation_id,
+        )
+        .await
+    }
+
+    async fn record_progress(
+        &self,
+        id: &str,
+        body: &RecordProgress,
+        operation_id: Option<&str>,
+    ) -> StorageResult<ProgressResult> {
+        let full = self.resolve_task_id(id).await?;
+        self.request_body_idempotent(
+            reqwest::Method::POST,
+            &format!("/api/tasks/{full}/progress"),
+            body,
+            operation_id,
+        )
+        .await
+    }
+
+    async fn complete_task_work(
+        &self,
+        id: &str,
+        operation_id: Option<&str>,
+    ) -> StorageResult<TaskRow> {
+        let full = self.resolve_task_id(id).await?;
+        let body = json!({});
+        self.request_body_idempotent(
+            reqwest::Method::POST,
+            &format!("/api/tasks/{full}/work/complete"),
+            &body,
+            operation_id,
+        )
+        .await
+    }
+
+    async fn get_task_progress(&self, id: &str) -> StorageResult<TaskProgress> {
+        let full = self.resolve_task_id(id).await?;
+        self.request(reqwest::Method::GET, &format!("/api/tasks/{full}/progress"))
+            .await
+    }
+
+    async fn split_task(
+        &self,
+        id: &str,
+        body: &SplitTask,
+        operation_id: Option<&str>,
+    ) -> StorageResult<SplitResult> {
+        let full = self.resolve_task_id(id).await?;
+        self.request_body_idempotent(
+            reqwest::Method::POST,
+            &format!("/api/tasks/{full}/split"),
+            body,
+            operation_id,
+        )
+        .await
     }
 
     async fn health_check(&self) -> StorageResult<String> {

@@ -109,6 +109,30 @@ pub trait Storage: Send + Sync + 'static {
         query: &SimilarTaskQuery,
     ) -> StorageResult<Vec<SimilarTaskRow>>;
 
+    // ── Active-session progress management (#WI-9) ────────
+    async fn start_task_work(&self, id: &str, operation_id: Option<&str>)
+    -> StorageResult<TaskRow>;
+    async fn pause_task_work(&self, id: &str, operation_id: Option<&str>)
+    -> StorageResult<TaskRow>;
+    async fn record_progress(
+        &self,
+        id: &str,
+        body: &RecordProgress,
+        operation_id: Option<&str>,
+    ) -> StorageResult<ProgressResult>;
+    async fn complete_task_work(
+        &self,
+        id: &str,
+        operation_id: Option<&str>,
+    ) -> StorageResult<TaskRow>;
+    async fn get_task_progress(&self, id: &str) -> StorageResult<TaskProgress>;
+    async fn split_task(
+        &self,
+        id: &str,
+        body: &SplitTask,
+        operation_id: Option<&str>,
+    ) -> StorageResult<SplitResult>;
+
     async fn get_gcal_settings(&self) -> StorageResult<GoogleCalSettingsRow>;
     async fn update_gcal_settings(
         &self,

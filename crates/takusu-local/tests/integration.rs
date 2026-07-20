@@ -3415,3 +3415,324 @@ async fn find_similar_tasks_orders_completed_tasks() {
     assert_eq!(similar[0]["title"], "数学の演習問題");
     assert!(similar[0]["similarity"].as_str().is_some());
 }
+
+#[tokio::test]
+async fn progress_lifecycle() {
+    let (state, _pool) = setup().await;
+    let app = build_router(state);
+
+    // Create a quantitative task.
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "study",
+            "end_at": "2026-07-22T18:00:00+09:00",
+            "avg_minutes": 30,
+            "quantity_total": 10,
+            "quantity_unit": "pages"
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let task: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let id = task["id"].as_str().unwrap();
+
+    // Start work.
+    let req = auth_req(Method::POST, &format!("/api/tasks/{id}/work/start"));
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let started: serde_json::Value =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(started["status"], "in_progress");
+
+    // Record progress.
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/tasks/{id}/progress"),
+        json!({"quantity_done": 4}),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let progress: serde_json::Value =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(progress["task"]["quantity_done"], 4);
+    assert_eq!(progress["event"]["delta_quantity"], 4);
+    assert!(!progress["event"]["id"].as_str().unwrap().is_empty());
+
+    // Idempotent progress call with the same value returns a null event.
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/tasks/{id}/progress"),
+        json!({"quantity_done": 4}),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let no_op: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(no_op["event"].is_null());
+
+    // Get progress.
+    let req = auth_req(Method::GET, &format!("/api/tasks/{id}/progress"));
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let detail: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(detail["events"].as_array().unwrap().len(), 1);
+    assert!(detail["open_session"].is_object());
+
+    // Complete the task.
+    let req = auth_req(Method::POST, &format!("/api/tasks/{id}/work/complete"));
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let completed: serde_json::Value =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(completed["status"], "completed");
+    assert_eq!(completed["quantity_done"], 10);
+}
+
+#[tokio::test]
+async fn progress_status_validation() {
+    let (state, _pool) = setup().await;
+    let app = build_router(state);
+
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "done",
+            "end_at": "2026-07-22T18:00:00+09:00",
+            "avg_minutes": 30,
+            "quantity_total": 5
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let task: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let id = task["id"].as_str().unwrap();
+
+    // Complete it first.
+    let req = auth_req(Method::POST, &format!("/api/tasks/{id}/work/complete"));
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // Attempting to start/record/complete/split a completed task fails.
+    for uri in [
+        format!("/api/tasks/{id}/work/start"),
+        format!("/api/tasks/{id}/work/pause"),
+        format!("/api/tasks/{id}/work/complete"),
+    ] {
+        let req = auth_req(Method::POST, &uri);
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{uri} should fail");
+    }
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/tasks/{id}/progress"),
+        json!({"quantity_done": 1}),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/tasks/{id}/split"),
+        json!({"retained_quantity": 2}),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn split_task_works() {
+    let (state, _pool) = setup().await;
+    let app = build_router(state);
+
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "split-me",
+            "end_at": "2026-07-22T18:00:00+09:00",
+            "avg_minutes": 30,
+            "quantity_total": 10,
+            "quantity_done": 3
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let task: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let id = task["id"].as_str().unwrap();
+
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/tasks/{id}/split"),
+        json!({"retained_quantity": 4}),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let split: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(split["original"]["quantity_total"], 4);
+    assert_eq!(split["original"]["quantity_done"], 3);
+    assert_eq!(split["remainder"]["quantity_total"], 6);
+    assert_eq!(split["remainder"]["quantity_done"], 0);
+    assert_eq!(split["remainder"]["status"], "pending");
+}
+
+#[tokio::test]
+async fn split_rejects_retained_less_than_done() {
+    let (state, _pool) = setup().await;
+    let app = build_router(state);
+
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "split-done",
+            "end_at": "2026-07-22T18:00:00+09:00",
+            "avg_minutes": 30,
+            "quantity_total": 10,
+            "quantity_done": 4
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let task: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let id = task["id"].as_str().unwrap();
+
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/tasks/{id}/split"),
+        json!({"retained_quantity": 2}),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn progress_active_minutes_are_incremental() {
+    let (state, pool) = setup().await;
+    let app = build_router(state);
+
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "progressive",
+            "end_at": "2026-07-22T18:00:00+09:00",
+            "avg_minutes": 30,
+            "quantity_total": 10
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let task: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let id = task["id"].as_str().unwrap();
+
+    let now = jiff::Timestamp::now();
+    let hour_ago = now
+        .checked_sub(jiff::SignedDuration::from_hours(1))
+        .unwrap()
+        .to_string();
+    let seconds_ago = now
+        .checked_sub(jiff::SignedDuration::from_secs(5))
+        .unwrap()
+        .to_string();
+
+    sqlx::query("INSERT INTO task_work_sessions (id, task_id, started_at) VALUES (?, ?, ?)")
+        .bind(uuid::Uuid::now_v7().to_string())
+        .bind(id)
+        .bind(hour_ago)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    sqlx::query(
+        "INSERT INTO progress_events (id, task_id, at, quantity_done, delta_quantity, active_minutes, note) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(uuid::Uuid::now_v7().to_string())
+    .bind(id)
+    .bind(seconds_ago)
+    .bind(3i64)
+    .bind(3i64)
+    .bind(60i64)
+    .bind(None::<String>)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query("UPDATE tasks SET quantity_done = ? WHERE id = ?")
+        .bind(3i64)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/tasks/{id}/progress"),
+        json!({"quantity_done": 5}),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let result: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(result["event"]["delta_quantity"], 2);
+    let active_minutes = result["event"]["active_minutes"].as_i64().unwrap();
+    assert!(
+        active_minutes < 60,
+        "active_minutes should be incremental ({active_minutes})"
+    );
+}
+
+#[tokio::test]
+async fn update_task_completed_at_follows_status() {
+    let (state, _pool) = setup().await;
+    let app = build_router(state);
+
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "status-cycle",
+            "end_at": "2026-07-22T18:00:00+09:00",
+            "avg_minutes": 30,
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let task: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let id = task["id"].as_str().unwrap();
+
+    let req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{id}"),
+        json!({"status": "completed"}),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let completed: serde_json::Value =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(completed["status"], "completed");
+    assert!(!completed["completed_at"].is_null());
+
+    let req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{id}"),
+        json!({"title": "renamed"}),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let renamed: serde_json::Value =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(renamed["title"], "renamed");
+    assert!(!renamed["completed_at"].is_null());
+
+    let req = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{id}"),
+        json!({"status": "pending"}),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let pending: serde_json::Value =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(pending["status"], "pending");
+    assert!(pending["completed_at"].is_null());
+}

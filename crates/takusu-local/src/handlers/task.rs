@@ -1,11 +1,21 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use serde::Deserialize;
-use takusu_storage::{CreateTask, TaskQuery, TaskRow, UpdateTask};
+use takusu_storage::{
+    CreateTask, ProgressResult, RecordProgress, SplitResult, SplitTask, TaskProgress, TaskQuery,
+    TaskRow, UpdateTask,
+};
 
 use crate::error::HttpError;
 use crate::state::AppState;
+
+fn operation_id(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get("idempotency-key")
+        .or_else(|| headers.get("Idempotency-Key"))
+        .and_then(|v| v.to_str().ok())
+}
 
 #[derive(Debug, Deserialize)]
 pub struct TaskQueryParams {
@@ -91,4 +101,74 @@ pub async fn dependency_analysis(
 ) -> Result<Json<serde_json::Value>, HttpError> {
     let redundant = state.app.analyze_task_dependencies().await?;
     Ok(Json(serde_json::json!({ "redundant": redundant })))
+}
+
+pub async fn start_task_work(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<TaskRow>, HttpError> {
+    let task = state
+        .app
+        .start_task_work(&id, operation_id(&headers))
+        .await?;
+    Ok(Json(task))
+}
+
+pub async fn pause_task_work(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<TaskRow>, HttpError> {
+    let task = state
+        .app
+        .pause_task_work(&id, operation_id(&headers))
+        .await?;
+    Ok(Json(task))
+}
+
+pub async fn record_progress(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<RecordProgress>,
+) -> Result<Json<ProgressResult>, HttpError> {
+    let result = state
+        .app
+        .record_progress(&id, &body, operation_id(&headers))
+        .await?;
+    Ok(Json(result))
+}
+
+pub async fn complete_task_work(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<TaskRow>, HttpError> {
+    let task = state
+        .app
+        .complete_task_work(&id, operation_id(&headers))
+        .await?;
+    Ok(Json(task))
+}
+
+pub async fn get_task_progress(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<TaskProgress>, HttpError> {
+    let progress = state.app.get_task_progress(&id).await?;
+    Ok(Json(progress))
+}
+
+pub async fn split_task(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<SplitTask>,
+) -> Result<Json<SplitResult>, HttpError> {
+    let result = state
+        .app
+        .split_task(&id, &body, operation_id(&headers))
+        .await?;
+    Ok(Json(result))
 }

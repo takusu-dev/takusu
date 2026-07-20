@@ -12,9 +12,10 @@ use takusu_core::{
 use takusu_storage::{
     CreateHabit, CreateHabitScheduledSpan, CreateMemory, CreateSkill, CreateTask,
     GoogleCalEventRow, GoogleCalSettingsRow, HabitDetail, HabitRow, HabitScheduledSpanRow,
-    HabitStepInput, HabitStepRow, MemoryQuery, MemoryRow, SaveScheduleRequest, ScheduleEntry,
-    ScheduleRow, SettingsRow, SimilarTaskQuery, SimilarTaskRow, SkillRow, Storage, TaskQuery,
-    TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateMemory,
+    HabitStepInput, HabitStepRow, MemoryQuery, MemoryRow, ProgressResult, RecordProgress,
+    SaveScheduleRequest, ScheduleEntry, ScheduleRow, SettingsRow, SimilarTaskQuery, SimilarTaskRow,
+    SkillRow, SplitResult, SplitTask, Storage, TaskProgress, TaskQuery, TaskRow,
+    TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateMemory,
     UpdateSettings, UpdateSkill, UpdateTask,
 };
 
@@ -1121,6 +1122,70 @@ impl TakusuApp {
         self.storage.delete_task(id).await.map_err(storage_to_app)
     }
 
+    pub async fn start_task_work(
+        &self,
+        id: &str,
+        operation_id: Option<&str>,
+    ) -> Result<TaskRow, AppError> {
+        self.storage
+            .start_task_work(id, operation_id)
+            .await
+            .map_err(storage_to_app)
+    }
+
+    pub async fn pause_task_work(
+        &self,
+        id: &str,
+        operation_id: Option<&str>,
+    ) -> Result<TaskRow, AppError> {
+        self.storage
+            .pause_task_work(id, operation_id)
+            .await
+            .map_err(storage_to_app)
+    }
+
+    pub async fn record_progress(
+        &self,
+        id: &str,
+        body: &RecordProgress,
+        operation_id: Option<&str>,
+    ) -> Result<ProgressResult, AppError> {
+        self.storage
+            .record_progress(id, body, operation_id)
+            .await
+            .map_err(storage_to_app)
+    }
+
+    pub async fn complete_task_work(
+        &self,
+        id: &str,
+        operation_id: Option<&str>,
+    ) -> Result<TaskRow, AppError> {
+        self.storage
+            .complete_task_work(id, operation_id)
+            .await
+            .map_err(storage_to_app)
+    }
+
+    pub async fn get_task_progress(&self, id: &str) -> Result<TaskProgress, AppError> {
+        self.storage
+            .get_task_progress(id)
+            .await
+            .map_err(storage_to_app)
+    }
+
+    pub async fn split_task(
+        &self,
+        id: &str,
+        body: &SplitTask,
+        operation_id: Option<&str>,
+    ) -> Result<SplitResult, AppError> {
+        self.storage
+            .split_task(id, body, operation_id)
+            .await
+            .map_err(storage_to_app)
+    }
+
     pub async fn import_ical(&self, ical_body: &str) -> Result<IcalImportResult, AppError> {
         let events =
             takusu_ical::parse_ical(ical_body).map_err(|e| AppError::BadRequest(e.to_string()))?;
@@ -1149,6 +1214,10 @@ impl TakusuApp {
                     habit_id: None,
                     fixed: None,
                     habit_step_id: None,
+                    quantity_total: None,
+                    quantity_done: None,
+                    quantity_unit: None,
+                    original_quantity_total: None,
                 })
                 .await
                 .map_err(storage_to_app)?;
@@ -2536,6 +2605,10 @@ impl TakusuApp {
                     habit_id: Some(habit_id.clone()),
                     fixed: Some(core_task.fixed),
                     habit_step_id: step_id_opt.clone(),
+                    quantity_total: None,
+                    quantity_done: None,
+                    quantity_unit: None,
+                    original_quantity_total: None,
                 };
                 let created = self
                     .storage

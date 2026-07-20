@@ -141,6 +141,44 @@ pub(crate) fn validate_minutes(avg: i64, sigma: Option<i64>) -> Result<(), Worke
     Ok(())
 }
 
+/// Reject nonsensical quantity values and ensure `done <= total` when both
+/// sides are provided.
+pub(crate) fn validate_quantity(
+    total: Option<i64>,
+    done: Option<i64>,
+    original: Option<i64>,
+) -> Result<(), WorkerError> {
+    if let Some(t) = total
+        && t < 0
+    {
+        return Err(WorkerError::BadRequest(format!(
+            "quantity_total must be >= 0 (got {t})"
+        )));
+    }
+    if let Some(d) = done
+        && d < 0
+    {
+        return Err(WorkerError::BadRequest(format!(
+            "quantity_done must be >= 0 (got {d})"
+        )));
+    }
+    if let Some(o) = original
+        && o < 0
+    {
+        return Err(WorkerError::BadRequest(format!(
+            "original_quantity_total must be >= 0 (got {o})"
+        )));
+    }
+    if let (Some(t), Some(d)) = (total, done)
+        && d > t
+    {
+        return Err(WorkerError::BadRequest(format!(
+            "quantity_done cannot exceed quantity_total ({d} > {t})"
+        )));
+    }
+    Ok(())
+}
+
 /// Verify the recurrence string parses as a `RecurrenceRule` so that bad JSON
 /// is rejected at the API boundary instead of crashing later (#285).
 pub(crate) fn validate_recurrence(recurrence: &str) -> Result<(), WorkerError> {
