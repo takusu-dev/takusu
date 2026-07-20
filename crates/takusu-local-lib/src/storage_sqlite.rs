@@ -2,11 +2,12 @@ use async_trait::async_trait;
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 use takusu_storage::{
-    CreateHabit, CreateHabitScheduledSpan, CreateSkill, CreateTask, GoogleCalEventRow,
-    GoogleCalSettingsRow, HabitRow, HabitScheduledSpanRow, HabitStepInput, HabitStepRow,
-    SaveScheduleRequest, ScheduleRow, SettingsRow, SkillRow, Storage, StorageError, TaskQuery,
-    TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateSettings,
-    UpdateSkill, UpdateTask, storage::StorageResult,
+    CreateHabit, CreateHabitScheduledSpan, CreateMemory, CreateSkill, CreateTask,
+    GoogleCalEventRow, GoogleCalSettingsRow, HabitRow, HabitScheduledSpanRow, HabitStepInput,
+    HabitStepRow, MemoryQuery, MemoryRow, SaveScheduleRequest, ScheduleRow, SettingsRow,
+    SimilarTaskQuery, SimilarTaskRow, SkillRow, Storage, StorageError, TaskQuery, TaskRow,
+    TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateMemory,
+    UpdateSettings, UpdateSkill, UpdateTask, storage::StorageResult,
 };
 
 use crate::config::LocalConfig;
@@ -30,6 +31,7 @@ const MIGRATION_012: &str = include_str!("../migrations/012_window_mode.sql");
 const MIGRATION_013: &str = include_str!("../migrations/013_habit_task_display_id.sql");
 const MIGRATION_014: &str = include_str!("../migrations/014_workload.sql");
 const MIGRATION_015: &str = include_str!("../migrations/015_skills.sql");
+const MIGRATION_016: &str = include_str!("../migrations/016_memory.sql");
 // Migration 013 one-time backfill: drops the old global unique index, renumbers
 // existing habit tasks to start from 1 per habit, and seeds the per-habit
 // sequences. Non-idempotent (DROP + UPDATE renumber) — guarded by a check
@@ -279,6 +281,9 @@ impl SqliteStorage {
 
         // Migration 015 creates the skills table (idempotent).
         sqlx::raw_sql(MIGRATION_015).execute(&pool).await?;
+
+        // Migration 016 creates the memory tables (idempotent).
+        sqlx::raw_sql(MIGRATION_016).execute(&pool).await?;
 
         Ok(Self { pool })
     }
@@ -1239,6 +1244,326 @@ impl Storage for SqliteStorage {
         Ok(())
     }
 
+    async fn get_memory(&self, id: &str) -> StorageResult<MemoryRow> {
+        sqlx::query_as::<_, MemoryRow>("SELECT * FROM memories WHERE id = ?")
+            .bind(id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::RowNotFound => {
+                    StorageError::NotFound(format!("memory {id} not found"))
+                }
+                other => StorageError::Internal(other.to_string()),
+            })
+    }
+
+    async fn create_memory(
+        &self,
+        body: &CreateMemory,
+        operation_id: Option<&str>,
+    ) -> StorageResult<MemoryRow> {
+        let normalized_key = takusu_util::memory::normalize_key(&body.key)
+            .map_err(|e| StorageError::BadRequest(format!("invalid key: {e}")))?;
+        let normalized_content = takusu_util::memory::normalize_content(&body.content)
+            .map_err(|e| StorageError::BadRequest(format!("invalid content: {e}")))?;
+        let subject_type = body.subject_type.clone().unwrap_or_default();
+        let subject_id = body.subject_id.clone().unwrap_or_default();
+
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        let payload = serde_json::to_string(body).unwrap_or_default();
+        let hash = memory_request_hash(&payload, operation_id);
+        if let Some(op_id) = operation_id
+            && let Some(stored) = Self::check_idempotency(&mut *tx, op_id, &hash).await?
+        {
+            return stored;
+        }
+
+        let existing: Option<MemoryRow> = sqlx::query_as::<_, MemoryRow>(
+            "SELECT * FROM memories WHERE kind = ? AND normalized_key = ? AND subject_type = ? AND subject_id = ?",
+        )
+        .bind(&body.kind)
+        .bind(&normalized_key)
+        .bind(&subject_type)
+        .bind(&subject_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        if let Some(existing) = existing {
+            if body.upsert {
+                let id = existing.id;
+                let new_revision = existing.revision + 1;
+                let result = sqlx::query(
+                    "UPDATE memories SET content = ?, normalized_content = ?, revision = ?, updated_at = datetime('now') WHERE id = ? AND revision = ?",
+                )
+                .bind(&body.content)
+                .bind(&normalized_content)
+                .bind(new_revision)
+                .bind(&id)
+                .bind(existing.revision)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_err)?;
+                if result.rows_affected() == 0 {
+                    return Err(StorageError::Conflict(
+                        "memory changed after proposal".into(),
+                    ));
+                }
+                let row: MemoryRow =
+                    sqlx::query_as::<_, MemoryRow>("SELECT * FROM memories WHERE id = ?")
+                        .bind(&id)
+                        .fetch_one(&mut *tx)
+                        .await
+                        .map_err(map_err)?;
+                if let Some(op_id) = operation_id {
+                    Self::record_operation(&mut *tx, op_id, &hash, &row).await?;
+                }
+                tx.commit().await.map_err(map_err)?;
+                return Ok(row);
+            }
+            return Err(StorageError::Conflict(format!(
+                "memory {} already exists",
+                body.key
+            )));
+        }
+
+        let id = uuid::Uuid::now_v7().to_string();
+        let source = "user_confirmed";
+        sqlx::query(
+            "INSERT INTO memories (id, kind, key, normalized_key, content, normalized_content, subject_type, subject_id, source, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+        )
+        .bind(&id)
+        .bind(&body.kind)
+        .bind(&body.key)
+        .bind(&normalized_key)
+        .bind(&body.content)
+        .bind(&normalized_content)
+        .bind(&subject_type)
+        .bind(&subject_id)
+        .bind(source)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        let row: MemoryRow = sqlx::query_as::<_, MemoryRow>("SELECT * FROM memories WHERE id = ?")
+            .bind(&id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        if let Some(op_id) = operation_id {
+            Self::record_operation(&mut *tx, op_id, &hash, &row).await?;
+        }
+        tx.commit().await.map_err(map_err)?;
+        Ok(row)
+    }
+
+    async fn update_memory(
+        &self,
+        id: &str,
+        body: &UpdateMemory,
+        operation_id: Option<&str>,
+    ) -> StorageResult<MemoryRow> {
+        let content = body
+            .content
+            .as_ref()
+            .ok_or_else(|| StorageError::BadRequest("content is required".into()))?;
+        let normalized_content = takusu_util::memory::normalize_content(content)
+            .map_err(|e| StorageError::BadRequest(format!("invalid content: {e}")))?;
+
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        let payload = format!(
+            "update:{id}:{}:{}",
+            body.observed_revision,
+            body.content.as_deref().unwrap_or("")
+        );
+        let hash = memory_request_hash(&payload, operation_id);
+        if let Some(op_id) = operation_id
+            && let Some(stored) = Self::check_idempotency(&mut *tx, op_id, &hash).await?
+        {
+            return stored;
+        }
+
+        let existing: Option<MemoryRow> =
+            sqlx::query_as::<_, MemoryRow>("SELECT * FROM memories WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(map_err)?;
+        let existing =
+            existing.ok_or_else(|| StorageError::NotFound(format!("memory {id} not found")))?;
+        if existing.revision != body.observed_revision {
+            return Err(StorageError::Conflict(
+                "memory changed after proposal".into(),
+            ));
+        }
+        let new_revision = existing.revision + 1;
+
+        let result = sqlx::query(
+            "UPDATE memories SET content = ?, normalized_content = ?, revision = ?, updated_at = datetime('now') WHERE id = ? AND revision = ?",
+        )
+        .bind(content)
+        .bind(&normalized_content)
+        .bind(new_revision)
+        .bind(id)
+        .bind(body.observed_revision)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        if result.rows_affected() == 0 {
+            return Err(StorageError::Conflict(
+                "memory changed after proposal".into(),
+            ));
+        }
+
+        let row: MemoryRow = sqlx::query_as::<_, MemoryRow>("SELECT * FROM memories WHERE id = ?")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        if let Some(op_id) = operation_id {
+            Self::record_operation(&mut *tx, op_id, &hash, &row).await?;
+        }
+        tx.commit().await.map_err(map_err)?;
+        Ok(row)
+    }
+
+    async fn delete_memory(
+        &self,
+        id: &str,
+        observed_revision: i64,
+        operation_id: Option<&str>,
+    ) -> StorageResult<()> {
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        let payload = format!("delete:{id}:{observed_revision}");
+        let hash = memory_request_hash(&payload, operation_id);
+        if let Some(op_id) = operation_id
+            && let Some(stored) = Self::check_idempotency::<_, ()>(&mut *tx, op_id, &hash).await?
+        {
+            let _ = stored?;
+            return Ok(());
+        }
+
+        let existing: Option<MemoryRow> =
+            sqlx::query_as::<_, MemoryRow>("SELECT * FROM memories WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(map_err)?;
+        let existing =
+            existing.ok_or_else(|| StorageError::NotFound(format!("memory {id} not found")))?;
+        if existing.revision != observed_revision {
+            return Err(StorageError::Conflict(
+                "memory changed after proposal".into(),
+            ));
+        }
+
+        let result = sqlx::query("DELETE FROM memories WHERE id = ? AND revision = ?")
+            .bind(id)
+            .bind(observed_revision)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+
+        if result.rows_affected() == 0 {
+            return Err(StorageError::Conflict(
+                "memory changed after proposal".into(),
+            ));
+        }
+
+        if let Some(op_id) = operation_id {
+            Self::record_operation_raw(&mut *tx, op_id, &hash, "null").await?;
+        }
+        tx.commit().await.map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn search_memories(&self, query: &MemoryQuery) -> StorageResult<Vec<MemoryRow>> {
+        let q = takusu_util::memory::normalize_query(&query.q)
+            .map_err(|e| StorageError::BadRequest(format!("invalid query: {e}")))?;
+        let pattern = format!("%{}%", takusu_util::memory::escape_like_pattern(&q));
+
+        let mut sql = String::from(
+            "SELECT * FROM memories WHERE (normalized_key LIKE ? ESCAPE '\\' OR normalized_content LIKE ? ESCAPE '\\')",
+        );
+        let mut bindings: Vec<String> = vec![pattern.clone(), pattern];
+
+        if let Some(ref kind) = query.kind {
+            sql.push_str(" AND kind = ?");
+            bindings.push(kind.clone());
+        }
+        if let Some(ref subject_type) = query.subject_type {
+            sql.push_str(" AND subject_type = ?");
+            bindings.push(subject_type.clone());
+        }
+        if let Some(ref subject_id) = query.subject_id {
+            sql.push_str(" AND subject_id = ?");
+            bindings.push(subject_id.clone());
+        }
+        sql.push_str(" LIMIT 1000");
+
+        let mut q = sqlx::query_as::<_, MemoryRow>(sqlx::AssertSqlSafe(sql.as_str()));
+        for b in &bindings {
+            q = q.bind(b);
+        }
+        let mut rows: Vec<MemoryRow> = q.fetch_all(&self.pool).await.map_err(map_err)?;
+
+        takusu_util::memory::sort_memories(&query.q, &mut rows);
+
+        let limit = query.limit.map_or(10, |n| n.clamp(1, 50) as usize);
+        rows.truncate(limit);
+        Ok(rows)
+    }
+
+    async fn find_similar_tasks(
+        &self,
+        query: &SimilarTaskQuery,
+    ) -> StorageResult<Vec<SimilarTaskRow>> {
+        let normalized_title = takusu_util::memory::normalize_text(
+            &query.title,
+            Some(takusu_util::memory::MAX_QUERY_SCALARS),
+        )
+        .map_err(|e| StorageError::BadRequest(format!("invalid title: {e}")))?;
+        let rows: Vec<SimilarTaskRow> = sqlx::query_as::<_, SimilarTaskRow>(
+            "SELECT id AS task_id, display_id, title, avg_minutes, sigma_minutes, NULL AS actual_minutes, NULL AS completed_at, updated_at, 'title_overlap' AS similarity FROM tasks WHERE status = 'completed' ORDER BY updated_at DESC LIMIT 1000",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+
+        let mut scored: Vec<(f64, SimilarTaskRow)> = rows
+            .into_iter()
+            .filter_map(|row| {
+                takusu_util::memory::similar_task_score_pre_normalized(
+                    &normalized_title,
+                    &row.title,
+                )
+                .map(|score| (score, row))
+            })
+            .collect();
+
+        scored.sort_by(|(sa, a), (sb, b)| {
+            sa.total_cmp(sb)
+                .reverse()
+                .then_with(|| {
+                    takusu_util::memory::compare_optional_desc(&a.completed_at, &b.completed_at)
+                })
+                .then_with(|| b.updated_at.cmp(&a.updated_at))
+                .then_with(|| a.task_id.cmp(&b.task_id))
+        });
+
+        let limit = query.limit.map_or(10, |n| n.clamp(1, 50)) as usize;
+        let mut out: Vec<SimilarTaskRow> = scored
+            .into_iter()
+            .map(|(_, mut row)| {
+                row.similarity = "title_overlap".to_string();
+                row
+            })
+            .collect();
+        out.truncate(limit);
+        Ok(out)
+    }
+
     async fn health_check(&self) -> StorageResult<String> {
         // A cheap round-trip to the DB confirms the connection is alive.
         let v: String = sqlx::query_scalar("SELECT sqlite_version()")
@@ -1249,7 +1574,86 @@ impl Storage for SqliteStorage {
     }
 }
 
+impl SqliteStorage {
+    async fn check_idempotency<'a, E, T: serde::de::DeserializeOwned>(
+        executor: E,
+        operation_id: &str,
+        request_hash: &str,
+    ) -> StorageResult<Option<StorageResult<T>>>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Sqlite>,
+    {
+        #[derive(sqlx::FromRow)]
+        struct OpRow {
+            request_hash: String,
+            response_json: String,
+        }
+        let row: Option<OpRow> = sqlx::query_as(
+            "SELECT request_hash, response_json FROM memory_operations WHERE operation_id = ?",
+        )
+        .bind(operation_id)
+        .fetch_optional(executor)
+        .await
+        .map_err(map_err)?;
+
+        if let Some(row) = row {
+            if row.request_hash != request_hash {
+                return Err(StorageError::Conflict(
+                    "idempotency key reused with different request".into(),
+                ));
+            }
+            let value: T = serde_json::from_str(&row.response_json).map_err(|e| {
+                StorageError::Internal(format!("corrupt idempotency response: {e}"))
+            })?;
+            return Ok(Some(Ok(value)));
+        }
+        Ok(None)
+    }
+
+    async fn record_operation<'a, E, T: serde::Serialize>(
+        executor: E,
+        operation_id: &str,
+        request_hash: &str,
+        value: &T,
+    ) -> StorageResult<()>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Sqlite>,
+    {
+        let response_json = serde_json::to_string(value)
+            .map_err(|e| StorageError::Internal(format!("serialize idempotency response: {e}")))?;
+        Self::record_operation_raw(executor, operation_id, request_hash, &response_json).await
+    }
+
+    async fn record_operation_raw<'a, E>(
+        executor: E,
+        operation_id: &str,
+        request_hash: &str,
+        response_json: &str,
+    ) -> StorageResult<()>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Sqlite>,
+    {
+        sqlx::query(
+            "INSERT INTO memory_operations (operation_id, request_hash, response_json) VALUES (?, ?, ?)",
+        )
+        .bind(operation_id)
+        .bind(request_hash)
+        .bind(response_json)
+        .execute(executor)
+        .await
+        .map_err(map_err)?;
+        Ok(())
+    }
+}
+
+fn memory_request_hash(payload: &str, operation_id: Option<&str>) -> String {
+    crate::auth::hash_token(&format!("{}:{}", payload, operation_id.unwrap_or("")))
+}
+
 async fn resolve_task_id(pool: &SqlitePool, id: &str) -> StorageResult<String> {
+    // Allow display ids with a leading `#` (e.g. `#42`) written by the LLM.
+    let id = id.strip_prefix('#').unwrap_or(id);
+
     // `h{habit_display_id}#{task_display_id}` → habit task lookup (#380).
     if let Some(rest) = id.strip_prefix(['h', 'H'])
         && let Some((hdisp, tdisp)) = rest.split_once('#')

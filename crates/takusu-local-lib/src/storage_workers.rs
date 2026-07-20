@@ -6,11 +6,12 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use takusu_storage::{
-    CreateHabit, CreateHabitScheduledSpan, CreateSkill, CreateTask, GoogleCalEventRow,
-    GoogleCalSettingsRow, HabitRow, HabitScheduledSpanRow, HabitStepInput, HabitStepRow,
-    SaveScheduleRequest, ScheduleRow, SettingsRow, SkillRow, Storage, StorageError, TaskQuery,
-    TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateSettings,
-    UpdateSkill, UpdateTask, storage::StorageResult,
+    CreateHabit, CreateHabitScheduledSpan, CreateMemory, CreateSkill, CreateTask,
+    GoogleCalEventRow, GoogleCalSettingsRow, HabitRow, HabitScheduledSpanRow, HabitStepInput,
+    HabitStepRow, MemoryQuery, MemoryRow, SaveScheduleRequest, ScheduleRow, SettingsRow,
+    SimilarTaskQuery, SimilarTaskRow, SkillRow, Storage, StorageError, TaskQuery, TaskRow,
+    TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateMemory,
+    UpdateSettings, UpdateSkill, UpdateTask, storage::StorageResult,
 };
 
 const RETRY_STATUSES: &[u16] = &[429, 500, 502, 503, 504];
@@ -533,6 +534,88 @@ impl Storage for WorkersStorage {
         .await
     }
 
+    async fn get_memory(&self, id: &str) -> StorageResult<MemoryRow> {
+        self.request(
+            reqwest::Method::GET,
+            &format!("/api/memory/{}", url_encode(id)),
+        )
+        .await
+    }
+
+    async fn create_memory(
+        &self,
+        body: &CreateMemory,
+        operation_id: Option<&str>,
+    ) -> StorageResult<MemoryRow> {
+        self.request_body_idempotent(reqwest::Method::POST, "/api/memory", body, operation_id)
+            .await
+    }
+
+    async fn update_memory(
+        &self,
+        id: &str,
+        body: &UpdateMemory,
+        operation_id: Option<&str>,
+    ) -> StorageResult<MemoryRow> {
+        self.request_body_idempotent(
+            reqwest::Method::PATCH,
+            &format!("/api/memory/{}", url_encode(id)),
+            body,
+            operation_id,
+        )
+        .await
+    }
+
+    async fn delete_memory(
+        &self,
+        id: &str,
+        observed_revision: i64,
+        operation_id: Option<&str>,
+    ) -> StorageResult<()> {
+        self.request_no_body_idempotent(
+            reqwest::Method::DELETE,
+            &format!(
+                "/api/memory/{}?observed_revision={observed_revision}",
+                url_encode(id)
+            ),
+            operation_id,
+        )
+        .await
+    }
+
+    async fn search_memories(&self, query: &MemoryQuery) -> StorageResult<Vec<MemoryRow>> {
+        let mut path = String::from("/api/memory/search");
+        let mut parts: Vec<String> = Vec::new();
+        parts.push(format!("q={}", url_encode(&query.q)));
+        if let Some(ref kind) = query.kind {
+            parts.push(format!("kind={}", url_encode(kind)));
+        }
+        if let Some(ref subject_type) = query.subject_type {
+            parts.push(format!("subject_type={}", url_encode(subject_type)));
+        }
+        if let Some(ref subject_id) = query.subject_id {
+            parts.push(format!("subject_id={}", url_encode(subject_id)));
+        }
+        if let Some(limit) = query.limit {
+            parts.push(format!("limit={limit}"));
+        }
+        path.push('?');
+        path.push_str(&parts.join("&"));
+        self.request(reqwest::Method::GET, &path).await
+    }
+
+    async fn find_similar_tasks(
+        &self,
+        query: &SimilarTaskQuery,
+    ) -> StorageResult<Vec<SimilarTaskRow>> {
+        let mut path = "/api/tasks/similar?".to_string();
+        path.push_str(&format!("q={}", url_encode(&query.title)));
+        if let Some(limit) = query.limit {
+            path.push_str(&format!("&limit={limit}"));
+        }
+        self.request(reqwest::Method::GET, &path).await
+    }
+
     async fn health_check(&self) -> StorageResult<String> {
         let url = format!("{}/health", self.base_url);
         // Per-request timeout so an unreachable worker fails fast instead of
@@ -559,6 +642,53 @@ impl Storage for WorkersStorage {
 }
 
 impl WorkersStorage {
+    async fn request_body_idempotent<T: DeserializeOwned, B: Serialize + Clone>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: &B,
+        operation_id: Option<&str>,
+    ) -> StorageResult<T> {
+        let url = format!("{}{}", self.base_url, path);
+        let body_ref = body;
+        let resp = self
+            .send_with_retry(|| {
+                let mut req = self
+                    .http
+                    .request(method.clone(), &url)
+                    .bearer_auth(&self.token)
+                    .json(body_ref);
+                if let Some(op_id) = operation_id {
+                    req = req.header("Idempotency-Key", op_id);
+                }
+                req.build()
+            })
+            .await?;
+        map_response(resp).await
+    }
+
+    async fn request_no_body_idempotent(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        operation_id: Option<&str>,
+    ) -> StorageResult<()> {
+        let url = format!("{}{}", self.base_url, path);
+        let resp = self
+            .send_with_retry(|| {
+                let mut req = self
+                    .http
+                    .request(method.clone(), &url)
+                    .bearer_auth(&self.token);
+                if let Some(op_id) = operation_id {
+                    req = req.header("Idempotency-Key", op_id);
+                }
+                req.build()
+            })
+            .await?;
+        map_empty(resp).await
+    }
+
     async fn resolve_task_id(&self, id: &str) -> StorageResult<String> {
         // `h{habit_display_id}#{task_display_id}` → habit task lookup (#380).
         if let Some(rest) = id.strip_prefix(['h', 'H'])

@@ -13,6 +13,7 @@
 mod auth;
 mod error;
 mod handlers;
+mod memory;
 mod models;
 mod router;
 mod validate;

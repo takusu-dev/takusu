@@ -4290,6 +4290,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "takusu-util",
  "thiserror 2.0.18",
 ]
 
@@ -4298,6 +4299,7 @@ name = "takusu-util"
 version = "0.20260720.1"
 dependencies = [
  "jiff",
+ "unicode-normalization",
  "uuid",
 ]
 
@@ -4311,6 +4313,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "takusu-util",
  "thiserror 2.0.18",
  "uuid",
  "wasm-bindgen",

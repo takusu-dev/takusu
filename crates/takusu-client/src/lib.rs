@@ -858,6 +858,134 @@ impl Client {
         }
         Ok(())
     }
+
+    // ── Memory (#WI-7) ──
+
+    pub async fn create_memory(
+        &self,
+        body: &CreateMemory,
+        operation_id: Option<&str>,
+    ) -> Result<MemoryRow, ClientError> {
+        let mut req = self
+            .request(reqwest::Method::POST, "/api/memory")
+            .await
+            .json(body);
+        if let Some(op_id) = operation_id {
+            req = req.header("Idempotency-Key", op_id);
+        }
+        let resp = req.send().await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn get_memory(&self, id: &str) -> Result<MemoryRow, ClientError> {
+        let resp = self
+            .request(reqwest::Method::GET, &format!("/api/memory/{id}"))
+            .await
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn update_memory(
+        &self,
+        id: &str,
+        body: &UpdateMemory,
+        operation_id: Option<&str>,
+    ) -> Result<MemoryRow, ClientError> {
+        let mut req = self
+            .request(reqwest::Method::PATCH, &format!("/api/memory/{id}"))
+            .await
+            .json(body);
+        if let Some(op_id) = operation_id {
+            req = req.header("Idempotency-Key", op_id);
+        }
+        let resp = req.send().await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn delete_memory(
+        &self,
+        id: &str,
+        observed_revision: i64,
+        operation_id: Option<&str>,
+    ) -> Result<(), ClientError> {
+        let path = format!("/api/memory/{id}?observed_revision={observed_revision}");
+        let mut req = self.request(reqwest::Method::DELETE, &path).await;
+        if let Some(op_id) = operation_id {
+            req = req.header("Idempotency-Key", op_id);
+        }
+        let resp = req.send().await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(())
+    }
+
+    pub async fn search_memory(&self, query: &MemoryQuery) -> Result<Vec<MemoryRow>, ClientError> {
+        let limit = query.limit.map(|l| l.to_string());
+        let mut params: Vec<(&str, &str)> = Vec::new();
+        params.push(("q", &query.q));
+        if let Some(ref kind) = query.kind {
+            params.push(("kind", kind));
+        }
+        if let Some(ref subject_type) = query.subject_type {
+            params.push(("subject_type", subject_type));
+        }
+        if let Some(ref subject_id) = query.subject_id {
+            params.push(("subject_id", subject_id));
+        }
+        if let Some(ref limit_string) = limit {
+            params.push(("limit", limit_string));
+        }
+        let mut req = self
+            .request(reqwest::Method::GET, "/api/memory/search")
+            .await;
+        if !params.is_empty() {
+            req = req.query(&params);
+        }
+        let resp = req.send().await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn find_similar_tasks(
+        &self,
+        query: &SimilarTaskQuery,
+    ) -> Result<Vec<SimilarTaskRow>, ClientError> {
+        let limit = query.limit.unwrap_or(10).to_string();
+        let mut req = self
+            .request(reqwest::Method::GET, "/api/tasks/similar")
+            .await;
+        req = req.query(&[("q", query.title.as_str()), ("limit", limit.as_str())]);
+        let resp = req.send().await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
 }
 
 // ── Types (mirrors server model.rs) ──
@@ -1299,6 +1427,78 @@ pub struct UpdateSkill {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
+}
+
+// ── Memory types (#WI-7) ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryRow {
+    pub id: String,
+    pub kind: String,
+    pub key: String,
+    pub content: String,
+    #[serde(default)]
+    pub subject_type: String,
+    #[serde(default)]
+    pub subject_id: String,
+    pub source: String,
+    pub revision: i64,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_used_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateMemory {
+    pub kind: String,
+    pub key: String,
+    pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_id: Option<String>,
+    #[serde(default)]
+    pub upsert: bool,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UpdateMemory {
+    pub observed_revision: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct MemoryQuery {
+    pub q: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimilarTaskRow {
+    pub task_id: String,
+    pub display_id: i64,
+    pub title: String,
+    pub avg_minutes: i64,
+    pub sigma_minutes: i64,
+    pub actual_minutes: Option<i64>,
+    pub completed_at: Option<String>,
+    pub similarity: String,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct SimilarTaskQuery {
+    #[serde(rename = "q")]
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
 }
 
 // ── Settings types ──

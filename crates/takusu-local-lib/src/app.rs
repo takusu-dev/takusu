@@ -8,10 +8,11 @@ use takusu_core::{
     NormalDist, Planner, Point, RescheduleRange, SleepConfig, Task as CoreTask, WorkloadConfig,
 };
 use takusu_storage::{
-    CreateHabit, CreateHabitScheduledSpan, CreateSkill, CreateTask, GoogleCalEventRow,
-    GoogleCalSettingsRow, HabitDetail, HabitRow, HabitScheduledSpanRow, HabitStepInput,
-    HabitStepRow, SaveScheduleRequest, ScheduleEntry, ScheduleRow, SettingsRow, SkillRow, Storage,
-    TaskQuery, TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit,
+    CreateHabit, CreateHabitScheduledSpan, CreateMemory, CreateSkill, CreateTask,
+    GoogleCalEventRow, GoogleCalSettingsRow, HabitDetail, HabitRow, HabitScheduledSpanRow,
+    HabitStepInput, HabitStepRow, MemoryQuery, MemoryRow, SaveScheduleRequest, ScheduleEntry,
+    ScheduleRow, SettingsRow, SimilarTaskQuery, SimilarTaskRow, SkillRow, Storage, TaskQuery,
+    TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateMemory,
     UpdateSettings, UpdateSkill, UpdateTask,
 };
 
@@ -185,6 +186,38 @@ fn validate_skill(create: &CreateSkill) -> Result<(), AppError> {
         return Err(AppError::BadRequest(format!(
             "body must be 1..{MAX_BODY_LEN} characters"
         )));
+    }
+    Ok(())
+}
+
+/// Validate a memory create request (#WI-7).
+fn validate_memory(create: &CreateMemory) -> Result<(), AppError> {
+    if !matches!(create.kind.as_str(), "proper_noun" | "fact" | "task_note") {
+        return Err(AppError::BadRequest(
+            "kind must be 'proper_noun', 'fact', or 'task_note'".into(),
+        ));
+    }
+    if takusu_util::memory::normalize_key(&create.key).is_err() {
+        return Err(AppError::BadRequest("invalid key".into()));
+    }
+    if takusu_util::memory::normalize_content(&create.content).is_err() {
+        return Err(AppError::BadRequest("invalid content".into()));
+    }
+    if create.subject_type.as_ref().is_some_and(|s| s.len() > 64) {
+        return Err(AppError::BadRequest("subject_type too long".into()));
+    }
+    if create.subject_id.as_ref().is_some_and(|s| s.len() > 64) {
+        return Err(AppError::BadRequest("subject_id too long".into()));
+    }
+    if create.kind == "task_note" {
+        if create.subject_type.as_deref() != Some("task") {
+            return Err(AppError::BadRequest(
+                "task_note requires subject_type='task'".into(),
+            ));
+        }
+        if create.subject_id.as_ref().is_none_or(|s| s.is_empty()) {
+            return Err(AppError::BadRequest("task_note requires subject_id".into()));
+        }
     }
     Ok(())
 }
@@ -805,6 +838,92 @@ impl TakusuApp {
         }
         self.storage
             .delete_skill(slug)
+            .await
+            .map_err(storage_to_app)
+    }
+
+    // ── Memory (#WI-7) ────────────────────────────────────
+
+    pub async fn create_memory(
+        &self,
+        body: &CreateMemory,
+        operation_id: Option<&str>,
+    ) -> Result<MemoryRow, AppError> {
+        validate_memory(body)?;
+        let mut body = body.clone();
+        if body.kind == "task_note" {
+            let task_id = body.subject_id.as_deref().unwrap_or("");
+            let task = self
+                .storage
+                .get_task(task_id)
+                .await
+                .map_err(storage_to_app)?;
+            body.subject_id = Some(task.id);
+        }
+        self.storage
+            .create_memory(&body, operation_id)
+            .await
+            .map_err(storage_to_app)
+    }
+
+    pub async fn get_memory(&self, id: &str) -> Result<MemoryRow, AppError> {
+        self.storage.get_memory(id).await.map_err(storage_to_app)
+    }
+
+    pub async fn update_memory(
+        &self,
+        id: &str,
+        body: &UpdateMemory,
+        operation_id: Option<&str>,
+    ) -> Result<MemoryRow, AppError> {
+        if body.content.as_ref().is_none_or(|c| c.is_empty()) {
+            return Err(AppError::BadRequest("content is required".into()));
+        }
+        if takusu_util::memory::normalize_content(body.content.as_deref().unwrap_or("")).is_err() {
+            return Err(AppError::BadRequest("invalid content".into()));
+        }
+        self.storage
+            .update_memory(id, body, operation_id)
+            .await
+            .map_err(storage_to_app)
+    }
+
+    pub async fn delete_memory(
+        &self,
+        id: &str,
+        observed_revision: i64,
+        operation_id: Option<&str>,
+    ) -> Result<(), AppError> {
+        self.storage
+            .delete_memory(id, observed_revision, operation_id)
+            .await
+            .map_err(storage_to_app)
+    }
+
+    pub async fn search_memories(&self, query: &MemoryQuery) -> Result<Vec<MemoryRow>, AppError> {
+        if takusu_util::memory::normalize_query(&query.q).is_err() {
+            return Err(AppError::BadRequest("invalid query".into()));
+        }
+        self.storage
+            .search_memories(query)
+            .await
+            .map_err(storage_to_app)
+    }
+
+    pub async fn find_similar_tasks(
+        &self,
+        query: &SimilarTaskQuery,
+    ) -> Result<Vec<SimilarTaskRow>, AppError> {
+        if takusu_util::memory::normalize_text(
+            &query.title,
+            Some(takusu_util::memory::MAX_QUERY_SCALARS),
+        )
+        .is_err()
+        {
+            return Err(AppError::BadRequest("invalid title".into()));
+        }
+        self.storage
+            .find_similar_tasks(query)
             .await
             .map_err(storage_to_app)
     }

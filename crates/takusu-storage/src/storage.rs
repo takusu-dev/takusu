@@ -84,6 +84,31 @@ pub trait Storage: Send + Sync + 'static {
     async fn update_skill(&self, slug: &str, body: &UpdateSkill) -> StorageResult<SkillRow>;
     async fn delete_skill(&self, slug: &str) -> StorageResult<()>;
 
+    // ── Memory (#WI-7) ────────────────────────────────────
+    async fn get_memory(&self, id: &str) -> StorageResult<MemoryRow>;
+    async fn create_memory(
+        &self,
+        body: &CreateMemory,
+        operation_id: Option<&str>,
+    ) -> StorageResult<MemoryRow>;
+    async fn update_memory(
+        &self,
+        id: &str,
+        body: &UpdateMemory,
+        operation_id: Option<&str>,
+    ) -> StorageResult<MemoryRow>;
+    async fn delete_memory(
+        &self,
+        id: &str,
+        observed_revision: i64,
+        operation_id: Option<&str>,
+    ) -> StorageResult<()>;
+    async fn search_memories(&self, query: &MemoryQuery) -> StorageResult<Vec<MemoryRow>>;
+    async fn find_similar_tasks(
+        &self,
+        query: &SimilarTaskQuery,
+    ) -> StorageResult<Vec<SimilarTaskRow>>;
+
     async fn get_gcal_settings(&self) -> StorageResult<GoogleCalSettingsRow>;
     async fn update_gcal_settings(
         &self,

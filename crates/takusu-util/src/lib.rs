@@ -1,3 +1,5 @@
+pub mod memory;
+
 use std::str::FromStr;
 use uuid::Uuid;
 

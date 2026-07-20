@@ -438,6 +438,95 @@ pub struct UpdateSkill {
     pub body: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct MemoryRow {
+    pub id: String,
+    pub kind: String,
+    pub key: String,
+    #[serde(default, skip_serializing)]
+    pub normalized_key: String,
+    pub content: String,
+    #[serde(default, skip_serializing)]
+    pub normalized_content: String,
+    pub subject_type: String,
+    pub subject_id: String,
+    pub source: String,
+    pub revision: i64,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_used_at: Option<String>,
+}
+
+impl takusu_util::memory::MemoryRankable for MemoryRow {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn normalized_key(&self) -> &str {
+        &self.normalized_key
+    }
+    fn normalized_content(&self) -> &str {
+        &self.normalized_content
+    }
+    fn updated_at(&self) -> &str {
+        &self.updated_at
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateMemory {
+    pub kind: String,
+    pub key: String,
+    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub subject_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub subject_id: Option<String>,
+    #[serde(default)]
+    pub upsert: bool,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct UpdateMemory {
+    pub observed_revision: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct MemoryQuery {
+    pub q: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct SimilarTaskRow {
+    pub task_id: String,
+    pub display_id: i64,
+    pub title: String,
+    pub avg_minutes: i64,
+    pub sigma_minutes: i64,
+    pub actual_minutes: Option<i64>,
+    pub completed_at: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub updated_at: String,
+    pub similarity: String,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct SimilarTaskQuery {
+    #[serde(rename = "q")]
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UpdateSettings {
     #[serde(skip_serializing_if = "Option::is_none")]

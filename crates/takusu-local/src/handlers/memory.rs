@@ -1,0 +1,81 @@
+use axum::Json;
+use axum::extract::{Path, Query, State};
+use axum::http::{HeaderMap, StatusCode};
+use takusu_storage::{CreateMemory, MemoryQuery, SimilarTaskQuery, UpdateMemory};
+
+use crate::error::HttpError;
+use crate::state::AppState;
+
+fn operation_id(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get("idempotency-key")
+        .or_else(|| headers.get("Idempotency-Key"))
+        .and_then(|v| v.to_str().ok())
+}
+
+pub async fn create_memory(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<CreateMemory>,
+) -> Result<(StatusCode, Json<takusu_storage::MemoryRow>), HttpError> {
+    let memory = state
+        .app
+        .create_memory(&body, operation_id(&headers))
+        .await?;
+    Ok((StatusCode::CREATED, Json(memory)))
+}
+
+pub async fn get_memory(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<takusu_storage::MemoryRow>, HttpError> {
+    let memory = state.app.get_memory(&id).await?;
+    Ok(Json(memory))
+}
+
+pub async fn update_memory(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateMemory>,
+) -> Result<Json<takusu_storage::MemoryRow>, HttpError> {
+    let memory = state
+        .app
+        .update_memory(&id, &body, operation_id(&headers))
+        .await?;
+    Ok(Json(memory))
+}
+
+#[derive(serde::Deserialize)]
+pub struct DeleteMemoryParams {
+    pub observed_revision: i64,
+}
+
+pub async fn delete_memory(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Query(params): Query<DeleteMemoryParams>,
+) -> Result<StatusCode, HttpError> {
+    state
+        .app
+        .delete_memory(&id, params.observed_revision, operation_id(&headers))
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn search_memory(
+    State(state): State<AppState>,
+    Query(query): Query<MemoryQuery>,
+) -> Result<Json<Vec<takusu_storage::MemoryRow>>, HttpError> {
+    let memories = state.app.search_memories(&query).await?;
+    Ok(Json(memories))
+}
+
+pub async fn find_similar_tasks(
+    State(state): State<AppState>,
+    Query(query): Query<SimilarTaskQuery>,
+) -> Result<Json<Vec<takusu_storage::SimilarTaskRow>>, HttpError> {
+    let tasks = state.app.find_similar_tasks(&query).await?;
+    Ok(Json(tasks))
+}

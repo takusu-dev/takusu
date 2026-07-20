@@ -20,6 +20,7 @@ pub fn register_tools(
 ) {
     register_read_tools(registry, client.clone(), tz_cache.clone());
     register_mutation_tools(registry, client.clone(), tz_cache.clone());
+    crate::tools::memory::register_tools(registry, client.clone());
     registry.register(Box::new(PreviewScheduleTool {
         client: client.clone(),
         tz_cache: tz_cache.clone(),

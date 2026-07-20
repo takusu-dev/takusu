@@ -1,4 +1,5 @@
 pub mod habit;
+pub mod memory;
 pub mod schedule;
 pub mod settings;
 pub mod skills;

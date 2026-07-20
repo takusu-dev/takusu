@@ -403,6 +403,59 @@ pub struct UpdateSkill {
     pub body: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryRow {
+    pub id: String,
+    pub kind: String,
+    pub key: String,
+    #[serde(skip_serializing)]
+    pub normalized_key: String,
+    pub content: String,
+    #[serde(skip_serializing)]
+    pub normalized_content: String,
+    pub subject_type: String,
+    pub subject_id: String,
+    pub source: String,
+    pub revision: i64,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_used_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateMemory {
+    pub kind: String,
+    pub key: String,
+    pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_id: Option<String>,
+    #[serde(default)]
+    pub upsert: bool,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UpdateMemory {
+    pub observed_revision: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimilarTaskRow {
+    pub task_id: String,
+    pub display_id: i64,
+    pub title: String,
+    pub avg_minutes: i64,
+    pub sigma_minutes: i64,
+    pub actual_minutes: Option<i64>,
+    pub completed_at: Option<String>,
+    #[serde(skip_serializing)]
+    pub updated_at: String,
+    pub similarity: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
