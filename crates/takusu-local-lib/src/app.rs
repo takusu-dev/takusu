@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use takusu_core::{
-    NormalDist, Planner, Point, RescheduleRange, SleepConfig, Task as CoreTask, WorkloadConfig,
+    NormalDist, Planner, Point, RescheduleRange, SleepConfig, Solver, Task as CoreTask,
+    WorkloadConfig,
 };
 use takusu_storage::{
     CreateHabit, CreateHabitScheduledSpan, CreateMemory, CreateSkill, CreateTask,
@@ -501,6 +503,29 @@ fn parse_workload(settings: &SettingsRow) -> WorkloadConfig {
     }
 }
 
+/// #772: 設定文字列から `Solver` を構築する。不明・空の場合は `Auto`。
+fn parse_solver(s: &str) -> Solver {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "sa" => Solver::Sa,
+        "priority" => Solver::Priority,
+        _ => Solver::Auto,
+    }
+}
+
+/// #772: `Planner` に settings の solver / time budget / seed / warm start を反映する。
+fn apply_planner_settings(planner: &mut Planner, settings: &SettingsRow) {
+    planner.set_workload(parse_workload(settings));
+    planner.set_solver(parse_solver(&settings.solver));
+    planner.set_time_budget(
+        settings
+            .time_budget_ms
+            .filter(|&ms| ms > 0)
+            .map(|ms| Duration::from_millis(ms as u64)),
+    );
+    planner.set_seed(settings.seed.filter(|&s| s >= 0).map(|s| s as u64));
+    planner.set_warm_start(settings.warm_start);
+}
+
 /// ISO文字列 → Point スロット値。`now` は現在時刻。
 /// ハードコードされた 5 (分/スロット) は Planner の per と揃っている必要がある。
 /// AGENTS.md の「point_to_iso hardcoded 5-minute slots」参照。
@@ -706,6 +731,10 @@ fn default_settings_row() -> SettingsRow {
         sleep_end: "06:00".to_string(),
         comfortable_minutes: None,
         maximum_minutes: None,
+        solver: "auto".to_string(),
+        time_budget_ms: None,
+        seed: None,
+        warm_start: false,
         created_at: String::new(),
         updated_at: String::new(),
     }
@@ -1385,9 +1414,8 @@ impl TakusuApp {
         // (stale habit tasks) are not carried into the planner (#582).
         let task_rows = self.load_task_rows(input.task_ids.as_ref()).await?;
         let all_rows = Self::merge_active_tasks(habit_rows, task_rows);
-        let workload = parse_workload(&settings);
         let (mut planner, id_map, id_to_idx) = self
-            .build_planner(from_point, sleep, workload, &all_rows, &tz)
+            .build_planner(from_point, sleep, &settings, &all_rows, &tz)
             .await?;
 
         // #211: 前回スケジュールを参照として渡し、直近タスクの移動に
@@ -1453,9 +1481,8 @@ impl TakusuApp {
         let habit_rows = self.sync_habit_tasks(&tz).await?;
         let task_rows = self.load_task_rows(input.task_ids.as_ref()).await?;
         let all_rows = Self::merge_active_tasks(habit_rows, task_rows);
-        let workload = parse_workload(&settings);
         let (mut planner, id_map, id_to_idx) = self
-            .build_planner(from_point, sleep, workload, &all_rows, &tz)
+            .build_planner(from_point, sleep, &settings, &all_rows, &tz)
             .await?;
         let existing_entries = self
             .storage
@@ -1582,9 +1609,8 @@ impl TakusuApp {
         let task_rows = self.load_task_rows(None).await?;
         let active = Self::merge_active_tasks(habit_rows, task_rows);
 
-        let workload = parse_workload(&settings);
         let (planner, id_map, id_to_idx) = self
-            .build_planner(now_point, sleep, workload, &active, &tz)
+            .build_planner(now_point, sleep, &settings, &active, &tz)
             .await?;
 
         // Note: stability penalty (#211) is intentionally NOT applied here.
@@ -2619,7 +2645,7 @@ impl TakusuApp {
         &self,
         start: Point,
         sleep: SleepConfig,
-        workload: WorkloadConfig,
+        settings: &SettingsRow,
         task_rows: &[TaskRow],
         tz: &jiff::tz::TimeZone,
     ) -> Result<(Planner, Vec<String>, HashMap<String, usize>), AppError> {
@@ -2698,7 +2724,7 @@ impl TakusuApp {
         }
 
         let mut planner = Planner::new(start, sleep);
-        planner.set_workload(workload);
+        apply_planner_settings(&mut planner, settings);
         let mut id_map: Vec<String> = Vec::with_capacity(task_rows.len());
 
         for (i, row) in task_rows.iter().enumerate() {

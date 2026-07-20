@@ -1,7 +1,7 @@
 //! SA Solver (sa_lns) と Priority Solver (alns_search) の解を比較して HTML レポートを出力する。
 //!
 //! 実行:
-//!   cargo run --example compare_solvers -p takusu-core --features quality-benchmark
+//!   cargo run --example compare_solvers -p takusu-core
 //!
 //! 環境変数:
 //!   TAKUSU_COMPARE_FIXTURE  (default: "7d")

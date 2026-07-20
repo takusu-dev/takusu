@@ -32,6 +32,7 @@ const MIGRATION_013: &str = include_str!("../migrations/013_habit_task_display_i
 const MIGRATION_014: &str = include_str!("../migrations/014_workload.sql");
 const MIGRATION_015: &str = include_str!("../migrations/015_skills.sql");
 const MIGRATION_016: &str = include_str!("../migrations/016_memory.sql");
+const MIGRATION_017: &str = include_str!("../migrations/017_solver.sql");
 // Migration 013 one-time backfill: drops the old global unique index, renumbers
 // existing habit tasks to start from 1 per habit, and seeds the per-habit
 // sequences. Non-idempotent (DROP + UPDATE renumber) — guarded by a check
@@ -284,6 +285,17 @@ impl SqliteStorage {
 
         // Migration 016 creates the memory tables (idempotent).
         sqlx::raw_sql(MIGRATION_016).execute(&pool).await?;
+
+        // Migration 017 adds solver/time_budget_ms/seed/warm_start to settings
+        // (idempotent, guarded by a column check).
+        let has_solver: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('settings') WHERE name = 'solver'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        if !has_solver {
+            sqlx::raw_sql(MIGRATION_017).execute(&pool).await?;
+        }
 
         Ok(Self { pool })
     }
@@ -1066,14 +1078,22 @@ impl Storage for SqliteStorage {
         let sleep_end = body.sleep_end.clone().unwrap_or(existing.sleep_end);
         let comfortable_minutes = body.comfortable_minutes.or(existing.comfortable_minutes);
         let maximum_minutes = body.maximum_minutes.or(existing.maximum_minutes);
+        let solver = body.solver.clone().unwrap_or(existing.solver);
+        let time_budget_ms = body.time_budget_ms.or(existing.time_budget_ms);
+        let seed = body.seed.or(existing.seed);
+        let warm_start = body.warm_start.unwrap_or(existing.warm_start);
         sqlx::query(
-            "UPDATE settings SET tz = ?, sleep_start = ?, sleep_end = ?, comfortable_minutes = ?, maximum_minutes = ?, updated_at = datetime('now') WHERE id = 'active'",
+            "UPDATE settings SET tz = ?, sleep_start = ?, sleep_end = ?, comfortable_minutes = ?, maximum_minutes = ?, solver = ?, time_budget_ms = ?, seed = ?, warm_start = ?, updated_at = datetime('now') WHERE id = 'active'",
         )
         .bind(&tz)
         .bind(&sleep_start)
         .bind(&sleep_end)
         .bind(comfortable_minutes)
         .bind(maximum_minutes)
+        .bind(&solver)
+        .bind(time_budget_ms)
+        .bind(seed)
+        .bind(warm_start)
         .execute(&self.pool)
         .await
         .map_err(map_err)?;

@@ -1512,6 +1512,18 @@ pub struct SettingsResponse {
     pub comfortable_minutes: Option<i64>,
     /// #459: 1 日の最大作業時間（分）。`None` または `0` の場合はデフォルトを使う。
     pub maximum_minutes: Option<i64>,
+    /// 使用する solver。`"sa"` / `"priority"` / `"auto"`。空または不明な場合は `auto`。
+    #[serde(default)]
+    pub solver: String,
+    /// 求解時間の上限（ミリ秒）。`None` または `0` の場合は制限なし。
+    #[serde(default)]
+    pub time_budget_ms: Option<i64>,
+    /// 乱数シード。`None` の場合は決定的なデフォルト。
+    #[serde(default)]
+    pub seed: Option<i64>,
+    /// 前回スケジュールから priority/ALNS の初期解を warm start する。
+    #[serde(default)]
+    pub warm_start: bool,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -1528,4 +1540,16 @@ pub struct UpdateSettings {
     /// #459: 1 日の最大作業時間（分）。`None` または `0` の場合はデフォルトを使う。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub maximum_minutes: Option<i64>,
+    /// 使用する solver。`"sa"` / `"priority"` / `"auto"`。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub solver: Option<String>,
+    /// 求解時間の上限（ミリ秒）。`None` または `0` で制限なし。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_budget_ms: Option<i64>,
+    /// 乱数シード。`None` でデフォルト。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seed: Option<i64>,
+    /// 前回スケジュールから priority/ALNS の初期解を warm start する。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warm_start: Option<bool>,
 }

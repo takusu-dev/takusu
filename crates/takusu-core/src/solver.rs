@@ -1,101 +1,87 @@
-//! # ソルバー: 並列再起動 SA
+//! # ソルバー: 設定に応じた SA / priority dispatch
 //!
-//! k 本の独立 SA チェーンを rayon で並列実行し、評価関数最大の解を選択する。
-//! タスクはすべてスケジュールされる（諦めない）。
-//! abandonability が高いタスクは deadline 超過ペナルティが軽減される。
-//!
-//! ## 並列戦略
-//!
-//! 各チェーンは異なる乱数シード (0..num_chains) で初期化。
-//! これにより、同じ貪欲初期解から出発しても異なる SA 軌道を辿る。
-//! `MAX_CHAINS=4`: CPUコア数にクランプ。過剰並列はメモリ競合と
-//! 収穫逓減のため制限。
-//!
-//! ## 部分問題分割の検討
-//!
-//! ### DAG 連結成分分解
-//! 依存グラフを連結成分に分割し、成分ごとに独立 SA。n=100 を 5×20 に分割すれば
-//! 評価関数 25倍高速。品質低下は中程度。時間窓競合のマージが課題。
-//!
-//! ### 結論
-//! 現時点では全体 SA + 並列再起動が最も堅実。
+//! `Planner.solver` / `time_budget` / `seed` / `warm_start` をもとに、
+//! SA (`sa_lns`) または priority decoder + ALNS (`alns_search`) を選択する。
+//! full / partial / range は pinned 集合の違いとして統一し、同じ dispatch 経路で解く。
 
 use std::cmp::Ordering;
+use std::time::{Duration, Instant};
 
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rayon::prelude::*;
 
 use super::*;
-#[cfg(feature = "quality-benchmark")]
-use anneal::alns_search;
-use anneal::{sa_lns, sa_lns_partial};
+use anneal::{alns_search_pinned, sa_lns, sa_lns_partial};
 use evaluate::evaluate;
 
 const MAX_CHAINS: usize = 4;
+const DEFAULT_SEED: u64 = 0;
+const MIN_REMAINING_TIME: Duration = Duration::from_millis(1);
 
+fn base_seed(planner: &Planner, override_seed: Option<u64>) -> u64 {
+    override_seed.or(planner.seed).unwrap_or(DEFAULT_SEED)
+}
+
+/// full solve: `Planner` の設定に従って solver を選択する。
 pub fn solve(planner: &Planner) -> Plan {
-    let num_chains = rayon::current_num_threads().clamp(1, MAX_CHAINS);
-
-    (0..num_chains)
-        .into_par_iter()
-        .map(|seed| sa_lns(planner, &mut StdRng::seed_from_u64(seed as u64)))
-        .max_by(|a, b| {
-            evaluate(planner, a, 0.0, 1.0)
-                .partial_cmp(&evaluate(planner, b, 0.0, 1.0))
-                .unwrap_or(Ordering::Equal)
-        })
-        .unwrap_or_else(|| Plan { schedules: vec![] })
+    match planner.solver {
+        Solver::Sa => solve_sa(planner, None),
+        Solver::Priority => solve_priority(planner, &[], None),
+        Solver::Auto => solve_auto(planner, &[]),
+    }
 }
 
-#[cfg(feature = "quality-benchmark")]
+/// 単一 seed で SA full solve を実行する（solver 設定に関わらず SA）。
 pub fn solve_with_seed(planner: &Planner, seed: u64) -> Plan {
-    sa_lns(planner, &mut StdRng::seed_from_u64(seed))
+    solve_sa_with_seed(planner, seed)
 }
 
-#[cfg(feature = "quality-benchmark")]
+/// 単一 seed で priority/ALNS full solve を実行する。
 pub fn solve_alns_with_seed(planner: &Planner, seed: u64) -> Plan {
-    alns_search(planner, &mut StdRng::seed_from_u64(seed))
+    solve_priority(planner, &[], Some(seed))
 }
 
-#[cfg(feature = "quality-benchmark")]
+/// partial / range solve: pinned 集合を固定して再スケジュールする。
+pub fn solve_partial(planner: &Planner, pinned: &[(Point, Point, usize)]) -> Plan {
+    let pinned = validate_pinned(planner, pinned);
+    match planner.solver {
+        Solver::Sa => solve_sa_partial(planner, &pinned),
+        Solver::Priority => solve_priority(planner, &pinned, None),
+        Solver::Auto => solve_auto(planner, &pinned),
+    }
+}
+
+/// 単一 seed で SA partial solve を実行する（solver 設定に関わらず SA）。
 pub fn solve_partial_with_seed(
     planner: &Planner,
     pinned: &[(Point, Point, usize)],
     seed: u64,
 ) -> Plan {
-    sa_lns_partial(planner, pinned, &mut StdRng::seed_from_u64(seed))
+    let pinned = validate_pinned(planner, pinned);
+    solve_sa_partial_with_seed(planner, &pinned, seed)
 }
 
-/// 範囲外のタスク ID は無視し、有効な pinned が空の場合は solve (sa_lns) に委譲する。
-/// sa_lns と sa_lns_partial は pinned_ids のフィルタリング以外は同一アルゴリズムのため、
-/// 空 pinned の場合はオーバーヘッドを避けてフル SA にフォールバック。
-pub fn solve_partial(planner: &Planner, pinned: &[(Point, Point, usize)]) -> Plan {
-    if pinned.is_empty() {
-        return solve(planner);
-    }
-
-    let valid_pinned: Vec<_> = pinned
+fn validate_pinned(
+    planner: &Planner,
+    pinned: &[(Point, Point, usize)],
+) -> Vec<(Point, Point, usize)> {
+    let mut seen = std::collections::HashSet::new();
+    pinned
         .iter()
         .filter(|(_, _, id)| *id < planner.tasks.len())
         .copied()
-        .collect();
+        .filter(|(_, _, id)| seen.insert(*id))
+        .collect()
+}
 
-    if valid_pinned.is_empty() {
-        return solve(planner);
-    }
-
+fn solve_sa(planner: &Planner, override_seed: Option<u64>) -> Plan {
     let num_chains = rayon::current_num_threads().clamp(1, MAX_CHAINS);
+    let base = base_seed(planner, override_seed);
 
     (0..num_chains)
         .into_par_iter()
-        .map(|seed| {
-            sa_lns_partial(
-                planner,
-                &valid_pinned,
-                &mut StdRng::seed_from_u64(seed as u64),
-            )
-        })
+        .map(|i| sa_lns(planner, &mut StdRng::seed_from_u64(base + i as u64)))
         .max_by(|a, b| {
             evaluate(planner, a, 0.0, 1.0)
                 .partial_cmp(&evaluate(planner, b, 0.0, 1.0))
@@ -104,10 +90,95 @@ pub fn solve_partial(planner: &Planner, pinned: &[(Point, Point, usize)]) -> Pla
         .unwrap_or_else(|| Plan { schedules: vec![] })
 }
 
+fn solve_sa_with_seed(planner: &Planner, seed: u64) -> Plan {
+    sa_lns(planner, &mut StdRng::seed_from_u64(seed))
+}
+
+fn solve_sa_partial(planner: &Planner, pinned: &[(Point, Point, usize)]) -> Plan {
+    if pinned.is_empty() {
+        return solve_sa(planner, None);
+    }
+
+    let num_chains = rayon::current_num_threads().clamp(1, MAX_CHAINS);
+    let base = base_seed(planner, None);
+
+    (0..num_chains)
+        .into_par_iter()
+        .map(|i| sa_lns_partial(planner, pinned, &mut StdRng::seed_from_u64(base + i as u64)))
+        .max_by(|a, b| {
+            evaluate(planner, a, 0.0, 1.0)
+                .partial_cmp(&evaluate(planner, b, 0.0, 1.0))
+                .unwrap_or(Ordering::Equal)
+        })
+        .unwrap_or_else(|| Plan { schedules: vec![] })
+}
+
+fn solve_sa_partial_with_seed(
+    planner: &Planner,
+    pinned: &[(Point, Point, usize)],
+    seed: u64,
+) -> Plan {
+    if pinned.is_empty() {
+        return solve_sa_with_seed(planner, seed);
+    }
+    sa_lns_partial(planner, pinned, &mut StdRng::seed_from_u64(seed))
+}
+
+fn solve_priority_result(
+    planner: &Planner,
+    pinned: &[(Point, Point, usize)],
+    override_seed: Option<u64>,
+) -> DecodeResult {
+    let seed = base_seed(planner, override_seed);
+    alns_search_pinned(planner, pinned, &mut StdRng::seed_from_u64(seed))
+}
+
+fn solve_priority(
+    planner: &Planner,
+    pinned: &[(Point, Point, usize)],
+    override_seed: Option<u64>,
+) -> Plan {
+    solve_priority_result(planner, pinned, override_seed).plan
+}
+
+/// Auto: まず priority/ALNS を試し、実行不可能または制約緩和（Relaxed）なら SA に fallback する。
+/// time budget を超えないよう priority 実行後の残り時間を SA に渡す。
+/// priority が time budget を使い切した場合は SA fallback を実行しない。
+fn solve_auto(planner: &Planner, pinned: &[(Point, Point, usize)]) -> Plan {
+    let start = Instant::now();
+    let priority_result = solve_priority_result(planner, pinned, None);
+    if priority_result.status == DecodeStatus::Feasible {
+        return priority_result.plan;
+    }
+
+    let remaining = planner
+        .time_budget
+        .map(|b| b.saturating_sub(start.elapsed()).max(MIN_REMAINING_TIME));
+    if remaining.is_some_and(|r| r <= MIN_REMAINING_TIME) {
+        return priority_result.plan;
+    }
+
+    let mut sa_planner = planner.clone();
+    sa_planner.set_time_budget(remaining);
+    let sa_plan = if pinned.is_empty() {
+        solve_sa(&sa_planner, None)
+    } else {
+        solve_sa_partial(&sa_planner, pinned)
+    };
+
+    if evaluate(planner, &sa_plan, 0.0, 1.0) > evaluate(planner, &priority_result.plan, 0.0, 1.0) {
+        sa_plan
+    } else {
+        priority_result.plan
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
-    use crate::{NormalDist, Planner, SleepConfig, Task};
+    use crate::{NormalDist, Planner, SleepConfig, Solver, Task};
 
     fn make_planner(task_count: usize) -> Planner {
         let mut planner = Planner::new(Point(0), SleepConfig::disabled());
@@ -201,5 +272,55 @@ mod tests {
         for (_s, e, _) in &plan.schedules {
             assert!(e.0 <= 10000);
         }
+    }
+
+    #[test]
+    fn plan_with_seed_is_always_sa() {
+        let mut planner = make_planner(3);
+        planner.set_seed(Some(42));
+        planner.set_solver(Solver::Priority);
+        let priority_solver_plan = planner.plan_with_seed(7);
+        planner.set_solver(Solver::Sa);
+        let sa_solver_plan = planner.plan_with_seed(7);
+        assert_eq!(priority_solver_plan, sa_solver_plan);
+    }
+
+    #[test]
+    fn plan_alns_with_seed_is_always_priority() {
+        let mut planner = make_planner(3);
+        planner.set_seed(Some(42));
+        planner.set_solver(Solver::Sa);
+        let sa_solver_plan = planner.plan_alns_with_seed(7);
+        planner.set_solver(Solver::Priority);
+        let priority_solver_plan = planner.plan_alns_with_seed(7);
+        assert_eq!(sa_solver_plan, priority_solver_plan);
+    }
+
+    #[test]
+    fn solve_respects_solver_priority() {
+        let mut planner = make_planner(3);
+        planner.set_seed(Some(42));
+        planner.set_solver(Solver::Priority);
+        let plan = planner.plan();
+        let alns_plan = planner.plan_alns_with_seed(42);
+        assert_eq!(plan, alns_plan);
+    }
+
+    #[test]
+    fn seed_is_deterministic() {
+        let mut planner = make_planner(3);
+        planner.set_seed(Some(42));
+        planner.set_solver(Solver::Priority);
+        let plan1 = planner.plan();
+        let plan2 = planner.plan();
+        assert_eq!(plan1, plan2);
+    }
+
+    #[test]
+    fn time_budget_zero_returns_initial_plan() {
+        let mut planner = make_planner(3);
+        planner.set_time_budget(Some(Duration::ZERO));
+        let plan = planner.plan();
+        assert_eq!(plan.schedules.len(), planner.tasks.len());
     }
 }

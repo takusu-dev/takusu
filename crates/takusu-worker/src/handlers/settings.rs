@@ -23,8 +23,15 @@ pub async fn update(mut req: worker::Request, env: Env) -> Result<Response, Work
     let sleep_end = body.sleep_end.clone().unwrap_or(existing.sleep_end);
     let comfortable_minutes = body.comfortable_minutes.or(existing.comfortable_minutes);
     let maximum_minutes = body.maximum_minutes.or(existing.maximum_minutes);
+    let solver = body.solver.clone().unwrap_or(existing.solver);
+    let time_budget_ms = body
+        .time_budget_ms
+        .filter(|&v| v > 0)
+        .or(existing.time_budget_ms);
+    let seed = body.seed.filter(|&v| v >= 0).or(existing.seed);
+    let warm_start = body.warm_start.unwrap_or(existing.warm_start);
     let stmt = database.prepare(
-        "UPDATE settings SET tz = ?1, sleep_start = ?2, sleep_end = ?3, comfortable_minutes = ?4, maximum_minutes = ?5, updated_at = datetime('now') WHERE id = 'active'",
+        "UPDATE settings SET tz = ?1, sleep_start = ?2, sleep_end = ?3, comfortable_minutes = ?4, maximum_minutes = ?5, solver = ?6, time_budget_ms = ?7, seed = ?8, warm_start = ?9, updated_at = datetime('now') WHERE id = 'active'",
     );
     stmt.bind(&[
         JsValue::from_str(&tz),
@@ -36,6 +43,13 @@ pub async fn update(mut req: worker::Request, env: Env) -> Result<Response, Work
         maximum_minutes
             .map(|v| JsValue::from_f64(v as f64))
             .unwrap_or(JsValue::NULL),
+        JsValue::from_str(&solver),
+        time_budget_ms
+            .map(|v| JsValue::from_f64(v as f64))
+            .unwrap_or(JsValue::NULL),
+        seed.map(|v| JsValue::from_f64(v as f64))
+            .unwrap_or(JsValue::NULL),
+        JsValue::from_bool(warm_start),
     ])?
     .run()
     .await
@@ -46,7 +60,7 @@ pub async fn update(mut req: worker::Request, env: Env) -> Result<Response, Work
 
 async fn get_inner(database: &worker::D1Database) -> Result<SettingsRow, WorkerError> {
     let stmt = database
-        .prepare("SELECT id, tz, sleep_start, sleep_end, comfortable_minutes, maximum_minutes, created_at, updated_at FROM settings WHERE id = 'active'");
+        .prepare("SELECT id, tz, sleep_start, sleep_end, comfortable_minutes, maximum_minutes, solver, time_budget_ms, seed, warm_start, created_at, updated_at FROM settings WHERE id = 'active'");
     let rows: Vec<SettingsRow> = safe_all(&stmt).await?;
     rows.into_iter()
         .next()

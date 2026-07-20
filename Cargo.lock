@@ -4299,6 +4299,8 @@ name = "takusu-util"
 version = "0.20260720.1"
 dependencies = [
  "jiff",
+ "serde",
+ "serde_json",
  "unicode-normalization",
  "uuid",
 ]
