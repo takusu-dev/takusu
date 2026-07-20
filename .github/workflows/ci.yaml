@@ -180,3 +180,34 @@ jobs:
       - name: ktlint check
         working-directory: mobile
         run: ktlint 'modules/**/*.kt' '!modules/takusu-server/android/src/main/java/uniffi/**'
+
+  kotlin-test:
+    needs: changes
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      needs.changes.outputs.kotlin == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
+        with:
+          extra_nix_config: |
+            build-dir = /nix/tmp
+
+      - name: Create Nix build directory
+        run: sudo install -d -m 1777 /nix/tmp
+
+      - name: Restore binary cache
+        uses: asa1984/infra/.github/actions/binary-cache@44165003348ea3578a66f8c879bfaf23a3c7cc18
+        with:
+          package: .#ci-android-libs
+
+      - name: Install Expo dependencies
+        working-directory: mobile
+        run: npm install --legacy-peer-deps
+
+      - name: Run Android unit tests
+        run: nix run .#test-android-unit

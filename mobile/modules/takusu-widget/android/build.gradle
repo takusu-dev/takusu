@@ -15,6 +15,11 @@ android {
   lintOptions {
     abortOnError false
   }
+  testOptions {
+    unitTests {
+      includeAndroidResources true
+    }
+  }
 }
 
 dependencies {
@@ -24,4 +29,7 @@ dependencies {
   implementation 'androidx.work:work-runtime-ktx:2.10.0'
   // RemoteViewsCompat / RemoteCollectionItems for collection widgets
   implementation 'androidx.core:core-remoteviews:1.1.0'
+
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.robolectric:robolectric:4.14.1'
 }
