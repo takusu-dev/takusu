@@ -62,7 +62,7 @@ takusu-agent (library + CLI binary)
 └── src/bin/agent.rs  # text mode and push-to-talk CLI
 
 takusu server/storage/client extensions
-├── migrations/014_memory.sql
+├── backend-specific memory migration (see design/plan-memory.md)
 ├── migrations/015_progress.sql
 ├── /api/schedule/preview
 ├── /api/memory/* and /api/tasks/similar
@@ -76,9 +76,10 @@ The Cloudflare Worker is a storage backend for D1: it exposes schedule read/save
 candidate back through the local application layer, which atomically saves it through the selected
 storage backend.
 
-The current latest local migration is `013_habit_task_display_id.sql`; therefore this plan starts
-at 014. SQLite/local and D1/Worker must expose the same storage behavior, while planner-only
-operations remain in the application layer.
+Migration numbers are maintained independently by the local SQLite and D1/Worker backends. The
+memory design uses the next available number in each backend rather than assuming a shared sequence.
+SQLite/local and D1/Worker must expose the same storage behavior, while planner-only operations
+remain in the application layer.
 
 ### Runtime data flow
 
@@ -467,55 +468,37 @@ size limits, confirmation, backup/rollback, and prompt-index refresh.
 
 ### WI-7: Memory server
 
-**Files**: `014_memory.sql`, storage trait/models and both backends, app/routes, and
-`takusu-client`.
+**Files**: the dedicated design and implementation described in [`design/plan-memory.md`](plan-memory.md):
+backend migrations, storage trait/models and both backends, app/routes, and `takusu-client`.
 
-Schema:
+`plan-memory.md` is the normative contract for the schema, canonical non-null subject keys, unique
+logical index, `revision` optimistic concurrency, mutation idempotency, source enum, normalization,
+deterministic search, and WI-8 Agent integration. In particular:
 
-```sql
-CREATE TABLE memories (
-    id           TEXT PRIMARY KEY,
-    kind         TEXT NOT NULL CHECK(kind IN ('proper_noun','fact','task_note')),
-    key          TEXT NOT NULL,
-    normalized_key TEXT NOT NULL,
-    content      TEXT NOT NULL,
-    subject_type TEXT,
-    subject_id   TEXT,
-    source       TEXT,
-    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    last_used_at TEXT
-);
-CREATE INDEX idx_memories_normalized_key ON memories(normalized_key);
-CREATE INDEX idx_memories_subject ON memories(subject_type, subject_id);
-```
-
-Endpoints:
-
-- `POST /api/memory` — create or explicitly upsert by normalized key/kind/subject;
-- `PATCH /api/memory/:id`;
-- `GET /api/memory/search?q=...&kind=...&limit=...`;
-- `DELETE /api/memory/:id`;
-- `GET /api/tasks/similar?q=...&limit=...`.
-
-Normalize Japanese/Latin width and case consistently in Rust for both backends. Search `key` and
-`content` with OR semantics and deterministic ranking: exact normalized key, key prefix, key
-substring, then content substring, with recency as a tie-breaker. Do not depend only on whitespace
-tokenization because Japanese text often has none. Similar tasks are completed tasks ranked by
-normalized title overlap and return estimate fields plus active `actual_minutes` once WI-9 exists.
+- use the next migration number independently in local and Worker; do not use the stale `014_memory.sql` name;
+- `POST /api/memory`, `PATCH /api/memory/:id`, `GET /api/memory/search`, `DELETE /api/memory/:id`, and `GET /api/tasks/similar` must expose the same behavior in both backends;
+- update/delete require `observed_revision`; approved mutations carry a stable operation ID and are safe to retry;
+- WI-7 returns optional `completed_at` and `actual_minutes` as null until WI-9 adds the fields;
+- memory writes never set `schedule_dirty`.
 
 The current repository is a single-workspace data model. If multi-user ownership is introduced,
 all memory, task, progress, schedule, and agent-session queries must be scoped together; adding only a
 `user_id` to memory would not be sufficient.
 
-**Verify**: create/upsert/update/search/delete, Japanese normalization/ranking, subject lookup,
+**Verify**: run the focused storage/API and Agent approval tests in `plan-memory.md`, including unique
+concurrency, idempotency replay, revision conflicts, Japanese normalization/ranking, subject lookup,
 similar completed tasks, limits, and local/Worker parity.
 
 ### WI-8: Memory tools and inference flow
 
-**Files**: `crates/takusu-agent/src/tools/memory.rs` and system-context rules.
+**Files**: `crates/takusu-agent/src/tools/memory.rs`, `AgentSession::execute_proposed_change`,
+`takusu-client`, and system-context rules. The detailed contract is in
+[`design/plan-memory.md`](plan-memory.md).
 
-Implement `memory_save`, `memory_update`, `memory_search`, `memory_delete`, and `similar_tasks`.
+Implement `memory_save`, `memory_update`, `memory_search`, `memory_delete`, and `similar_tasks`,
+and add the corresponding memory create/update/delete dispatch to the approval executor. Memory
+proposals must produce `ChangeReceipt.target_type = "memory"`, preserve `observed_revision`, use a
+stable operation ID for retries, and leave `schedule_dirty` unchanged.
 The system flow is:
 
 1. search a proper noun before treating it as unknown;
