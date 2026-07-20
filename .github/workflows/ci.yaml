@@ -191,6 +191,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          # easimon/maximize-build-space is flaky on current GitHub-hosted
+          # runners because the LVM setup can receive an invalid size and fail
+          # with "fallocate: invalid length value specified". free-disk-space
+          # only removes pre-installed software, which is enough now that
+          # runners provide a single large root filesystem.
+          tool-cache: true
+
       - name: Install Nix
         uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
         with:
