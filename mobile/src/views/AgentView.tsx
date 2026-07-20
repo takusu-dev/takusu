@@ -759,7 +759,7 @@ export function AgentView() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const { workersToken, ready } = useServer();
-  const { setShowInAgent } = useVoice();
+  const { pendingSessionId, setPendingSessionId } = useVoice();
   const [pendingResult, setPendingResult] = useState<VoiceResult | null>(null);
   const sendTextRef = useRef(sendText);
   const client = useMemo(
@@ -800,6 +800,7 @@ export function AgentView() {
   const flatListRef = useRef<FlatList<Message>>(null);
   const autoScrollRef = useRef(true);
   const skipSnapshotSaveRef = useRef(false);
+  const lastPendingSessionIdRef = useRef<string | null>(null);
   const viewOffset = useSharedValue(0);
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: viewOffset.value }],
@@ -918,6 +919,7 @@ export function AgentView() {
   useEffect(() => {
     let cancelled = false;
     async function init() {
+      setError(null);
       try {
         const [history, settings] = await Promise.all([
           loadSessionHistory(),
@@ -930,8 +932,31 @@ export function AgentView() {
         sessionHistoryCountRef.current = count;
 
         let ids = history.ids;
-        let index = history.activeIndex;
         if (!Array.isArray(ids)) ids = [];
+
+        if (pendingSessionId) {
+          if (lastPendingSessionIdRef.current !== pendingSessionId) {
+            // FloatingVoiceButton queued a brand-new session.
+            lastPendingSessionIdRef.current = pendingSessionId;
+            await activateSessionId(pendingSessionId, true);
+            setPendingSessionId(null);
+          }
+          if (!cancelled) setHistoryReady(true);
+          return;
+        }
+
+        if (lastPendingSessionIdRef.current !== null) {
+          // We consumed the queued new session in a previous effect run.
+          // `pendingSessionId` is already null (FloatingVoiceButton cleared it),
+          // so `pendingSessionId == null` here. Without this guard we would fall
+          // through to the normal history-load path and overwrite the just-created
+          // session with the previous active session. The ref is intentionally not
+          // reset to null; it is a marker that a queued session was already handled.
+          if (!cancelled) setHistoryReady(true);
+          return;
+        }
+
+        let index = history.activeIndex;
         if (index < 0 || index >= ids.length) {
           index = Math.max(0, ids.length - 1);
         }
@@ -987,7 +1012,7 @@ export function AgentView() {
     return () => {
       cancelled = true;
     };
-  }, [client, ready, workersToken]);
+  }, [client, ready, workersToken, pendingSessionId, setPendingSessionId]);
 
   useEffect(() => {
     if (!historyReady) return;
@@ -1058,10 +1083,6 @@ export function AgentView() {
       () => {},
     );
   }, [messages, approval, busy]);
-
-  useEffect(() => {
-    setShowInAgent(messages.length === 0);
-  }, [messages.length, setShowInAgent]);
 
   useEffect(() => {
     return voiceBridge.subscribe((r) => {
@@ -1700,64 +1721,66 @@ export function AgentView() {
             <Text style={styles.error}>{error}</Text>
           </Pressable>
         )}
-        <GestureDetector gesture={switcherGesture}>
-          <View
-            style={[
-              styles.switcher,
-              {
-                borderTopColor: colors.separator,
-                paddingBottom: 8,
-              },
-            ]}
-          >
-            <Pressable
-              disabled={activeIndex === 0 || isSwitching || busy}
-              onPress={() => switchSession(-1)}
-              style={styles.switcherButton}
+        {sessionIds.length > 1 && (
+          <GestureDetector gesture={switcherGesture}>
+            <View
+              style={[
+                styles.switcher,
+                {
+                  borderTopColor: colors.separator,
+                  paddingBottom: 8,
+                },
+              ]}
             >
-              <Ionicons
-                name="chevron-back"
-                size={20}
-                color={
-                  activeIndex > 0 && !isSwitching && !busy
-                    ? colors.black
-                    : colors.gray
-                }
-              />
-            </Pressable>
-            <View style={styles.dots}>
-              {sessionIds.map((id, i) => (
-                <View
-                  key={id}
-                  style={[
-                    styles.dot,
-                    {
-                      backgroundColor:
-                        i === activeIndex ? BRAND_COLOR : colors.grayLight,
-                    },
-                  ]}
+              <Pressable
+                disabled={activeIndex === 0 || isSwitching || busy}
+                onPress={() => switchSession(-1)}
+                style={styles.switcherButton}
+              >
+                <Ionicons
+                  name="chevron-back"
+                  size={20}
+                  color={
+                    activeIndex > 0 && !isSwitching && !busy
+                      ? colors.black
+                      : colors.gray
+                  }
                 />
-              ))}
-            </View>
-            <Pressable
-              disabled={
-                activeIndex >= sessionIds.length - 1 || isSwitching || busy
-              }
-              onPress={() => switchSession(1)}
-              style={styles.switcherButton}
-            >
-              <Ionicons
-                name="chevron-forward"
-                size={20}
-                color={
-                  activeIndex < sessionIds.length - 1 && !isSwitching && !busy
-                    ? colors.black
-                    : colors.gray
+              </Pressable>
+              <View style={styles.dots}>
+                {sessionIds.map((id, i) => (
+                  <View
+                    key={id}
+                    style={[
+                      styles.dot,
+                      {
+                        backgroundColor:
+                          i === activeIndex ? BRAND_COLOR : colors.grayLight,
+                      },
+                    ]}
+                  />
+                ))}
+              </View>
+              <Pressable
+                disabled={
+                  activeIndex >= sessionIds.length - 1 || isSwitching || busy
                 }
-              />
-            </Pressable>
-          </View>
-        </GestureDetector>
+                onPress={() => switchSession(1)}
+                style={styles.switcherButton}
+              >
+                <Ionicons
+                  name="chevron-forward"
+                  size={20}
+                  color={
+                    activeIndex < sessionIds.length - 1 && !isSwitching && !busy
+                      ? colors.black
+                      : colors.gray
+                  }
+                />
+              </Pressable>
+            </View>
+          </GestureDetector>
+        )}
         <View
           style={[
             styles.composer,

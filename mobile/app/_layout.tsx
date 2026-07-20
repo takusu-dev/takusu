@@ -11,6 +11,7 @@ import * as Sentry from '@sentry/react-native';
 import type { TakusuClient } from '@/src/api/client';
 import { ServerProvider, useServer } from '@/src/api/ServerProvider';
 import { VoiceProvider } from '@/src/api/VoiceContext';
+import { setRecordingChangeListener } from '@/src/utils/voice';
 import { FloatingVoiceButton } from '@/src/components/FloatingVoiceButton';
 import { installGlobalErrorHandler } from '@/src/api/installGlobalErrorHandler';
 import {
@@ -399,7 +400,7 @@ function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ServerProvider>
-          <VoiceProvider>
+          <VoiceProvider onRecordingChange={setRecordingChangeListener}>
             <ThemedApp />
           </VoiceProvider>
         </ServerProvider>
