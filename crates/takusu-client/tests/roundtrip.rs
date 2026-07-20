@@ -164,6 +164,7 @@ fn update_settings_serialization() {
         sleep_end: None,
         comfortable_minutes: None,
         maximum_minutes: None,
+        ..UpdateSettings::default()
     };
 
     let json = serde_json::to_value(&us).unwrap();
@@ -177,6 +178,37 @@ fn update_settings_serialization() {
             .contains_key("comfortable_minutes")
     );
     assert!(!json.as_object().unwrap().contains_key("maximum_minutes"));
+}
+
+#[test]
+fn update_settings_new_fields_serialization() {
+    let us = UpdateSettings {
+        tz: None,
+        sleep_start: None,
+        sleep_end: None,
+        comfortable_minutes: None,
+        maximum_minutes: None,
+        solver: Some("sa".to_string()),
+        time_budget_ms: Some(1500),
+        seed: Some(42),
+        warm_start: Some(true),
+    };
+
+    let json = serde_json::to_value(&us).unwrap();
+    assert_eq!(json["solver"], "sa");
+    assert_eq!(json["time_budget_ms"], 1500);
+    assert_eq!(json["seed"], 42);
+    assert_eq!(json["warm_start"], true);
+}
+
+#[test]
+fn update_settings_default_skips_new_fields() {
+    let us = UpdateSettings::default();
+    let json = serde_json::to_value(&us).unwrap();
+    assert!(!json.as_object().unwrap().contains_key("solver"));
+    assert!(!json.as_object().unwrap().contains_key("time_budget_ms"));
+    assert!(!json.as_object().unwrap().contains_key("seed"));
+    assert!(!json.as_object().unwrap().contains_key("warm_start"));
 }
 
 #[test]

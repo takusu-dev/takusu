@@ -10,7 +10,7 @@ use super::evaluate::evaluate_with_scratch;
 use super::*;
 use crate::placement::*;
 
-// ── decode API (quality-benchmark only until production integration) ───
+// ── decode API ───
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RepairMode {
@@ -19,9 +19,7 @@ pub enum RepairMode {
     LowestDelta,
     Regret2,
     Deadline,
-    #[cfg(test)]
     Habit,
-    #[cfg(test)]
     Stability,
 }
 
@@ -32,14 +30,14 @@ pub struct DecodeInput<'a> {
     pub repair_mode: RepairMode,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Clone)]
 pub struct DecodeResult {
     pub plan: Plan,
     pub diagnostics: DecodeDiagnostics,
     pub status: DecodeStatus,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct DecodeDiagnostics {
     pub failures: Vec<PlacementFailure>,
     pub relaxed: Vec<RelaxedPlacement>,
@@ -315,7 +313,6 @@ fn place_task_earliest(
     )
 }
 
-#[cfg(test)]
 fn place_task_near_anchor(
     planner: &Planner,
     schedules: &[Placement],
@@ -620,7 +617,6 @@ pub fn decode(planner: &Planner, input: DecodeInput<'_>) -> DecodeResult {
                     place_task_earliest(planner, &schedules, &input, id, &index, &dependents);
                 (id, s, e, err)
             }
-            #[cfg(test)]
             RepairMode::Habit => {
                 let previous = planner.previous_schedule();
                 let mut ordered = ready;
@@ -655,7 +651,6 @@ pub fn decode(planner: &Planner, input: DecodeInput<'_>) -> DecodeResult {
                 );
                 (id, s, e, err)
             }
-            #[cfg(test)]
             RepairMode::Stability => {
                 let previous = planner.previous_schedule();
                 let mut ordered = ready;
@@ -870,7 +865,7 @@ fn normalize_priority(priority: &[usize], n: usize) -> (Vec<usize>, bool) {
     (normalized, invalid)
 }
 
-#[cfg(all(test, feature = "quality-benchmark"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -882,6 +877,7 @@ mod tests {
             sleep: SleepConfig::disabled(),
             workload: WorkloadConfig::default(),
             previous_schedule: vec![],
+            ..Planner::default()
         }
     }
 

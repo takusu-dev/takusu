@@ -4,32 +4,6 @@
 
 use serde::{Deserialize, Serialize};
 
-pub mod bool_compat {
-    use serde::{Deserialize, Deserializer};
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<bool, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let v = serde_json::Value::deserialize(deserializer)?;
-        match v {
-            serde_json::Value::Bool(b) => Ok(b),
-            serde_json::Value::Number(n) => Ok(n.as_f64().map(|f| f != 0.0).unwrap_or(false)),
-            serde_json::Value::Null => Ok(false),
-            _ => Err(serde::de::Error::custom(
-                "expected bool or number for boolean field",
-            )),
-        }
-    }
-
-    pub fn serialize<S>(value: &bool, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serde::Serialize::serialize(value, serializer)
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskRow {
     pub id: String,
@@ -42,17 +16,17 @@ pub struct TaskRow {
     pub avg_minutes: i64,
     pub sigma_minutes: i64,
     pub depends: String,
-    #[serde(with = "bool_compat", default)]
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub parallelizable: bool,
-    #[serde(with = "bool_compat", default)]
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub allows_parallel: bool,
     pub abandonability: f64,
     pub status: String,
     pub habit_id: Option<String>,
     pub ical_uid: Option<String>,
-    #[serde(with = "bool_compat", default)]
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub user_edited: bool,
-    #[serde(with = "bool_compat", default)]
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub fixed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub habit_step_id: Option<String>,
@@ -135,14 +109,14 @@ pub struct HabitRow {
     pub end_time: String,
     pub avg_minutes: i64,
     pub sigma_minutes: i64,
-    #[serde(with = "bool_compat", default)]
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub parallelizable: bool,
-    #[serde(with = "bool_compat", default)]
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub allows_parallel: bool,
     pub abandonability: f64,
-    #[serde(with = "bool_compat", default)]
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub active: bool,
-    #[serde(with = "bool_compat", default)]
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub fixed: bool,
     #[serde(default)]
     pub window_mode: String,
@@ -238,12 +212,12 @@ pub struct HabitStepRow {
     pub end_time: String,
     pub avg_minutes: i64,
     pub sigma_minutes: i64,
-    #[serde(with = "bool_compat", default)]
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub parallelizable: bool,
-    #[serde(with = "bool_compat", default)]
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub allows_parallel: bool,
     pub abandonability: f64,
-    #[serde(with = "bool_compat", default)]
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub fixed: bool,
     pub depends_on: String,
     pub created_at: String,
@@ -326,7 +300,7 @@ pub struct TokenCreateResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GoogleCalSettingsRow {
     pub id: String,
-    #[serde(with = "bool_compat", default)]
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub enabled: bool,
     pub calendar_id: String,
     pub client_id: String,
@@ -367,6 +341,18 @@ pub struct SettingsRow {
     pub comfortable_minutes: Option<i64>,
     /// #459: 1 日の最大作業時間（分）。`None` または未設定の場合はデフォルトを使う。
     pub maximum_minutes: Option<i64>,
+    /// 使用する solver。`"sa"` / `"priority"` / `"auto"`。空または不明な場合は `auto`。
+    #[serde(default)]
+    pub solver: String,
+    /// 求解時間の上限（ミリ秒）。`None` または `0` の場合は制限なし。
+    #[serde(default)]
+    pub time_budget_ms: Option<i64>,
+    /// 乱数シード。`None` の場合は決定的なデフォルト。
+    #[serde(default)]
+    pub seed: Option<i64>,
+    /// 前回スケジュールから priority/ALNS の初期解を warm start する。
+    #[serde(with = "takusu_util::bool_compat", default)]
+    pub warm_start: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -377,7 +363,7 @@ pub struct SkillRow {
     pub name: String,
     pub description: String,
     pub body: String,
-    #[serde(with = "bool_compat", default)]
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub built_in: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -470,4 +456,20 @@ pub struct UpdateSettings {
     /// #459: 1 日の最大作業時間（分）。`None` または未設定の場合はデフォルトを使う。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub maximum_minutes: Option<i64>,
+    /// 使用する solver。`"sa"` / `"priority"` / `"auto"`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solver: Option<String>,
+    /// 求解時間の上限（ミリ秒）。`None` または `0` で制限なし。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_budget_ms: Option<i64>,
+    /// 乱数シード。`None` でデフォルト。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<i64>,
+    /// 前回スケジュールから priority/ALNS の初期解を warm start する。
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "takusu_util::option_bool_compat"
+    )]
+    pub warm_start: Option<bool>,
 }

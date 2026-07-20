@@ -4,8 +4,7 @@ use std::cell::RefCell;
 
 use super::*;
 
-#[cfg_attr(not(feature = "quality-benchmark"), allow(dead_code))]
-pub(crate) type Placement = (Point, Point, usize);
+pub type Placement = (Point, Point, usize);
 
 thread_local! {
     /// `day_load_with_candidate` 用の scratch buffer。
@@ -73,7 +72,6 @@ fn day_start_for(planner: &Planner, p: Point) -> Point {
     Point(base + (p.0 - base).div_euclid(spd) * spd)
 }
 
-#[cfg_attr(not(feature = "quality-benchmark"), allow(dead_code))]
 pub(crate) fn next_day_start(planner: &Planner, p: Point) -> Point {
     day_start_for(planner, p) + slots_per_day(planner)
 }
@@ -119,7 +117,6 @@ fn day_load_with_candidate(
 
 /// 与えられた時刻が属する日の、既存スケジュールの最大終了時刻を返す。
 /// cursor 以降にタスクがなければ cursor を返す。
-#[cfg_attr(not(feature = "quality-benchmark"), allow(dead_code))]
 pub(crate) fn max_end_in_day(planner: &Planner, schedules: &[Placement], cursor: Point) -> Point {
     let spd = slots_per_day(planner);
     let day_start = day_start_for(planner, cursor);
@@ -262,7 +259,6 @@ pub(crate) fn try_place<const CHECK_CAPACITY: bool>(
     }
 }
 
-#[cfg_attr(not(feature = "quality-benchmark"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlacementFailure {
     DependencyCycle,

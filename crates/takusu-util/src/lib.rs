@@ -1,4 +1,6 @@
+pub mod bool_compat;
 pub mod memory;
+pub mod option_bool_compat;
 
 use std::str::FromStr;
 use uuid::Uuid;

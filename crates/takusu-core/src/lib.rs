@@ -43,13 +43,19 @@
 //! `SleepConfig::disabled()` で睡眠制約なし。
 
 mod anneal;
-#[cfg(feature = "quality-benchmark")]
-mod decoder;
+pub mod decoder;
 pub mod evaluate;
 mod placement;
 mod solver;
 
+pub use decoder::{
+    DecodeDiagnostics, DecodeInput, DecodeResult, DecodeStatus, PinnedConflict, RelaxedPlacement,
+    RepairMode,
+};
+pub use placement::{Placement, PlacementFailure};
+
 use jiff::Timestamp;
+use std::time::Duration;
 use thiserror::Error;
 
 #[cfg(feature = "jemalloc")]
@@ -307,7 +313,7 @@ pub struct Task {
 ///
 /// タスクは常に全数スケジュールされる。
 /// `abandonability` が高いタスクは deadline 超過が許容されるが、諦められない。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
     /// スケジュールされたタスク。各要素は `(開始slot, 終了slot, task_id)`。
     pub schedules: Vec<(Point, Point, usize)>,
@@ -334,6 +340,20 @@ impl Plan {
     pub fn is_scheduled(&self, task_id: usize) -> bool {
         self.schedules.iter().any(|(_, _, id)| *id == task_id)
     }
+}
+
+// ── Solver ─────────────────────────────────────────────────────────────
+
+/// 使用するソルバー。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Solver {
+    /// 焼きなまし法 (SA) + LNS。デフォルト。
+    #[default]
+    Sa,
+    /// priority decoder + ALNS。
+    Priority,
+    /// まず priority/ALNS を試し、実行不可能または制約緩和（Relaxed）の場合のみ SA に fallback する。
+    Auto,
 }
 
 // ── RescheduleRange ───────────────────────────────────────────────────
@@ -386,7 +406,7 @@ type ResultE<T> = Result<T, Error>;
 /// let plan = p.plan();
 /// assert!(plan.is_scheduled(0));
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Planner {
     tasks: Vec<Task>,
     now: Point,
@@ -400,6 +420,15 @@ pub struct Planner {
     /// 各タスクの (start, end) で、SAが移動を嫌うようにする。
     /// 直近のタスクほど強いペナルティ。
     previous_schedule: Vec<Option<(Point, Point)>>,
+
+    /// 使用するソルバー。デフォルトは `Solver::Sa`。
+    solver: Solver,
+    /// 求解時間の上限。`None` の場合は既存の反復数で完了する。
+    time_budget: Option<Duration>,
+    /// 乱数シード。`None` の場合は決定的なデフォルトシードを使用する。
+    seed: Option<u64>,
+    /// 前回スケジュールから priority/ALNS の初期解を warm start するか。
+    warm_start: bool,
 }
 
 impl Planner {
@@ -415,6 +444,10 @@ impl Planner {
             sleep,
             workload: WorkloadConfig::default(),
             previous_schedule: vec![],
+            solver: Solver::default(),
+            time_budget: None,
+            seed: None,
+            warm_start: false,
         }
     }
 
@@ -438,7 +471,8 @@ impl Planner {
 
     /// スケジュールを計算して返す。
     ///
-    /// 内部では 4 本の独立 SA チェーンを並列実行し最良解を選択する。
+    /// `solver` / `time_budget` / `seed` / `warm_start` の設定に従い、
+    /// SA または priority/ALNS で解を探索する。
     /// 全タスクがスケジュールされる。`abandonability` が高いタスクは
     /// deadline 超過ペナルティが軽減されるが、ドロップはされない。
     ///
@@ -448,15 +482,14 @@ impl Planner {
         solver::solve(self)
     }
 
-    /// 指定した seed の単一 SA chain で計画する。
+    /// 指定した seed で単一 SA chain を実行する（solver 設定に関わらず SA）。
     #[doc(hidden)]
-    #[cfg(feature = "quality-benchmark")]
     pub fn plan_with_seed(&self, seed: u64) -> Plan {
         solver::solve_with_seed(self, seed)
     }
 
+    /// 指定した seed で priority/ALNS を実行する（solver 設定に関わらず priority）。
     #[doc(hidden)]
-    #[cfg(feature = "quality-benchmark")]
     pub fn plan_alns_with_seed(&self, seed: u64) -> Plan {
         solver::solve_alns_with_seed(self, seed)
     }
@@ -480,13 +513,11 @@ impl Planner {
     }
 
     #[doc(hidden)]
-    #[cfg(feature = "quality-benchmark")]
     pub fn workload(&self) -> WorkloadConfig {
         self.workload
     }
 
     #[doc(hidden)]
-    #[cfg(feature = "quality-benchmark")]
     pub fn sleep_config(&self) -> SleepConfig {
         self.sleep
     }
@@ -498,16 +529,36 @@ impl Planner {
         self.workload = workload;
     }
 
+    /// 使用するソルバーを設定する。
+    pub fn set_solver(&mut self, solver: Solver) {
+        self.solver = solver;
+    }
+
+    /// 求解時間の上限を設定する。`None` で制限なし。
+    pub fn set_time_budget(&mut self, budget: Option<Duration>) {
+        self.time_budget = budget;
+    }
+
+    /// 乱数シードを設定する。`None` で決定的なデフォルト。
+    pub fn set_seed(&mut self, seed: Option<u64>) {
+        self.seed = seed;
+    }
+
+    /// 前回スケジュールからの warm start を有効/無効にする。
+    pub fn set_warm_start(&mut self, warm_start: bool) {
+        self.warm_start = warm_start;
+    }
+
     /// 固定タスクを保持したまま未固定タスクをスケジュール。
     ///
     /// `pinned` に含まれるタスクは指定位置に固定され、近傍操作の対象外。
-    /// 未固定タスクのみがSAで配置される。評価関数は固定・未固定両方を考慮する。
+    /// 未固定タスクのみが探索される。評価関数は固定・未固定両方を考慮する。
     pub fn plan_partial(&self, pinned: &[(Point, Point, usize)]) -> Plan {
         solver::solve_partial(self, pinned)
     }
 
+    /// 指定した seed で SA partial を実行する（solver 設定に関わらず SA）。
     #[doc(hidden)]
-    #[cfg(feature = "quality-benchmark")]
     pub fn plan_partial_with_seed(&self, pinned: &[(Point, Point, usize)], seed: u64) -> Plan {
         solver::solve_partial_with_seed(self, pinned, seed)
     }
@@ -516,7 +567,7 @@ impl Planner {
     ///
     /// `current_schedule` に含まれるタスクのうち、期間外のものを固定とみなす。
     /// `extra_pinned` に追加で固定したいタスクも指定できる。
-    /// 期間内 (`range.from <= start` かつ `end <= range.until`) のタスクのみがSAで再配置される。
+    /// 期間内 (`range.from <= start` かつ `end <= range.until`) のタスクのみが再配置される。
     ///
     /// 元の `Planner` に対して `solve_partial` を実行するため、固定タスクと再配置タスクの
     /// 時間重複・並列条件・依存関係を同じ評価関数で扱う。 (#454)
@@ -538,8 +589,8 @@ impl Planner {
         solver::solve_partial(self, &pinned)
     }
 
+    /// 指定した seed で SA range 再スケジュールを実行する（solver 設定に関わらず SA）。
     #[doc(hidden)]
-    #[cfg(feature = "quality-benchmark")]
     pub fn plan_in_range_with_seed(
         &self,
         range: &RescheduleRange,

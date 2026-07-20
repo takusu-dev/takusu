@@ -193,6 +193,18 @@ enum ConfigCommands {
         /// Maximum daily workload in hours (stored as minutes)
         #[arg(long)]
         maximum: Option<f64>,
+        /// Solver to use: sa, priority, or auto
+        #[arg(long)]
+        solver: Option<String>,
+        /// Time budget for solving in milliseconds
+        #[arg(long)]
+        time_budget_ms: Option<i64>,
+        /// Random seed for the solver
+        #[arg(long)]
+        seed: Option<i64>,
+        /// Warm-start priority/ALNS from the previous schedule
+        #[arg(long)]
+        warm_start: Option<bool>,
     },
 }
 
@@ -737,6 +749,10 @@ fn main() {
                     sleep_end,
                     comfortable: _,
                     maximum: _,
+                    solver: _,
+                    time_budget_ms: _,
+                    seed: _,
+                    warm_start: _,
                 } => {
                     if let Some(v) = storage {
                         config::set("storage", v).unwrap_or_else(|e| {
@@ -1980,6 +1996,10 @@ async fn run_config(cmd: ConfigCommands, app: &TakusuApp, cfg: &CliConfig) -> Re
             sleep_end,
             comfortable,
             maximum,
+            solver,
+            time_budget_ms,
+            seed,
+            warm_start,
             ..
         } => {
             let mut update = UpdateSettings {
@@ -1988,6 +2008,10 @@ async fn run_config(cmd: ConfigCommands, app: &TakusuApp, cfg: &CliConfig) -> Re
                 sleep_end,
                 comfortable_minutes: comfortable.map(|h| (h * 60.0).round() as i64),
                 maximum_minutes: maximum.map(|h| (h * 60.0).round() as i64),
+                solver,
+                time_budget_ms,
+                seed,
+                warm_start,
             };
             if update.tz.is_none() && cfg.tz.is_some() {
                 update.tz = cfg.tz.clone();
@@ -2002,8 +2026,16 @@ async fn run_config(cmd: ConfigCommands, app: &TakusuApp, cfg: &CliConfig) -> Re
             let comfortable_h = resp.comfortable_minutes.unwrap_or(0) as f64 / 60.0;
             let maximum_h = resp.maximum_minutes.unwrap_or(0) as f64 / 60.0;
             println!(
-                "Settings updated: tz={}, sleep_start={}, sleep_end={}, comfortable={:.2}h, maximum={:.2}h",
-                resp.tz, resp.sleep_start, resp.sleep_end, comfortable_h, maximum_h
+                "Settings updated: tz={}, sleep_start={}, sleep_end={}, comfortable={:.2}h, maximum={:.2}h, solver={}, time_budget_ms={:?}, seed={:?}, warm_start={}",
+                resp.tz,
+                resp.sleep_start,
+                resp.sleep_end,
+                comfortable_h,
+                maximum_h,
+                resp.solver,
+                resp.time_budget_ms,
+                resp.seed,
+                resp.warm_start
             );
         }
     }
