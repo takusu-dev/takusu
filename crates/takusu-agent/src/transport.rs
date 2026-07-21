@@ -112,7 +112,7 @@ pub struct AgentApiState {
     pub factory: Arc<dyn SessionFactory>,
     user_input_provider: Arc<dyn UserInputProvider>,
     sessions: Mutex<BoundedMap<String, Arc<AgentSession>>>,
-    turn_results: Mutex<BoundedMap<(String, String), TurnResultDto>>,
+    turn_results: Mutex<BoundedMap<(String, String, &'static str), TurnResultDto>>,
     approval_results: Mutex<BoundedMap<(String, String), ApprovalResultDto>>,
 }
 
@@ -221,6 +221,17 @@ pub struct TurnRequest {
     pub idempotency_key: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditTurnRequest {
+    pub text: String,
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevertRequest {
+    pub after_user: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct TurnResultDto {
     pub text: String,
@@ -285,6 +296,14 @@ pub fn router(state: Arc<AgentApiState>) -> Router {
         .route("/sessions", post(create_session))
         .route("/sessions/{id}/turns", post(run_turn))
         .route("/sessions/{id}/turns/stream", post(run_turn_stream))
+        .route(
+            "/sessions/{id}/turns/{turn_index}/edit/stream",
+            post(edit_turn_stream),
+        )
+        .route(
+            "/sessions/{id}/turns/{turn_index}/revert",
+            post(revert_turn),
+        )
         .route("/sessions/{id}/approval", get(get_approval))
         .route(
             "/sessions/{id}/approvals/{approval_id}",
@@ -365,7 +384,7 @@ async fn run_turn(
     let key = body.value.idempotency_key.filter(|key| !key.is_empty());
     if let Some(key) = &key
         && let Ok(results) = state.turn_results.lock()
-        && let Some(result) = results.get(&(id.clone(), key.clone()))
+        && let Some(result) = results.get(&(id.clone(), key.clone(), "turn"))
     {
         return Json(Versioned {
             version: API_VERSION,
@@ -380,7 +399,7 @@ async fn run_turn(
     if let Some(key) = key
         && let Ok(mut results) = state.turn_results.lock()
     {
-        results.insert((id, key), result.clone());
+        results.insert((id, key, "turn"), result.clone());
     }
     Json(Versioned {
         version: API_VERSION,
@@ -408,7 +427,7 @@ async fn run_turn_stream(
     let key = body.value.idempotency_key.filter(|key| !key.is_empty());
     if let Some(key) = &key
         && let Ok(results) = state.turn_results.lock()
-        && let Some(result) = results.get(&(id.clone(), key.clone()))
+        && let Some(result) = results.get(&(id.clone(), key.clone(), "turn"))
     {
         let cached = TurnResult {
             text: result.text.clone(),
@@ -444,7 +463,7 @@ async fn run_turn_stream(
                         if let Some(key) = key2
                             && let Ok(mut results) = state2.turn_results.lock()
                         {
-                            results.insert((id2, key), TurnResultDto::from(result));
+                            results.insert((id2, key, "turn"), TurnResultDto::from(result));
                         }
                     }
                     Err(error) => {
@@ -461,6 +480,109 @@ async fn run_turn_stream(
     Sse::new(stream)
         .keep_alive(KeepAlive::default())
         .into_response()
+}
+
+async fn edit_turn_stream(
+    State(state): State<Arc<AgentApiState>>,
+    Path((id, turn_index)): Path<(String, usize)>,
+    headers: HeaderMap,
+    Json(body): Json<Versioned<EditTurnRequest>>,
+) -> Response {
+    if !authorized(&headers, &state.bearer_token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if body.version != API_VERSION || body.value.text.trim().is_empty() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let session = match state.session(&id) {
+        Some(session) => session,
+        None => return StatusCode::NOT_FOUND.into_response(),
+    };
+    let key = body.value.idempotency_key.filter(|key| !key.is_empty());
+    if let Some(key) = &key
+        && let Ok(results) = state.turn_results.lock()
+        && let Some(result) = results.get(&(id.clone(), key.clone(), "edit"))
+    {
+        let cached = TurnResult {
+            text: result.text.clone(),
+            changes: result.changes.clone(),
+            schedule_dirty: result.schedule_dirty,
+            approval_request: result.approval_request.clone(),
+        };
+        let event = TurnEvent::Done(cached);
+        let json = serde_json::to_string(&event).unwrap();
+        let stream = futures_util::stream::once(std::future::ready(Ok::<_, Infallible>(
+            Event::default().data(json),
+        )));
+        return Sse::new(stream)
+            .keep_alive(KeepAlive::default())
+            .into_response();
+    }
+    let text = body.value.text.clone();
+    let (tx, rx) = unbounded_channel::<TurnEvent>();
+    let tx_closed = tx.clone();
+    let session2 = session.clone();
+    let id2 = id.clone();
+    let key2 = key.clone();
+    let state2 = Arc::clone(&state);
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = tx_closed.closed() => {}
+            result = session2.edit_turn_stream(turn_index, &text, |event| {
+                let _ = tx.send(event);
+            }) => {
+                match result {
+                    Ok(result) => {
+                        let _ = tx.send(TurnEvent::Done(result.clone()));
+                        if let Some(key) = key2
+                            && let Ok(mut results) = state2.turn_results.lock()
+                        {
+                            results.insert((id2, key, "edit"), TurnResultDto::from(result));
+                        }
+                    }
+                    Err(error) => {
+                        let _ = tx.send(TurnEvent::Error(error.to_string()));
+                    }
+                }
+            }
+        }
+    });
+    let stream = UnboundedReceiverStream::new(rx).map(|event| {
+        let json = serde_json::to_string(&event).unwrap();
+        Ok::<_, Infallible>(Event::default().data(json))
+    });
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+async fn revert_turn(
+    State(state): State<Arc<AgentApiState>>,
+    Path((id, turn_index)): Path<(String, usize)>,
+    headers: HeaderMap,
+    Json(body): Json<Versioned<RevertRequest>>,
+) -> Response {
+    if !authorized(&headers, &state.bearer_token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if body.version != API_VERSION {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let session = match state.session(&id) {
+        Some(session) => session,
+        None => return StatusCode::NOT_FOUND.into_response(),
+    };
+    match session
+        .truncate_history(turn_index, body.value.after_user)
+        .await
+    {
+        Ok(()) => Json(Versioned {
+            version: API_VERSION,
+            value: serde_json::json!({ "ok": true }),
+        })
+        .into_response(),
+        Err(error) => agent_error(error),
+    }
 }
 
 async fn get_approval(
