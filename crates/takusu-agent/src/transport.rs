@@ -242,6 +242,18 @@ pub struct CreateSessionResponse {
     pub session_id: String,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CreateSessionRequest {
+    #[serde(default)]
+    pub permissions: Option<crate::Permissions>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UpdateSessionSettings {
+    #[serde(default)]
+    pub permissions: Option<crate::Permissions>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurnRequest {
     pub text: String,
@@ -264,6 +276,7 @@ pub struct UpdateAgentLlmSettings {
     pub base_url: Option<String>,
     pub model: Option<String>,
     pub api_key: Option<String>,
+    pub permissions: Option<crate::Permissions>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -360,6 +373,7 @@ pub fn router(state: Arc<AgentApiState>) -> Router {
             "/sessions/{id}/turns/{turn_index}/revert",
             post(revert_turn),
         )
+        .route("/sessions/{id}/settings", put(update_session_settings))
         .route("/sessions/{id}/approval", get(get_approval))
         .route(
             "/sessions/{id}/approvals/{approval_id}",
@@ -422,6 +436,9 @@ async fn update_settings(
         if let Some(api_key) = llm.api_key {
             config.llm.api_key = api_key;
         }
+        if let Some(permissions) = llm.permissions {
+            config.llm.permissions = permissions;
+        }
     }
     if let Some(audio) = body.value.audio
         && let Some(tts) = audio.tts
@@ -452,15 +469,29 @@ async fn update_settings(
     .into_response()
 }
 
-async fn create_session(State(state): State<Arc<AgentApiState>>, headers: HeaderMap) -> Response {
+async fn create_session(
+    State(state): State<Arc<AgentApiState>>,
+    headers: HeaderMap,
+    body: Option<Json<Versioned<CreateSessionRequest>>>,
+) -> Response {
     if let Err(status) = auth_token(&state, &headers).await {
         return status.into_response();
+    }
+    if let Some(Json(ref body)) = body
+        && body.version != API_VERSION
+    {
+        return StatusCode::BAD_REQUEST.into_response();
     }
     let config = state.config.read().await;
     let session = match state.factory.create(&config, state.token.clone()) {
         Ok(session) => Arc::new(session),
         Err(error) => return agent_error(error),
     };
+    if let Some(Json(body)) = body
+        && let Some(permissions) = body.value.permissions
+    {
+        session.set_session_permissions(permissions);
+    }
     let id = format!("session-{}", Uuid::now_v7());
     let mut sessions = match state.sessions.lock() {
         Ok(guard) => guard,
@@ -692,6 +723,31 @@ async fn revert_turn(
         .into_response(),
         Err(error) => agent_error(error),
     }
+}
+
+async fn update_session_settings(
+    State(state): State<Arc<AgentApiState>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<Versioned<UpdateSessionSettings>>,
+) -> Response {
+    if let Err(status) = auth_token(&state, &headers).await {
+        return status.into_response();
+    }
+    if body.version != API_VERSION {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let Some(session) = state.session(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if let Some(permissions) = body.value.permissions {
+        session.set_session_permissions(permissions);
+    }
+    Json(Versioned {
+        version: API_VERSION,
+        value: serde_json::json!({ "ok": true }),
+    })
+    .into_response()
 }
 
 async fn get_approval(
@@ -972,6 +1028,7 @@ mod tests {
                     base_url: Some("http://new".into()),
                     model: Some("new-model".into()),
                     api_key: None,
+                    permissions: None,
                 }),
                 audio: Some(UpdateAgentAudioSettings {
                     tts: Some(UpdateAgentTtsSettings {
@@ -1008,6 +1065,7 @@ mod tests {
                     base_url: None,
                     model: None,
                     api_key: Some("new".into()),
+                    permissions: None,
                 }),
                 ..Default::default()
             },

@@ -29,6 +29,8 @@ const KEYS = {
   activeTtsProvider: 'takusu.agent.activeTtsProvider',
 } as const;
 
+export type PermissionsMap = Record<string, boolean>;
+
 export interface LlmProviderSettings {
   id: string;
   name: string;
@@ -37,6 +39,7 @@ export interface LlmProviderSettings {
   cachedModels: string[];
   modelsFetchedAt?: string;
   cost?: string;
+  permissions?: PermissionsMap;
 }
 
 export type TtsProvider = 'cartesia' | 'android';

@@ -63,6 +63,7 @@ function normalizeLlmProvider(p: LlmProviderSettings): LlmProviderSettings {
     cachedModels: p.cachedModels,
     modelsFetchedAt: p.modelsFetchedAt,
     cost: p.cost,
+    permissions: p.permissions,
   };
 }
 
@@ -73,6 +74,7 @@ function newLlmProvider(): LlmProviderSettings {
     baseUrl: '',
     selectedModel: '',
     cachedModels: [],
+    permissions: {},
   };
 }
 
@@ -451,6 +453,10 @@ export function AgentSettingsView() {
             <Text style={{ color: colors.gray, fontSize: 12 }}>
               {provider.selectedModel || '未設定'}
               {provider.cost ? ` · ${provider.cost}` : ''}
+              {provider.permissions &&
+              Object.values(provider.permissions).some(Boolean)
+                ? ` · ${Object.values(provider.permissions).filter(Boolean).length} 権限`
+                : ''}
             </Text>
           </View>
           <Pressable

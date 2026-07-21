@@ -9,7 +9,11 @@ import {
   View,
 } from 'react-native';
 import { useColors, BRAND_COLOR, COLORS } from '@/src/theme';
-import { type LlmProviderSettings } from '@/src/api/settingsStore';
+import {
+  type LlmProviderSettings,
+  type PermissionsMap,
+} from '@/src/api/settingsStore';
+import { PermissionsEditor } from '@/src/components/PermissionsEditor';
 
 interface Props {
   provider: LlmProviderSettings;
@@ -263,6 +267,15 @@ export function LlmProviderEditor({
         autoCapitalize="none"
         placeholder="モデルID（手入力可）"
       />
+      <Text style={[styles.sectionTitle, { color: colors.black }]}>
+        自動承認する権限
+      </Text>
+      <PermissionsEditor
+        permissions={provider.permissions}
+        onChange={(permissions: PermissionsMap) =>
+          onChangeProvider({ ...provider, permissions })
+        }
+      />
       <View style={styles.actions}>
         <Pressable onPress={handleSave} style={styles.save} disabled={saving}>
           {saving ? (
@@ -342,4 +355,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   removeText: { color: '#B33A3A' },
+  sectionTitle: { fontSize: 15, fontWeight: '700', marginTop: 4 },
 });

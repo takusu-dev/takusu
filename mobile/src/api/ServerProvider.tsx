@@ -92,6 +92,12 @@ async function buildAgentUpdateSettings(): Promise<AgentUpdateSettings> {
     if (llmKey) {
       body.llm.api_key = llmKey;
     }
+    if (
+      activeLlm.permissions &&
+      Object.keys(activeLlm.permissions).length > 0
+    ) {
+      body.llm.permissions = activeLlm.permissions;
+    }
   }
   if (activeTts) {
     body.audio = {

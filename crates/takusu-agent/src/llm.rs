@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
 
+use crate::Permissions;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LlmProviderKind {
@@ -41,6 +43,8 @@ pub struct LlmConfig {
     pub api_key_env: String,
     #[serde(default)]
     pub api_key: String,
+    #[serde(default)]
+    pub permissions: Permissions,
     #[serde(default = "default_max_history")]
     pub max_history: usize,
     #[serde(default = "default_max_context_tokens")]
@@ -58,6 +62,7 @@ impl Default for LlmConfig {
             model: default_llm_model(),
             api_key_env: default_llm_api_key_env(),
             api_key: String::new(),
+            permissions: Permissions::default(),
             max_history: default_max_history(),
             max_context_tokens: default_max_context_tokens(),
             max_tool_calls: default_max_tool_calls(),
