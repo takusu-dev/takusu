@@ -1,3 +1,5 @@
+use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -14,22 +16,30 @@ use takusu_storage::{
     UpdateGoogleCalSettings, UpdateHabit, UpdateMemory, UpdateSettings, UpdateSkill, UpdateTask,
     storage::StorageResult,
 };
+use tokio::sync::RwLock;
 
 const RETRY_STATUSES: &[u16] = &[429, 500, 502, 503, 504];
 const RETRY_DELAYS_MS: &[u64] = &[100, 200, 400];
 
+#[derive(Clone)]
+struct Credentials {
+    url: Arc<str>,
+    token: Arc<str>,
+}
+
 pub struct WorkersStorage {
     http: Client,
-    base_url: String,
-    token: String,
+    credentials: RwLock<Credentials>,
 }
 
 impl WorkersStorage {
     pub fn new_with(base_url: String, token: String) -> Self {
         Self {
             http: Client::new(),
-            base_url: base_url.trim_end_matches('/').to_string(),
-            token,
+            credentials: RwLock::new(Credentials {
+                url: Arc::from(base_url.trim_end_matches('/')),
+                token: Arc::from(token.into_boxed_str()),
+            }),
         }
     }
 
@@ -42,9 +52,22 @@ impl WorkersStorage {
     pub fn new_with_client(client: Client, base_url: String, token: String) -> Self {
         Self {
             http: client,
-            base_url: base_url.trim_end_matches('/').to_string(),
-            token,
+            credentials: RwLock::new(Credentials {
+                url: Arc::from(base_url.trim_end_matches('/')),
+                token: Arc::from(token.into_boxed_str()),
+            }),
         }
+    }
+
+    pub async fn update_credentials(&self, base_url: String, token: String) {
+        *self.credentials.write().await = Credentials {
+            url: Arc::from(base_url.trim_end_matches('/')),
+            token: Arc::from(token.into_boxed_str()),
+        };
+    }
+
+    async fn credentials(&self) -> Credentials {
+        self.credentials.read().await.clone()
     }
 
     async fn request<T: DeserializeOwned>(
@@ -52,13 +75,17 @@ impl WorkersStorage {
         method: reqwest::Method,
         path: &str,
     ) -> StorageResult<T> {
-        let url = format!("{}{}", self.base_url, path);
         let resp = self
-            .send_with_retry(|| {
-                self.http
-                    .request(method.clone(), &url)
-                    .bearer_auth(&self.token)
-                    .build()
+            .send_with_retry(move || {
+                let method = method.clone();
+                async move {
+                    let creds = self.credentials().await;
+                    let url = format!("{}{}", creds.url.as_ref(), path);
+                    self.http
+                        .request(method.clone(), &url)
+                        .bearer_auth(creds.token.as_ref())
+                        .build()
+                }
             })
             .await?;
         map_response(resp).await
@@ -70,14 +97,22 @@ impl WorkersStorage {
         path: &str,
         body: &B,
     ) -> StorageResult<T> {
-        let url = format!("{}{}", self.base_url, path);
+        let body_json = serde_json::to_string(body)
+            .map_err(|e| StorageError::Internal(format!("serialize body: {e}")))?;
         let resp = self
-            .send_with_retry(|| {
-                self.http
-                    .request(method.clone(), &url)
-                    .bearer_auth(&self.token)
-                    .json(body)
-                    .build()
+            .send_with_retry(move || {
+                let method = method.clone();
+                let body_json = body_json.clone();
+                async move {
+                    let creds = self.credentials().await;
+                    let url = format!("{}{}", creds.url.as_ref(), path);
+                    self.http
+                        .request(method.clone(), &url)
+                        .bearer_auth(creds.token.as_ref())
+                        .header("content-type", "application/json")
+                        .body(body_json.clone())
+                        .build()
+                }
             })
             .await?;
         map_response(resp).await
@@ -89,39 +124,54 @@ impl WorkersStorage {
         path: &str,
         body: &B,
     ) -> StorageResult<()> {
-        let url = format!("{}{}", self.base_url, path);
+        let body_json = serde_json::to_string(body)
+            .map_err(|e| StorageError::Internal(format!("serialize body: {e}")))?;
         let resp = self
-            .send_with_retry(|| {
-                self.http
-                    .request(method.clone(), &url)
-                    .bearer_auth(&self.token)
-                    .json(body)
-                    .build()
+            .send_with_retry(move || {
+                let method = method.clone();
+                let body_json = body_json.clone();
+                async move {
+                    let creds = self.credentials().await;
+                    let url = format!("{}{}", creds.url.as_ref(), path);
+                    self.http
+                        .request(method.clone(), &url)
+                        .bearer_auth(creds.token.as_ref())
+                        .header("content-type", "application/json")
+                        .body(body_json.clone())
+                        .build()
+                }
             })
             .await?;
         map_empty(resp).await
     }
 
     async fn request_no_body(&self, method: reqwest::Method, path: &str) -> StorageResult<()> {
-        let url = format!("{}{}", self.base_url, path);
         let resp = self
-            .send_with_retry(|| {
-                self.http
-                    .request(method.clone(), &url)
-                    .bearer_auth(&self.token)
-                    .build()
+            .send_with_retry(move || {
+                let method = method.clone();
+                async move {
+                    let creds = self.credentials().await;
+                    let url = format!("{}{}", creds.url.as_ref(), path);
+                    self.http
+                        .request(method.clone(), &url)
+                        .bearer_auth(creds.token.as_ref())
+                        .build()
+                }
             })
             .await?;
         map_empty(resp).await
     }
 
-    async fn send_with_retry<F>(&self, build: F) -> StorageResult<reqwest::Response>
+    async fn send_with_retry<F, Fut>(&self, build: F) -> StorageResult<reqwest::Response>
     where
-        F: Fn() -> reqwest::Result<reqwest::Request>,
+        F: Fn() -> Fut,
+        Fut: Future<Output = reqwest::Result<reqwest::Request>> + Send,
     {
         let mut attempt = 0;
         loop {
-            let req = build().map_err(|e| StorageError::Internal(format!("build request: {e}")))?;
+            let req = build()
+                .await
+                .map_err(|e| StorageError::Internal(format!("build request: {e}")))?;
             let result = self.http.execute(req).await;
             match result {
                 Ok(resp) if !RETRY_STATUSES.contains(&resp.status().as_u16()) => return Ok(resp),
@@ -186,9 +236,12 @@ fn map_status(status: u16, body: String) -> StorageError {
 #[async_trait]
 impl Storage for WorkersStorage {
     async fn verify_token(&self, token: &str) -> StorageResult<bool> {
-        let url = format!("{}/api/auth/verify", self.base_url);
         let resp = self
-            .send_with_retry(|| self.http.get(&url).bearer_auth(token).build())
+            .send_with_retry(move || async move {
+                let creds = self.credentials().await;
+                let url = format!("{}/api/auth/verify", creds.url.as_ref());
+                self.http.get(&url).bearer_auth(token).build()
+            })
             .await?;
         match resp.status().as_u16() {
             200 => Ok(true),
@@ -396,9 +449,15 @@ impl Storage for WorkersStorage {
     }
 
     async fn get_schedule(&self) -> StorageResult<Option<ScheduleRow>> {
-        let url = format!("{}/api/schedule", self.base_url);
         let resp = self
-            .send_with_retry(|| self.http.get(&url).bearer_auth(&self.token).build())
+            .send_with_retry(move || async move {
+                let creds = self.credentials().await;
+                let url = format!("{}/api/schedule", creds.url.as_ref());
+                self.http
+                    .get(&url)
+                    .bearer_auth(creds.token.as_ref())
+                    .build()
+            })
             .await?;
         match resp.status().as_u16() {
             200 => {
@@ -494,9 +553,15 @@ impl Storage for WorkersStorage {
     }
 
     async fn clear_gcal_mappings(&self) -> StorageResult<()> {
-        let url = format!("{}/api/sync/mappings?all=1", self.base_url);
         let resp = self
-            .send_with_retry(|| self.http.delete(&url).bearer_auth(&self.token).build())
+            .send_with_retry(move || async move {
+                let creds = self.credentials().await;
+                let url = format!("{}/api/sync/mappings?all=1", creds.url.as_ref());
+                self.http
+                    .delete(&url)
+                    .bearer_auth(creds.token.as_ref())
+                    .build()
+            })
             .await?;
         map_empty(resp).await
     }
@@ -704,7 +769,8 @@ impl Storage for WorkersStorage {
     }
 
     async fn health_check(&self) -> StorageResult<String> {
-        let url = format!("{}/health", self.base_url);
+        let creds = self.credentials().await;
+        let url = format!("{}/health", creds.url.as_ref());
         // Per-request timeout so an unreachable worker fails fast instead of
         // hanging indefinitely (the shared client has no default timeout).
         let resp = self
@@ -726,6 +792,12 @@ impl Storage for WorkersStorage {
             .map_err(|e| StorageError::Internal(format!("worker health check body read: {e}")))?;
         Ok(format!("worker ok: {}", body.trim()))
     }
+
+    async fn update_workers_credentials(&self, url: &str, token: &str) -> StorageResult<()> {
+        self.update_credentials(url.to_string(), token.to_string())
+            .await;
+        Ok(())
+    }
 }
 
 impl WorkersStorage {
@@ -736,19 +808,26 @@ impl WorkersStorage {
         body: &B,
         operation_id: Option<&str>,
     ) -> StorageResult<T> {
-        let url = format!("{}{}", self.base_url, path);
-        let body_ref = body;
+        let body_json = serde_json::to_string(body)
+            .map_err(|e| StorageError::Internal(format!("serialize body: {e}")))?;
         let resp = self
-            .send_with_retry(|| {
-                let mut req = self
-                    .http
-                    .request(method.clone(), &url)
-                    .bearer_auth(&self.token)
-                    .json(body_ref);
-                if let Some(op_id) = operation_id {
-                    req = req.header("Idempotency-Key", op_id);
+            .send_with_retry(move || {
+                let method = method.clone();
+                let body_json = body_json.clone();
+                async move {
+                    let creds = self.credentials().await;
+                    let url = format!("{}{}", creds.url.as_ref(), path);
+                    let mut req = self
+                        .http
+                        .request(method.clone(), &url)
+                        .bearer_auth(creds.token.as_ref())
+                        .header("content-type", "application/json")
+                        .body(body_json.clone());
+                    if let Some(op_id) = operation_id {
+                        req = req.header("Idempotency-Key", op_id);
+                    }
+                    req.build()
                 }
-                req.build()
             })
             .await?;
         map_response(resp).await
@@ -760,17 +839,21 @@ impl WorkersStorage {
         path: &str,
         operation_id: Option<&str>,
     ) -> StorageResult<()> {
-        let url = format!("{}{}", self.base_url, path);
         let resp = self
-            .send_with_retry(|| {
-                let mut req = self
-                    .http
-                    .request(method.clone(), &url)
-                    .bearer_auth(&self.token);
-                if let Some(op_id) = operation_id {
-                    req = req.header("Idempotency-Key", op_id);
+            .send_with_retry(move || {
+                let method = method.clone();
+                async move {
+                    let creds = self.credentials().await;
+                    let url = format!("{}{}", creds.url.as_ref(), path);
+                    let mut req = self
+                        .http
+                        .request(method.clone(), &url)
+                        .bearer_auth(creds.token.as_ref());
+                    if let Some(op_id) = operation_id {
+                        req = req.header("Idempotency-Key", op_id);
+                    }
+                    req.build()
                 }
-                req.build()
             })
             .await?;
         map_empty(resp).await

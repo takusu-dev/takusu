@@ -767,6 +767,13 @@ impl TakusuApp {
         }
     }
 
+    pub async fn update_workers_credentials(&self, url: &str, token: &str) -> Result<(), AppError> {
+        self.storage
+            .update_workers_credentials(url, token)
+            .await
+            .map_err(storage_to_app)
+    }
+
     // ── Settings ──────────────────────────────────────────
 
     async fn get_settings_or_default(&self) -> Result<SettingsRow, AppError> {

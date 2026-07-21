@@ -42,7 +42,7 @@ export class ApiError extends Error {
 }
 
 export class TakusuClient {
-  private baseUrl: string;
+  readonly baseUrl: string;
   private token: string;
 
   constructor(baseUrl: string, token: string) {
@@ -308,5 +308,12 @@ export class TakusuClient {
   // ── Health ──
   async workerHealthCheck(): Promise<{ status: string }> {
     return this.request('GET', '/api/workers/health');
+  }
+
+  async updateWorkersConfig(body: {
+    url: string;
+    token: string;
+  }): Promise<{ ok: boolean }> {
+    return this.request('PUT', '/api/workers/config', body);
   }
 }

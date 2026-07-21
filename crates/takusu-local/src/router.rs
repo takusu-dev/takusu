@@ -115,6 +115,10 @@ pub fn router(state: AppState) -> Router {
         .route("/sync/mappings", get(handlers::sync::list_mappings))
         .route("/settings", get(handlers::settings::get_settings))
         .route("/settings", put(handlers::settings::update_settings))
+        .route(
+            "/workers/config",
+            put(handlers::settings::update_workers_config),
+        )
         .route("/skills", get(handlers::skills::list_skills))
         .route("/skills", post(handlers::skills::create_skill))
         .route("/skills/{slug}", get(handlers::skills::get_skill))

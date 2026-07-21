@@ -32,6 +32,30 @@ export class AbortError extends Error {
   }
 }
 
+export interface AgentLlmSettings {
+  base_url: string;
+  model: string;
+  api_key?: string;
+}
+
+export interface AgentTtsSettings {
+  backend: string;
+  api_key?: string;
+  voice_id: string;
+  language: string;
+  sample_rate: number;
+  speed?: number;
+}
+
+export interface AgentAudioSettings {
+  tts: AgentTtsSettings;
+}
+
+export interface AgentUpdateSettings {
+  llm?: AgentLlmSettings;
+  audio?: AgentAudioSettings;
+}
+
 export class AgentClient {
   private readonly baseUrl: string;
   private readonly token: string;
@@ -310,6 +334,14 @@ export class AgentClient {
     await this.request<void>(
       'DELETE',
       `/api/agent/v1/sessions/${encodeURIComponent(sessionId)}`,
+    );
+  }
+
+  async updateSettings(settings: AgentUpdateSettings): Promise<void> {
+    await this.request<{ version: number; ok: boolean }>(
+      'PUT',
+      '/api/agent/v1/settings',
+      { version: 1, ...settings },
     );
   }
 }

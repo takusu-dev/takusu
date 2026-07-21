@@ -6,6 +6,8 @@ mod model;
 
 use std::sync::{Arc, Mutex};
 
+use tokio::sync::RwLock;
+
 use axum::Router;
 use takusu_agent::tools::takusu::{TimeZoneCache, register_tools};
 use takusu_agent::transport::{AgentApiState, ApiUserInputProvider};
@@ -142,7 +144,9 @@ impl TakusuServer {
         ));
         let token_cache = Arc::new(TokenCache::with_default_ttl());
         let app = Arc::new(TakusuApp::new(storage, token_cache));
-        let state = AppState::new(app, root_token.clone());
+        let shared_token: Arc<RwLock<Arc<str>>> =
+            Arc::new(RwLock::new(Arc::from(root_token.as_str())));
+        let state = AppState::new_with_token(app, shared_token.clone());
 
         // Agent sessions run in the same process as the planner server. The
         // factory creates a fresh session for each authenticated Mobile
@@ -155,16 +159,13 @@ impl TakusuServer {
             })?
         };
         agent_config.server.url = format!("http://127.0.0.1:{port}");
-        agent_config.server.token = root_token.clone();
         let user_input_provider = Arc::new(ApiUserInputProvider::new());
         let agent_factory = Arc::new({
             let user_input_provider = user_input_provider.clone();
-            move || {
-                let llm = takusu_agent::llm::OpenAIClient::new(agent_config.llm.clone())?;
-                let planner_client = takusu_client::Client::new(
-                    &agent_config.server.url,
-                    &agent_config.server.token,
-                );
+            move |config: &AgentConfig, token: Arc<RwLock<Arc<str>>>| {
+                let llm = takusu_agent::llm::OpenAIClient::new(config.llm.clone())?;
+                let planner_client =
+                    takusu_client::Client::new_with_token(&config.server.url, token);
                 let tz_cache = TimeZoneCache::new(planner_client.clone());
                 let mut registry = ToolRegistry::new();
                 register_tools(
@@ -174,7 +175,7 @@ impl TakusuServer {
                     user_input_provider.clone(),
                 );
                 Ok(AgentSession::new_with_client_and_cache(
-                    agent_config.clone(),
+                    config.clone(),
                     planner_client,
                     tz_cache,
                     registry,
@@ -182,10 +183,11 @@ impl TakusuServer {
                 ))
             }
         });
-        let agent_state = Arc::new(AgentApiState::new(
-            root_token,
+        let agent_state = Arc::new(AgentApiState::new_with_token(
+            shared_token,
             agent_factory,
             user_input_provider,
+            agent_config,
         ));
         let app_router = router(state).merge(Router::new().nest(
             "/api/agent/v1",
