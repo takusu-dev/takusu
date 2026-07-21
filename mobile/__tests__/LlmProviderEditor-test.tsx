@@ -86,30 +86,30 @@ describe('formatCost', () => {
     expect(formatCost({ prompt: '', completion: '' })).toBeUndefined();
   });
 
-  it('formats prompt and completion per 1K tokens', () => {
+  it('formats prompt and completion per 1M tokens', () => {
     const pricing: ModelPricing = {
       prompt: '0.0000025',
       completion: '0.00001',
     };
-    expect(formatCost(pricing)).toBe('in $0.0025, out $0.01 / 1K tokens');
+    expect(formatCost(pricing)).toBe('in $2.5, out $10 / 1M tokens');
   });
 
   it('formats numeric pricing values', () => {
     expect(formatCost({ prompt: 0.000005, completion: 0.000015 })).toBe(
-      'in $0.005, out $0.015 / 1K tokens',
+      'in $5, out $15 / 1M tokens',
     );
   });
 
   it('formats only prompt or only completion', () => {
-    expect(formatCost({ prompt: '0.000005' })).toBe('$0.005 / 1K tokens');
-    expect(formatCost({ completion: '0.000015' })).toBe('$0.015 / 1K tokens');
+    expect(formatCost({ prompt: '0.000005' })).toBe('$5 / 1M tokens');
+    expect(formatCost({ completion: '0.000015' })).toBe('$15 / 1M tokens');
   });
 
   it('ignores invalid pricing values', () => {
     expect(formatCost({ prompt: 'not a number' })).toBeUndefined();
     expect(formatCost({ prompt: -1 })).toBeUndefined();
     expect(formatCost({ prompt: -1, completion: '0.00001' })).toBe(
-      '$0.01 / 1K tokens',
+      '$10 / 1M tokens',
     );
   });
 });
@@ -121,7 +121,7 @@ describe('LlmProviderEditor', () => {
         ...baseProvider,
         cachedModels: ['existing-model'],
         selectedModel: 'existing-model',
-        cost: '$0.005 / 1K tokens',
+        cost: '$5 / 1M tokens',
       },
     });
 
@@ -131,7 +131,7 @@ describe('LlmProviderEditor', () => {
       expect(onChangeProvider).toHaveBeenCalledWith(
         expect.objectContaining({
           selectedModel: 'existing-model',
-          cost: '$0.005 / 1K tokens',
+          cost: '$5 / 1M tokens',
         }),
       ),
     );
@@ -142,7 +142,7 @@ describe('LlmProviderEditor', () => {
       provider: {
         ...baseProvider,
         selectedModel: 'existing-model',
-        cost: '$0.005 / 1K tokens',
+        cost: '$5 / 1M tokens',
       },
     });
 
@@ -155,7 +155,7 @@ describe('LlmProviderEditor', () => {
       expect(onChangeProvider).toHaveBeenCalledWith(
         expect.objectContaining({
           selectedModel: 'existing-model',
-          cost: '$0.005 / 1K tokens',
+          cost: '$5 / 1M tokens',
         }),
       ),
     );
@@ -166,7 +166,7 @@ describe('LlmProviderEditor', () => {
       provider: {
         ...baseProvider,
         selectedModel: 'existing-model',
-        cost: '$0.005 / 1K tokens',
+        cost: '$5 / 1M tokens',
       },
     });
 
@@ -206,7 +206,7 @@ describe('LlmProviderEditor', () => {
     fireEvent.press(getByText('モデルを取得'));
 
     await waitFor(() => {
-      expect(getByText('in $0.0025, out $0.01 / 1K tokens')).toBeTruthy();
+      expect(getByText('in $2.5, out $10 / 1M tokens')).toBeTruthy();
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -220,7 +220,7 @@ describe('LlmProviderEditor', () => {
       expect.objectContaining({
         cachedModels: ['model-1', 'model-2'],
         selectedModel: 'model-1',
-        cost: 'in $0.0025, out $0.01 / 1K tokens',
+        cost: 'in $2.5, out $10 / 1M tokens',
       }),
     );
   });

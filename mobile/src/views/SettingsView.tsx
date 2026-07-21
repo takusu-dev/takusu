@@ -23,6 +23,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Menu } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import * as Application from 'expo-application';
 import * as FileSystem from 'expo-file-system';
@@ -31,7 +32,7 @@ import * as Clipboard from 'expo-clipboard';
 import Constants from 'expo-constants';
 import { useServer } from '@/src/api/ServerProvider';
 import type { GoogleCalSettings, SettingsRow } from '@/src/api/types';
-import { useColors, BRAND_COLOR, APP_THEMES } from '@/src/theme';
+import { useColors, BRAND_COLOR, APP_THEMES, type AppTheme } from '@/src/theme';
 import {
   formatTime,
   minutesToTime,
@@ -94,6 +95,19 @@ function parseHoursToMinutes(value: string): number | null {
   const n = parseFloat(trimmed);
   if (!isFinite(n) || n < 0) return null;
   return Math.round(n * 60);
+}
+
+function themeLabel(t: AppTheme): string {
+  switch (t) {
+    case 'light':
+      return 'Light';
+    case 'dark':
+      return 'Dark';
+    case 'catppuccin':
+      return 'Catppuccin';
+    case 'aura-soft-dark':
+      return 'Aura Soft';
+  }
 }
 
 // ── Category list screen ──
@@ -255,6 +269,9 @@ export function SettingsDetailView({
   // Undo steps input — local text state, committed on blur to avoid
   // trimming the undo stack through intermediate values while typing.
   const [undoStepsInput, setUndoStepsInput] = useState(String(undoSteps));
+
+  // Theme dropdown menu
+  const [themeMenuVisible, setThemeMenuVisible] = useState(false);
 
   // Google Calendar state
   const [gcalSettings, setGcalSettings] = useState<GoogleCalSettings | null>(
@@ -752,42 +769,49 @@ export function SettingsDetailView({
                 <Text style={[styles.settingLabel, { color: colors.black }]}>
                   テーマ
                 </Text>
-                <View style={styles.themeSelector}>
-                  {APP_THEMES.map((t) => (
+                <Menu
+                  visible={themeMenuVisible}
+                  onDismiss={() => setThemeMenuVisible(false)}
+                  anchor={
                     <Pressable
-                      key={t}
-                      onPress={() => {
-                        haptic.select();
-                        setTheme(t);
-                      }}
+                      onPress={() => setThemeMenuVisible(true)}
                       style={[
-                        styles.themeButton,
+                        styles.themeDropdown,
                         {
-                          backgroundColor:
-                            theme === t ? BRAND_COLOR : colors.surface,
+                          backgroundColor: colors.surface,
                           borderColor: colors.separator,
                         },
                       ]}
                     >
                       <Text
                         style={[
-                          styles.themeButtonText,
-                          {
-                            color: theme === t ? '#FFFFFF' : colors.black,
-                          },
+                          styles.themeDropdownText,
+                          { color: colors.black },
                         ]}
                       >
-                        {t === 'light'
-                          ? 'Light'
-                          : t === 'dark'
-                            ? 'Dark'
-                            : t === 'catppuccin'
-                              ? 'Catppuccin'
-                              : 'Aura Soft'}
+                        {themeLabel(theme)}
                       </Text>
+                      <Ionicons
+                        name="chevron-down"
+                        size={16}
+                        color={colors.black}
+                      />
                     </Pressable>
+                  }
+                >
+                  {APP_THEMES.map((t) => (
+                    <Menu.Item
+                      key={t}
+                      title={themeLabel(t)}
+                      leadingIcon={theme === t ? 'check' : undefined}
+                      onPress={() => {
+                        setThemeMenuVisible(false);
+                        haptic.select();
+                        setTheme(t);
+                      }}
+                    />
                   ))}
-                </View>
+                </Menu>
               </View>
 
               <View style={styles.field}>
@@ -1856,20 +1880,18 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     paddingHorizontal: 4,
   },
-  themeSelector: {
+  themeDropdown: {
     flexDirection: 'row',
-    gap: 8,
-  },
-  themeButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    borderWidth: 1,
-    minWidth: 80,
     alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    minWidth: 140,
   },
-  themeButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
+  themeDropdownText: {
+    fontSize: 15,
+    fontWeight: '500',
   },
 });

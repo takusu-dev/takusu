@@ -61,13 +61,14 @@ export function formatCost(
   const completion = parsePrice(pricing?.completion);
   if (prompt === undefined && completion === undefined) return undefined;
   if (prompt !== undefined && completion !== undefined) {
-    return `in ${formatMoney(prompt * 1000)}, out ${formatMoney(
-      completion * 1000,
-    )} / 1K tokens`;
+    return `in ${formatMoney(prompt * 1000000)}, out ${formatMoney(
+      completion * 1000000,
+    )} / 1M tokens`;
   }
-  if (prompt !== undefined) return `${formatMoney(prompt * 1000)} / 1K tokens`;
+  if (prompt !== undefined)
+    return `${formatMoney(prompt * 1000000)} / 1M tokens`;
   if (completion !== undefined)
-    return `${formatMoney(completion * 1000)} / 1K tokens`;
+    return `${formatMoney(completion * 1000000)} / 1M tokens`;
 }
 
 export function LlmProviderEditor({
