@@ -5,6 +5,7 @@ import type {
   TurnEvent,
   UserInputAnswer,
 } from './agentTypes';
+import type { PermissionsMap } from './settingsStore';
 
 export type { AgentTurnResult };
 
@@ -36,6 +37,7 @@ export interface AgentLlmSettings {
   base_url: string;
   model: string;
   api_key?: string;
+  permissions?: PermissionsMap;
 }
 
 export interface AgentTtsSettings {
@@ -91,12 +93,24 @@ export class AgentClient {
     return this.request<AgentCapabilities>('GET', '/api/agent/v1/capabilities');
   }
 
-  async createSession(): Promise<string> {
+  async createSession(permissions?: PermissionsMap): Promise<string> {
     const response = await this.request<{ session_id: string }>(
       'POST',
       '/api/agent/v1/sessions',
+      { version: 1, permissions },
     );
     return response.session_id;
+  }
+
+  async updateSessionSettings(
+    sessionId: string,
+    permissions?: PermissionsMap,
+  ): Promise<void> {
+    await this.request<{ ok: boolean }>(
+      'PUT',
+      `/api/agent/v1/sessions/${encodeURIComponent(sessionId)}/settings`,
+      { version: 1, permissions },
+    );
   }
 
   async runTurn(

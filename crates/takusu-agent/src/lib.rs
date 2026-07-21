@@ -3,11 +3,14 @@ pub mod audio;
 pub mod audio_config;
 pub mod bundled_skills;
 pub mod llm;
+pub mod permissions;
 pub mod runner;
 pub mod tool;
 pub mod tools;
 pub mod transport;
 pub mod user_input;
+
+pub use permissions::Permissions;
 
 pub use tool::{
     ChangeReceipt, InferredField, ProposedChange, Tool, ToolError, ToolOutput, ToolRegistry,
@@ -189,6 +192,9 @@ pub struct AgentSession {
     /// Estimated tokens of the last built system prompt, used for consistent history trimming.
     last_system_estimate: Mutex<Option<usize>>,
     pending_approval: Mutex<Option<ApprovalRequest>>,
+    /// Per-session permission overrides. Session permissions take precedence over provider
+    /// permissions configured in `config.llm.permissions`.
+    session_permissions: Mutex<Permissions>,
     session_id: String,
     approval_sequence: Mutex<u64>,
     schedule_dirty: Mutex<bool>,
@@ -244,12 +250,32 @@ impl AgentSession {
             last_prompt_tokens: Mutex::new(None),
             last_system_estimate: Mutex::new(None),
             pending_approval: Mutex::new(None),
+            session_permissions: Mutex::new(Permissions::default()),
             session_id: new_session_id(),
             approval_sequence: Mutex::new(0),
             schedule_dirty: Mutex::new(false),
             bundled_skills_synced: std::sync::atomic::AtomicBool::new(false),
             skills_index: Mutex::new(None),
         }
+    }
+
+    pub fn set_session_permissions(&self, permissions: Permissions) {
+        *self.session_permissions.lock().unwrap() = permissions;
+    }
+
+    fn is_auto_approved(&self, target: &str, operation: &str) -> bool {
+        let session = self.session_permissions.lock().unwrap();
+        if let Some(allowed) = session.resolve(target, operation) {
+            return allowed;
+        }
+        self.config.llm.permissions.is_allowed(target, operation)
+    }
+
+    fn all_changes_allowed(&self, changes: &[ProposedChange]) -> bool {
+        changes.iter().all(|change| {
+            let target = change.target_label.split_whitespace().next().unwrap_or("");
+            self.is_auto_approved(target, &change.operation)
+        })
     }
 
     pub async fn run_turn(&self, user_text: &str) -> Result<TurnResult, AgentError> {
@@ -295,12 +321,26 @@ impl AgentSession {
                         text.clone(),
                     )));
                     self.replace_history(local, response.prompt_tokens, system_estimate);
+                    let all_allowed =
+                        !proposed_changes.is_empty() && self.all_changes_allowed(&proposed_changes);
                     let approval_request = self.make_approval_request(
                         proposed_changes,
                         inferred_fields,
                         approval_why,
                         approval_warnings,
                     );
+                    if all_allowed && let Some(request) = approval_request {
+                        *self.pending_approval.lock().unwrap() = None;
+                        let result = self.execute_approved_changes(request, true).await?;
+                        let mut final_changes = changes;
+                        final_changes.extend(result.changes);
+                        return Ok(TurnResult {
+                            text,
+                            changes: final_changes,
+                            schedule_dirty: result.schedule_dirty,
+                            approval_request: None,
+                        });
+                    }
                     *self.schedule_dirty.lock().unwrap() = schedule_dirty;
                     return Ok(TurnResult {
                         text,
@@ -510,12 +550,26 @@ impl AgentSession {
                                 text.clone(),
                             )));
                             self.replace_history(local, prompt_tokens, system_estimate);
+                            let all_allowed = !proposed_changes.is_empty()
+                                && self.all_changes_allowed(&proposed_changes);
                             let approval_request = self.make_approval_request(
                                 proposed_changes,
                                 inferred_fields,
                                 approval_why,
                                 approval_warnings,
                             );
+                            if all_allowed && let Some(request) = approval_request {
+                                *self.pending_approval.lock().unwrap() = None;
+                                let result = self.execute_approved_changes(request, true).await?;
+                                let mut final_changes = changes;
+                                final_changes.extend(result.changes);
+                                return Ok(TurnResult {
+                                    text,
+                                    changes: final_changes,
+                                    schedule_dirty: result.schedule_dirty,
+                                    approval_request: None,
+                                });
+                            }
                             *self.schedule_dirty.lock().unwrap() = schedule_dirty;
                             return Ok(TurnResult {
                                 text,
@@ -673,11 +727,15 @@ impl AgentSession {
         Ok(results)
     }
 
-    fn build_approval_resolution_message(approved: bool, changes: &[ProposedChange]) -> String {
-        let header = if approved {
-            "ユーザーは以下の提案を承認し、変更を適用しました。"
-        } else {
-            "ユーザーは以下の提案を拒否しました。"
+    fn build_approval_resolution_message(
+        approved: bool,
+        changes: &[ProposedChange],
+        auto: bool,
+    ) -> String {
+        let header = match (approved, auto) {
+            (true, true) => "以下の変更は自動承認され、適用されました。",
+            (true, false) => "ユーザーは以下の提案を承認し、変更を適用しました。",
+            (false, _) => "ユーザーは以下の提案を拒否しました。",
         };
         let mut lines = vec![header.to_string()];
         for change in changes {
@@ -711,9 +769,10 @@ impl AgentSession {
         if jiff::Timestamp::now() >= request.expires_at {
             return Err(AgentError::Tool(ToolError::Cancelled));
         }
-        let resolution_message = Self::build_approval_resolution_message(approve, &request.changes);
-        let system_estimate = self.last_system_estimate.lock().unwrap().unwrap_or(0);
         if !approve {
+            let system_estimate = self.last_system_estimate.lock().unwrap().unwrap_or(0);
+            let resolution_message =
+                Self::build_approval_resolution_message(false, &request.changes, false);
             let mut local = self.history.lock().unwrap().clone();
             local.push(llm::Message::User(resolution_message));
             self.replace_history(local, None, system_estimate);
@@ -724,6 +783,15 @@ impl AgentSession {
                 schedule_dirty: *self.schedule_dirty.lock().unwrap(),
             });
         }
+        self.execute_approved_changes(request, false).await
+    }
+
+    async fn execute_approved_changes(
+        &self,
+        request: ApprovalRequest,
+        auto: bool,
+    ) -> Result<ApprovalResult, AgentError> {
+        let changes_for_message = request.changes.clone();
         let schedule_commit = request.changes.iter().any(|change| {
             change.target_label.split_whitespace().next() == Some("schedule")
                 && matches!(change.operation.as_str(), "generate" | "reschedule")
@@ -755,21 +823,31 @@ impl AgentSession {
             schedule_dirty = false;
         }
         *self.schedule_dirty.lock().unwrap() = schedule_dirty;
+        let system_estimate = self.last_system_estimate.lock().unwrap().unwrap_or(0);
         if let Some((change, e)) = execution_error {
-            let error_message = format!(
-                "ユーザーは以下の提案を承認しましたが、変更の適用中にエラーが発生しました: {}\n- {}",
-                e, change.description
-            );
+            let error_message = if auto {
+                format!(
+                    "自動承認された変更の適用中にエラーが発生しました: {}\n- {}",
+                    e, change.description
+                )
+            } else {
+                format!(
+                    "ユーザーは以下の提案を承認しましたが、変更の適用中にエラーが発生しました: {}\n- {}",
+                    e, change.description
+                )
+            };
             let mut local = self.history.lock().unwrap().clone();
             local.push(llm::Message::User(error_message));
             self.replace_history(local, None, system_estimate);
             return Err(e);
         }
+        let resolution_message =
+            Self::build_approval_resolution_message(true, &changes_for_message, auto);
         let mut local = self.history.lock().unwrap().clone();
         local.push(llm::Message::User(resolution_message));
         self.replace_history(local, None, system_estimate);
         Ok(ApprovalResult {
-            id: id.to_owned(),
+            id: request.id,
             approved: true,
             changes: receipts,
             schedule_dirty,
@@ -2334,5 +2412,136 @@ mod tests {
             "approval should be recorded in LLM history: {:?}",
             history
         );
+    }
+
+    #[tokio::test]
+    async fn provider_permissions_auto_approve_allowed_changes() {
+        use axum::routing::post;
+        use axum::{Json, Router};
+        use takusu_client::ScheduleRow;
+
+        let app = Router::new().route(
+            "/api/schedule/replace",
+            post(|Json(_): Json<serde_json::Value>| async move {
+                Json(ScheduleRow {
+                    id: "sched-1".to_string(),
+                    created_at: "2026-07-18T00:00:00Z".to_string(),
+                    updated_at: "2026-07-18T00:00:00Z".to_string(),
+                    schedule: "{}".to_string(),
+                })
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(ScheduleProposeTool));
+
+        let mock = MockLlm {
+            calls: Mutex::new(Vec::new()),
+            responses: Mutex::new(vec![
+                llm::LlmResponse {
+                    content: llm::LlmResponseContent::ToolCalls(vec![llm::ToolCall {
+                        id: "call_1".to_string(),
+                        name: "propose_schedule".to_string(),
+                        arguments: json!({}),
+                    }]),
+                    prompt_tokens: None,
+                    finish_reason: None,
+                },
+                llm::LlmResponse {
+                    content: llm::LlmResponseContent::Text("スケジュールを提案します".to_string()),
+                    prompt_tokens: None,
+                    finish_reason: None,
+                },
+            ]),
+        };
+
+        let mut cfg = AgentConfig::default();
+        cfg.server.url = format!("http://{addr}");
+        cfg.llm.permissions.set("schedule", "generate", true);
+        let agent = AgentSession::new(cfg, registry, mock);
+        let result = agent.run_turn("スケジュールを作成して").await.unwrap();
+
+        assert!(
+            result.approval_request.is_none(),
+            "allowed changes should be auto-approved"
+        );
+        assert_eq!(result.changes.len(), 1);
+        assert!(!result.schedule_dirty);
+
+        let history = agent.history.lock().unwrap();
+        assert!(
+            history
+                .iter()
+                .any(|m| matches!(m, llm::Message::User(text) if text.contains("自動承認"))),
+            "auto-approval should be recorded in LLM history: {:?}",
+            history
+        );
+    }
+
+    #[tokio::test]
+    async fn session_permissions_override_provider_permissions() {
+        use axum::routing::post;
+        use axum::{Json, Router};
+        use takusu_client::ScheduleRow;
+
+        let app = Router::new().route(
+            "/api/schedule/replace",
+            post(|Json(_): Json<serde_json::Value>| async move {
+                Json(ScheduleRow {
+                    id: "sched-1".to_string(),
+                    created_at: "2026-07-18T00:00:00Z".to_string(),
+                    updated_at: "2026-07-18T00:00:00Z".to_string(),
+                    schedule: "{}".to_string(),
+                })
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(ScheduleProposeTool));
+
+        let mock = MockLlm {
+            calls: Mutex::new(Vec::new()),
+            responses: Mutex::new(vec![
+                llm::LlmResponse {
+                    content: llm::LlmResponseContent::ToolCalls(vec![llm::ToolCall {
+                        id: "call_1".to_string(),
+                        name: "propose_schedule".to_string(),
+                        arguments: json!({}),
+                    }]),
+                    prompt_tokens: None,
+                    finish_reason: None,
+                },
+                llm::LlmResponse {
+                    content: llm::LlmResponseContent::Text("スケジュールを提案します".to_string()),
+                    prompt_tokens: None,
+                    finish_reason: None,
+                },
+            ]),
+        };
+
+        let mut cfg = AgentConfig::default();
+        cfg.server.url = format!("http://{addr}");
+        // Provider disallows schedule generation.
+        cfg.llm.permissions.set("schedule", "generate", false);
+        let agent = AgentSession::new(cfg, registry, mock);
+
+        // Session override allows it.
+        let mut session_permissions = Permissions::default();
+        session_permissions.set("schedule", "generate", true);
+        agent.set_session_permissions(session_permissions);
+
+        let result = agent.run_turn("スケジュールを作成して").await.unwrap();
+
+        assert!(
+            result.approval_request.is_none(),
+            "session permissions should override provider and auto-approve"
+        );
+        assert_eq!(result.changes.len(), 1);
     }
 }

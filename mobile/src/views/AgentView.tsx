@@ -86,8 +86,10 @@ import { ApprovalPanel } from '@/src/components/ApprovalPanel';
 import { ComposerRecordButton } from '@/src/components/ComposerRecordButton';
 import { EditMessageModal } from '@/src/components/EditMessageModal';
 import { MessageContextMenu } from '@/src/components/MessageContextMenu';
+import { SessionPermissionsModal } from '@/src/components/SessionPermissionsModal';
 import { haptic } from '@/src/components/haptics';
 import { BRAND_COLOR, COLORS, useColors, type ColorSet } from '@/src/theme';
+import type { PermissionsMap } from '@/src/api/settingsStore';
 
 function newId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -854,6 +856,10 @@ export function AgentView() {
     messageId: string;
     text: string;
   }>({ visible: false, messageId: '', text: '' });
+  const [permissionsModal, setPermissionsModal] = useState(false);
+  const [sessionPermissions, setSessionPermissions] = useState<PermissionsMap>(
+    {},
+  );
 
   const sessionIdsRef = useRef<string[]>([]);
   const activeIndexRef = useRef(0);
@@ -866,6 +872,7 @@ export function AgentView() {
   const autoScrollRef = useRef(true);
   const skipSnapshotSaveRef = useRef(false);
   const lastPendingSessionIdRef = useRef<string | null>(null);
+  const sessionPermissionsRef = useRef<PermissionsMap>({});
   const viewOffset = useSharedValue(0);
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: viewOffset.value }],
@@ -883,6 +890,9 @@ export function AgentView() {
   useEffect(() => {
     isSwitchingRef.current = isSwitching;
   }, [isSwitching]);
+  useEffect(() => {
+    sessionPermissionsRef.current = sessionPermissions;
+  }, [sessionPermissions]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next) => {
@@ -911,33 +921,42 @@ export function AgentView() {
     };
   }, []);
 
-  async function activateSessionId(id: string, isNew = false) {
-    let ids = sessionIdsRef.current;
-    const existingIndex = ids.indexOf(id);
-    if (isNew && existingIndex !== -1) {
-      ids = ids.filter((s) => s !== id);
-    }
-    if (existingIndex === -1 || isNew) {
-      ids = [...ids, id];
-      const max = sessionHistoryCountRef.current;
-      if (ids.length > max) {
-        const removed = ids.shift()!;
-        await deleteSessionSnapshot(removed);
+  const activateSessionId = useCallback(
+    async (id: string, isNew = false) => {
+      let ids = sessionIdsRef.current;
+      const existingIndex = ids.indexOf(id);
+      if (isNew && existingIndex !== -1) {
+        ids = ids.filter((s) => s !== id);
       }
-    }
-    const index = ids.indexOf(id);
-    const snapshot = await loadSessionSnapshot(id);
-    autoScrollRef.current = true;
-    setMessages(snapshot?.messages ?? []);
-    setApproval(snapshot?.approval ?? null);
-    sessionIdRef.current = id;
-    setText('');
-    setSessionIds(ids);
-    sessionIdsRef.current = ids;
-    setActiveIndex(index);
-    activeIndexRef.current = index;
-    await saveSessionHistory({ ids, activeIndex: index });
-  }
+      if (existingIndex === -1 || isNew) {
+        ids = [...ids, id];
+        const max = sessionHistoryCountRef.current;
+        if (ids.length > max) {
+          const removed = ids.shift()!;
+          await deleteSessionSnapshot(removed);
+        }
+      }
+      const index = ids.indexOf(id);
+      const snapshot = await loadSessionSnapshot(id);
+      const perms = snapshot?.permissions ?? {};
+      setSessionPermissions(perms);
+      sessionPermissionsRef.current = perms;
+      autoScrollRef.current = true;
+      setMessages(snapshot?.messages ?? []);
+      setApproval(snapshot?.approval ?? null);
+      sessionIdRef.current = id;
+      setText('');
+      setSessionIds(ids);
+      sessionIdsRef.current = ids;
+      setActiveIndex(index);
+      activeIndexRef.current = index;
+      if (!isNew && Object.keys(perms).length > 0) {
+        client.updateSessionSettings(id, perms).catch(() => {});
+      }
+      await saveSessionHistory({ ids, activeIndex: index });
+    },
+    [client],
+  );
 
   function trimSessionIds(
     ids: string[],
@@ -976,7 +995,7 @@ export function AgentView() {
 
   async function ensureSession(): Promise<string> {
     if (sessionIdRef.current) return sessionIdRef.current;
-    const created = await client.createSession();
+    const created = await client.createSession(sessionPermissionsRef.current);
     await activateSessionId(created, true);
     return created;
   }
@@ -1077,7 +1096,14 @@ export function AgentView() {
     return () => {
       cancelled = true;
     };
-  }, [client, ready, workersToken, pendingSessionId, setPendingSessionId]);
+  }, [
+    client,
+    ready,
+    workersToken,
+    pendingSessionId,
+    setPendingSessionId,
+    activateSessionId,
+  ]);
 
   useEffect(() => {
     if (!historyReady) return;
@@ -1144,9 +1170,11 @@ export function AgentView() {
 
   useEffect(() => {
     if (!sessionIdRef.current || busy || skipSnapshotSaveRef.current) return;
-    saveSessionSnapshot(sessionIdRef.current, { messages, approval }).catch(
-      () => {},
-    );
+    saveSessionSnapshot(sessionIdRef.current, {
+      messages,
+      approval,
+      permissions: sessionPermissionsRef.current,
+    }).catch(() => {});
   }, [messages, approval, busy]);
 
   useEffect(() => {
@@ -1696,14 +1724,19 @@ export function AgentView() {
     setIsSwitching(true);
     try {
       if (currentId) {
-        await saveSessionSnapshot(currentId, { messages, approval }).catch(
-          () => {},
-        );
+        await saveSessionSnapshot(currentId, {
+          messages,
+          approval,
+          permissions: sessionPermissionsRef.current,
+        }).catch(() => {});
       }
       const snapshot = (await loadSessionSnapshot(nextId)) ?? {
         messages: [],
         approval: null,
       };
+      const perms = snapshot.permissions ?? {};
+      setSessionPermissions(perms);
+      sessionPermissionsRef.current = perms;
       sessionIdRef.current = nextId;
       setActiveIndex(nextIndex);
       activeIndexRef.current = nextIndex;
@@ -1711,6 +1744,9 @@ export function AgentView() {
       autoScrollRef.current = true;
       setMessages(snapshot.messages);
       setApproval(snapshot.approval);
+      if (Object.keys(perms).length > 0) {
+        client.updateSessionSettings(nextId, perms).catch(() => {});
+      }
       saveSessionHistory({
         ids: sessionIdsRef.current,
         activeIndex: nextIndex,
@@ -1734,13 +1770,16 @@ export function AgentView() {
       await saveSessionSnapshot(currentId, {
         messages: previousMessages,
         approval: previousApproval,
+        permissions: sessionPermissionsRef.current,
       }).catch(() => {});
     }
     skipSnapshotSaveRef.current = true;
+    setSessionPermissions({});
+    sessionPermissionsRef.current = {};
     setMessages([]);
     setApproval(null);
     try {
-      const created = await client.createSession();
+      const created = await client.createSession({});
       let ids = [...sessionIdsRef.current, created];
       const max = sessionHistoryCountRef.current;
       const removed: string[] = [];
@@ -1810,6 +1849,27 @@ export function AgentView() {
             <Text style={[styles.backText, { color: BRAND_COLOR }]}>‹</Text>
           </Pressable>
           <Text style={[styles.title, { color: colors.black }]}>Agent</Text>
+          <Pressable
+            disabled={busy || isSwitching || !historyReady}
+            onPress={() => setPermissionsModal(true)}
+            style={styles.permissionsButton}
+          >
+            <Ionicons
+              name={
+                Object.values(sessionPermissions).some(Boolean)
+                  ? 'shield-checkmark'
+                  : 'shield-outline'
+              }
+              size={24}
+              color={
+                busy || isSwitching || !historyReady
+                  ? colors.gray
+                  : Object.values(sessionPermissions).some(Boolean)
+                    ? BRAND_COLOR
+                    : colors.gray
+              }
+            />
+          </Pressable>
           <Pressable
             disabled={busy || isSwitching || !historyReady}
             onPress={startNewSession}
@@ -2090,6 +2150,25 @@ export function AgentView() {
           }
           onSave={handleSaveEdit}
         />
+
+        <SessionPermissionsModal
+          visible={permissionsModal}
+          permissions={sessionPermissions}
+          onChange={(permissions) => {
+            setSessionPermissions(permissions);
+            sessionPermissionsRef.current = permissions;
+            const id = sessionIdRef.current;
+            if (id) {
+              client.updateSessionSettings(id, permissions).catch(() => {});
+              saveSessionSnapshot(id, {
+                messages,
+                approval,
+                permissions,
+              }).catch(() => {});
+            }
+          }}
+          onClose={() => setPermissionsModal(false)}
+        />
       </Reanimated.View>
     </KeyboardAvoidingView>
   );
@@ -2106,6 +2185,11 @@ const styles = StyleSheet.create({
   back: { width: 56, alignItems: 'center' },
   backText: { fontSize: 40, lineHeight: 40 },
   title: { flex: 1, fontSize: 20, fontWeight: '700' },
+  permissionsButton: {
+    width: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   newSession: { width: 56, alignItems: 'center', justifyContent: 'center' },
   messages: { flex: 1 },
   messageContent: {
