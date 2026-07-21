@@ -44,7 +44,7 @@ function parseDateTime(iso: string): {
   time: string;
 } | null {
   const m = iso.match(
-    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)$/,
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)?(?:\[[^\]]+\])?$/,
   );
   if (!m) return null;
   const [, y, mo, d, h, mi] = m;
@@ -114,6 +114,8 @@ function getOperationBadge(operation: string): {
       return { label: '生成', color: 'muted' };
     case 'reschedule':
       return { label: '再調整', color: 'muted' };
+    case 'move':
+      return { label: '移動', color: 'brand' };
     default:
       return { label: operation, color: 'muted' };
   }
@@ -477,6 +479,59 @@ function TaskChangeRows({
   return rows;
 }
 
+interface MoveChangeRowsProps {
+  after: Record<string, unknown>;
+  before: Record<string, unknown>;
+  colors: ColorSet;
+}
+
+function MoveChangeRows({
+  after,
+  before,
+  colors,
+}: MoveChangeRowsProps): React.ReactNode[] {
+  const rows: React.ReactNode[] = [];
+  const afterStart = asString(after.start_at);
+  const afterEnd = asString(after.end_at);
+  const beforeStart = asString(before.schedule_start_at);
+  const beforeEnd = asString(before.schedule_end_at);
+
+  if (afterStart) {
+    const beforeValue =
+      beforeStart && beforeEnd
+        ? formatDateTimeRange(beforeStart, beforeEnd)
+        : beforeStart
+          ? formatInstant(beforeStart)
+          : undefined;
+    const afterValue = afterEnd
+      ? formatDateTimeRange(afterStart, afterEnd)
+      : formatInstant(afterStart);
+
+    if (beforeValue) {
+      rows.push(
+        <WhenRow
+          key="move-range"
+          label="予定"
+          before={beforeValue}
+          after={afterValue}
+          colors={colors}
+        />,
+      );
+    } else {
+      rows.push(
+        <WhenRow
+          key="move-after"
+          label="移動先"
+          value={afterValue}
+          colors={colors}
+        />,
+      );
+    }
+  }
+
+  return rows;
+}
+
 interface HabitChangeRowsProps {
   after: Record<string, unknown>;
   before: Record<string, unknown>;
@@ -725,13 +780,15 @@ function ChangeCard({ change, colors }: ChangeCardProps) {
   const isUpdate = change.operation === 'update';
 
   const rows: React.ReactNode[] =
-    targetType === 'task'
-      ? TaskChangeRows({ after, before, colors, isFixed, isUpdate })
-      : targetType === 'habit'
-        ? HabitChangeRows({ after, before, colors, isUpdate })
-        : targetType === 'schedule'
-          ? ScheduleChangeRows({ after, before, colors })
-          : [];
+    change.operation === 'move'
+      ? MoveChangeRows({ after, before, colors })
+      : targetType === 'task'
+        ? TaskChangeRows({ after, before, colors, isFixed, isUpdate })
+        : targetType === 'habit'
+          ? HabitChangeRows({ after, before, colors, isUpdate })
+          : targetType === 'schedule'
+            ? ScheduleChangeRows({ after, before, colors })
+            : [];
 
   const badgeColor =
     op.color === 'success'
