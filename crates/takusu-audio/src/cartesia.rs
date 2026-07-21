@@ -300,7 +300,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tts_backend_parses_cartesia() {
+    fn tts_backend_parses_known_backends() {
         assert_eq!(
             TtsBackend::from_str("cartesia").unwrap(),
             TtsBackend::Cartesia
@@ -308,6 +308,14 @@ mod tests {
         assert_eq!(
             TtsBackend::from_str("CARTESIA").unwrap(),
             TtsBackend::Cartesia
+        );
+        assert_eq!(
+            TtsBackend::from_str("android").unwrap(),
+            TtsBackend::Android
+        );
+        assert_eq!(
+            TtsBackend::from_str("ANDROID").unwrap(),
+            TtsBackend::Android
         );
         assert!(TtsBackend::from_str("unknown").is_err());
     }

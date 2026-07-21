@@ -17,12 +17,14 @@ use thiserror::Error;
 #[serde(rename_all = "lowercase")]
 pub enum TtsBackend {
     Cartesia,
+    Android,
 }
 
 impl std::fmt::Display for TtsBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TtsBackend::Cartesia => write!(f, "cartesia"),
+            TtsBackend::Android => write!(f, "android"),
         }
     }
 }
@@ -32,6 +34,7 @@ impl std::str::FromStr for TtsBackend {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "cartesia" => Ok(TtsBackend::Cartesia),
+            "android" => Ok(TtsBackend::Android),
             _ => Err(format!("unsupported TTS backend: {s}")),
         }
     }

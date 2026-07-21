@@ -1,11 +1,13 @@
 import { NativeModule, requireNativeModule } from 'expo';
 
 export interface AudioOptions {
+  provider: string;
   modelDir: string;
   apiKey: string;
   voiceId: string;
   language: string;
   sampleRate: number;
+  speed: number;
 }
 
 interface TakusuAudioModuleType extends NativeModule {
