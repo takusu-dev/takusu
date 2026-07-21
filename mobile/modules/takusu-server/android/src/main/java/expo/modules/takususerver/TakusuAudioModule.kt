@@ -7,6 +7,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import android.util.Log
 import expo.modules.kotlin.exception.CodedException
+import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.records.Field
@@ -50,7 +51,7 @@ class TakusuAudioModule : Module() {
         ModuleDefinition {
             Name("TakusuAudio")
 
-            AsyncFunction("configure") { options: AudioOptions ->
+            AsyncFunction("configure") Coroutine { options: AudioOptions ->
                 val context =
                     appContext.reactContext
                         ?: throw CodedException("ERR_AUDIO_CONFIG", "React context is not available", null)
@@ -193,10 +194,11 @@ class TakusuAudioModule : Module() {
     private suspend fun initTextToSpeech(context: Context): TextToSpeech =
         withContext(Dispatchers.Main) {
             suspendCoroutine { continuation ->
-                val tts =
+                var tts: TextToSpeech? = null
+                tts =
                     TextToSpeech(context) { status ->
                         if (status == TextToSpeech.SUCCESS) {
-                            continuation.resume(tts)
+                            continuation.resume(tts!!)
                         } else {
                             continuation.resumeWithException(
                                 CodedException(
