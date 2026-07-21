@@ -56,6 +56,10 @@ pub struct TaskRow {
     /// WI-9: pre-split total quantity, kept for lineage.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_quantity_total: Option<i64>,
+    /// Total active work minutes from task_work_sessions (NULL when no work has been done).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[sqlx(default)]
+    pub actual_minutes: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }

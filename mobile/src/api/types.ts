@@ -33,6 +33,8 @@ export interface TaskRow {
   completed_at?: string;
   split_from_task_id?: string;
   original_quantity_total?: number;
+  /// Total active work minutes from task_work_sessions (absent when no work has been done).
+  actual_minutes?: number;
   created_at: string;
   updated_at: string;
 }

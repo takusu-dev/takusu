@@ -42,6 +42,8 @@ pub struct TaskRow {
     pub split_from_task_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_quantity_total: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual_minutes: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }

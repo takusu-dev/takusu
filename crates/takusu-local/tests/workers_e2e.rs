@@ -60,6 +60,7 @@ async fn setup_mock_db() -> SqlitePool {
         include_str!("../../takusu-local-lib/migrations/017_solver.sql"),
         include_str!("../../takusu-local-lib/migrations/018_progress.sql"),
         include_str!("../../takusu-local-lib/migrations/019_jwt.sql"),
+        include_str!("../../takusu-local-lib/migrations/020_task_actual_minutes_view.sql"),
     ];
     for s in sqls {
         sqlx::raw_sql(*s).execute(&pool).await.unwrap();
@@ -144,14 +145,14 @@ const OVERDUE_SQL: &str =
 /// SQL predicate that excludes overdue tasks (completed/skipped or end_at is now or later).
 const NOT_OVERDUE_SQL: &str =
     "(status IN ('completed', 'skipped') OR datetime(end_at) >= datetime('now'))";
+/// Shared task SELECT fragment (mirrors takusu-worker TASK_COLS).
+const TASK_SELECT: &str = "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at, tam.actual_minutes FROM tasks LEFT JOIN task_actual_minutes tam ON tam.task_id = tasks.id";
 
 async fn list_tasks(
     State(state): State<MockState>,
     axum::extract::Query(q): axum::extract::Query<TaskQuery>,
 ) -> Json<Vec<TaskRow>> {
-    let mut sql = String::from(
-        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at FROM tasks WHERE 1=1",
-    );
+    let mut sql = format!("{TASK_SELECT} WHERE 1=1");
     if let Some(ref status) = q.status {
         if status == "overdue" {
             sql.push_str(" AND ");
@@ -243,13 +244,12 @@ async fn create_task(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let row: TaskRow = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at FROM tasks WHERE id = ?",
-    )
-    .bind(&id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let select_sql = format!("{TASK_SELECT} WHERE tasks.id = ?");
+    let row: TaskRow = sqlx::query_as::<_, TaskRow>(sqlx::AssertSqlSafe(select_sql.as_str()))
+        .bind(&id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok((StatusCode::CREATED, Json(row)))
 }
 
@@ -257,13 +257,12 @@ async fn get_task(
     State(state): State<MockState>,
     Path(id): Path<String>,
 ) -> Result<Json<TaskRow>, StatusCode> {
-    let row: Option<TaskRow> = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at FROM tasks WHERE id = ?",
-    )
-    .bind(&id)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let sql = format!("{TASK_SELECT} WHERE tasks.id = ?");
+    let row: Option<TaskRow> = sqlx::query_as::<_, TaskRow>(sqlx::AssertSqlSafe(sql.as_str()))
+        .bind(&id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     row.map(Json).ok_or(StatusCode::NOT_FOUND)
 }
 
@@ -289,13 +288,13 @@ async fn update_task(
         .as_ref()
         .map(|d| serde_json::to_string(d).unwrap_or_else(|_| "[]".into()));
 
-    let existing: TaskRow = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at FROM tasks WHERE id = ?",
-    )
-    .bind(&id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|_| StatusCode::NOT_FOUND)?;
+    let existing_sql = format!("{TASK_SELECT} WHERE tasks.id = ?");
+    let existing: TaskRow =
+        sqlx::query_as::<_, TaskRow>(sqlx::AssertSqlSafe(existing_sql.as_str()))
+            .bind(&id)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|_| StatusCode::NOT_FOUND)?;
     let final_status = body.status.clone().unwrap_or(existing.status);
 
     sqlx::query(
@@ -322,13 +321,12 @@ async fn update_task(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let row: TaskRow = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at FROM tasks WHERE id = ?",
-    )
-    .bind(&id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let select_sql = format!("{TASK_SELECT} WHERE tasks.id = ?");
+    let row: TaskRow = sqlx::query_as::<_, TaskRow>(sqlx::AssertSqlSafe(select_sql.as_str()))
+        .bind(&id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(row))
 }
 
@@ -369,13 +367,12 @@ async fn replace_task(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let row: TaskRow = sqlx::query_as::<_, TaskRow>(
-        "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at FROM tasks WHERE id = ?",
-    )
-    .bind(&id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let select_sql = format!("{TASK_SELECT} WHERE tasks.id = ?");
+    let row: TaskRow = sqlx::query_as::<_, TaskRow>(sqlx::AssertSqlSafe(select_sql.as_str()))
+        .bind(&id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(row))
 }
 
@@ -921,7 +918,7 @@ async fn similar_tasks(
 ) -> Json<Vec<SimilarTaskRow>> {
     let limit = q.limit.unwrap_or(10).clamp(1, 50);
     let rows: Vec<SimilarTaskRow> = sqlx::query_as::<_, SimilarTaskRow>(
-        "SELECT id AS task_id, display_id, title, avg_minutes, sigma_minutes, NULL AS actual_minutes, NULL AS completed_at, updated_at, 'title_overlap' AS similarity FROM tasks WHERE status = 'completed' ORDER BY updated_at DESC LIMIT ?"
+        "SELECT t.id AS task_id, t.display_id, t.title, t.avg_minutes, t.sigma_minutes, tam.actual_minutes, NULL AS completed_at, t.updated_at, 'title_overlap' AS similarity FROM tasks t LEFT JOIN task_actual_minutes tam ON tam.task_id = t.id WHERE t.status = 'completed' ORDER BY t.updated_at DESC LIMIT ?"
     )
     .bind(limit)
     .fetch_all(&state.pool)

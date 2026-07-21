@@ -41,7 +41,7 @@ import { CancelConfirmButton } from '@/src/components/CancelConfirmButton';
 import { DeleteConfirmMenuItem } from '@/src/components/DeleteConfirmMenuItem';
 import { RedundantDepWarning } from '@/src/components/RedundantDepWarning';
 import { formatDate } from '@/src/formatDate';
-import { parseDuration } from '@/src/utils/duration';
+import { parseDuration, formatDuration } from '@/src/utils/duration';
 import {
   DependencyGraph,
   type GraphNode,
@@ -1233,6 +1233,13 @@ export function TaskDetailView() {
                 ) : (
                   <Text style={{ color: colors.grayLight }}>0m</Text>
                 )}
+                {task.actual_minutes !== undefined &&
+                task.actual_minutes > 0 ? (
+                  <Text style={{ color: colors.gray }}>
+                    {' '}
+                    (実績: {formatDuration(task.actual_minutes)})
+                  </Text>
+                ) : null}
               </Text>
             </Pressable>
           )}

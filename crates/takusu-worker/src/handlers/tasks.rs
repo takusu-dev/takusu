@@ -8,7 +8,8 @@ use crate::handlers::tokens::{json_created, json_ok, parse_json};
 use crate::models::{CreateTask, TaskRow, UpdateTask};
 use crate::validate::{validate_minutes, validate_quantity};
 
-const TASK_COLS: &str = "id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at";
+const TASK_COLS: &str = "id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at, tam.actual_minutes";
+const TASK_FROM: &str = "tasks LEFT JOIN task_actual_minutes tam ON tam.task_id = tasks.id";
 /// SQL predicate for tasks whose deadline has passed but are not finished.
 const OVERDUE_SQL: &str =
     "status NOT IN ('completed', 'skipped') AND datetime(end_at) < datetime('now')";
@@ -17,7 +18,7 @@ const NOT_OVERDUE_SQL: &str =
     "(status IN ('completed', 'skipped') OR datetime(end_at) >= datetime('now'))";
 
 pub(crate) fn select_tasks() -> String {
-    format!("SELECT {TASK_COLS} FROM tasks")
+    format!("SELECT {TASK_COLS} FROM {TASK_FROM}")
 }
 
 pub async fn list(req: Request, env: Env) -> Result<Response, WorkerError> {

@@ -27,6 +27,7 @@ import { useServer } from '@/src/api/ServerProvider';
 import { logError, showError } from '@/src/api/errors';
 import { parseSchedule } from '@/src/api/types';
 import type { HabitRow, ScheduleEntry, TaskRow } from '@/src/api/types';
+import { formatDuration } from '@/src/utils/duration';
 import { useTheme, BRAND_COLOR, habitColorFor } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
 import { dateKey, todayDateKey } from '@/src/utils/dateKey';
@@ -164,6 +165,8 @@ interface StatsData {
   avgCompletedPerDay: number;
   avgCompletedPerStudiedDay: number;
   maxCompletedInDay: number;
+  totalActualMinutes: number;
+  avgActualMinutesPerCompleted: number;
   todayBreakdown: DayBreakdown;
   futureKeys: string[];
   futureCounts: number[];
@@ -206,6 +209,7 @@ function computeStats(
   let inProgress = 0;
   let scheduled = 0;
   let pending = 0;
+  let totalActualMinutes = 0;
   const habitCounts = new Map<string, number>();
 
   for (const t of tasks) {
@@ -220,6 +224,7 @@ function computeStats(
         case 'completed':
           completed++;
           bd.completed++;
+          totalActualMinutes += t.actual_minutes ?? 0;
           break;
         case 'skipped':
           skipped++;
@@ -262,6 +267,8 @@ function computeStats(
     dayKeys.length > 0 ? completed / dayKeys.length : 0;
   const avgCompletedPerStudiedDay =
     daysWithCompleted > 0 ? completed / daysWithCompleted : 0;
+  const avgActualMinutesPerCompleted =
+    completed > 0 ? totalActualMinutes / completed : 0;
 
   const futureDays = period === 'all' ? 30 : Number(period);
   const futureDayKeys = generateFutureKeys(futureDays, serverTz);
@@ -293,6 +300,8 @@ function computeStats(
     avgCompletedPerDay,
     avgCompletedPerStudiedDay,
     maxCompletedInDay,
+    totalActualMinutes,
+    avgActualMinutesPerCompleted,
     todayBreakdown: dayStatusMap.get(todayKey) ?? emptyBreakdown(),
     futureKeys: futureDayKeys,
     futureCounts,
@@ -666,6 +675,21 @@ export function StatsView() {
               />
             </View>
 
+            <View style={styles.cards}>
+              <StatCard
+                label="実績時間"
+                value={formatDuration(stats.totalActualMinutes)}
+              />
+              {stats.completed > 0 && (
+                <StatCard
+                  label="平均実績"
+                  value={formatDuration(
+                    Math.round(stats.avgActualMinutesPerCompleted),
+                  )}
+                />
+              )}
+            </View>
+
             <Text style={[styles.summaryText, { color: colors.gray }]}>
               {stats.total > 0
                 ? `期間中 ${stats.completed} タスク完了 ` +
@@ -673,7 +697,10 @@ export function StatsView() {
                   `完了した日平均 ${stats.avgCompletedPerStudiedDay.toFixed(
                     1,
                   )} タスク、 ` +
-                  `最大 ${stats.maxCompletedInDay} タスク/日）`
+                  `最大 ${stats.maxCompletedInDay} タスク/日）` +
+                  (stats.totalActualMinutes > 0
+                    ? ` 実績時間 ${formatDuration(stats.totalActualMinutes)}`
+                    : '')
                 : 'この期間のデータはありません'}
             </Text>
 
