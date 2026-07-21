@@ -229,6 +229,14 @@ export interface SettingsRow {
   comfortable_minutes: number | null;
   /// #459: 1 日の最大作業時間（分）。`null` または未設定の場合はデフォルト（12 時間）を使う。
   maximum_minutes: number | null;
+  /// #789: 使用する solver。`"sa"` / `"priority"` / `"auto"`。空または不明な場合は `"auto"`。
+  solver: string;
+  /// #789: 求解時間の上限（ミリ秒）。`null` または `0` の場合は制限なし。
+  time_budget_ms: number | null;
+  /// #789: 乱数シード。`null` の場合は決定的なデフォルト。
+  seed: number | null;
+  /// #789: 前回スケジュールから priority/ALNS の初期解を warm start する。
+  warm_start: boolean;
 }
 
 export interface UpdateSettings {
@@ -239,6 +247,14 @@ export interface UpdateSettings {
   comfortable_minutes?: number | null;
   /// #459: 1 日の最大作業時間（分）。`null` または未設定の場合はデフォルトを使う。
   maximum_minutes?: number | null;
+  /// #789: 使用する solver。`"sa"` / `"priority"` / `"auto"`。
+  solver?: string;
+  /// #789: 求解時間の上限（ミリ秒）。`null` または `0` で制限なし。
+  time_budget_ms?: number | null;
+  /// #789: 乱数シード。`null` でデフォルト。
+  seed?: number | null;
+  /// #789: 前回スケジュールから priority/ALNS の初期解を warm start する。
+  warm_start?: boolean;
 }
 
 export interface TokenRow {
