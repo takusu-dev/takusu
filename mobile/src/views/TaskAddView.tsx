@@ -66,6 +66,8 @@ export function TaskAddView({
   const [parallelizable, setParallelizable] = useState(false);
   const [allowsParallel, setAllowsParallel] = useState(false);
   const [fixed, setFixed] = useState(false);
+  const [quantityTotal, setQuantityTotal] = useState('');
+  const [quantityUnit, setQuantityUnit] = useState('');
   const [description, setDescription] = useState('');
   const [selectedDeps, setSelectedDeps] = useState<string[]>(initialDeps);
   const [allTasks, setAllTasks] = useState<TaskRow[]>([]);
@@ -94,6 +96,9 @@ export function TaskAddView({
     const sigmaRaw = parseDuration(sigmaMinutes);
     // sigma=0/未入力の時は未送信にしてサーバーの auto (avg/5) に任せる
     const sigma = sigmaRaw !== null && sigmaRaw > 0 ? sigmaRaw : undefined;
+    const parsedTotal = quantityTotal ? parseInt(quantityTotal, 10) : NaN;
+    const quantity_total =
+      !Number.isNaN(parsedTotal) && parsedTotal > 0 ? parsedTotal : undefined;
     try {
       const task = await client.createTask({
         title,
@@ -107,6 +112,8 @@ export function TaskAddView({
         parallelizable,
         allows_parallel: allowsParallel,
         fixed,
+        quantity_total,
+        quantity_unit: quantityUnit.trim() || undefined,
       });
       undoRedo.push({
         description: `create task: ${title}`,
@@ -126,6 +133,8 @@ export function TaskAddView({
             parallelizable,
             allows_parallel: allowsParallel,
             fixed,
+            quantity_total,
+            quantity_unit: quantityUnit.trim() || undefined,
           });
         },
       });
@@ -345,6 +354,42 @@ export function TaskAddView({
                 m (avg/5)
               </Text>
             )}
+          </View>
+        </View>
+
+        <View style={styles.row}>
+          <View style={[styles.field, { flex: 1 }]}>
+            <Text style={[styles.label, { color: colors.gray }]}>
+              全体数量 (任意)
+            </Text>
+            <TextInput
+              style={[
+                styles.input,
+                { borderColor: colors.separator, color: colors.black },
+              ]}
+              value={quantityTotal}
+              onChangeText={(text) =>
+                setQuantityTotal(text.replace(/[^0-9]/g, ''))
+              }
+              keyboardType="number-pad"
+              placeholder="全体数量"
+              placeholderTextColor={colors.grayLight}
+            />
+          </View>
+          <View style={[styles.field, { flex: 1 }]}>
+            <Text style={[styles.label, { color: colors.gray }]}>
+              単位 (任意)
+            </Text>
+            <TextInput
+              style={[
+                styles.input,
+                { borderColor: colors.separator, color: colors.black },
+              ]}
+              value={quantityUnit}
+              onChangeText={setQuantityUnit}
+              placeholder="ページ、個"
+              placeholderTextColor={colors.grayLight}
+            />
           </View>
         </View>
 

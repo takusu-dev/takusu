@@ -324,6 +324,11 @@ function TaskCardImpl({
 
             {/* Right: deps, dependents, and cost stacked vertically */}
             <View style={styles.meta}>
+              {task.quantity_total !== undefined && task.quantity_total > 0 && (
+                <Text style={[styles.metaText, { color: colors.gray }]}>
+                  {task.quantity_done}/{task.quantity_total}
+                </Text>
+              )}
               {deps.length > 0 && (
                 <Text style={[styles.metaText, { color: colors.gray }]}>
                   ↳ {deps.length}

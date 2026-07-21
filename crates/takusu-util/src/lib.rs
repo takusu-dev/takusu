@@ -78,6 +78,35 @@ pub fn parse_datetime(s: &str) -> Result<String, String> {
     parse_datetime_to_timestamp(s, &jiff::tz::TimeZone::UTC).map(|ts| ts.to_string())
 }
 
+/// Return the later of two RFC 3339 timestamp strings.
+/// Falls back to `a` if either timestamp cannot be parsed.
+pub fn later_timestamp<'a>(a: &'a str, b: &'a str) -> &'a str {
+    match (jiff::Timestamp::from_str(a), jiff::Timestamp::from_str(b)) {
+        (Ok(ta), Ok(tb)) => {
+            if ta >= tb {
+                a
+            } else {
+                b
+            }
+        }
+        (Ok(_), _) => a,
+        (_, Ok(_)) => b,
+        _ => a,
+    }
+}
+
+/// Minutes between two RFC 3339 timestamps.
+/// Returns at least 1 to avoid degenerate speed observations.
+pub fn minutes_between(start: &str, end: &str) -> i64 {
+    match (
+        jiff::Timestamp::from_str(start),
+        jiff::Timestamp::from_str(end),
+    ) {
+        (Ok(s), Ok(e)) => ((e.as_second() - s.as_second()) / 60).max(1),
+        _ => 1,
+    }
+}
+
 pub fn parse_datetime_tz(s: &str, tz: &jiff::tz::TimeZone) -> Result<String, String> {
     parse_datetime_to_timestamp(s, tz).map(|ts| ts.to_string())
 }

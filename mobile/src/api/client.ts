@@ -29,6 +29,10 @@ import type {
   SkillRow,
   CreateSkill,
   UpdateSkill,
+  RecordProgress,
+  ProgressResult,
+  SplitTask,
+  SplitResult,
 } from './types';
 
 export class ApiError extends Error {
@@ -118,6 +122,30 @@ export class TakusuClient {
 
   async deleteTask(id: string): Promise<void> {
     return this.request('DELETE', `/api/tasks/${id}`);
+  }
+
+  // ── Task progress (#757) ──
+  async startTaskWork(id: string): Promise<TaskRow> {
+    return this.request('POST', `/api/tasks/${id}/work/start`);
+  }
+
+  async pauseTaskWork(id: string): Promise<TaskRow> {
+    return this.request('POST', `/api/tasks/${id}/work/pause`);
+  }
+
+  async recordProgress(
+    id: string,
+    body: RecordProgress,
+  ): Promise<ProgressResult> {
+    return this.request('POST', `/api/tasks/${id}/progress`, body);
+  }
+
+  async completeTaskWork(id: string): Promise<TaskRow> {
+    return this.request('POST', `/api/tasks/${id}/work/complete`);
+  }
+
+  async splitTask(id: string, body: SplitTask): Promise<SplitResult> {
+    return this.request('POST', `/api/tasks/${id}/split`, body);
   }
 
   // ── Composite dependency analysis (#355) ──

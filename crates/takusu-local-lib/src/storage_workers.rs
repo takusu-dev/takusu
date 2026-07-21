@@ -860,6 +860,9 @@ impl WorkersStorage {
     }
 
     async fn resolve_task_id(&self, id: &str) -> StorageResult<String> {
+        // Allow display ids with a leading `#` (e.g. `#42`) written by the LLM.
+        let id = id.strip_prefix('#').unwrap_or(id);
+
         // `h{habit_display_id}#{task_display_id}` → habit task lookup (#380).
         if let Some(rest) = id.strip_prefix(['h', 'H'])
             && let Some((hdisp, tdisp)) = rest.split_once('#')

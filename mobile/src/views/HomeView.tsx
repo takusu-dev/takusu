@@ -40,6 +40,7 @@ import Reanimated, {
 } from 'react-native-reanimated';
 import { useColors, COLORS, BRAND_COLOR } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
+import { TaskProgressSheet } from '@/src/components/TaskProgressSheet';
 import { dateKey, todayDateKey } from '@/src/utils/dateKey';
 import TakusuWidgetModule from '../../modules/takusu-widget/src/TakusuWidgetModule';
 import { useScheduleOperation } from '@/src/hooks/useScheduleOperation';
@@ -159,6 +160,8 @@ export function HomeView() {
   const [showPast, setShowPast] = useState(false);
   // #206: past tasks load 1 week at a time
   const [pastWeeks, setPastWeeks] = useState(1);
+  const [progressSheetVisible, setProgressSheetVisible] = useState(false);
+  const [progressTask, setProgressTask] = useState<TaskRow | null>(null);
   const listRef = useRef<FlatList<ListItem>>(null);
   const scrollOffsetRef = useRef(0);
   // Viewport height of the FlatList (for page-sized scrolls). Captured via
@@ -744,7 +747,13 @@ export function HomeView() {
       errorLabel = 'タスクの開始に失敗';
     }
     try {
-      await currentClient.updateTask(task.id, { status: newStatus });
+      if (isInProgress || isPending) {
+        await currentClient.completeTaskWork(task.id);
+      } else if (isDone) {
+        await currentClient.updateTask(task.id, { status: newStatus });
+      } else {
+        await currentClient.startTaskWork(task.id);
+      }
     } catch (e) {
       showError(e, errorLabel);
       return;
@@ -773,28 +782,57 @@ export function HomeView() {
     if (newStatus === 'in_progress' && currentNotifications.inProgress) {
       postInProgressNotification(task).catch((e) => logError('通知の投稿', e));
     }
+    const originalQuantityDone = task.quantity_done;
+    const total = task.quantity_total;
+
     undoRedo.push({
       description: `${actionLabel}: ${task.title}`,
       undo: async () => {
         const undoClient = clientRef.current;
         if (!undoClient) return;
         const undoNotifications = notificationsRef.current;
-        await undoClient.updateTask(task.id, { status: prevStatus });
-        if (newStatus === 'in_progress') {
-          dismissInProgressNotification(task.id).catch((e) =>
-            logError('通知の消去', e),
-          );
-        }
-        if (prevStatus === 'in_progress' && undoNotifications.inProgress) {
-          postInProgressNotification(task).catch((e) =>
-            logError('通知の投稿', e),
-          );
-        }
-        // If undoing back to in_progress, cancel any pending start reminders.
-        if (prevStatus === 'in_progress') {
-          cancelScheduledStartNotifications(task.id).catch((e) =>
-            logError('通知のキャンセル', e),
-          );
+        if (newStatus === 'in_progress' && prevStatus === 'scheduled') {
+          // undo start: close the work session and return to scheduled.
+          await undoClient.pauseTaskWork(task.id);
+          if (undoNotifications.inProgress) {
+            dismissInProgressNotification(task.id).catch((e) =>
+              logError('通知の消去', e),
+            );
+          }
+        } else if (newStatus === 'completed' && prevStatus === 'in_progress') {
+          // undo complete: restore in_progress and previous quantity_done.
+          await undoClient.updateTask(task.id, {
+            status: 'in_progress',
+            quantity_done: originalQuantityDone,
+          });
+          if (undoNotifications.inProgress) {
+            postInProgressNotification(task).catch((e) =>
+              logError('通知の投稿', e),
+            );
+          }
+        } else if (
+          newStatus === 'scheduled' &&
+          (prevStatus === 'completed' || prevStatus === 'skipped')
+        ) {
+          // undo undone: restore completed/skipped.
+          if (prevStatus === 'completed') {
+            await undoClient.updateTask(task.id, {
+              status: 'completed',
+              quantity_done: total ?? originalQuantityDone,
+            });
+          } else {
+            await undoClient.updateTask(task.id, { status: 'skipped' });
+          }
+          if (undoNotifications.inProgress) {
+            dismissInProgressNotification(task.id).catch((e) =>
+              logError('通知の消去', e),
+            );
+          }
+        } else {
+          await undoClient.updateTask(task.id, {
+            status: prevStatus,
+            quantity_done: originalQuantityDone,
+          });
         }
         await refreshRef.current();
       },
@@ -802,28 +840,138 @@ export function HomeView() {
         const redoClient = clientRef.current;
         if (!redoClient) return;
         const redoNotifications = notificationsRef.current;
-        await redoClient.updateTask(task.id, { status: newStatus });
-        if (newStatus === 'in_progress' && redoNotifications.inProgress) {
-          postInProgressNotification(task).catch((e) =>
-            logError('通知の投稿', e),
-          );
-        }
-        if (prevStatus === 'in_progress' && newStatus === 'completed') {
-          dismissInProgressNotification(task.id).catch((e) =>
-            logError('通知の消去', e),
-          );
-        }
-        // If redoing into in_progress, cancel any pending start reminders.
-        if (newStatus === 'in_progress') {
-          cancelScheduledStartNotifications(task.id).catch((e) =>
-            logError('通知のキャンセル', e),
-          );
+        if (newStatus === 'in_progress' && prevStatus === 'scheduled') {
+          await redoClient.startTaskWork(task.id);
+          if (redoNotifications.inProgress) {
+            postInProgressNotification(task).catch((e) =>
+              logError('通知の投稿', e),
+            );
+          }
+        } else if (
+          newStatus === 'completed' &&
+          (prevStatus === 'in_progress' || prevStatus === 'pending')
+        ) {
+          // redo complete: update status and quantity_done without creating a
+          // duplicate progress event.
+          await redoClient.updateTask(task.id, {
+            status: 'completed',
+            quantity_done: total ?? originalQuantityDone,
+          });
+          if (redoNotifications.inProgress) {
+            dismissInProgressNotification(task.id).catch((e) =>
+              logError('通知の消去', e),
+            );
+          }
+        } else if (
+          newStatus === 'scheduled' &&
+          (prevStatus === 'completed' || prevStatus === 'skipped')
+        ) {
+          await redoClient.updateTask(task.id, { status: 'scheduled' });
+        } else {
+          await redoClient.updateTask(task.id, { status: newStatus });
         }
         await refreshRef.current();
       },
     });
     await refreshRef.current();
   }, []);
+
+  const inProgressTask = useMemo(
+    () => tasks.find((t) => t.status === 'in_progress') || null,
+    [tasks],
+  );
+
+  const startNextTask = useCallback(async () => {
+    const currentClient = clientRef.current;
+    if (!currentClient) return;
+    const scheduled = tasksRef.current
+      .filter((t) => t.status === 'scheduled')
+      .sort(
+        (a, b) =>
+          new Date(a.start_at ?? a.end_at).getTime() -
+          new Date(b.start_at ?? b.end_at).getTime(),
+      );
+    const next =
+      scheduled[0] ?? tasksRef.current.find((t) => t.status === 'pending');
+    if (!next) return;
+    haptic.medium();
+    try {
+      await currentClient.startTaskWork(next.id);
+      cancelScheduledStartNotifications(next.id).catch((e) =>
+        logError('通知のキャンセル', e),
+      );
+      dismissTaskNotifications(next.id).catch((e) => logError('通知の消去', e));
+      const currentNotifications = notificationsRef.current;
+      if (currentNotifications.inProgress) {
+        postInProgressNotification({ ...next, status: 'in_progress' }).catch(
+          (e) => logError('通知の投稿', e),
+        );
+      }
+    } catch (e) {
+      showError(e, 'タスクの開始に失敗');
+      return;
+    }
+    await refreshRef.current();
+  }, []);
+
+  const pauseInProgress = useCallback(
+    async (payload: {
+      quantityDone: number;
+      note?: string;
+      quantityTotal?: number;
+    }) => {
+      const currentClient = clientRef.current;
+      const task = inProgressTask;
+      if (!currentClient || !task) return;
+      try {
+        if (
+          payload.quantityTotal !== undefined &&
+          payload.quantityTotal !== task.quantity_total
+        ) {
+          await currentClient.updateTask(task.id, {
+            quantity_total: payload.quantityTotal,
+          });
+        }
+        await currentClient.recordProgress(task.id, {
+          quantity_done: payload.quantityDone,
+          note: payload.note,
+        });
+        await currentClient.pauseTaskWork(task.id);
+        dismissInProgressNotification(task.id).catch((e) =>
+          logError('通知の消去', e),
+        );
+      } catch (e) {
+        showError(e, '進捗の記録または一時停止に失敗');
+        return;
+      }
+      await refreshRef.current();
+    },
+    [inProgressTask],
+  );
+
+  const handleHomeProgressConfirm = useCallback(
+    async (payload: {
+      quantityDone: number;
+      note?: string;
+      quantityTotal?: number;
+    }) => {
+      await pauseInProgress(payload);
+      setProgressSheetVisible(false);
+      setProgressTask(null);
+    },
+    [pauseInProgress],
+  );
+
+  const openHomeProgressSheet = useCallback(() => {
+    const task = inProgressTask;
+    if (!task) {
+      startNextTask();
+      return;
+    }
+    haptic.light();
+    setProgressTask(task);
+    setProgressSheetVisible(true);
+  }, [inProgressTask, startNextTask]);
 
   const deleteTask = useCallback(async (task: TaskRow) => {
     const currentClient = clientRef.current;
@@ -1504,53 +1652,36 @@ export function HomeView() {
       {/* Bottom bar */}
       <View style={[styles.bottomBar, { paddingBottom: 16 + insets.bottom }]}>
         <Pressable
-          style={[styles.startDoneButton, { bottom: 16 + insets.bottom }]}
-          onPress={async () => {
-            // Start next task — mark as in_progress.
-            // #256: pick the chronologically next scheduled task (earliest
-            // start time) so the user can start it early (前倒し), not just
-            // the most recently created one. Fall back to pending tasks.
-            const scheduled = tasks
-              .filter((t) => t.status === 'scheduled')
-              .sort((a, b) => {
-                const sa = scheduleMap.get(a.id)?.start_at ?? a.end_at;
-                const sb = scheduleMap.get(b.id)?.start_at ?? b.end_at;
-                return new Date(sa).getTime() - new Date(sb).getTime();
-              });
-            const next =
-              scheduled[0] ?? tasks.find((t) => t.status === 'pending');
-            if (next) {
-              haptic.medium();
-              if (client && next.status !== 'in_progress') {
-                try {
-                  await client.updateTask(next.id, { status: 'in_progress' });
-                  // Dismiss any delivered start reminder notifications (#257)
-                  dismissTaskNotifications(next.id).catch((e) =>
-                    logError('通知の消去', e),
-                  );
-                  // Cancel pending start-time reminders so the started task
-                  // does not get a "タスク開始時間" notification later (#648).
-                  cancelScheduledStartNotifications(next.id).catch((e) =>
-                    logError('通知のキャンセル', e),
-                  );
-                  // Post in-progress notification with DONE/CANCEL actions
-                  if (notifications.inProgress) {
-                    postInProgressNotification(next).catch((e) =>
-                      logError('通知の投稿', e),
-                    );
-                  }
-                } catch (e) {
-                  showError(e, 'タスクの開始に失敗');
-                  return;
-                }
-              }
-              router.push(`/task/${next.id}`);
-            }
-          }}
+          style={[
+            styles.startDoneButton,
+            {
+              bottom: 16 + insets.bottom,
+              backgroundColor: inProgressTask ? COLORS.red : COLORS.green,
+            },
+          ]}
+          onPress={openHomeProgressSheet}
         >
-          <Ionicons name="play" size={24} color={COLORS.white} />
+          <Ionicons
+            name={inProgressTask ? 'pause' : 'play'}
+            size={24}
+            color={COLORS.white}
+          />
         </Pressable>
       </View>
+
+      {/* Progress sheet for in-progress pause */}
+      {progressTask && (
+        <TaskProgressSheet
+          visible={progressSheetVisible}
+          task={progressTask}
+          mode="pause"
+          onConfirm={handleHomeProgressConfirm}
+          onCancel={() => {
+            setProgressSheetVisible(false);
+            setProgressTask(null);
+          }}
+        />
+      )}
 
       {/* Floating navigation — visible only while scrolling (#308) */}
       <Reanimated.View

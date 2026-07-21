@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use takusu_client::{Client, CreateMemory, MemoryQuery, MemoryRow, SimilarTaskQuery, UpdateMemory};
 
+use crate::tools::takusu::required_i64;
 use crate::{Tool, ToolError, ToolOutput};
 
 fn object(args: Value) -> Result<serde_json::Map<String, Value>, ToolError> {
@@ -32,12 +33,6 @@ fn optional_string(
             .map(|value| Some(value.to_owned()))
             .ok_or_else(|| ToolError::InvalidArgs(format!("{name} must be a string"))),
     }
-}
-
-fn required_i64(args: &serde_json::Map<String, Value>, name: &str) -> Result<i64, ToolError> {
-    args.get(name)
-        .and_then(Value::as_i64)
-        .ok_or_else(|| ToolError::InvalidArgs(format!("missing or invalid {name}")))
 }
 
 fn optional_i64(
