@@ -44,11 +44,14 @@ import { haptic } from '@/src/components/haptics';
 import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
 import { AgentSettingsView } from '@/src/views/AgentSettingsView';
 import { SkillsSettingsView } from '@/src/views/SkillsSettingsView';
+import { useSolverSettings } from '@/src/hooks/useSolverSettings';
+import { solverLabel, SOLVER_OPTIONS } from '@/src/utils/settings';
 
 export type SettingsCategory =
   | 'general'
   | 'sleep'
   | 'workload'
+  | 'solver'
   | 'notifications'
   | 'agent'
   | 'skills'
@@ -60,6 +63,7 @@ const CATEGORY_LABELS: Record<SettingsCategory, string> = {
   general: '一般',
   sleep: '睡眠',
   workload: '作業負荷',
+  solver: 'Solver',
   notifications: '通知',
   agent: 'Agent',
   skills: 'スキル',
@@ -72,6 +76,7 @@ const CATEGORY_ORDER: SettingsCategory[] = [
   'general',
   'sleep',
   'workload',
+  'solver',
   'notifications',
   'agent',
   'skills',
@@ -261,6 +266,25 @@ export function SettingsDetailView({
   const DEFAULT_COMFORTABLE_HOURS = 8;
   const DEFAULT_MAXIMUM_HOURS = 12;
 
+  // Solver tab state (#789)
+  const {
+    solverValue,
+    setSolverValue,
+    timeBudgetInput,
+    setTimeBudgetInput,
+    seedInput,
+    setSeedInput,
+    warmStartValue,
+    setWarmStartValue,
+    loading: solverLoading,
+    saving: solverSaving,
+    menuVisible: solverMenuVisible,
+    setMenuVisible: setSolverMenuVisible,
+    dirty: solverDirty,
+    loadSolverSettings,
+    saveSolverSettings,
+  } = useSolverSettings(client);
+
   // Worker tab state
   const [workerUrl, setWorkerUrl] = useState(savedUrl);
   const [workerKey, setWorkerKey] = useState(savedToken);
@@ -416,6 +440,13 @@ export function SettingsDetailView({
       loadWorkloadSettings();
     }
   }, [category, loadWorkloadSettings]);
+
+  // Load solver settings only when the solver tab is active (#789).
+  useEffect(() => {
+    if (category === 'solver') {
+      loadSolverSettings();
+    }
+  }, [category, loadSolverSettings]);
   async function saveWorkerSettings() {
     if (client) {
       await client.updateWorkersConfig({ url: workerUrl, token: workerKey });
@@ -1075,6 +1106,135 @@ export function SettingsDetailView({
                     disabled={workloadSaving || !client}
                   >
                     {workloadSaving ? (
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.actionButtonText}>設定を保存</Text>
+                    )}
+                  </Pressable>
+                </>
+              )}
+            </>
+          )}
+
+          {category === 'solver' && (
+            <>
+              {solverLoading ? (
+                <ActivityIndicator color={BRAND_COLOR} style={styles.loader} />
+              ) : (
+                <>
+                  <View style={styles.settingRow}>
+                    <Text
+                      style={[styles.settingLabel, { color: colors.black }]}
+                    >
+                      Solver
+                    </Text>
+                    <Menu
+                      visible={solverMenuVisible}
+                      onDismiss={() => setSolverMenuVisible(false)}
+                      anchor={
+                        <Pressable
+                          onPress={() => setSolverMenuVisible(true)}
+                          style={[
+                            styles.themeDropdown,
+                            {
+                              backgroundColor: colors.surface,
+                              borderColor: colors.separator,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.themeDropdownText,
+                              { color: colors.black },
+                            ]}
+                          >
+                            {solverLabel(solverValue)}
+                          </Text>
+                          <Ionicons
+                            name="chevron-down"
+                            size={16}
+                            color={colors.black}
+                          />
+                        </Pressable>
+                      }
+                    >
+                      {SOLVER_OPTIONS.map((s) => (
+                        <Menu.Item
+                          key={s}
+                          title={solverLabel(s)}
+                          leadingIcon={solverValue === s ? 'check' : undefined}
+                          onPress={() => {
+                            setSolverMenuVisible(false);
+                            haptic.select();
+                            setSolverValue(s);
+                          }}
+                        />
+                      ))}
+                    </Menu>
+                  </View>
+
+                  <View style={styles.field}>
+                    <Text style={[styles.label, { color: colors.gray }]}>
+                      求解時間の上限（ミリ秒）
+                    </Text>
+                    <TextInput
+                      style={[
+                        styles.input,
+                        { borderColor: colors.separator, color: colors.black },
+                      ]}
+                      value={timeBudgetInput}
+                      onChangeText={setTimeBudgetInput}
+                      keyboardType="numeric"
+                      placeholder="0（制限なし）"
+                      placeholderTextColor={colors.gray}
+                    />
+                  </View>
+
+                  <View style={styles.field}>
+                    <Text style={[styles.label, { color: colors.gray }]}>
+                      乱数シード
+                    </Text>
+                    <TextInput
+                      style={[
+                        styles.input,
+                        { borderColor: colors.separator, color: colors.black },
+                      ]}
+                      value={seedInput}
+                      onChangeText={setSeedInput}
+                      keyboardType="numeric"
+                      placeholder="0（デフォルト）"
+                      placeholderTextColor={colors.gray}
+                    />
+                  </View>
+
+                  <View style={styles.settingRow}>
+                    <Text
+                      style={[styles.settingLabel, { color: colors.black }]}
+                    >
+                      Warm start
+                    </Text>
+                    <Switch
+                      value={warmStartValue}
+                      onValueChange={(v) => {
+                        haptic.select();
+                        setWarmStartValue(v);
+                      }}
+                      trackColor={{ true: BRAND_COLOR }}
+                    />
+                  </View>
+
+                  <Pressable
+                    style={[
+                      styles.actionButton,
+                      { backgroundColor: BRAND_COLOR },
+                    ]}
+                    onPress={() => {
+                      haptic.medium();
+                      saveSolverSettings();
+                    }}
+                    disabled={solverSaving || !client || !solverDirty}
+                  >
+                    {solverSaving ? (
                       <ActivityIndicator color="#FFFFFF" />
                     ) : (
                       <Text style={styles.actionButtonText}>設定を保存</Text>
