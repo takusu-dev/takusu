@@ -8,7 +8,6 @@ import { useEffect, useRef, useCallback } from 'react';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
 import * as Sentry from '@sentry/react-native';
-import type { TakusuClient } from '@/src/api/client';
 import { ServerProvider, useServer } from '@/src/api/ServerProvider';
 import { VoiceProvider } from '@/src/api/VoiceContext';
 import { setRecordingChangeListener } from '@/src/utils/voice';
@@ -26,16 +25,12 @@ import { haptic } from '@/src/components/haptics';
 import {
   setupNotificationCategories,
   ensureNotificationPermissions,
-  ACTION_DONE,
-  ACTION_CANCEL,
-  ACTION_START,
-  dismissInProgressNotification,
-  dismissTaskNotifications,
-  cancelScheduledTaskNotifications,
-  cancelScheduledStartNotifications,
-  postInProgressNotification,
-  postResultNotification,
 } from '@/src/notifications';
+import { handleActionButtonResponse } from '@/src/notifications/actionHandler';
+import {
+  registerNotificationBackgroundTask,
+  unregisterNotificationBackgroundTask,
+} from '@/src/notifications/backgroundTask';
 
 // Foreground notification handler — show notifications while app is open
 Notifications.setNotificationHandler({
@@ -80,95 +75,6 @@ if (process.env.EXPO_PUBLIC_SENTRY_DSN) {
   });
 }
 
-// Process a notification action button (START / DONE / CANCEL).
-// Returns true if the response was a recognized action button, false otherwise.
-function handleActionButton(
-  response: Notifications.NotificationResponse,
-  client: TakusuClient,
-  inProgressNotifEnabled: boolean,
-): boolean {
-  const actionId = response.actionIdentifier;
-
-  // Handle START action (task start reminder → mark in_progress)
-  if (actionId === ACTION_START) {
-    const taskId = response.notification.request.content.data?.taskId;
-    if (typeof taskId !== 'string' || !taskId) return true;
-    haptic.medium();
-    client
-      .updateTask(taskId, { status: 'in_progress' })
-      .then(() => {
-        // Dismiss the start reminder notification (#257)
-        dismissTaskNotifications(taskId).catch((err) =>
-          console.warn('Notification action: dismiss failed', err),
-        );
-        // Cancel any pending start-time reminders so an in-progress task
-        // does not get a "タスク開始時間" notification later (#648).
-        cancelScheduledStartNotifications(taskId).catch((err) =>
-          console.warn(
-            'Notification action: cancel start reminders failed',
-            err,
-          ),
-        );
-        // Post in-progress notification with DONE/CANCEL actions
-        if (inProgressNotifEnabled) {
-          client
-            .getTask(taskId)
-            .then((task) =>
-              postInProgressNotification(task).catch((err) =>
-                console.warn(
-                  'Notification action: post in-progress failed',
-                  err,
-                ),
-              ),
-            )
-            .catch((err) =>
-              console.warn('Notification action: getTask failed', err),
-            );
-        }
-      })
-      .catch((err) =>
-        console.warn('Notification action: updateTask failed', err),
-      );
-    return true;
-  }
-
-  // Handle action button taps (DONE / CANCEL for in-progress tasks)
-  if (actionId === ACTION_DONE || actionId === ACTION_CANCEL) {
-    const taskId = response.notification.request.content.data?.taskId;
-    if (typeof taskId !== 'string' || !taskId) return true;
-    const newStatus = actionId === ACTION_DONE ? 'completed' : 'skipped';
-    if (actionId === ACTION_DONE) haptic.success();
-    else haptic.warning();
-    const title = response.notification.request.content.title ?? '';
-    const taskTitle = title.replace(/^実行中: /, '') || 'タスク';
-    client
-      .updateTask(taskId, { status: newStatus })
-      .then(() => {
-        postResultNotification(taskId, taskTitle, newStatus).catch((err) =>
-          console.warn('Notification action: post result failed', err),
-        );
-        dismissInProgressNotification(taskId).catch((err) =>
-          console.warn('Notification action: dismiss failed', err),
-        );
-        dismissTaskNotifications(taskId).catch((err) =>
-          console.warn('Notification action: dismiss task failed', err),
-        );
-        cancelScheduledTaskNotifications(taskId).catch((err) =>
-          console.warn(
-            'Notification action: cancel scheduled task failed',
-            err,
-          ),
-        );
-      })
-      .catch((err) =>
-        console.warn('Notification action: updateTask failed', err),
-      );
-    return true;
-  }
-
-  return false;
-}
-
 function ThemedApp() {
   const { theme, client, notifications } = useServer();
   const MAX_PROCESSED_RESPONSE_IDS = 50;
@@ -184,17 +90,25 @@ function ThemedApp() {
   const processedResponseOrder = useRef<string[]>([]);
   const lastNotificationResponse = Notifications.useLastNotificationResponse();
 
-  // Set up notification channels, categories, permissions, and listeners
+  // Set up notification channels, categories, permissions, action categories,
+  // and the background task that handles action buttons on Android.
   useEffect(() => {
     async function setupNotifications() {
       await ensureNotificationPermissions();
       await setupNotificationCategories();
+      await registerNotificationBackgroundTask();
     }
     setupNotifications();
+
+    return () => {
+      unregisterNotificationBackgroundTask().catch(() => {
+        // ignore cleanup errors
+      });
+    };
   }, []);
 
   const processResponse = useCallback(
-    (response: Notifications.NotificationResponse) => {
+    async (response: Notifications.NotificationResponse) => {
       const id = response.notification.request.identifier;
       if (!id) return;
       if (
@@ -222,11 +136,11 @@ function ThemedApp() {
         return;
       }
 
-      const handled = handleActionButton(
-        response,
+      const handled = await handleActionButtonResponse(response, {
         client,
-        notifications.inProgress,
-      );
+        inProgressNotifications: notifications.inProgress,
+        haptic,
+      });
       if (handled) {
         markProcessed();
       } else {
@@ -256,7 +170,7 @@ function ThemedApp() {
     for (const response of queued) {
       const id = response.notification.request.identifier;
       if (id) pendingResponseIds.current.delete(id);
-      processResponse(response);
+      void processResponse(response);
     }
   }, [
     client,
@@ -266,12 +180,11 @@ function ThemedApp() {
   ]);
 
   // Handle notification responses (body tap and action buttons) from both
-  // cold start and live listener events. On Android, action buttons must open
-  // the app to foreground to be delivered; on iOS the listener fires in the
-  // background as well (#647).
+  // cold start and live listener events. On Android, action buttons are now
+  // handled by the background task so the app stays closed (#788).
   useEffect(() => {
     if (!lastNotificationResponse) return;
-    processResponse(lastNotificationResponse);
+    void processResponse(lastNotificationResponse);
   }, [lastNotificationResponse, processResponse]);
 
   const isDark = theme !== 'light';
