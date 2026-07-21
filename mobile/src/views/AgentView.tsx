@@ -24,6 +24,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -58,7 +59,12 @@ import {
   AGENT_SESSION_HISTORY_DEFAULT,
   loadSettings,
 } from '@/src/api/settingsStore';
-import { AgentClient, AgentApiError, AbortError } from '@/src/api/agentClient';
+import {
+  AgentClient,
+  AgentApiError,
+  AbortError,
+  type AgentTurnResult,
+} from '@/src/api/agentClient';
 import type {
   ApprovalRequest,
   TurnEvent,
@@ -75,8 +81,12 @@ import {
   saveSessionHistory,
   saveSessionSnapshot,
 } from '@/src/api/agentSessionStore';
+import { getTurnIndex } from '@/src/utils/getTurnIndex';
 import { ApprovalPanel } from '@/src/components/ApprovalPanel';
 import { ComposerRecordButton } from '@/src/components/ComposerRecordButton';
+import { EditMessageModal } from '@/src/components/EditMessageModal';
+import { MessageContextMenu } from '@/src/components/MessageContextMenu';
+import { haptic } from '@/src/components/haptics';
 import { BRAND_COLOR, COLORS, useColors, type ColorSet } from '@/src/theme';
 
 function newId(prefix: string): string {
@@ -635,6 +645,7 @@ interface AssistantMessageProps {
   availableHeight: number;
   isLatest: boolean;
   onToggleGroupCollapsed: (messageId: string, groupIndex: number) => void;
+  onLongPress: (message: Message, position: { x: number; y: number }) => void;
 }
 
 const AssistantMessage = memo(function AssistantMessageImpl({
@@ -646,18 +657,29 @@ const AssistantMessage = memo(function AssistantMessageImpl({
   availableHeight,
   isLatest,
   onToggleGroupCollapsed,
+  onLongPress,
 }: AssistantMessageProps) {
   const items = useMemo(
     () => buildAssistantItems(item, isLatest),
     [item, isLatest],
   );
+  const handleLongPress = (event: {
+    nativeEvent: { pageX?: number; pageY?: number };
+  }) => {
+    onLongPress(item, {
+      x: event.nativeEvent.pageX ?? 0,
+      y: event.nativeEvent.pageY ?? 0,
+    });
+  };
+
   return (
-    <View
+    <Pressable
       style={[
         styles.bubble,
         styles.assistantBubble,
         { backgroundColor: colors.separator, gap: 8 },
       ]}
+      onLongPress={handleLongPress}
     >
       {items.map((it, idx) => {
         if (it.type === 'text') {
@@ -695,21 +717,39 @@ const AssistantMessage = memo(function AssistantMessageImpl({
             <ActivityIndicator color={BRAND_COLOR} />
           </View>
         )}
-    </View>
+    </Pressable>
   );
 });
 
-const UserMessage = memo(function UserMessageImpl({ text }: { text: string }) {
+interface UserMessageProps {
+  message: Message;
+  onLongPress: (message: Message, position: { x: number; y: number }) => void;
+}
+
+const UserMessage = memo(function UserMessageImpl({
+  message,
+  onLongPress,
+}: UserMessageProps) {
+  const handleLongPress = (event: {
+    nativeEvent: { pageX?: number; pageY?: number };
+  }) => {
+    onLongPress(message, {
+      x: event.nativeEvent.pageX ?? 0,
+      y: event.nativeEvent.pageY ?? 0,
+    });
+  };
+
   return (
-    <View
+    <Pressable
       style={[
         styles.bubble,
         styles.userBubble,
         { backgroundColor: BRAND_COLOR },
       ]}
+      onLongPress={handleLongPress}
     >
-      <Text style={{ color: COLORS.white }}>{text}</Text>
-    </View>
+      <Text style={{ color: COLORS.white }}>{message.text}</Text>
+    </Pressable>
   );
 });
 
@@ -804,6 +844,16 @@ export function AgentView() {
     questions: UserInputQuestion[];
     values: string[];
   } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    visible: boolean;
+    messageId: string;
+    position: { x: number; y: number };
+  }>({ visible: false, messageId: '', position: { x: 0, y: 0 } });
+  const [editModal, setEditModal] = useState<{
+    visible: boolean;
+    messageId: string;
+    text: string;
+  }>({ visible: false, messageId: '', text: '' });
 
   const sessionIdsRef = useRef<string[]>([]);
   const activeIndexRef = useRef(0);
@@ -1126,22 +1176,21 @@ export function AgentView() {
     setError(null);
     backgroundAbortedRef.current = false;
     autoScrollRef.current = true;
+    setApproval(null);
+    setUserInput(null);
+    const trimmed = value.trim();
     setMessages((current) => [
       ...current,
-      { id: newId('user'), role: 'user', text: value.trim() },
+      { id: newId('user'), role: 'user', text: trimmed },
     ]);
     setBusy(true);
-    const abortController = new AbortController();
-    streamAbortRef.current = abortController;
-    let assistantId: string | null = null;
     try {
       const session = await ensureSession();
-      const id = newId('assistant');
-      assistantId = id;
+      const assistantId = newId('assistant');
       setMessages((current) => [
         ...current,
         {
-          id,
+          id: assistantId,
           role: 'assistant',
           text: '',
           thinking: '',
@@ -1151,108 +1200,174 @@ export function AgentView() {
           collapsedGroups: [],
         },
       ]);
-      const result = await client.runTurnStream(
-        session,
-        value.trim(),
-        newId('turn'),
-        (event: TurnEvent) => {
-          setMessages((current) => {
-            if (!assistantId) return current;
-            const index = current.findIndex((m) => m.id === assistantId);
-            if (index === -1) return current;
-            const msg = current[index];
-            const next = { ...msg };
-            switch (event.type) {
-              case 'Thinking':
-                next.thinking = (next.thinking ?? '') + event.data;
-                next.segments = appendSegment(next.segments ?? [], {
-                  type: 'thinking',
-                  text: event.data,
-                });
-                next.state = 'thinking';
-                break;
-              case 'ToolCall': {
-                if (event.data.name === 'correct_asr' && sessionIdRef.current) {
-                  const args = event.data.arguments as
-                    | { questions: UserInputQuestion[] }
-                    | undefined;
-                  const questions = args?.questions ?? [];
-                  if (questions.length > 0) {
-                    setUserInput({
-                      sessionId: sessionIdRef.current,
-                      callId: event.data.call_id,
-                      questions,
-                      values: questions.map((q) => q.text),
-                    });
-                  }
-                }
-                const callIndex = (next.toolCalls ?? []).length;
-                next.toolCalls = [
-                  ...(next.toolCalls ?? []),
-                  {
-                    name: event.data.name,
-                    callId: event.data.call_id,
-                    arguments: event.data.arguments,
-                  },
-                ];
-                next.segments = appendSegment(next.segments ?? [], {
-                  type: 'toolCall',
-                  callIndex,
-                });
-                next.state = 'tool_call';
-                break;
-              }
-              case 'ToolResult': {
-                const calls = [...(next.toolCalls ?? [])];
-                const match = calls.find(
-                  (c) => c.callId === event.data.call_id,
-                );
-                if (match) {
-                  if (event.data.name === 'correct_asr') {
-                    match.result = '訂正を反映しました';
-                    match.isError = false;
-                  } else {
-                    match.result = event.data.content;
-                    match.isError = event.data.is_error;
-                  }
-                }
-                next.toolCalls = calls;
-                break;
-              }
-              case 'Text':
-                next.text = (next.text ?? '') + event.data;
-                next.segments = appendTextSegment(
-                  next.segments ?? [],
-                  event.data,
-                );
-                next.state = 'answering';
-                break;
-              case 'Error':
-                next.text = event.data;
-                next.segments = finalizeTextSegment(
-                  next.segments ?? [],
-                  event.data,
-                );
-                next.state = 'done';
-                break;
-              case 'Done':
-                next.text = event.data.text;
-                next.segments = finalizeTextSegment(
-                  next.segments ?? [],
-                  event.data.text,
-                );
-                next.state = 'done';
-                break;
-            }
-            return [
-              ...current.slice(0, index),
-              next,
-              ...current.slice(index + 1),
-            ];
-          });
-        },
-        abortController.signal,
+      await runAssistantStream(assistantId, (onEvent, signal) =>
+        client.runTurnStream(session, trimmed, newId('turn'), onEvent, signal),
       );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+      setBusy(false);
+    }
+  }
+
+  async function editTurn(turnIndex: number, userId: string, newText: string) {
+    if (!newText.trim() || busy || isSwitchingRef.current || !historyReady)
+      return;
+    setError(null);
+    backgroundAbortedRef.current = false;
+    autoScrollRef.current = true;
+    setApproval(null);
+    setUserInput(null);
+    const trimmed = newText.trim();
+    setBusy(true);
+    try {
+      const session = await ensureSession();
+      const assistantId = newId('assistant');
+      let userIndex = -1;
+      setMessages((current) => {
+        const index = current.findIndex((m) => m.id === userId);
+        if (index === -1) return current;
+        userIndex = index;
+        return [
+          ...current.slice(0, index),
+          { ...current[index], text: trimmed },
+          {
+            id: assistantId,
+            role: 'assistant',
+            text: '',
+            thinking: '',
+            toolCalls: [],
+            state: 'thinking',
+            segments: [],
+            collapsedGroups: [],
+          },
+        ];
+      });
+      if (userIndex === -1) {
+        setBusy(false);
+        return;
+      }
+      await runAssistantStream(assistantId, (onEvent, signal) =>
+        client.editTurnStream(
+          session,
+          turnIndex,
+          trimmed,
+          newId('turn'),
+          onEvent,
+          signal,
+        ),
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+      setBusy(false);
+    }
+  }
+
+  async function runAssistantStream(
+    assistantId: string,
+    apiCall: (
+      onEvent: (event: TurnEvent) => void,
+      signal: AbortSignal,
+    ) => Promise<AgentTurnResult>,
+  ) {
+    setBusy(true);
+    const abortController = new AbortController();
+    streamAbortRef.current = abortController;
+    try {
+      const result = await apiCall((event: TurnEvent) => {
+        setMessages((current) => {
+          const index = current.findIndex((m) => m.id === assistantId);
+          if (index === -1) return current;
+          const msg = current[index];
+          const next = { ...msg };
+          switch (event.type) {
+            case 'Thinking':
+              next.thinking = (next.thinking ?? '') + event.data;
+              next.segments = appendSegment(next.segments ?? [], {
+                type: 'thinking',
+                text: event.data,
+              });
+              next.state = 'thinking';
+              break;
+            case 'ToolCall': {
+              if (event.data.name === 'correct_asr' && sessionIdRef.current) {
+                const args = event.data.arguments as
+                  | { questions: UserInputQuestion[] }
+                  | undefined;
+                const questions = args?.questions ?? [];
+                if (questions.length > 0) {
+                  setUserInput({
+                    sessionId: sessionIdRef.current,
+                    callId: event.data.call_id,
+                    questions,
+                    values: questions.map((q) => q.text),
+                  });
+                }
+              }
+              const callIndex = (next.toolCalls ?? []).length;
+              next.toolCalls = [
+                ...(next.toolCalls ?? []),
+                {
+                  name: event.data.name,
+                  callId: event.data.call_id,
+                  arguments: event.data.arguments,
+                },
+              ];
+              next.segments = appendSegment(next.segments ?? [], {
+                type: 'toolCall',
+                callIndex,
+              });
+              next.state = 'tool_call';
+              break;
+            }
+            case 'ToolResult': {
+              const calls = [...(next.toolCalls ?? [])];
+              const match = calls.find((c) => c.callId === event.data.call_id);
+              if (match) {
+                if (event.data.name === 'correct_asr') {
+                  match.result = '訂正を反映しました';
+                  match.isError = false;
+                } else {
+                  match.result = event.data.content;
+                  match.isError = event.data.is_error;
+                }
+              }
+              next.toolCalls = calls;
+              break;
+            }
+            case 'Text':
+              next.text = (next.text ?? '') + event.data;
+              next.segments = appendTextSegment(
+                next.segments ?? [],
+                event.data,
+              );
+              next.state = 'answering';
+              break;
+            case 'Error':
+              next.text = event.data;
+              next.segments = finalizeTextSegment(
+                next.segments ?? [],
+                event.data,
+              );
+              next.state = 'done';
+              break;
+            case 'Done':
+              next.text = event.data.text;
+              next.segments = finalizeTextSegment(
+                next.segments ?? [],
+                event.data.text,
+              );
+              next.state = 'done';
+              break;
+          }
+          return [
+            ...current.slice(0, index),
+            next,
+            ...current.slice(index + 1),
+          ];
+        });
+      }, abortController.signal);
       setApproval(result.approval_request);
       const ttsText = markdownToSpeech(result.text);
       if (audioReady && ttsText.trim()) {
@@ -1269,32 +1384,34 @@ export function AgentView() {
       const isAbort = backgroundAbortedRef.current || e instanceof AbortError;
       if (isAbort) {
         backgroundAbortedRef.current = false;
-        if (assistantId) {
-          setMessages((current) =>
-            current.map((m) =>
-              m.id === assistantId
-                ? {
-                    ...m,
-                    text: m.text || '応答が中断されました',
-                    state: 'done',
-                    toolCalls: [],
-                    segments: undefined,
-                  }
-                : m,
-            ),
-          );
-        }
+        setMessages((current) =>
+          current.map((m) => {
+            const fallback = m.text || '応答が中断されました';
+            return m.id === assistantId
+              ? {
+                  ...m,
+                  text: fallback,
+                  state: 'done',
+                  toolCalls: [],
+                  segments: undefined,
+                }
+              : m;
+          }),
+        );
       } else {
         const message = e instanceof Error ? e.message : String(e);
-        if (assistantId) {
-          setMessages((current) =>
-            current.map((m) =>
-              m.id === assistantId
-                ? { ...m, text: message, state: 'done', toolCalls: [] }
-                : m,
-            ),
-          );
-        }
+        setMessages((current) =>
+          current.map((m) =>
+            m.id === assistantId
+              ? {
+                  ...m,
+                  text: message,
+                  state: 'done',
+                  toolCalls: [],
+                }
+              : m,
+          ),
+        );
         if (e instanceof AgentApiError && e.status === 404) {
           const lostId = sessionIdRef.current;
           if (lostId) {
@@ -1348,6 +1465,89 @@ export function AgentView() {
     );
   }, []);
 
+  const handleMessageLongPress = useCallback(
+    (message: Message, position: { x: number; y: number }) => {
+      haptic.medium();
+      setContextMenu({
+        visible: true,
+        messageId: message.id,
+        position,
+      });
+    },
+    [],
+  );
+
+  const contextMenuMessage = useMemo(
+    () => messages.find((m) => m.id === contextMenu.messageId) ?? null,
+    [messages, contextMenu.messageId],
+  );
+
+  const handleCopy = useCallback(async () => {
+    if (!contextMenuMessage) return;
+    await Clipboard.setStringAsync(contextMenuMessage.text);
+    haptic.success();
+    setContextMenu((current) => ({ ...current, visible: false }));
+  }, [contextMenuMessage]);
+
+  const handleEdit = useCallback(() => {
+    if (!contextMenuMessage || busy || isSwitchingRef.current || !historyReady)
+      return;
+    setEditModal({
+      visible: true,
+      messageId: contextMenuMessage.id,
+      text: contextMenuMessage.text,
+    });
+    setContextMenu((current) => ({ ...current, visible: false }));
+  }, [contextMenuMessage, busy, historyReady]);
+
+  function handleSaveEdit(newText: string) {
+    setEditModal({ visible: false, messageId: '', text: '' });
+    if (
+      !sessionIdRef.current ||
+      !newText.trim() ||
+      busy ||
+      isSwitchingRef.current ||
+      !historyReady
+    )
+      return;
+    const index = messages.findIndex((m) => m.id === editModal.messageId);
+    if (index === -1 || messages[index].role !== 'user') return;
+    const turnIndex = getTurnIndex(messages, index);
+    editTurn(turnIndex, editModal.messageId, newText.trim());
+  }
+
+  const handleRevert = useCallback(async () => {
+    if (
+      !contextMenuMessage ||
+      !sessionIdRef.current ||
+      busy ||
+      isSwitchingRef.current ||
+      !historyReady
+    )
+      return;
+    streamAbortRef.current?.abort();
+    const index = messages.findIndex((m) => m.id === contextMenuMessage.id);
+    if (index === -1 || index === messages.length - 1) {
+      setContextMenu((current) => ({ ...current, visible: false }));
+      return;
+    }
+    const turnIndex = getTurnIndex(messages, index);
+    const afterUser = contextMenuMessage.role === 'user';
+    haptic.medium();
+    setBusy(true);
+    try {
+      await client.revertTurn(sessionIdRef.current, turnIndex, afterUser);
+      setMessages((current) => current.slice(0, index + 1));
+      setApproval(null);
+      setUserInput(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      setContextMenu((current) => ({ ...current, visible: false }));
+    }
+  }, [contextMenuMessage, messages, client, historyReady, busy]);
+
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const { contentOffset, contentSize, layoutMeasurement } =
@@ -1374,7 +1574,9 @@ export function AgentView() {
   const renderItem = useCallback(
     ({ item }: { item: Message }) => {
       if (item.role === 'user') {
-        return <UserMessage text={item.text} />;
+        return (
+          <UserMessage message={item} onLongPress={handleMessageLongPress} />
+        );
       }
       const isLatest = item.id === messages[messages.length - 1]?.id;
       return (
@@ -1387,6 +1589,7 @@ export function AgentView() {
           availableHeight={messagesHeight}
           isLatest={isLatest}
           onToggleGroupCollapsed={toggleGroupCollapsed}
+          onLongPress={handleMessageLongPress}
         />
       );
     },
@@ -1398,6 +1601,7 @@ export function AgentView() {
       markdownRules,
       messagesHeight,
       toggleGroupCollapsed,
+      handleMessageLongPress,
     ],
   );
 
@@ -1859,6 +2063,33 @@ export function AgentView() {
             )}
           </Pressable>
         </View>
+
+        <MessageContextMenu
+          visible={contextMenu.visible}
+          position={contextMenu.position}
+          canEdit={!busy && contextMenuMessage?.role === 'user'}
+          canRevert={
+            !busy &&
+            !!contextMenuMessage &&
+            messages.findIndex((m) => m.id === contextMenuMessage.id) <
+              messages.length - 1
+          }
+          onClose={() =>
+            setContextMenu((current) => ({ ...current, visible: false }))
+          }
+          onCopy={handleCopy}
+          onEdit={handleEdit}
+          onRevert={handleRevert}
+        />
+
+        <EditMessageModal
+          visible={editModal.visible}
+          text={editModal.text}
+          onClose={() =>
+            setEditModal({ visible: false, messageId: '', text: '' })
+          }
+          onSave={handleSaveEdit}
+        />
       </Reanimated.View>
     </KeyboardAvoidingView>
   );

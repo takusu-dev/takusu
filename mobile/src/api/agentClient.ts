@@ -94,8 +94,51 @@ export class AgentClient {
     onEvent: (event: TurnEvent) => void,
     signal?: AbortSignal,
   ): Promise<AgentTurnResult> {
+    const url = `${this.baseUrl}/api/agent/v1/sessions/${encodeURIComponent(sessionId)}/turns/stream`;
+    return this.streamRequest(
+      url,
+      { version: 1, text, idempotency_key: idempotencyKey },
+      onEvent,
+      signal,
+    );
+  }
+
+  editTurnStream(
+    sessionId: string,
+    turnIndex: number,
+    text: string,
+    idempotencyKey: string,
+    onEvent: (event: TurnEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<AgentTurnResult> {
+    const url = `${this.baseUrl}/api/agent/v1/sessions/${encodeURIComponent(sessionId)}/turns/${turnIndex}/edit/stream`;
+    return this.streamRequest(
+      url,
+      { version: 1, text, idempotency_key: idempotencyKey },
+      onEvent,
+      signal,
+    );
+  }
+
+  async revertTurn(
+    sessionId: string,
+    turnIndex: number,
+    afterUser: boolean,
+  ): Promise<void> {
+    await this.request<{ ok: boolean }>(
+      'POST',
+      `/api/agent/v1/sessions/${encodeURIComponent(sessionId)}/turns/${turnIndex}/revert`,
+      { version: 1, after_user: afterUser },
+    );
+  }
+
+  private streamRequest(
+    url: string,
+    body: unknown,
+    onEvent: (event: TurnEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<AgentTurnResult> {
     return new Promise((resolve, reject) => {
-      const url = `${this.baseUrl}/api/agent/v1/sessions/${encodeURIComponent(sessionId)}/turns/stream`;
       const xhr = new XMLHttpRequest();
       xhr.open('POST', url);
       xhr.setRequestHeader('Authorization', `Bearer ${this.token}`);
@@ -223,9 +266,7 @@ export class AgentClient {
         reject(new AbortError('Stream aborted'));
       };
 
-      xhr.send(
-        JSON.stringify({ version: 1, text, idempotency_key: idempotencyKey }),
-      );
+      xhr.send(JSON.stringify(body));
     });
   }
 

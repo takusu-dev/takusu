@@ -343,7 +343,7 @@ impl AgentSession {
     pub async fn run_turn_stream<F>(
         &self,
         user_text: &str,
-        mut emit: F,
+        emit: F,
     ) -> Result<TurnResult, AgentError>
     where
         F: FnMut(TurnEvent),
@@ -358,6 +358,101 @@ impl AgentSession {
         let mut local = self.history.lock().unwrap().clone();
         local.push(llm::Message::User(user_text.to_string()));
 
+        self.run_from_local_stream(system, system_estimate, tools, local, emit)
+            .await
+    }
+
+    /// Edits an existing user turn (by 0-based user-message index), truncates
+    /// the history after it, and re-runs the turn from that point.
+    pub async fn edit_turn_stream<F>(
+        &self,
+        turn_index: usize,
+        user_text: &str,
+        emit: F,
+    ) -> Result<TurnResult, AgentError>
+    where
+        F: FnMut(TurnEvent),
+    {
+        let _guard = self.turn_lock.lock().await;
+
+        let tools = self.registry.definitions();
+        let system = llm::Message::System(self.build_system_prompt().await);
+        let system_estimate = system.estimate_tokens();
+        *self.last_system_estimate.lock().unwrap() = Some(system_estimate);
+
+        let mut local = self.history.lock().unwrap().clone();
+        let user_position = local
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| matches!(m, llm::Message::User(_)))
+            .nth(turn_index)
+            .map(|(i, _)| i)
+            .ok_or_else(|| {
+                AgentError::Tool(ToolError::InvalidArgs(format!(
+                    "turn index {turn_index} out of range"
+                )))
+            })?;
+        local[user_position] = llm::Message::User(user_text.to_string());
+        local.truncate(user_position + 1);
+
+        // Any pending approval from later turns is no longer valid.
+        *self.pending_approval.lock().unwrap() = None;
+        // Recompute schedule_dirty and prompt tokens from the re-run.
+        *self.schedule_dirty.lock().unwrap() = false;
+        *self.last_prompt_tokens.lock().unwrap() = None;
+
+        self.run_from_local_stream(system, system_estimate, tools, local, emit)
+            .await
+    }
+
+    /// Truncates history at a given user-message turn.
+    /// `after_user: true`  -> keep history up to and including the user message.
+    /// `after_user: false` -> keep history up to and including the whole turn.
+    pub async fn truncate_history(
+        &self,
+        turn_index: usize,
+        after_user: bool,
+    ) -> Result<(), AgentError> {
+        let _guard = self.turn_lock.lock().await;
+
+        let mut history = self.history.lock().unwrap();
+        let user_positions: Vec<usize> = history
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| matches!(m, llm::Message::User(_)))
+            .map(|(i, _)| i)
+            .collect();
+        let &user_position = user_positions.get(turn_index).ok_or_else(|| {
+            AgentError::Tool(ToolError::InvalidArgs(format!(
+                "turn index {turn_index} out of range"
+            )))
+        })?;
+
+        if after_user {
+            history.truncate(user_position + 1);
+        } else if let Some(&next) = user_positions.get(turn_index + 1) {
+            history.truncate(next);
+        }
+        // If this is the latest turn and we want after_user=false, nothing to truncate.
+
+        *self.pending_approval.lock().unwrap() = None;
+        // Truncated history may have a different token count and schedule state.
+        *self.last_prompt_tokens.lock().unwrap() = None;
+        *self.schedule_dirty.lock().unwrap() = false;
+        Ok(())
+    }
+
+    async fn run_from_local_stream<F>(
+        &self,
+        system: llm::Message,
+        system_estimate: usize,
+        tools: Vec<Value>,
+        mut local: Vec<llm::Message>,
+        mut emit: F,
+    ) -> Result<TurnResult, AgentError>
+    where
+        F: FnMut(TurnEvent),
+    {
         let mut changes = Vec::new();
         let mut proposed_changes: Vec<ProposedChange> = Vec::new();
         let mut inferred_fields: Vec<InferredField> = Vec::new();
@@ -1581,6 +1676,140 @@ mod tests {
         let agent = AgentSession::new(cfg, registry, mock);
         let result = agent.run_turn_stream("call echo twice", |_| {}).await;
         assert!(matches!(result, Err(AgentError::TooManyToolCalls)));
+    }
+
+    #[tokio::test]
+    async fn edit_turn_stream_rewrites_user_and_truncates_history() {
+        let registry = ToolRegistry::new();
+        let mock = MockStreamingLlm {
+            calls: Mutex::new(Vec::new()),
+            events: Mutex::new(vec![
+                vec![
+                    llm::LlmStreamEvent::Text("first".into()),
+                    llm::LlmStreamEvent::Done {
+                        finish_reason: Some(llm::FinishReason::Stop),
+                        prompt_tokens: Some(10),
+                    },
+                ],
+                vec![
+                    llm::LlmStreamEvent::Text("edited".into()),
+                    llm::LlmStreamEvent::Done {
+                        finish_reason: Some(llm::FinishReason::Stop),
+                        prompt_tokens: Some(8),
+                    },
+                ],
+            ]),
+        };
+
+        let agent = AgentSession::new(AgentConfig::default(), registry, mock);
+        let first = agent.run_turn_stream("hello", |_| {}).await.unwrap();
+        assert_eq!(first.text, "first");
+
+        let second = agent.edit_turn_stream(0, "goodbye", |_| {}).await.unwrap();
+        assert_eq!(second.text, "edited");
+
+        let history = agent.history.lock().unwrap();
+        assert_eq!(history.len(), 2);
+        assert!(matches!(&history[0], llm::Message::User(t) if t == "goodbye"));
+        assert!(
+            matches!(&history[1], llm::Message::Assistant(llm::AssistantContent::Text(t)) if t == "edited")
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_turn_stream_rejects_out_of_range_turn() {
+        let registry = ToolRegistry::new();
+        let mock = MockStreamingLlm {
+            calls: Mutex::new(Vec::new()),
+            events: Mutex::new(vec![vec![llm::LlmStreamEvent::Done {
+                finish_reason: Some(llm::FinishReason::Stop),
+                prompt_tokens: None,
+            }]]),
+        };
+
+        let agent = AgentSession::new(AgentConfig::default(), registry, mock);
+        let result = agent.edit_turn_stream(0, "x", |_| {}).await;
+        assert!(matches!(
+            result,
+            Err(AgentError::Tool(ToolError::InvalidArgs(_)))
+        ));
+    }
+
+    #[tokio::test]
+    async fn truncate_history_keeps_messages_up_to_selected_turn() {
+        let registry = ToolRegistry::new();
+        let mock = MockStreamingLlm {
+            calls: Mutex::new(Vec::new()),
+            events: Mutex::new(vec![
+                vec![
+                    llm::LlmStreamEvent::Text("first".into()),
+                    llm::LlmStreamEvent::Done {
+                        finish_reason: Some(llm::FinishReason::Stop),
+                        prompt_tokens: Some(10),
+                    },
+                ],
+                vec![
+                    llm::LlmStreamEvent::Text("second".into()),
+                    llm::LlmStreamEvent::Done {
+                        finish_reason: Some(llm::FinishReason::Stop),
+                        prompt_tokens: Some(10),
+                    },
+                ],
+            ]),
+        };
+
+        let agent = AgentSession::new(AgentConfig::default(), registry, mock);
+        agent.run_turn_stream("hello", |_| {}).await.unwrap();
+        agent.run_turn_stream("world", |_| {}).await.unwrap();
+
+        agent.truncate_history(0, false).await.unwrap();
+
+        let history = agent.history.lock().unwrap();
+        assert_eq!(history.len(), 2);
+        assert!(matches!(&history[0], llm::Message::User(t) if t == "hello"));
+        assert!(
+            matches!(&history[1], llm::Message::Assistant(llm::AssistantContent::Text(t)) if t == "first")
+        );
+    }
+
+    #[tokio::test]
+    async fn truncate_history_after_user_keeps_only_user_message() {
+        let registry = ToolRegistry::new();
+        let mock = MockStreamingLlm {
+            calls: Mutex::new(Vec::new()),
+            events: Mutex::new(vec![vec![
+                llm::LlmStreamEvent::Text("answer".into()),
+                llm::LlmStreamEvent::Done {
+                    finish_reason: Some(llm::FinishReason::Stop),
+                    prompt_tokens: Some(10),
+                },
+            ]]),
+        };
+
+        let agent = AgentSession::new(AgentConfig::default(), registry, mock);
+        agent.run_turn_stream("hello", |_| {}).await.unwrap();
+
+        agent.truncate_history(0, true).await.unwrap();
+
+        let history = agent.history.lock().unwrap();
+        assert_eq!(history.len(), 1);
+        assert!(matches!(&history[0], llm::Message::User(t) if t == "hello"));
+    }
+
+    #[tokio::test]
+    async fn truncate_history_rejects_out_of_range_turn() {
+        let registry = ToolRegistry::new();
+        let mock = MockStreamingLlm {
+            calls: Mutex::new(Vec::new()),
+            events: Mutex::new(vec![]),
+        };
+
+        let agent = AgentSession::new(AgentConfig::default(), registry, mock);
+        let result = agent.truncate_history(0, true).await;
+        assert!(matches!(
+            result,
+            Err(AgentError::Tool(ToolError::InvalidArgs(_)))
+        ));
     }
 
     #[tokio::test]
