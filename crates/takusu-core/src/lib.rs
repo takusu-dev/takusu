@@ -1248,6 +1248,50 @@ mod tests {
         assert!((0.0..=1.0).contains(&f));
     }
 
+    // Regression (#780): a task whose deadline is already before `now` must
+    // be treated as the most urgent. `freeness()` currently uses
+    // `Point::diff` (absolute difference), which turns the negative slack
+    // into a positive number and deprioritizes the task.
+    #[test]
+    fn regression_780_freeness_past_deadline_priority() {
+        let mut planner = Planner::new(Point(100), SleepConfig::disabled());
+        let late = planner
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(50),
+                cost_estimate: NormalDist::new(5, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+        let tight = planner
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(101),
+                cost_estimate: NormalDist::new(5, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+
+        let late_freeness = planner.freeness(late);
+        let tight_freeness = planner.freeness(tight);
+        assert!(
+            late_freeness < tight_freeness,
+            "past-deadline task should be more urgent than a tight but feasible task: late={late_freeness} tight={tight_freeness}"
+        );
+    }
+
     #[test]
     fn plan_is_scheduled() {
         let planner = simple_two_task_planner();
