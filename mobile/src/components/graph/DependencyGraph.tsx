@@ -427,7 +427,17 @@ export function DependencyGraph({
 
   const panGesture = Gesture.Pan()
     .enabled(!height)
+    .maxPointers(1)
+    // testID allows the gesture to be retrieved in unit tests.
+    .withTestId('graph-pan')
     .onStart((e) => {
+      // maxPointers(1) is the primary safeguard, but we also ignore multi-pointer
+      // updates defensively: some platforms may deliver one more update before the
+      // gesture is cancelled when a second finger lands.
+      if (e.numberOfPointers > 1) {
+        draggingNodeId.value = null;
+        return;
+      }
       const world = toWorld(e.x, e.y);
       // Check if touching a node (or its label) → start node drag (#383, #422)
       for (const node of simNodes) {
@@ -449,6 +459,12 @@ export function DependencyGraph({
       draggingNodeId.value = null;
     })
     .onChange((e) => {
+      // Defensive: ignore updates with more than one pointer so pinch/zoom never
+      // drags a node (#790).
+      if (e.numberOfPointers > 1) {
+        draggingNodeId.value = null;
+        return;
+      }
       if (draggingNodeId.value) {
         // Drag node — update position via runOnJS for rendering
         const world = toWorld(e.x, e.y);
@@ -458,8 +474,14 @@ export function DependencyGraph({
         translateY.value = translateY.value + e.changeY;
       }
     })
-    .onEnd(() => {
-      if (draggingNodeId.value) {
+    .onEnd((_e, success) => {
+      if (success && draggingNodeId.value) {
+        draggingNodeId.value = null;
+      }
+    })
+    .onFinalize((_e, success) => {
+      // Reset drag state when the gesture fails or is cancelled (e.g. second finger lands).
+      if (!success && draggingNodeId.value) {
         draggingNodeId.value = null;
       }
     });
@@ -502,7 +524,15 @@ export function DependencyGraph({
 
   const longPressDrag = Gesture.Pan()
     .activateAfterLongPress(150)
+    .maxPointers(1)
+    // testID allows the gesture to be retrieved in unit tests.
+    .withTestId('graph-long-press-drag')
     .onStart((e) => {
+      // Defensive: ignore multi-pointer starts so a two-finger touch does not
+      // accidentally start an edge/cut drag (#790).
+      if (e.numberOfPointers > 1) {
+        return;
+      }
       if (!editMode) return;
       const world = toWorld(e.x, e.y);
       // Check if starting on a node (or its label) → edge addition mode
@@ -540,6 +570,9 @@ export function DependencyGraph({
     })
     .onUpdate((e) => {
       if (!editMode) return;
+      if (e.numberOfPointers > 1) {
+        return;
+      }
       const world = toWorld(e.x, e.y);
       if (dragSourceId.value) {
         // Edge addition drag
@@ -559,6 +592,9 @@ export function DependencyGraph({
     })
     .onEnd((e) => {
       if (!editMode) return;
+      if (e.numberOfPointers > 1) {
+        return;
+      }
       if (dragSourceId.value && onAddEdge) {
         // Edge addition — check if dropped on a node (including its label)
         const world = toWorld(e.x, e.y);
