@@ -495,7 +495,7 @@ pub(crate) fn task_json(
         Some(tz) => format_datetime_for_display(s, tz),
         None => s.to_string(),
     };
-    json!({
+    let mut value = json!({
         "display_id": task.display_id,
         "reference": ctx.reference(task),
         "title": task.title,
@@ -516,9 +516,16 @@ pub(crate) fn task_json(
         "completed_at": task.completed_at.as_deref().map(fmt),
         "split_from_task_id": task.split_from_task_id.as_deref().and_then(|id| ctx.ref_by_id(id).map(|r| r.reference.clone())),
         "original_quantity_total": task.original_quantity_total,
+        "actual_minutes": task.actual_minutes,
         "created_at": fmt(&task.created_at),
         "updated_at": fmt(&task.updated_at),
-    })
+    });
+    if task.actual_minutes.is_none()
+        && let Value::Object(map) = &mut value
+    {
+        map.remove("actual_minutes");
+    }
+    value
 }
 
 fn habit_summary_json(habit: &HabitRow) -> Value {
@@ -1790,6 +1797,7 @@ mod tests {
             completed_at: None,
             split_from_task_id: None,
             original_quantity_total: None,
+            actual_minutes: None,
             created_at: "2025-06-01T00:00:00Z".to_string(),
             updated_at: "2025-06-01T00:00:00Z".to_string(),
         }

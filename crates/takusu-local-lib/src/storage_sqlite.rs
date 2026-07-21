@@ -22,8 +22,8 @@ const NOT_OVERDUE_SQL: &str =
     "(status IN ('completed', 'skipped') OR datetime(end_at) >= datetime('now'))";
 /// Static `SELECT ... FROM tasks` fragments for queries that require an
 /// audited `&'static str` (`SqlSafeStr`) and avoid `SELECT *` brittleness.
-const SELECT_TASKS: &str = "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at FROM tasks";
-const SELECT_TASK_BY_ID: &str = "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at FROM tasks WHERE id = ?";
+const SELECT_TASKS: &str = "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at, tam.actual_minutes FROM tasks LEFT JOIN task_actual_minutes tam ON tam.task_id = tasks.id";
+const SELECT_TASK_BY_ID: &str = "SELECT id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at, tam.actual_minutes FROM tasks LEFT JOIN task_actual_minutes tam ON tam.task_id = tasks.id WHERE tasks.id = ?";
 
 const MIGRATION_001: &str = include_str!("../migrations/001_init.sql");
 const MIGRATION_002: &str = include_str!("../migrations/002_google_cal.sql");
@@ -41,6 +41,7 @@ const MIGRATION_016: &str = include_str!("../migrations/016_memory.sql");
 const MIGRATION_017: &str = include_str!("../migrations/017_solver.sql");
 const MIGRATION_018: &str = include_str!("../migrations/018_progress.sql");
 const MIGRATION_019: &str = include_str!("../migrations/019_jwt.sql");
+const MIGRATION_020: &str = include_str!("../migrations/020_task_actual_minutes_view.sql");
 // Migration 013 one-time backfill: drops the old global unique index, renumbers
 // existing habit tasks to start from 1 per habit, and seeds the per-habit
 // sequences. Non-idempotent (DROP + UPDATE renumber) — guarded by a check
@@ -340,6 +341,10 @@ impl SqliteStorage {
         if !has_jti {
             sqlx::raw_sql(MIGRATION_019).execute(&pool).await?;
         }
+
+        // Migration 020 creates a view that pre-computes per-task active work
+        // minutes from task_work_sessions (idempotent).
+        sqlx::raw_sql(MIGRATION_020).execute(&pool).await?;
 
         Ok(Self { pool, jwt_secret })
     }
@@ -1670,7 +1675,7 @@ impl Storage for SqliteStorage {
         )
         .map_err(|e| StorageError::BadRequest(format!("invalid title: {e}")))?;
         let rows: Vec<SimilarTaskRow> = sqlx::query_as::<_, SimilarTaskRow>(
-            "SELECT id AS task_id, display_id, title, avg_minutes, sigma_minutes, NULL AS actual_minutes, completed_at, updated_at, 'title_overlap' AS similarity FROM tasks WHERE status = 'completed' ORDER BY updated_at DESC LIMIT 1000",
+            "SELECT t.id AS task_id, t.display_id, t.title, t.avg_minutes, t.sigma_minutes, tam.actual_minutes, t.completed_at, t.updated_at, 'title_overlap' AS similarity FROM tasks t LEFT JOIN task_actual_minutes tam ON tam.task_id = t.id WHERE t.status = 'completed' ORDER BY t.updated_at DESC LIMIT 1000",
         )
         .fetch_all(&self.pool)
         .await
