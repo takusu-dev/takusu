@@ -26,6 +26,13 @@ export interface TaskRow {
   user_edited: boolean;
   fixed: boolean;
   habit_step_id?: string; // habit step that generated this task (#95)
+  // WI-9: quantity fields
+  quantity_total?: number;
+  quantity_done: number;
+  quantity_unit?: string;
+  completed_at?: string;
+  split_from_task_id?: string;
+  original_quantity_total?: number;
   created_at: string;
   updated_at: string;
 }
@@ -44,6 +51,11 @@ export interface CreateTask {
   ical_uid?: string;
   habit_id?: string;
   fixed?: boolean;
+  // WI-9: quantity fields
+  quantity_total?: number;
+  quantity_done?: number;
+  quantity_unit?: string;
+  original_quantity_total?: number;
 }
 
 export interface UpdateTask {
@@ -60,6 +72,11 @@ export interface UpdateTask {
   status?: TaskStatus;
   user_edited?: boolean;
   fixed?: boolean;
+  // WI-9: quantity fields
+  quantity_total?: number;
+  quantity_done?: number;
+  quantity_unit?: string;
+  original_quantity_total?: number;
 }
 
 export interface TaskQuery {
@@ -367,6 +384,42 @@ export interface RedundantDependency {
 
 export interface DependencyAnalysisResponse {
   redundant: RedundantDependency[];
+}
+
+// ── Task progress (#757) ──
+
+export interface RecordProgress {
+  quantity_done: number;
+  note?: string;
+}
+
+export interface ProgressEventRow {
+  id: string;
+  task_id: string;
+  at: string;
+  quantity_done?: number;
+  delta_quantity?: number;
+  active_minutes: number;
+  note?: string;
+}
+
+export interface ProgressResult {
+  task: TaskRow;
+  event?: ProgressEventRow;
+  suggests_completion: boolean;
+}
+
+export interface SplitTask {
+  retained_quantity: number;
+  set_dependency?: boolean;
+  title?: string;
+  description?: string;
+  end_at?: string;
+}
+
+export interface SplitResult {
+  original: TaskRow;
+  remainder: TaskRow;
 }
 
 // Helper: parse depends JSON string

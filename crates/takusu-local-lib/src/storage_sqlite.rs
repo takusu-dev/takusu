@@ -12,8 +12,6 @@ use takusu_storage::{
 };
 use takusu_util::{DEFAULT_AUD, SCOPE_READ_WRITE};
 
-use std::str::FromStr;
-
 use crate::config::LocalConfig;
 
 /// SQL predicate for tasks whose deadline has passed but are not finished.
@@ -1812,11 +1810,13 @@ impl Storage for SqliteStorage {
         .await
         .map_err(map_err)?;
 
-        sqlx::query("UPDATE tasks SET updated_at = datetime('now') WHERE id = ?")
-            .bind(&full)
-            .execute(&mut *tx)
-            .await
-            .map_err(map_err)?;
+        sqlx::query(
+            "UPDATE tasks SET status = 'scheduled', updated_at = datetime('now') WHERE id = ?",
+        )
+        .bind(&full)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
 
         let task: TaskRow = sqlx::query_as(SELECT_TASK_BY_ID)
             .bind(&full)
@@ -1887,7 +1887,9 @@ impl Storage for SqliteStorage {
         .await
         .map_err(map_err)?;
 
-        if open.is_none() && body.quantity_done != task.quantity_done {
+        // Increasing progress requires an open session to measure active time.
+        // Corrections (decreasing or keeping quantity_done) are allowed without one.
+        if open.is_none() && body.quantity_done > task.quantity_done {
             return Err(StorageError::BadRequest(
                 "no open work session; start work first".into(),
             ));
@@ -1923,11 +1925,11 @@ impl Storage for SqliteStorage {
 
         let active_minutes = if let Some(ref session) = open {
             let base = if let Some(ref ev) = last_event {
-                later_timestamp(&session.started_at, &ev.at)?
+                takusu_util::later_timestamp(&session.started_at, &ev.at)
             } else {
                 &session.started_at
             };
-            minutes_between(base, &now)
+            takusu_util::minutes_between(base, &now)
         } else {
             0
         };
@@ -1966,6 +1968,8 @@ impl Storage for SqliteStorage {
 
         let status = if task.status == "completed" {
             "completed".to_string()
+        } else if delta_quantity < 0 {
+            task.status.clone()
         } else {
             "in_progress".to_string()
         };
@@ -2049,23 +2053,71 @@ impl Storage for SqliteStorage {
         .await
         .map_err(map_err)?;
 
-        let quantity_done: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(quantity_total, quantity_done) FROM tasks WHERE id = ?",
+        let task_before: TaskRow = sqlx::query_as(SELECT_TASK_BY_ID)
+            .bind(&full)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_err)?;
+
+        let sessions: Vec<TaskWorkSessionRow> = sqlx::query_as(
+            "SELECT id, task_id, started_at, ended_at, created_at FROM task_work_sessions WHERE task_id = ? ORDER BY started_at ASC",
         )
         .bind(&full)
-        .fetch_one(&mut *tx)
+        .fetch_all(&mut *tx)
         .await
         .map_err(map_err)?;
+        let total_active_minutes: i64 = sessions.iter().map(session_minutes).sum();
+
+        let quantity_done = task_before
+            .quantity_total
+            .unwrap_or(task_before.quantity_done);
+        let delta_quantity = quantity_done - task_before.quantity_done;
+
+        let (new_avg, new_sigma) = if delta_quantity > 0 && total_active_minutes > 0 {
+            compute_updated_estimate(
+                &mut *tx,
+                &full,
+                task_before.avg_minutes,
+                task_before.sigma_minutes,
+                task_before.quantity_total,
+                total_active_minutes,
+                delta_quantity,
+            )
+            .await?
+        } else if task_before.quantity_total.is_none() && total_active_minutes > 0 {
+            (total_active_minutes, task_before.sigma_minutes)
+        } else {
+            (task_before.avg_minutes, task_before.sigma_minutes)
+        };
 
         sqlx::query(
-            "UPDATE tasks SET status = 'completed', completed_at = ?, quantity_done = ?, updated_at = datetime('now') WHERE id = ?",
+            "UPDATE tasks SET status = 'completed', completed_at = ?, quantity_done = ?, avg_minutes = ?, sigma_minutes = ?, updated_at = datetime('now') WHERE id = ?",
         )
         .bind(&now)
         .bind(quantity_done)
+        .bind(new_avg)
+        .bind(new_sigma)
         .bind(&full)
         .execute(&mut *tx)
         .await
         .map_err(map_err)?;
+
+        if total_active_minutes > 0 {
+            let event_id = uuid::Uuid::now_v7().to_string();
+            sqlx::query(
+                "INSERT INTO progress_events (id, task_id, at, quantity_done, delta_quantity, active_minutes, note) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&event_id)
+            .bind(&full)
+            .bind(&now)
+            .bind(quantity_done)
+            .bind(delta_quantity)
+            .bind(total_active_minutes)
+            .bind("completed")
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        }
 
         let task: TaskRow = sqlx::query_as(SELECT_TASK_BY_ID)
             .bind(&full)
@@ -2450,33 +2502,13 @@ fn validate_quantity(
     Ok(())
 }
 
-/// Return the later of two RFC 3339 timestamp strings.
-fn later_timestamp<'a>(a: &'a str, b: &'a str) -> StorageResult<&'a str> {
-    match (jiff::Timestamp::from_str(a), jiff::Timestamp::from_str(b)) {
-        (Ok(ta), Ok(tb)) => Ok(if ta >= tb { a } else { b }),
-        _ => Err(StorageError::Internal(
-            "invalid timestamp for comparison".into(),
-        )),
-    }
-}
-
-/// Minutes between two RFC 3339 timestamps. Returns at least 1 to avoid
-/// degenerate speed observations when the start and end are too close.
-fn minutes_between(start: &str, end: &str) -> i64 {
-    match (
-        jiff::Timestamp::from_str(start),
-        jiff::Timestamp::from_str(end),
-    ) {
-        (Ok(s), Ok(e)) => ((e.as_second() - s.as_second()) / 60).max(1),
-        _ => 1,
-    }
-}
-
 /// Active minutes for a work session (closed or open).
 fn session_minutes(session: &TaskWorkSessionRow) -> i64 {
     match session.ended_at.as_deref() {
-        Some(end) => minutes_between(&session.started_at, end),
-        None => minutes_between(&session.started_at, &jiff::Timestamp::now().to_string()),
+        Some(end) => takusu_util::minutes_between(&session.started_at, end),
+        None => {
+            takusu_util::minutes_between(&session.started_at, &jiff::Timestamp::now().to_string())
+        }
     }
 }
 

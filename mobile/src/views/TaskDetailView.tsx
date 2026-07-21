@@ -35,6 +35,8 @@ import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { haptic } from '@/src/components/haptics';
+import { TaskProgressSheet } from '@/src/components/TaskProgressSheet';
+import { SplitTaskModal } from '@/src/components/SplitTaskModal';
 import { CancelConfirmButton } from '@/src/components/CancelConfirmButton';
 import { DeleteConfirmMenuItem } from '@/src/components/DeleteConfirmMenuItem';
 import { RedundantDepWarning } from '@/src/components/RedundantDepWarning';
@@ -98,6 +100,8 @@ export function TaskDetailView() {
   const [abandonability, setAbandonability] = useState(0.5);
   const [avgMinutes, setAvgMinutes] = useState('');
   const [sigmaMinutes, setSigmaMinutes] = useState('');
+  const [quantityTotal, setQuantityTotal] = useState('');
+  const [quantityUnit, setQuantityUnit] = useState('');
   const [startAt, setStartAt] = useState<Date | null>(null);
   const [endAt, setEndAt] = useState<Date | null>(null);
   const [parallelizable, setParallelizable] = useState(false);
@@ -113,6 +117,11 @@ export function TaskDetailView() {
   );
   const [status, setStatus] = useState<TaskStatus>('pending');
   const [menuVisible, setMenuVisible] = useState(false);
+  const [progressSheetVisible, setProgressSheetVisible] = useState(false);
+  const [progressSheetMode, setProgressSheetMode] = useState<
+    'record' | 'pause'
+  >('record');
+  const [splitModalVisible, setSplitModalVisible] = useState(false);
   // Double-tap detection ref — must be before the early return to satisfy
   // React's Rules of Hooks (hooks must be called unconditionally).
   const lastTapRef = useRef(0);
@@ -135,6 +144,12 @@ export function TaskDetailView() {
       setAbandonability(t.abandonability);
       setAvgMinutes(String(t.avg_minutes));
       setSigmaMinutes(t.sigma_minutes > 0 ? String(t.sigma_minutes) : '');
+      setQuantityTotal(
+        t.quantity_total !== undefined && t.quantity_total > 0
+          ? String(t.quantity_total)
+          : '',
+      );
+      setQuantityUnit(t.quantity_unit ?? '');
       setStartAt(t.start_at ? new Date(t.start_at) : null);
       setEndAt(new Date(t.end_at));
       setParallelizable(t.parallelizable);
@@ -235,6 +250,14 @@ export function TaskDetailView() {
       const v = parseDuration(sigmaMinutes);
       if (v !== null && v >= 0) updates.sigma_minutes = v;
     }
+    if (quantityTotal !== String(task.quantity_total ?? '')) {
+      const v = parseInt(quantityTotal, 10);
+      if (!isNaN(v) && v > 0) updates.quantity_total = v;
+      else updates.quantity_total = undefined;
+    }
+    if (quantityUnit !== (task.quantity_unit ?? '')) {
+      updates.quantity_unit = quantityUnit.trim() || undefined;
+    }
     const prevStart = task.start_at ? new Date(task.start_at) : null;
     if (startAt?.getTime() !== prevStart?.getTime()) {
       updates.start_at = startAt ? toISO(startAt) : null;
@@ -275,6 +298,8 @@ export function TaskDetailView() {
           abandonability: prev.abandonability,
           avg_minutes: prev.avg_minutes,
           sigma_minutes: prev.sigma_minutes,
+          quantity_total: prev.quantity_total,
+          quantity_unit: prev.quantity_unit,
           start_at: prev.start_at,
           end_at: prev.end_at,
           parallelizable: prev.parallelizable,
@@ -326,44 +351,42 @@ export function TaskDetailView() {
   async function changeStatus(newStatus: TaskStatus) {
     if (!client || !task) return;
     const prevStatus = task.status;
-    setStatus(newStatus);
     setStatusMenuVisible(false);
     if (newStatus === prevStatus) return;
 
     // In edit mode, only update local state — persisted on Save
-    if (editing) return;
+    if (editing) {
+      setStatus(newStatus);
+      return;
+    }
+
+    if (newStatus === 'in_progress') {
+      await startTask();
+      return;
+    }
+    if (newStatus === 'completed') {
+      await completeTask();
+      return;
+    }
+    if (newStatus === 'scheduled' && prevStatus === 'in_progress') {
+      await pauseTask();
+      return;
+    }
 
     try {
       await client.updateTask(task.id, { status: newStatus });
     } catch (e) {
       showError(e, 'ステータス変更に失敗');
-      setStatus(prevStatus);
       return;
     }
+    setStatus(newStatus);
 
-    // Manage in-progress notification
-    if (newStatus === 'in_progress') {
-      // Dismiss any delivered start reminder notifications (#257)
-      dismissTaskNotifications(task.id).catch((e) => logError('通知の消去', e));
-      // Cancel pending start-time reminders so an in-progress task does not
-      // get a "タスク開始時間" notification later (#648).
-      cancelScheduledStartNotifications(task.id).catch((e) =>
-        logError('通知のキャンセル', e),
-      );
-      if (notifications.inProgress) {
-        postInProgressNotification({ ...task, status: newStatus }).catch((e) =>
-          logError('通知の投稿', e),
-        );
-      }
-    } else if (prevStatus === 'in_progress') {
+    if (prevStatus === 'in_progress') {
       dismissInProgressNotification(task.id).catch((e) =>
         logError('通知の消去', e),
       );
     }
-    // Dismiss any delivered reminder notifications when the task is
-    // completed or skipped (#257), and cancel pending scheduled reminders
-    // including end-time notifications (#455).
-    if (newStatus === 'completed' || newStatus === 'skipped') {
+    if (newStatus === 'skipped') {
       dismissTaskNotifications(task.id).catch((e) => logError('通知の消去', e));
       cancelScheduledTaskNotifications(task.id).catch((e) =>
         logError('通知のキャンセル', e),
@@ -374,23 +397,10 @@ export function TaskDetailView() {
       description: `status → ${STATUS_LABELS[newStatus]}: ${task.title}`,
       undo: async () => {
         await client.updateTask(task.id, { status: prevStatus });
-        // If undoing back to in_progress, make sure no start-time reminders
-        // remain scheduled.
-        if (prevStatus === 'in_progress') {
-          cancelScheduledStartNotifications(task.id).catch((e) =>
-            logError('通知のキャンセル', e),
-          );
-        }
         await refresh();
       },
       redo: async () => {
         await client.updateTask(task.id, { status: newStatus });
-        // If redoing into in_progress, cancel any pending start reminders.
-        if (newStatus === 'in_progress') {
-          cancelScheduledStartNotifications(task.id).catch((e) =>
-            logError('通知のキャンセル', e),
-          );
-        }
         await refresh();
       },
     });
@@ -469,6 +479,251 @@ export function TaskDetailView() {
       },
     });
     router.back();
+  }
+
+  // ── Task progress actions (#757) ──
+
+  async function startTask() {
+    if (!client || !task) return;
+    const prevStatus = task.status;
+    try {
+      await client.startTaskWork(task.id);
+    } catch (e) {
+      showError(e, 'タスクの開始に失敗');
+      return;
+    }
+    cancelScheduledStartNotifications(task.id).catch((e) =>
+      logError('通知のキャンセル', e),
+    );
+    dismissTaskNotifications(task.id).catch((e) => logError('通知の消去', e));
+    if (notifications.inProgress) {
+      postInProgressNotification({ ...task, status: 'in_progress' }).catch(
+        (e) => logError('通知の投稿', e),
+      );
+    }
+    await refresh();
+
+    undoRedo.push({
+      description: `start: ${task.title}`,
+      undo: async () => {
+        try {
+          await client.pauseTaskWork(task.id);
+        } catch (e) {
+          showError(e, 'タスクの巻き戻しに失敗');
+          return;
+        }
+        if (prevStatus !== 'scheduled') {
+          try {
+            await client.updateTask(task.id, { status: prevStatus });
+          } catch (e) {
+            showError(e, 'タスクの巻き戻しに失敗');
+          }
+        }
+        await refresh();
+      },
+      redo: async () => {
+        try {
+          await client.startTaskWork(task.id);
+        } catch (e) {
+          showError(e, 'タスクの再開に失敗');
+          return;
+        }
+        await refresh();
+      },
+    });
+  }
+
+  async function pauseTask(payload?: {
+    quantityDone: number;
+    note?: string;
+    quantityTotal?: number;
+  }) {
+    if (!client || !task) return;
+    const prevQuantityDone = task.quantity_done;
+    const prevQuantityTotal = task.quantity_total;
+    if (payload) {
+      try {
+        if (
+          payload.quantityTotal !== undefined &&
+          payload.quantityTotal !== task.quantity_total
+        ) {
+          await client.updateTask(task.id, {
+            quantity_total: payload.quantityTotal,
+          });
+        }
+        await client.recordProgress(task.id, {
+          quantity_done: payload.quantityDone,
+          note: payload.note,
+        });
+      } catch (e) {
+        showError(e, '進捗の記録に失敗');
+        return;
+      }
+    }
+    try {
+      await client.pauseTaskWork(task.id);
+    } catch (e) {
+      showError(e, 'タスクの一時停止に失敗');
+      return;
+    }
+    dismissInProgressNotification(task.id).catch((e) =>
+      logError('通知の消去', e),
+    );
+    await refresh();
+
+    undoRedo.push({
+      description: `pause: ${task.title}`,
+      undo: async () => {
+        try {
+          await client.startTaskWork(task.id);
+        } catch (e) {
+          showError(e, 'タスクの巻き戻しに失敗');
+          return;
+        }
+        if (payload) {
+          try {
+            await client.updateTask(task.id, {
+              quantity_done: prevQuantityDone,
+              quantity_total: prevQuantityTotal,
+            });
+          } catch (e) {
+            showError(e, '数量の巻き戻しに失敗');
+          }
+        }
+        await refresh();
+      },
+      redo: async () => {
+        try {
+          await client.pauseTaskWork(task.id);
+        } catch (e) {
+          showError(e, 'タスクの再停止に失敗');
+          return;
+        }
+        await refresh();
+      },
+    });
+  }
+
+  async function completeTask() {
+    if (!client || !task) return;
+    const prevQuantityDone = task.quantity_done;
+    const total = task.quantity_total;
+    try {
+      await client.completeTaskWork(task.id);
+    } catch (e) {
+      showError(e, 'タスクの完了に失敗');
+      return;
+    }
+    dismissTaskNotifications(task.id).catch((e) => logError('通知の消去', e));
+    cancelScheduledTaskNotifications(task.id).catch((e) =>
+      logError('通知のキャンセル', e),
+    );
+    await refresh();
+
+    undoRedo.push({
+      description: `complete: ${task.title}`,
+      undo: async () => {
+        try {
+          await client.updateTask(task.id, {
+            status: 'in_progress',
+            quantity_done: prevQuantityDone,
+          });
+        } catch (e) {
+          showError(e, 'タスクの巻き戻しに失敗');
+          return;
+        }
+        await refresh();
+      },
+      redo: async () => {
+        try {
+          await client.updateTask(task.id, {
+            status: 'completed',
+            quantity_done: total ?? prevQuantityDone,
+          });
+        } catch (e) {
+          showError(e, 'タスクの再完了に失敗');
+          return;
+        }
+        await refresh();
+      },
+    });
+  }
+
+  async function recordProgress(payload: {
+    quantityDone: number;
+    note?: string;
+    quantityTotal?: number;
+  }) {
+    if (!client || !task) return;
+    try {
+      if (
+        payload.quantityTotal !== undefined &&
+        payload.quantityTotal !== task.quantity_total
+      ) {
+        await client.updateTask(task.id, {
+          quantity_total: payload.quantityTotal,
+        });
+      }
+      await client.recordProgress(task.id, {
+        quantity_done: payload.quantityDone,
+        note: payload.note,
+      });
+    } catch (e) {
+      showError(e, '進捗の記録に失敗');
+      return;
+    }
+    await refresh();
+  }
+
+  async function adjustProgress(delta: number) {
+    if (!task) return;
+    const next = Math.max(0, (task.quantity_done ?? 0) + delta);
+    await recordProgress({ quantityDone: next });
+  }
+
+  async function splitTask(payload: {
+    retainedQuantity: number;
+    setDependency: boolean;
+    title?: string;
+    description?: string;
+    endAt?: string;
+  }) {
+    if (!client || !task) return;
+    try {
+      await client.splitTask(task.id, {
+        retained_quantity: payload.retainedQuantity,
+        set_dependency: payload.setDependency,
+        title: payload.title,
+        description: payload.description,
+        end_at: payload.endAt,
+      });
+    } catch (e) {
+      showError(e, 'タスクの分割に失敗');
+      return;
+    }
+    await refresh();
+  }
+
+  function openProgressSheet(mode: 'record' | 'pause') {
+    setProgressSheetMode(mode);
+    setProgressSheetVisible(true);
+  }
+
+  function openSplitModal() {
+    setSplitModalVisible(true);
+  }
+
+  async function handleProgressConfirm(payload: {
+    quantityDone: number;
+    note?: string;
+    quantityTotal?: number;
+  }) {
+    if (progressSheetMode === 'pause') {
+      await pauseTask(payload);
+    } else {
+      await recordProgress(payload);
+    }
+    setProgressSheetVisible(false);
   }
 
   // Build the connected component dependency graph for the current task.
@@ -716,6 +971,104 @@ export function TaskDetailView() {
           </Menu>
         </View>
 
+        {/* Progress */}
+        {!editing &&
+          task.status === 'in_progress' &&
+          task.quantity_total !== undefined &&
+          task.quantity_total > 0 && (
+            <View style={styles.section}>
+              <View style={styles.progressHeader}>
+                <Text style={[styles.sectionLabel, { color: colors.gray }]}>
+                  進捗
+                </Text>
+                <Text style={{ color: colors.black, fontWeight: '600' }}>
+                  {task.quantity_done}/{task.quantity_total}
+                </Text>
+              </View>
+              <View style={styles.progressActionsRow}>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.progressButton,
+                    { backgroundColor: COLORS.red, opacity: pressed ? 0.8 : 1 },
+                  ]}
+                  onPress={() => openProgressSheet('pause')}
+                >
+                  <Ionicons name="pause" size={20} color={COLORS.white} />
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.progressButton,
+                    {
+                      backgroundColor: COLORS.green,
+                      opacity: pressed ? 0.8 : 1,
+                    },
+                  ]}
+                  onPress={completeTask}
+                >
+                  <Ionicons name="checkmark" size={24} color={COLORS.white} />
+                </Pressable>
+              </View>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.progressButton,
+                  styles.progressButtonFull,
+                  { borderColor: colors.separator, opacity: pressed ? 0.8 : 1 },
+                ]}
+                onPress={openSplitModal}
+              >
+                <Ionicons name="cut" size={20} color={colors.black} />
+                <Text style={{ color: colors.black, marginLeft: 6 }}>分割</Text>
+              </Pressable>
+              <View style={styles.progressActionsRow}>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.progressButton,
+                    styles.progressButtonFlex,
+                    {
+                      borderColor: colors.separator,
+                      opacity: pressed ? 0.8 : 1,
+                    },
+                  ]}
+                  onPress={() => adjustProgress(-1)}
+                >
+                  <Text style={{ color: colors.black, fontWeight: '600' }}>
+                    -1
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.progressButton,
+                    styles.progressButtonFlex,
+                    {
+                      backgroundColor: BRAND_COLOR,
+                      opacity: pressed ? 0.8 : 1,
+                    },
+                  ]}
+                  onPress={() => openProgressSheet('record')}
+                >
+                  <Text style={{ color: COLORS.white, fontWeight: '600' }}>
+                    記録
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.progressButton,
+                    styles.progressButtonFlex,
+                    {
+                      borderColor: colors.separator,
+                      opacity: pressed ? 0.8 : 1,
+                    },
+                  ]}
+                  onPress={() => adjustProgress(1)}
+                >
+                  <Text style={{ color: colors.black, fontWeight: '600' }}>
+                    +1
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+
         {/* Time */}
         {!isPending && (
           <View style={styles.section}>
@@ -880,6 +1233,50 @@ export function TaskDetailView() {
                 ) : (
                   <Text style={{ color: colors.grayLight }}>0m</Text>
                 )}
+              </Text>
+            </Pressable>
+          )}
+        </View>
+
+        {/* Quantity */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: colors.gray }]}>
+            数量
+          </Text>
+          {editing ? (
+            <View style={styles.costEditContainer}>
+              <View style={styles.costInput}>
+                <PaperTextInput
+                  mode="outlined"
+                  label="全体"
+                  value={quantityTotal}
+                  onChangeText={(text) =>
+                    setQuantityTotal(text.replace(/[^0-9]/g, ''))
+                  }
+                  keyboardType="number-pad"
+                  outlineColor={colors.separator}
+                  activeOutlineColor={BRAND_COLOR}
+                  dense
+                />
+              </View>
+              <View style={styles.costInput}>
+                <PaperTextInput
+                  mode="outlined"
+                  label="単位"
+                  value={quantityUnit}
+                  onChangeText={setQuantityUnit}
+                  outlineColor={colors.separator}
+                  activeOutlineColor={BRAND_COLOR}
+                  dense
+                />
+              </View>
+            </View>
+          ) : (
+            <Pressable onPress={() => handleSectionTap('quantity')}>
+              <Text style={[styles.sectionValue, { color: colors.black }]}>
+                {task.quantity_total !== undefined
+                  ? `${task.quantity_total} ${task.quantity_unit ?? ''}`
+                  : '未設定'}
               </Text>
             </Pressable>
           )}
@@ -1264,6 +1661,27 @@ export function TaskDetailView() {
         onCancel={() => setPickerField(null)}
       />
 
+      {/* Progress sheet */}
+      {task && (
+        <TaskProgressSheet
+          visible={progressSheetVisible}
+          task={task}
+          mode={progressSheetMode}
+          onConfirm={handleProgressConfirm}
+          onCancel={() => setProgressSheetVisible(false)}
+        />
+      )}
+
+      {/* Split modal */}
+      {task && (
+        <SplitTaskModal
+          visible={splitModalVisible}
+          task={task}
+          onConfirm={splitTask}
+          onCancel={() => setSplitModalVisible(false)}
+        />
+      )}
+
       {/* Dep selection modal (Paper) */}
       <Portal>
         <Modal
@@ -1560,5 +1978,32 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     fontSize: 18,
     fontWeight: '700',
+  },
+  progressHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  progressActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  progressButton: {
+    flex: 1,
+    height: 48,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  progressButtonFlex: {
+    flex: 1,
+  },
+  progressButtonFull: {
+    marginBottom: 8,
   },
 });

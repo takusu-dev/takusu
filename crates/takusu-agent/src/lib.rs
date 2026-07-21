@@ -22,8 +22,9 @@ use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use takusu_client::{
-    ClientError, CreateHabit, CreateMemory, CreateSkill, CreateTask, MoveEntry,
-    SaveScheduleRequest, ScheduleEntry, UpdateHabit, UpdateMemory, UpdateSkill, UpdateTask,
+    ClientError, CreateHabit, CreateMemory, CreateSkill, CreateTask, MoveEntry, RecordProgress,
+    SaveScheduleRequest, ScheduleEntry, SplitTask, UpdateHabit, UpdateMemory, UpdateSkill,
+    UpdateTask,
 };
 use tools::memory::client_error;
 use uuid::Uuid;
@@ -1018,6 +1019,96 @@ impl AgentSession {
                 let after = Some(move_result);
                 (target_id.clone(), change.before.clone(), after, None)
             }
+            (Some("task"), "start") => {
+                let task = self
+                    .client
+                    .start_task_work(&target_id, operation_id)
+                    .await
+                    .map_err(|e| AgentError::Tool(tools::takusu::client_error(e)))?;
+                let after = serde_json::to_value(&task)
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?;
+                (target_id.clone(), change.before.clone(), Some(after), None)
+            }
+            (Some("task"), "pause") => {
+                let task = self
+                    .client
+                    .pause_task_work(&target_id, operation_id)
+                    .await
+                    .map_err(|e| AgentError::Tool(tools::takusu::client_error(e)))?;
+                let after = serde_json::to_value(&task)
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?;
+                (target_id.clone(), change.before.clone(), Some(after), None)
+            }
+            (Some("task"), "progress") => {
+                let quantity_done = args
+                    .get("quantity_done")
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| {
+                        AgentError::Tool(ToolError::InvalidArgs("missing quantity_done".into()))
+                    })?;
+                let note = args
+                    .get("note")
+                    .and_then(Value::as_str)
+                    .map(|s| s.to_owned());
+                let record = RecordProgress {
+                    quantity_done,
+                    note,
+                };
+                let result = self
+                    .client
+                    .record_progress(&target_id, &record, operation_id)
+                    .await
+                    .map_err(|e| AgentError::Tool(tools::takusu::client_error(e)))?;
+                let after = serde_json::to_value(&result)
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?;
+                (target_id.clone(), change.before.clone(), Some(after), None)
+            }
+            (Some("task"), "complete") => {
+                let task = self
+                    .client
+                    .complete_task_work(&target_id, operation_id)
+                    .await
+                    .map_err(|e| AgentError::Tool(tools::takusu::client_error(e)))?;
+                let after = serde_json::to_value(&task)
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?;
+                (target_id.clone(), change.before.clone(), Some(after), None)
+            }
+            (Some("task"), "split") => {
+                let retained_quantity = args
+                    .get("retained_quantity")
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| {
+                        AgentError::Tool(ToolError::InvalidArgs("missing retained_quantity".into()))
+                    })?;
+                let set_dependency = args.get("set_dependency").and_then(Value::as_bool);
+                let title = args
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .map(|s| s.to_owned());
+                let description = args
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .map(|s| s.to_owned());
+                let end_at = args
+                    .get("end_at")
+                    .and_then(Value::as_str)
+                    .map(|s| s.to_owned());
+                let split = SplitTask {
+                    retained_quantity,
+                    set_dependency,
+                    title,
+                    description,
+                    end_at,
+                };
+                let result = self
+                    .client
+                    .split_task(&target_id, &split, operation_id)
+                    .await
+                    .map_err(|e| AgentError::Tool(tools::takusu::client_error(e)))?;
+                let after = serde_json::to_value(&result)
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?;
+                (target_id.clone(), change.before.clone(), Some(after), None)
+            }
             (_, "generate") | (_, "reschedule") => {
                 let entries = args.get("_preview_entries").cloned().ok_or_else(|| {
                     AgentError::Tool(ToolError::InvalidArgs("schedule preview is missing".into()))
@@ -1126,6 +1217,11 @@ impl AgentSession {
             - update_task: タスク更新の提案を生成
             - delete_task: タスク削除の提案を生成
             - move_task: スケジュール内のタスクを指定時刻に移動する提案を生成（fixed はデフォルトで true）
+            - task_start: タスクの作業開始の提案を生成
+            - task_pause: タスクの作業一時停止の提案を生成
+            - task_progress: タスクの進捗記録の提案を生成
+            - task_complete: タスクの完了の提案を生成
+            - task_split: タスクの分割の提案を生成
             - create_habit: 習慣作成の提案を生成
             - update_habit: 習慣更新の提案を生成
             - delete_habit: 習慣削除の提案を生成
@@ -1139,7 +1235,7 @@ impl AgentSession {
             - memory_delete: 既存の記憶を削除する提案を生成
 
             ## Proposal / 承認フロー（最重要）
-            - `create_task` / `update_task` / `delete_task` / `move_task` / `create_habit` / `update_habit` / `delete_habit` / `generate_schedule` / `reschedule` / `skills_propose_add` / `skills_propose_edit` / `memory_save` / `memory_update` / `memory_delete` を呼ぶと、システムは自動的に承認要求（Proposal）を生成します。
+            - `create_task` / `update_task` / `delete_task` / `move_task` / `task_start` / `task_pause` / `task_progress` / `task_complete` / `task_split` / `create_habit` / `update_habit` / `delete_habit` / `generate_schedule` / `reschedule` / `skills_propose_add` / `skills_propose_edit` / `memory_save` / `memory_update` / `memory_delete` を呼ぶと、システムは自動的に承認要求（Proposal）を生成します。
             - これらのツールを呼ぶこと自体が「変更を提案する」行為です。ツールを呼ぶ前に「～してもよいですか？」と口頭でユーザーに確認を挟まないでください。
             - 情報が揃っていれば躊躇せずツールを呼び出し、最後に変更内容とその理由を提示してください。ユーザーは Proposal を承認または否認できます。否認なら何も書き換わりません。
 
@@ -1156,6 +1252,7 @@ impl AgentSession {
             10. ツールの存在を忘れないでください。応答前に、必要な情報を取得するためのツールがないか簡潔に確認し、適切なツールを順番に呼び出してください。
             11. 複雑なタスクでは、推論のステップを簡潔に整理してから行動してください。
             12. `inferred_fields` には、明らかな単位換算（例：「1時間」→ 60 分）や現在日時から補完した値は含めないでください。不自然な推定やユーザーにとって分かりにくい推論だけを記載してください。
+            13. 進捗操作（task_start / task_pause / task_progress / task_complete / task_split）でユーザーが対象タスクを明示していない場合（例：「着手した」「完了した」だけ）は、task_ref を省略してそのままツールを呼び出してください。候補が複数あればシステムが選択肢を返すので、勝手に対象を決めずにユーザーに確認してください。
 
             ## 応答のルール
             - 日本語で応答すること。

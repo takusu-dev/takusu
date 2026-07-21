@@ -20,6 +20,7 @@ pub fn register_tools(
 ) {
     register_read_tools(registry, client.clone(), tz_cache.clone());
     register_mutation_tools(registry, client.clone(), tz_cache.clone());
+    crate::tools::progress::register_tools(registry, client.clone(), tz_cache.clone());
     crate::tools::memory::register_tools(registry, client.clone());
     registry.register(Box::new(PreviewScheduleTool {
         client: client.clone(),
@@ -56,13 +57,16 @@ pub fn register_read_tools(registry: &mut ToolRegistry, client: Client, tz_cache
     registry.register(Box::new(GetSettings { client }));
 }
 
-fn object(args: Value) -> Result<serde_json::Map<String, Value>, ToolError> {
+pub(crate) fn object(args: Value) -> Result<serde_json::Map<String, Value>, ToolError> {
     args.as_object()
         .cloned()
         .ok_or_else(|| ToolError::InvalidArgs("arguments must be an object".into()))
 }
 
-fn required_string(args: &serde_json::Map<String, Value>, name: &str) -> Result<String, ToolError> {
+pub(crate) fn required_string(
+    args: &serde_json::Map<String, Value>,
+    name: &str,
+) -> Result<String, ToolError> {
     args.get(name)
         .and_then(Value::as_str)
         .map(str::trim)
@@ -71,13 +75,16 @@ fn required_string(args: &serde_json::Map<String, Value>, name: &str) -> Result<
         .ok_or_else(|| ToolError::InvalidArgs(format!("missing or empty {name}")))
 }
 
-fn required_i64(args: &serde_json::Map<String, Value>, name: &str) -> Result<i64, ToolError> {
+pub(crate) fn required_i64(
+    args: &serde_json::Map<String, Value>,
+    name: &str,
+) -> Result<i64, ToolError> {
     args.get(name)
         .and_then(Value::as_i64)
         .ok_or_else(|| ToolError::InvalidArgs(format!("missing or invalid {name}")))
 }
 
-fn optional_string(
+pub(crate) fn optional_string(
     args: &serde_json::Map<String, Value>,
     name: &str,
 ) -> Result<Option<String>, ToolError> {
@@ -92,7 +99,7 @@ fn optional_string(
     }
 }
 
-fn optional_bool(
+pub(crate) fn optional_bool(
     args: &serde_json::Map<String, Value>,
     name: &str,
 ) -> Result<Option<bool>, ToolError> {
@@ -113,7 +120,7 @@ fn summary_string(args: &serde_json::Map<String, Value>, name: &str) -> Option<S
         .map(ToOwned::to_owned)
 }
 
-fn client_error(error: takusu_client::ClientError) -> ToolError {
+pub(crate) fn client_error(error: takusu_client::ClientError) -> ToolError {
     match error {
         takusu_client::ClientError::Api {
             status: 400..=499,
@@ -187,7 +194,7 @@ impl TimeZoneCache {
     }
 }
 
-async fn server_timezone(cache: &TimeZoneCache) -> jiff::tz::TimeZone {
+pub(crate) async fn server_timezone(cache: &TimeZoneCache) -> jiff::tz::TimeZone {
     cache.get_with_fallback().await
 }
 
@@ -210,7 +217,7 @@ fn normalize_datetime(
 /// parsed as absolute timestamps. Naive strings matching the SQLite format
 /// (with a space or `T`) are interpreted as UTC wall-clock times.
 /// Returns the original string unchanged if parsing fails.
-fn format_datetime_for_display(s: &str, tz: &jiff::tz::TimeZone) -> String {
+pub(crate) fn format_datetime_for_display(s: &str, tz: &jiff::tz::TimeZone) -> String {
     if s.is_empty() {
         return s.to_string();
     }
@@ -370,13 +377,13 @@ fn format_display_datetime_args(
 
 /// Strip a leading `#` from a user-supplied task reference.
 /// Keeps habit-scoped references such as `h1#5` and raw UUIDs intact.
-fn strip_leading_hash(reference: &str) -> &str {
+pub(crate) fn strip_leading_hash(reference: &str) -> &str {
     reference.strip_prefix('#').unwrap_or(reference)
 }
 
 /// Normalize a task status string to the canonical backend value.
 /// Handles common LLM/user synonyms such as "done" -> "completed".
-fn normalize_status(status: &str) -> String {
+pub(crate) fn normalize_status(status: &str) -> String {
     let lower = status.trim().to_lowercase();
     match lower.as_str() {
         "done" | "complete" | "completed" => "completed".to_string(),
@@ -413,20 +420,20 @@ fn normalize_reference_array(
 }
 
 #[derive(Debug, Clone)]
-struct TaskRef {
+pub(crate) struct TaskRef {
     display_id: i64,
     reference: String,
     title: String,
 }
 
 #[derive(Debug, Clone)]
-struct TaskContext {
+pub(crate) struct TaskContext {
     task_refs: HashMap<String, TaskRef>,
     habit_display_ids: HashMap<String, i64>,
 }
 
 impl TaskContext {
-    fn new(tasks: &[TaskRow], habits: &[HabitRow]) -> Self {
+    pub(crate) fn new(tasks: &[TaskRow], habits: &[HabitRow]) -> Self {
         let habit_display_ids: HashMap<String, i64> = habits
             .iter()
             .map(|habit| (habit.id.clone(), habit.display_id))
@@ -451,18 +458,18 @@ impl TaskContext {
         }
     }
 
-    fn ref_by_id(&self, id: &str) -> Option<&TaskRef> {
+    pub(crate) fn ref_by_id(&self, id: &str) -> Option<&TaskRef> {
         self.task_refs.get(id)
     }
 
-    fn reference(&self, task: &TaskRow) -> String {
+    pub(crate) fn reference(&self, task: &TaskRow) -> String {
         self.task_refs
             .get(&task.id)
             .map(|task_ref| task_ref.reference.clone())
             .unwrap_or_else(|| task_reference(task, &self.habit_display_ids))
     }
 
-    fn depends(&self, task: &TaskRow) -> Vec<String> {
+    pub(crate) fn depends(&self, task: &TaskRow) -> Vec<String> {
         serde_json::from_str::<Vec<String>>(&task.depends)
             .unwrap_or_default()
             .into_iter()
@@ -471,7 +478,7 @@ impl TaskContext {
     }
 }
 
-fn task_reference(task: &TaskRow, habit_display_ids: &HashMap<String, i64>) -> String {
+pub(crate) fn task_reference(task: &TaskRow, habit_display_ids: &HashMap<String, i64>) -> String {
     task.habit_id
         .as_ref()
         .and_then(|habit_id| habit_display_ids.get(habit_id))
@@ -479,7 +486,11 @@ fn task_reference(task: &TaskRow, habit_display_ids: &HashMap<String, i64>) -> S
         .unwrap_or_else(|| format!("#{}", task.display_id))
 }
 
-fn task_json(task: &TaskRow, ctx: &TaskContext, tz: Option<&jiff::tz::TimeZone>) -> Value {
+pub(crate) fn task_json(
+    task: &TaskRow,
+    ctx: &TaskContext,
+    tz: Option<&jiff::tz::TimeZone>,
+) -> Value {
     let fmt = |s: &str| match tz {
         Some(tz) => format_datetime_for_display(s, tz),
         None => s.to_string(),
@@ -499,6 +510,12 @@ fn task_json(task: &TaskRow, ctx: &TaskContext, tz: Option<&jiff::tz::TimeZone>)
         "abandonability": task.abandonability,
         "status": task.status,
         "fixed": task.fixed,
+        "quantity_total": task.quantity_total,
+        "quantity_done": task.quantity_done,
+        "quantity_unit": task.quantity_unit,
+        "completed_at": task.completed_at.as_deref().map(fmt),
+        "split_from_task_id": task.split_from_task_id.as_deref().and_then(|id| ctx.ref_by_id(id).map(|r| r.reference.clone())),
+        "original_quantity_total": task.original_quantity_total,
         "created_at": fmt(&task.created_at),
         "updated_at": fmt(&task.updated_at),
     })

@@ -55,8 +55,10 @@ impl MobileAudio {
             hush: Mutex::new(None),
             stt: Mutex::new(None),
             tts,
-            runtime: Mutex::new(Some(Runtime::new().map_err(|error| TakusuError::Audio {
-                detail: format!("failed to create audio runtime: {error}"),
+            runtime: Mutex::new(Some(Runtime::new().map_err(|error| {
+                TakusuError::Audio {
+                    detail: format!("failed to create audio runtime: {error}"),
+                }
             })?)),
             model_dir: root,
             language,

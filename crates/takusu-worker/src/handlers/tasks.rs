@@ -420,6 +420,9 @@ pub(crate) async fn resolve_task_id(
     database: &worker::D1Database,
     id: &str,
 ) -> Result<String, WorkerError> {
+    // Allow display ids with a leading `#` (e.g. `#42`) written by the LLM.
+    let id = id.strip_prefix('#').unwrap_or(id);
+
     // `h{habit_display_id}#{task_display_id}` → habit task lookup (#380).
     if let Some(rest) = id.strip_prefix(['h', 'H'])
         && let Some((hdisp, tdisp)) = rest.split_once('#')

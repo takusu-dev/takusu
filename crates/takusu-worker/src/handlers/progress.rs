@@ -98,26 +98,9 @@ fn parse_timestamp(s: &str) -> Result<i64, WorkerError> {
     Ok(zdt.timestamp().as_second())
 }
 
-/// Return the later of two timestamp strings.
-fn later_timestamp<'a>(a: &'a str, b: &'a str) -> Result<&'a str, WorkerError> {
-    let ta = parse_timestamp(a)?;
-    let tb = parse_timestamp(b)?;
-    Ok(if ta >= tb { a } else { b })
-}
-
-fn minutes_between(start: &str, end: &str) -> i64 {
-    match (parse_timestamp(start), parse_timestamp(end)) {
-        (Ok(s), Ok(e)) => ((e - s) / 60).max(1),
-        (Err(e), _) | (_, Err(e)) => {
-            log::warn!("failed to parse timestamps: {e}");
-            1
-        }
-    }
-}
-
 fn session_minutes(session: &TaskWorkSessionRow) -> i64 {
     match session.ended_at.as_deref() {
-        Some(end) => minutes_between(&session.started_at, end),
+        Some(end) => takusu_util::minutes_between(&session.started_at, end),
         None => {
             let now = now_seconds();
             let start = parse_timestamp(&session.started_at).unwrap_or(now);
@@ -262,7 +245,9 @@ pub async fn pause_task_work(req: Request, env: Env, id: &str) -> Result<Respons
         .await
         .map_err(WorkerError::Worker)?;
 
-    let update = database.prepare("UPDATE tasks SET updated_at = datetime('now') WHERE id = ?1");
+    let update = database.prepare(
+        "UPDATE tasks SET status = 'scheduled', updated_at = datetime('now') WHERE id = ?1",
+    );
     update
         .bind(&[JsValue::from_str(&full)])?
         .run()
@@ -327,7 +312,9 @@ pub async fn record_progress(
         .await
         .map_err(WorkerError::Worker)?;
 
-    if open.is_none() && body.quantity_done != task.quantity_done {
+    // Increasing progress requires an open session to measure active time.
+    // Corrections (decreasing or keeping quantity_done) are allowed without one.
+    if open.is_none() && body.quantity_done > task.quantity_done {
         return Err(WorkerError::BadRequest(
             "no open work session; start work first".into(),
         ));
@@ -371,11 +358,11 @@ pub async fn record_progress(
 
     let active_minutes = if let Some(ref session) = open {
         let base = if let Some(ref ev) = last_event {
-            later_timestamp(&session.started_at, &ev.at)?
+            takusu_util::later_timestamp(&session.started_at, &ev.at)
         } else {
             &session.started_at
         };
-        minutes_between(base, &now)
+        takusu_util::minutes_between(base, &now)
     } else {
         0
     };
@@ -419,6 +406,8 @@ pub async fn record_progress(
 
     let status = if task.status == "completed" {
         "completed".to_string()
+    } else if delta_quantity < 0 {
+        task.status.clone()
     } else {
         "in_progress".to_string()
     };
@@ -495,32 +484,67 @@ pub async fn complete_task_work(req: Request, env: Env, id: &str) -> Result<Resp
         .await
         .map_err(WorkerError::Worker)?;
 
-    let qty_stmt = database
-        .prepare("SELECT COALESCE(quantity_total, quantity_done) AS qty FROM tasks WHERE id = ?1");
-    #[derive(serde::Deserialize)]
-    struct QtyRow {
-        qty: i64,
-    }
-    let qty_row: Option<QtyRow> = qty_stmt
-        .bind(&[JsValue::from_str(&full)])?
-        .first(None)
-        .await
-        .map_err(WorkerError::Worker)?;
-    let quantity_done = qty_row
-        .ok_or_else(|| WorkerError::Internal("task disappeared during completion".into()))?
-        .qty;
+    let original = select_one(&database, &full).await?;
+
+    let session_stmt = database.prepare(
+        "SELECT id, task_id, started_at, ended_at, created_at FROM task_work_sessions WHERE task_id = ?1 ORDER BY started_at ASC",
+    );
+    let sessions: Vec<TaskWorkSessionRow> =
+        safe_all(&session_stmt.bind(&[JsValue::from_str(&full)])?).await?;
+    let total_active_minutes: i64 = sessions.iter().map(session_minutes).sum();
+
+    let quantity_done = original.quantity_total.unwrap_or(original.quantity_done);
+    let delta_quantity = quantity_done - original.quantity_done;
+
+    let (new_avg, new_sigma) = if delta_quantity > 0 && total_active_minutes > 0 {
+        compute_updated_estimate(
+            &database,
+            &full,
+            original.avg_minutes,
+            original.sigma_minutes,
+            original.quantity_total,
+            total_active_minutes,
+            delta_quantity,
+        )
+        .await?
+    } else if original.quantity_total.is_none() && total_active_minutes > 0 {
+        (total_active_minutes, original.sigma_minutes)
+    } else {
+        (original.avg_minutes, original.sigma_minutes)
+    };
 
     let update = database.prepare(
-        "UPDATE tasks SET status = 'completed', completed_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), quantity_done = ?1, updated_at = datetime('now') WHERE id = ?2",
+        "UPDATE tasks SET status = 'completed', completed_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), quantity_done = ?1, avg_minutes = ?2, sigma_minutes = ?3, updated_at = datetime('now') WHERE id = ?4",
     );
     update
         .bind(&[
             JsValue::from_f64(quantity_done as f64),
+            JsValue::from_f64(new_avg as f64),
+            JsValue::from_f64(new_sigma as f64),
             JsValue::from_str(&full),
         ])?
         .run()
         .await
         .map_err(WorkerError::Worker)?;
+
+    if total_active_minutes > 0 {
+        let event_id = uuid::Uuid::now_v7().to_string();
+        let insert = database.prepare(
+            "INSERT INTO progress_events (id, task_id, at, quantity_done, delta_quantity, active_minutes, note) VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?3, ?4, ?5, ?6)",
+        );
+        insert
+            .bind(&[
+                JsValue::from_str(&event_id),
+                JsValue::from_str(&full),
+                JsValue::from_f64(quantity_done as f64),
+                JsValue::from_f64(delta_quantity as f64),
+                JsValue::from_f64(total_active_minutes as f64),
+                JsValue::from_str("completed"),
+            ])?
+            .run()
+            .await
+            .map_err(WorkerError::Worker)?;
+    }
 
     let task = select_one(&database, &full).await?;
     if let Some(ref oid) = op_id {
