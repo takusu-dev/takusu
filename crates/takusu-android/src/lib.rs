@@ -146,7 +146,7 @@ impl TakusuServer {
         let app = Arc::new(TakusuApp::new(storage, token_cache));
         let shared_token: Arc<RwLock<Arc<str>>> =
             Arc::new(RwLock::new(Arc::from(root_token.as_str())));
-        let state = AppState::new_with_token(app, shared_token.clone());
+        let state = AppState::new(app);
 
         // Agent sessions run in the same process as the planner server. The
         // factory creates a fresh session for each authenticated Mobile

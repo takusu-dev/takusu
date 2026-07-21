@@ -1529,19 +1529,23 @@ pub struct MoveEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenRow {
     pub id: i64,
-    pub token_hash: String,
+    pub jti: String,
+    pub scope: String,
     pub label: Option<String>,
     pub created_by: String,
     pub created_at: String,
     pub revoked_at: Option<String>,
+    pub expires_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenCreateResponse {
     pub id: i64,
     pub token: String,
+    pub scope: String,
     pub label: Option<String>,
     pub created_at: String,
+    pub expires_at: Option<String>,
 }
 
 // ── Sync types ──

@@ -258,15 +258,23 @@ export interface UpdateSettings {
 }
 
 export interface TokenRow {
-  id: string;
-  description?: string;
+  id: number;
+  jti: string;
+  scope: string;
+  label?: string | null;
+  created_by: string;
   created_at: string;
-  revoked: boolean;
+  revoked_at?: string | null;
+  expires_at?: string | null;
 }
 
 export interface TokenCreateResponse {
+  id: number;
   token: string;
-  id: string;
+  scope: string;
+  label?: string | null;
+  created_at: string;
+  expires_at?: string | null;
 }
 
 // ── Google Calendar Sync ──

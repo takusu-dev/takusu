@@ -11,7 +11,24 @@ pub struct CreateTokenBody {
     pub label: Option<String>,
 }
 
+fn require_root(req: &Request, env: &Env) -> Result<(), WorkerError> {
+    let claims = auth::verify_token(req, env)?;
+    if !claims.is_root() {
+        return Err(WorkerError::Unauthorized);
+    }
+    Ok(())
+}
+
+fn token_expires_at(ttl_seconds: i64) -> Option<String> {
+    let now = jiff::Timestamp::now().as_second();
+    let exp = now.saturating_add(ttl_seconds);
+    jiff::Timestamp::from_second(exp)
+        .ok()
+        .map(|t| t.to_string())
+}
+
 pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError> {
+    require_root(&req, &env)?;
     let body: CreateTokenBody = parse_json(&mut req).await?;
     let label_str = body.label.clone().unwrap_or_default();
     let label_opt: Option<String> = if label_str.is_empty() {
@@ -20,45 +37,58 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
         Some(label_str)
     };
 
-    let new_token = auth::new_token();
-    let hash = auth::hash_token(&new_token);
+    let secret = auth::jwt_secret(&env)?;
+    let (new_token, jti) = takusu_util::jwt::generate_token_jwt(
+        &secret,
+        takusu_util::SCOPE_READ_WRITE,
+        label_opt.as_deref(),
+        None,
+    )
+    .map_err(|e| WorkerError::Internal(e.to_string()))?;
     let database = db(&env)?;
 
+    let expires_at = token_expires_at(takusu_util::jwt::DEFAULT_TOKEN_TTL_SECONDS);
     let stmt = worker::query!(
         &database,
-        "INSERT INTO tokens (token_hash, label, created_by) VALUES (?1, ?2, 'authenticated')",
-        hash,
-        label_opt
+        "INSERT INTO tokens (jti, scope, label, created_by, expires_at) VALUES (?1, ?2, ?3, 'authenticated', ?4)",
+        jti,
+        takusu_util::SCOPE_READ_WRITE,
+        label_opt,
+        expires_at
     )?;
     stmt.run().await.map_err(WorkerError::Worker)?;
 
     let lookup = worker::query!(
         &database,
-        "SELECT id, token_hash, label, created_by, created_at, revoked_at FROM tokens WHERE token_hash = ?1",
-        hash
+        "SELECT id, jti, scope, label, created_by, created_at, revoked_at, expires_at FROM tokens WHERE jti = ?1",
+        jti
     )?;
     let row: Option<TokenRow> = lookup.first(None).await.map_err(WorkerError::Worker)?;
     let row = row.ok_or_else(|| WorkerError::Internal("inserted token not found".into()))?;
     let resp = TokenCreateResponse {
         id: row.id,
         token: new_token,
+        scope: row.scope,
         label: row.label,
         created_at: row.created_at,
+        expires_at: row.expires_at,
     };
     json_created(&resp)
 }
 
-pub async fn list(_req: Request, env: Env) -> Result<Response, WorkerError> {
+pub async fn list(req: Request, env: Env) -> Result<Response, WorkerError> {
+    require_root(&req, &env)?;
     let database = db(&env)?;
     let stmt = worker::query!(
         &database,
-        "SELECT id, token_hash, label, created_by, created_at, revoked_at FROM tokens ORDER BY created_at DESC"
+        "SELECT id, jti, scope, label, created_by, created_at, revoked_at, expires_at FROM tokens ORDER BY created_at DESC"
     );
     let rows: Vec<TokenRow> = safe_all(&stmt).await?;
     json_ok(&rows)
 }
 
-pub async fn revoke(_req: Request, env: Env, id: &str) -> Result<Response, WorkerError> {
+pub async fn revoke(req: Request, env: Env, id: &str) -> Result<Response, WorkerError> {
+    require_root(&req, &env)?;
     let id_num: i64 = id
         .parse()
         .map_err(|_| WorkerError::BadRequest(format!("invalid token id: {id}")))?;

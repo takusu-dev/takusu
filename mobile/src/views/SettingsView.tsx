@@ -1472,7 +1472,9 @@ export function SettingsDetailView({
                 />
               </View>
               <View style={styles.field}>
-                <Text style={[styles.label, { color: colors.gray }]}>キー</Text>
+                <Text style={[styles.label, { color: colors.gray }]}>
+                  Root Token (JWT)
+                </Text>
                 <TextInput
                   style={[
                     styles.input,
@@ -1483,7 +1485,7 @@ export function SettingsDetailView({
                     setWorkerKey(v);
                     setWorkerDirty(true);
                   }}
-                  placeholder="tsk_..."
+                  placeholder="eyJ..."
                   placeholderTextColor={colors.gray}
                   secureTextEntry
                   autoCapitalize="none"

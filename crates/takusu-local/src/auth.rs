@@ -19,14 +19,7 @@ pub async fn auth_middleware(
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or(HttpError(AppError::Unauthorized))?;
 
-    let root_token = state.token.read().await.clone();
-    if !root_token.is_empty() && token == root_token.as_ref() {
-        let token = token.to_string();
-        req.extensions_mut().insert(token);
-        return Ok(next.run(req).await);
-    }
-
-    let valid = takusu_local_lib::auth::verify_token_with_cache(
+    let claims = takusu_local_lib::auth::verify_token_with_cache(
         token,
         state.app.storage.as_ref(),
         &state.app.token_cache,
@@ -34,9 +27,8 @@ pub async fn auth_middleware(
     .await
     .map_err(|e| HttpError(AppError::Internal(e.to_string())))?;
 
-    if valid {
-        let token = token.to_string();
-        req.extensions_mut().insert(token);
+    if let Some(claims) = claims {
+        req.extensions_mut().insert(claims);
         Ok(next.run(req).await)
     } else {
         Err(HttpError(AppError::Unauthorized))

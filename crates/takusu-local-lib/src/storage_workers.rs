@@ -16,6 +16,7 @@ use takusu_storage::{
     UpdateGoogleCalSettings, UpdateHabit, UpdateMemory, UpdateSettings, UpdateSkill, UpdateTask,
     storage::StorageResult,
 };
+use takusu_util::TokenClaims;
 use tokio::sync::RwLock;
 
 const RETRY_STATUSES: &[u16] = &[429, 500, 502, 503, 504];
@@ -235,7 +236,7 @@ fn map_status(status: u16, body: String) -> StorageError {
 
 #[async_trait]
 impl Storage for WorkersStorage {
-    async fn verify_token(&self, token: &str) -> StorageResult<bool> {
+    async fn verify_token(&self, token: &str) -> StorageResult<Option<TokenClaims>> {
         let resp = self
             .send_with_retry(move || async move {
                 let creds = self.credentials().await;
@@ -244,8 +245,12 @@ impl Storage for WorkersStorage {
             })
             .await?;
         match resp.status().as_u16() {
-            200 => Ok(true),
-            401 => Ok(false),
+            200 => resp
+                .json::<TokenClaims>()
+                .await
+                .map(Some)
+                .map_err(|e| StorageError::Internal(format!("invalid verify response: {e}"))),
+            401 => Ok(None),
             other => {
                 let body = resp.text().await.unwrap_or_default();
                 Err(StorageError::Internal(format!(

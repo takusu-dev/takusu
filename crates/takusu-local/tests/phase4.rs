@@ -4,9 +4,11 @@
 //! - Retry/backoff: transient 503 is retried.
 
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
+use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::http::Method;
@@ -17,7 +19,9 @@ use http_body_util::BodyExt;
 use serde_json::json;
 use takusu_local::router::router;
 use takusu_local::state::AppState;
+use takusu_local_lib::TokenClaims;
 use takusu_local_lib::app::TakusuApp;
+use takusu_local_lib::generate_root_jwt;
 use takusu_local_lib::storage_workers::WorkersStorage;
 use takusu_local_lib::token_cache::TokenCache;
 use takusu_storage::{
@@ -30,7 +34,10 @@ use takusu_storage::{
 use tokio::net::TcpListener;
 use tower::ServiceExt;
 
-const ROOT_TOKEN: &str = "tsk_test_root_token_phase4";
+const JWT_SECRET: &str = "test-secret-do-not-use-in-production";
+static ROOT_TOKEN: LazyLock<String> = LazyLock::new(|| {
+    generate_root_jwt(JWT_SECRET, None).expect("root token generation should not fail")
+});
 
 #[derive(Default)]
 struct Counters {
@@ -48,7 +55,14 @@ impl Counters {
 fn make_state(storage: Arc<dyn Storage>) -> AppState {
     let token_cache = Arc::new(TokenCache::with_default_ttl());
     let app = Arc::new(TakusuApp::new(storage, token_cache));
-    AppState::new(app, ROOT_TOKEN)
+    AppState::new(app)
+}
+
+fn counting_storage(counters: Arc<Counters>) -> Arc<dyn Storage> {
+    Arc::new(CountingStorage {
+        counters,
+        jwt_secret: JWT_SECRET.into(),
+    })
 }
 
 fn req(method: Method, uri: &str, token: Option<&str>) -> Request<axum::body::Body> {
@@ -66,13 +80,23 @@ async fn body_str(body: axum::body::Body) -> String {
 
 struct CountingStorage {
     counters: Arc<Counters>,
+    jwt_secret: String,
 }
 
 #[async_trait]
 impl Storage for CountingStorage {
-    async fn verify_token(&self, _t: &str) -> StorageResult<bool> {
-        self.counters.verify.fetch_add(1, Ordering::SeqCst);
-        Ok(true)
+    async fn verify_token(&self, t: &str) -> StorageResult<Option<TokenClaims>> {
+        match takusu_local_lib::jwt::verify(&self.jwt_secret, t, takusu_local_lib::DEFAULT_AUD) {
+            Ok(claims) if claims.is_root() => Ok(Some(claims)),
+            Ok(claims) => {
+                self.counters.verify.fetch_add(1, Ordering::SeqCst);
+                Ok(Some(claims))
+            }
+            Err(_) => {
+                self.counters.verify.fetch_add(1, Ordering::SeqCst);
+                Ok(None)
+            }
+        }
     }
     async fn list_tasks(&self, _q: &TaskQuery) -> StorageResult<Vec<TaskRow>> {
         Ok(vec![])
@@ -159,8 +183,10 @@ impl Storage for CountingStorage {
         Ok(TokenCreateResponse {
             id: 1,
             token: "tsk_new".into(),
+            scope: "read-write".into(),
             label: None,
             created_at: "2026-06-22T00:00:00Z".into(),
+            expires_at: None,
         })
     }
     async fn list_tokens(&self) -> StorageResult<Vec<TokenRow>> {
@@ -300,9 +326,7 @@ impl Storage for CountingStorage {
 #[tokio::test]
 async fn token_cache_hits_on_repeated_requests() {
     let counters = Arc::new(Counters::default());
-    let storage: Arc<dyn Storage> = Arc::new(CountingStorage {
-        counters: counters.clone(),
-    });
+    let storage: Arc<dyn Storage> = counting_storage(counters.clone());
     let state = make_state(storage);
     let app = router(state);
     let token = "tsk_user_xyz";
@@ -333,9 +357,7 @@ async fn token_cache_hits_on_repeated_requests() {
 #[tokio::test]
 async fn token_cache_caches_invalid_responses() {
     let counters = Arc::new(Counters::default());
-    let storage: Arc<dyn Storage> = Arc::new(CountingStorage {
-        counters: counters.clone(),
-    });
+    let storage: Arc<dyn Storage> = counting_storage(counters.clone());
     let state = make_state(storage);
     let app = router(state);
 
@@ -365,9 +387,7 @@ async fn token_cache_caches_invalid_responses() {
 #[tokio::test]
 async fn token_create_invalidates_cache() {
     let counters = Arc::new(Counters::default());
-    let storage: Arc<dyn Storage> = Arc::new(CountingStorage {
-        counters: counters.clone(),
-    });
+    let storage: Arc<dyn Storage> = counting_storage(counters.clone());
     let state = make_state(storage);
     let app = router(state);
     let token = "tsk_user_a";
@@ -393,7 +413,7 @@ async fn token_create_invalidates_cache() {
     let create_req = Request::builder()
         .method(Method::POST)
         .uri("/api/tokens")
-        .header("authorization", format!("Bearer {ROOT_TOKEN}"))
+        .header("authorization", format!("Bearer {}", ROOT_TOKEN.as_str()))
         .header("content-type", "application/json")
         .body(axum::body::Body::from(
             json!({ "label": "test" }).to_string(),
@@ -418,9 +438,7 @@ async fn token_create_invalidates_cache() {
 #[tokio::test]
 async fn token_revoke_invalidates_cache() {
     let counters = Arc::new(Counters::default());
-    let storage: Arc<dyn Storage> = Arc::new(CountingStorage {
-        counters: counters.clone(),
-    });
+    let storage: Arc<dyn Storage> = counting_storage(counters.clone());
     let state = make_state(storage);
     let app = router(state);
     let token = "tsk_user_b";
@@ -436,7 +454,7 @@ async fn token_revoke_invalidates_cache() {
     let revoke_req = Request::builder()
         .method(Method::DELETE)
         .uri("/api/tokens/1")
-        .header("authorization", format!("Bearer {ROOT_TOKEN}"))
+        .header("authorization", format!("Bearer {}", ROOT_TOKEN.as_str()))
         .body(axum::body::Body::empty())
         .unwrap();
     let rr = app.clone().oneshot(revoke_req).await.unwrap();
@@ -462,12 +480,21 @@ struct RetryMockState {
 }
 
 async fn spawn_retry_mock(state: RetryMockState) -> String {
-    async fn verify(State(s): State<RetryMockState>) -> StatusCode {
+    async fn verify(State(s): State<RetryMockState>) -> Result<Json<TokenClaims>, StatusCode> {
         let n = s.call_count.fetch_add(1, Ordering::SeqCst);
         if n < s.fail_first_n {
-            StatusCode::SERVICE_UNAVAILABLE
+            Err(StatusCode::SERVICE_UNAVAILABLE)
         } else {
-            StatusCode::OK
+            Ok(Json(TokenClaims {
+                sub: "sub".into(),
+                jti: "jti".into(),
+                scope: "read-write".into(),
+                label: None,
+                aud: takusu_local_lib::DEFAULT_AUD.into(),
+                iss: takusu_local_lib::DEFAULT_ISS.into(),
+                iat: 0,
+                exp: None,
+            }))
         }
     }
 
@@ -492,7 +519,7 @@ async fn workers_storage_retries_503() {
     let storage = WorkersStorage::new_with(url, ROOT_TOKEN.to_string());
 
     let valid = storage.verify_token("tsk_anything").await.unwrap();
-    assert!(valid);
+    assert!(valid.is_some());
     assert_eq!(
         state.call_count.load(Ordering::SeqCst),
         3,

@@ -15,6 +15,8 @@ pub struct CliConfig {
     #[serde(default)]
     pub root_token: Option<String>,
     #[serde(default)]
+    pub jwt_secret: Option<String>,
+    #[serde(default)]
     pub tz: Option<String>,
     #[serde(default)]
     pub sleep_start: Option<String>,
@@ -71,8 +73,9 @@ pub fn init() {
 # storage = "sqlite"
 # db = "sqlite:./takusu.db"
 # worker_url = "http://127.0.0.1:8787"
-# workers_token = "tsk_xxx"
-# root_token = "tsk_xxx"
+# workers_token = "eyJ..."
+# root_token = "eyJ..."
+# jwt_secret = "<generate with `openssl rand -hex 32` or `takusu-util::jwt::generate_secret()`>"
 # tz = "Asia/Tokyo"
 # sleep_start = "22:00"
 # sleep_end = "06:00"
@@ -104,6 +107,7 @@ pub fn set(key: &str, value: &str) -> Result<(), String> {
         "worker_url" | "url" => ("worker_url", Some("url")),
         "workers_token" | "token" => ("workers_token", Some("token")),
         "root_token" => ("root_token", None),
+        "jwt_secret" => ("jwt_secret", None),
         "tz" => ("tz", None),
         "sleep_start" => ("sleep_start", None),
         "sleep_end" => ("sleep_end", None),

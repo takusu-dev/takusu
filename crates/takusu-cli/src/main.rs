@@ -32,7 +32,7 @@ use takusu_storage::{
     RecordProgress, ScheduleEntry, SimilarTaskQuery, SplitTask, TaskQuery, UpdateHabit,
     UpdateMemory, UpdateSettings,
 };
-use takusu_util::{generate_root_token, parse_datetime_tz, parse_duration};
+use takusu_util::{parse_datetime_tz, parse_duration};
 
 fn prompt(label: &str) -> String {
     print!("{label}: ");
@@ -861,9 +861,23 @@ fn main() {
         let mut cfg = config::load();
 
         if matches!(cli.command, Commands::GenRootToken) {
-            let token = generate_root_token();
+            let secret = std::env::var("TAKUSU_JWT_SECRET")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .or_else(|| cfg.jwt_secret.clone().filter(|s| !s.is_empty()))
+                .unwrap_or_else(|| {
+                    eprintln!("Error: TAKUSU_JWT_SECRET (or jwt_secret in config) is required to generate a root token");
+                    process::exit(1);
+                });
+            let token = match takusu_util::jwt::generate_root_jwt(&secret, None) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("Error: failed to generate root token: {e}");
+                    process::exit(1);
+                }
+            };
             println!("{token}");
-            eprintln!("\nSet this as TAKUSU_ROOT_TOKEN env var for takusu.");
+            eprintln!("\nSet this as TAKUSU_ROOT_TOKEN env var or root_token in config for takusu.");
             return;
         }
 
@@ -987,6 +1001,11 @@ fn main() {
         } else if let Some(ref v) = cfg.worker_url {
             local_cfg.worker_url = v.clone();
         }
+        if let Ok(v) = std::env::var("TAKUSU_JWT_SECRET") && !v.is_empty() {
+            local_cfg.jwt_secret = v;
+        } else if let Some(ref v) = cfg.jwt_secret {
+            local_cfg.jwt_secret = v.clone();
+        }
 
         let env_root = std::env::var("TAKUSU_ROOT_TOKEN")
             .ok()
@@ -1020,6 +1039,10 @@ fn main() {
                 Arc::new(WorkersStorage::new_with(url, workers_token))
             }
             StorageKind::Sqlite => {
+                if local_cfg.jwt_secret.is_empty() {
+                    eprintln!("Error: TAKUSU_JWT_SECRET (or jwt_secret in config) is required for the sqlite backend");
+                    process::exit(1);
+                }
                 let storage = SqliteStorage::init(&local_cfg)
                     .await
                     .unwrap_or_else(|e| {

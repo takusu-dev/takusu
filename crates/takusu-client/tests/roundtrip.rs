@@ -284,11 +284,13 @@ fn schedule_entry_roundtrip() {
 fn token_row_deserialization() {
     let json = json!({
         "id": 1,
-        "token_hash": "abc123",
+        "jti": "tsk_abc123",
+        "scope": "read-write",
         "label": "test",
         "created_by": "root",
         "created_at": "2025-06-01T00:00:00Z",
-        "revoked_at": null
+        "revoked_at": null,
+        "expires_at": null
     });
     let tr: TokenRow = serde_json::from_value(json).unwrap();
     assert_eq!(tr.id, 1);
@@ -300,12 +302,15 @@ fn token_create_response_deserialization() {
     let json = json!({
         "id": 1,
         "token": "tsk_new_token_value",
+        "scope": "read-write",
         "label": "cli-token",
-        "created_at": "2025-06-01T00:00:00Z"
+        "created_at": "2025-06-01T00:00:00Z",
+        "expires_at": "2026-06-01T00:00:00Z"
     });
     let tcr: TokenCreateResponse = serde_json::from_value(json).unwrap();
     assert_eq!(tcr.token, "tsk_new_token_value");
     assert_eq!(tcr.id, 1);
+    assert_eq!(tcr.expires_at.as_deref(), Some("2026-06-01T00:00:00Z"));
 }
 
 #[test]
