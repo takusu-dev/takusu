@@ -1080,20 +1080,20 @@ impl AgentSession {
         let should_cache = sync_ok && list_result.is_ok();
         let index = match list_result {
             Ok(skills) if skills.is_empty() => crate::tools::skills::built_in_skills_index(),
-            Ok(skills) => skills
-                .iter()
-                .map(|s| {
+            Ok(skills) => {
+                let mut lines = vec![crate::tools::skills::SKILL_INDEX_HEADER.to_string()];
+                for s in skills {
                     if s.built_in {
-                        format!(
-                            "- {} ({}): {} [built-in]\n{}",
-                            s.name, s.slug, s.description, s.body
-                        )
+                        lines.push(format!(
+                            "- {} ({}) [built-in]: {}",
+                            s.name, s.slug, s.description
+                        ));
                     } else {
-                        format!("- {} ({}): {}\n{}", s.name, s.slug, s.description, s.body)
+                        lines.push(format!("- {} ({}): {}", s.name, s.slug, s.description));
                     }
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
+                }
+                lines.join("\n")
+            }
             Err(_) => crate::tools::skills::built_in_skills_index(),
         };
 
@@ -1118,23 +1118,31 @@ impl AgentSession {
             .as_ref()
             .map(|m| m.estimate_tokens())
             .unwrap_or(0);
+        let tools_estimate = self.registry.definitions_estimate_tokens();
+        let last_estimate = messages.last().map_or(0, |m| m.estimate_tokens());
         let target = self
             .config
             .llm
             .max_context_tokens
-            .saturating_sub(system_estimate);
+            .saturating_sub(system_estimate)
+            .saturating_sub(tools_estimate)
+            .max(last_estimate);
 
         let mut current = messages.iter().map(|m| m.estimate_tokens()).sum::<usize>();
         let adjusted_target = {
             let last = *self.last_prompt_tokens.lock().unwrap();
             let actual_local = last
-                .map(|p| p.saturating_sub(system_estimate))
+                .map(|p| {
+                    p.saturating_sub(system_estimate)
+                        .saturating_sub(tools_estimate)
+                })
                 .unwrap_or(current);
-            if actual_local > 0 {
+            let base = if actual_local > 0 {
                 (target as f64 * current as f64 / actual_local as f64) as usize
             } else {
                 target
-            }
+            };
+            base.max(last_estimate)
         };
 
         while current > adjusted_target && !messages.is_empty() {
@@ -1178,14 +1186,21 @@ impl AgentSession {
         prompt_tokens: Option<usize>,
         system_estimate: usize,
     ) {
+        let tools_estimate = self.registry.definitions_estimate_tokens();
+        let last_estimate = local.last().map_or(0, |m| m.estimate_tokens());
         let target = self
             .config
             .llm
             .max_context_tokens
-            .saturating_sub(system_estimate);
+            .saturating_sub(system_estimate)
+            .saturating_sub(tools_estimate)
+            .max(last_estimate);
         let current = local.iter().map(|m| m.estimate_tokens()).sum::<usize>();
         let actual_local = prompt_tokens
-            .map(|p| p.saturating_sub(system_estimate))
+            .map(|p| {
+                p.saturating_sub(system_estimate)
+                    .saturating_sub(tools_estimate)
+            })
             .unwrap_or(current);
 
         if actual_local <= target {
@@ -1194,10 +1209,13 @@ impl AgentSession {
             return;
         }
 
-        let adjusted_target = if actual_local > 0 {
-            (target as f64 * current as f64 / actual_local as f64) as usize
-        } else {
-            target
+        let adjusted_target = {
+            let base = if actual_local > 0 {
+                (target as f64 * current as f64 / actual_local as f64) as usize
+            } else {
+                target
+            };
+            base.max(last_estimate)
         };
 
         let mut estimate = current;
@@ -1669,6 +1687,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn trim_accounts_for_tool_definition_tokens() {
+        let mut cfg = AgentConfig::default();
+        cfg.llm.max_context_tokens = 120;
+
+        let mut registry_with_tools = ToolRegistry::new();
+        registry_with_tools.register(Box::new(EchoTool {
+            calls: std::sync::Arc::new(Mutex::new(0)),
+        }));
+        let agent_with_tools = AgentSession::new(
+            cfg.clone(),
+            registry_with_tools,
+            MockLlm {
+                calls: Mutex::new(Vec::new()),
+                responses: Mutex::new(Vec::new()),
+            },
+        );
+
+        let registry_empty = ToolRegistry::new();
+        let agent_empty = AgentSession::new(
+            cfg,
+            registry_empty,
+            MockLlm {
+                calls: Mutex::new(Vec::new()),
+                responses: Mutex::new(Vec::new()),
+            },
+        );
+
+        let mut messages_with_tools = vec![llm::Message::System("system".to_string())];
+        let mut messages_empty = vec![llm::Message::System("system".to_string())];
+        for i in 0..50 {
+            let m = format!("message {i}");
+            messages_with_tools.push(llm::Message::User(m.clone()));
+            messages_empty.push(llm::Message::User(m));
+        }
+
+        let trimmed_with_tools = agent_with_tools.trim_messages(messages_with_tools);
+        let trimmed_empty = agent_empty.trim_messages(messages_empty);
+
+        assert!(
+            trimmed_with_tools.len() < trimmed_empty.len(),
+            "trimming should be stricter when tool definitions consume budget"
+        );
+    }
+
+    #[tokio::test]
     async fn trim_keeps_tool_call_pairs_together() {
         let mut registry = ToolRegistry::new();
         registry.register(Box::new(EchoTool {
@@ -1757,7 +1820,7 @@ mod tests {
     fn built_in_skills_index_reads_bundled_front_matter() {
         let index = crate::tools::skills::built_in_skills_index();
         assert!(index.contains("weekly-review"));
-        assert!(index.contains("Run the weekly review"));
+        assert!(index.contains("Run a weekly review"));
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -113,9 +114,24 @@ pub trait Tool: Send + Sync {
     }
 }
 
-#[derive(Default)]
+fn estimate_tool_tokens(defs: &[Value]) -> usize {
+    defs.iter()
+        .map(|d| crate::llm::estimate_text_tokens(&serde_json::to_string(d).unwrap_or_default()))
+        .sum()
+}
+
 pub struct ToolRegistry {
     tools: HashMap<String, Box<dyn Tool>>,
+    definitions_cache: Mutex<Option<(Vec<Value>, usize)>>,
+}
+
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self {
+            tools: HashMap::new(),
+            definitions_cache: Mutex::new(None),
+        }
+    }
 }
 
 impl ToolRegistry {
@@ -125,14 +141,10 @@ impl ToolRegistry {
 
     pub fn register(&mut self, tool: Box<dyn Tool>) {
         self.tools.insert(tool.name().to_string(), tool);
+        *self.definitions_cache.lock().unwrap() = None;
     }
 
-    pub fn schemas(&self) -> Vec<Value> {
-        self.tools.values().map(|t| t.parameters_schema()).collect()
-    }
-
-    /// Tool definitions in OpenAI function-calling format.
-    pub fn definitions(&self) -> Vec<Value> {
+    fn build_definitions(&self) -> Vec<Value> {
         self.tools
             .values()
             .map(|t| {
@@ -146,6 +158,45 @@ impl ToolRegistry {
                 })
             })
             .collect()
+    }
+
+    pub fn schemas(&self) -> Vec<Value> {
+        self.tools.values().map(|t| t.parameters_schema()).collect()
+    }
+
+    /// Tool definitions in OpenAI function-calling format.
+    pub fn definitions(&self) -> Vec<Value> {
+        {
+            let guard = self.definitions_cache.lock().unwrap();
+            if let Some((defs, _)) = guard.as_ref() {
+                return defs.clone();
+            }
+        }
+        let defs = self.build_definitions();
+        let tokens = estimate_tool_tokens(&defs);
+        let mut guard = self.definitions_cache.lock().unwrap();
+        if guard.is_none() {
+            *guard = Some((defs.clone(), tokens));
+        }
+        guard.as_ref().unwrap().0.clone()
+    }
+
+    /// Rough token estimate for the tool definitions, using the same heuristic
+    /// as `llm::Message::estimate_tokens` (4 chars per token + overhead).
+    pub fn definitions_estimate_tokens(&self) -> usize {
+        {
+            let guard = self.definitions_cache.lock().unwrap();
+            if let Some((_, tokens)) = guard.as_ref() {
+                return *tokens;
+            }
+        }
+        let defs = self.build_definitions();
+        let tokens = estimate_tool_tokens(&defs);
+        let mut guard = self.definitions_cache.lock().unwrap();
+        if guard.is_none() {
+            *guard = Some((defs, tokens));
+        }
+        guard.as_ref().unwrap().1
     }
 
     pub async fn call(&self, name: &str, args: Value) -> Result<ToolOutput, ToolError> {
@@ -167,5 +218,59 @@ impl ToolRegistry {
             .get(name)
             .ok_or_else(|| ToolError::InvalidArgs(format!("unknown tool: {name}")))?;
         tool.call_with_id(call_id, args).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct DummyTool;
+
+    #[async_trait::async_trait]
+    impl Tool for DummyTool {
+        fn name(&self) -> &'static str {
+            "dummy"
+        }
+
+        fn description(&self) -> &'static str {
+            "A dummy tool for testing"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            json!({
+                "type": "object",
+                "properties": {
+                    "message": { "type": "string" }
+                },
+                "required": ["message"]
+            })
+        }
+
+        async fn call(&self, _args: Value) -> Result<ToolOutput, ToolError> {
+            Ok(ToolOutput::default())
+        }
+    }
+
+    #[test]
+    fn definitions_estimate_tokens_is_non_zero_and_consistent() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(DummyTool));
+
+        let first = registry.definitions_estimate_tokens();
+        assert!(first > 0);
+
+        let defs = registry.definitions();
+        assert_eq!(defs.len(), 1);
+
+        let second = registry.definitions_estimate_tokens();
+        assert_eq!(second, first);
+    }
+
+    #[test]
+    fn empty_registry_has_zero_tool_tokens() {
+        let registry = ToolRegistry::new();
+        assert_eq!(registry.definitions_estimate_tokens(), 0);
+        assert!(registry.definitions().is_empty());
     }
 }
