@@ -85,6 +85,11 @@ export function FloatingVoiceButton() {
   const pushAgent = useCallback(async () => {
     if (transitionedRef.current || pathname === '/agent') return;
 
+    // Mark the transition immediately so a second press/release while
+    // createSession is still in flight cannot open another Agent and create
+    // a duplicate empty session.
+    transitionedRef.current = true;
+
     // When the user is not authenticated we have no session to create, but
     // we still open Agent so the setup flow is reachable.
     if (workersToken) {
@@ -100,7 +105,6 @@ export function FloatingVoiceButton() {
       }
     }
 
-    transitionedRef.current = true;
     router.push('/agent');
   }, [agentClient, pathname, router, setPendingSessionId, workersToken]);
 
