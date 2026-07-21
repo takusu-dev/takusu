@@ -59,17 +59,23 @@ pub fn built_in_skills() -> Vec<Skill> {
         .collect()
 }
 
+pub const SKILL_INDEX_HEADER: &str =
+    "必要なスキルの詳細は `skills_read` ツールで slug を指定して読み出してください。";
+
 /// Build a fallback skills index from bundled skills.
 pub fn built_in_skills_index() -> String {
     let skills = built_in_skills();
     if skills.is_empty() {
         return "（スキルはまだ登録されていません）".into();
     }
-    skills
-        .iter()
-        .map(|s| format!("- {} ({}): {}\n{}", s.name, s.slug, s.description, s.body))
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut lines = vec![SKILL_INDEX_HEADER.to_string()];
+    for s in &skills {
+        lines.push(format!(
+            "- {} ({}) [built-in]: {}",
+            s.name, s.slug, s.description
+        ));
+    }
+    lines.join("\n")
 }
 
 /// Synchronize built-in skills into storage so they are synced across devices.

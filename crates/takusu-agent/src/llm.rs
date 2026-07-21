@@ -248,12 +248,22 @@ impl Message {
             Message::ToolResult { .. } => "tool",
         }
     }
+}
 
+pub(crate) const TOKEN_ESTIMATE_OVERHEAD: usize = 4;
+pub(crate) const TOKEN_ESTIMATE_CHARS_PER_TOKEN: usize = 4;
+
+pub(crate) fn estimate_text_tokens(text: &str) -> usize {
+    text.chars()
+        .count()
+        .div_ceil(TOKEN_ESTIMATE_CHARS_PER_TOKEN)
+        + TOKEN_ESTIMATE_OVERHEAD
+}
+
+impl Message {
     /// Very rough token estimate for history trimming. Treats ~4 characters as one token
     /// plus a small per-message overhead, which is enough to preserve context limits.
     pub fn estimate_tokens(&self) -> usize {
-        const OVERHEAD: usize = 4;
-        const CHARS_PER_TOKEN: usize = 4;
         let content_len = match self {
             Message::System(c) | Message::User(c) => c.chars().count(),
             Message::Assistant(AssistantContent::Text(c)) => c.chars().count(),
@@ -269,7 +279,7 @@ impl Message {
                 call_id, content, ..
             } => call_id.chars().count() + content.chars().count(),
         };
-        content_len.div_ceil(CHARS_PER_TOKEN) + OVERHEAD
+        content_len.div_ceil(TOKEN_ESTIMATE_CHARS_PER_TOKEN) + TOKEN_ESTIMATE_OVERHEAD
     }
 }
 
