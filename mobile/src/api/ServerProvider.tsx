@@ -10,7 +10,8 @@ import {
 import { Appearance, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { TakusuClient } from './client';
-import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
+import { DEFAULT_LOCAL_PORT, ensureLocalServer } from './server';
+import TakusuServerModule from '@/modules/takusu-server/src/TakusuServerModule';
 import TakusuWidgetModule from '../../modules/takusu-widget/src/TakusuWidgetModule';
 import {
   loadSettings,
@@ -65,7 +66,7 @@ const ServerContext = createContext<ServerContextValue>({
   setNotifications: async () => {},
 });
 
-export const DEFAULT_PORT = 3838;
+export const DEFAULT_PORT = DEFAULT_LOCAL_PORT;
 
 function systemInitialTheme(): AppTheme {
   return Appearance.getColorScheme() === 'dark' ? 'dark' : 'light';
@@ -133,8 +134,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
           : undefined,
       });
 
-      await TakusuServerModule.start({
-        port: DEFAULT_PORT,
+      const client = ensureLocalServer({
         workersUrl: finalUrl,
         rootToken: finalToken,
         agentConfigJson,
@@ -153,7 +153,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
         // widget module not available (e.g. non-Android) — ignore
       }
 
-      return new TakusuClient(`http://127.0.0.1:${DEFAULT_PORT}`, finalToken);
+      return client;
     },
     [],
   );
