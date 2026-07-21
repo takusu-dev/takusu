@@ -25,6 +25,10 @@ pub fn register_tools(
         client: client.clone(),
         tz_cache: tz_cache.clone(),
     }));
+    registry.register(Box::new(MoveTaskTool {
+        client: client.clone(),
+        tz_cache,
+    }));
     crate::tools::skills::register_tools(registry, client.clone());
     crate::tools::user_input::register_user_input_tool(registry, user_input_provider);
 }
@@ -1452,6 +1456,173 @@ impl Tool for MutationTool {
     }
 }
 
+struct MoveTaskTool {
+    client: Client,
+    tz_cache: TimeZoneCache,
+}
+
+#[async_trait]
+impl Tool for MoveTaskTool {
+    fn name(&self) -> &'static str {
+        "move_task"
+    }
+
+    fn description(&self) -> &'static str {
+        "Propose moving a scheduled task to a new start time. The task can also be marked fixed (default true). Generates a pending approval request; it does not write immediately."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "task_ref": {"type": "string", "description": "Task reference such as #42 or h1#3."},
+                "start_at": {"type": "string", "description": "New start time; interpreted in server timezone if no offset is given."},
+                "force": {"type": "boolean", "description": "Override deadline violation warnings."},
+                "fixed": {"type": "boolean", "description": "Mark the task as fixed after moving; defaults to true."},
+                "why": {"type": "string", "description": "Short user-facing reason for the proposed change."},
+                "warnings": {"type": "array", "items": {"type": "string"}},
+                "inferred_fields": {"type": "array", "description": "List of fields that were inferred from ambiguous user input and should be highlighted. Do not include obvious conversions (e.g. '1 hour' -> 60 minutes) or values filled from the current date/time."},
+            },
+            "required": ["task_ref", "start_at"],
+            "additionalProperties": false,
+        })
+    }
+
+    async fn call(&self, args: Value) -> Result<ToolOutput, ToolError> {
+        let mut args = object(args)?;
+        let tz = server_timezone(&self.tz_cache).await;
+        normalize_mutation_field(&mut args, "start_at", &tz)?;
+        normalize_task_ref(&mut args, "task_ref")?;
+
+        if args.get("fixed").is_none() {
+            args.insert("fixed".to_string(), Value::Bool(true));
+        }
+
+        // Validate optional booleans; defaults are applied above.
+        optional_bool(&args, "force")?;
+        optional_bool(&args, "fixed")?;
+
+        let task_ref = required_string(&args, "task_ref")?;
+        let start_at = required_string(&args, "start_at")?;
+
+        let display_ref = if task_ref.starts_with('h') || task_ref.starts_with('H') {
+            task_ref.clone()
+        } else {
+            format!("#{task_ref}")
+        };
+
+        let default_query = TaskQuery::default();
+        let c1 = self.client.clone();
+        let c2 = self.client.clone();
+        let c3 = self.client.clone();
+        let (task, all_tasks, habits) = tokio::try_join!(
+            async { c1.get_task(&task_ref).await },
+            async { c2.list_tasks(&default_query).await },
+            async { c3.list_habits().await },
+        )
+        .map_err(client_error)?;
+
+        let schedule_row = self.client.get_schedule().await.map_err(client_error)?;
+        let entries: Vec<Value> = serde_json::from_str(&schedule_row.schedule)
+            .map_err(|error| ToolError::Other(Box::new(error)))?;
+        let current_entry = entries
+            .into_iter()
+            .find(|e| e.get("task_id").and_then(Value::as_str) == Some(&task.id));
+        let Some(current_entry) = current_entry else {
+            return Err(ToolError::NotFound(format!(
+                "task {display_ref} is not in the active schedule"
+            )));
+        };
+
+        let ctx = TaskContext::new(&all_tasks, &habits);
+        let mut before = task_json(&task, &ctx, Some(&tz));
+        before["schedule_start_at"] = current_entry
+            .get("start_at")
+            .cloned()
+            .unwrap_or(Value::Null);
+        before["schedule_end_at"] = current_entry.get("end_at").cloned().unwrap_or(Value::Null);
+
+        let start_ts = jiff::Timestamp::from_str(&start_at)
+            .map_err(|error| ToolError::InvalidArgs(format!("invalid start_at: {error}")))?;
+        let duration_minutes = if let (Some(old_start_str), Some(old_end_str)) = (
+            current_entry.get("start_at").and_then(Value::as_str),
+            current_entry.get("end_at").and_then(Value::as_str),
+        ) {
+            let old_start = jiff::Timestamp::from_str(old_start_str).map_err(|error| {
+                ToolError::InvalidArgs(format!("invalid schedule start_at: {error}"))
+            })?;
+            let old_end = jiff::Timestamp::from_str(old_end_str).map_err(|error| {
+                ToolError::InvalidArgs(format!("invalid schedule end_at: {error}"))
+            })?;
+            let duration = old_end - old_start;
+            duration
+                .total(jiff::Unit::Minute)
+                .map_err(|error| ToolError::Other(Box::new(error)))? as i64
+        } else {
+            task.avg_minutes
+        };
+        let end_ts = start_ts
+            .checked_add(jiff::Span::new().minutes(duration_minutes))
+            .expect("valid end time");
+        let end_at = end_ts.to_string();
+
+        let mut display_args = args.clone();
+        display_args.insert("task_ref".to_string(), Value::String(display_ref.clone()));
+        display_args.insert("end_at".to_string(), Value::String(end_at));
+        format_display_datetime_args(&mut display_args, &tz);
+
+        let inferred_fields = args
+            .get("inferred_fields")
+            .cloned()
+            .unwrap_or_else(|| json!([]));
+        let inferred_fields = serde_json::from_value::<Vec<crate::InferredField>>(inferred_fields)
+            .map_err(|error| ToolError::InvalidArgs(format!("invalid inferred_fields: {error}")))?;
+
+        let why = optional_string(&args, "why")?;
+        let warnings = args
+            .get("warnings")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let display_start = display_args
+            .get("start_at")
+            .and_then(Value::as_str)
+            .unwrap_or(&start_at);
+        let description = format!("「{}」を {} に移動", task.title, display_start);
+
+        let mut execution_args = args.clone();
+        execution_args.remove("why");
+        execution_args.remove("warnings");
+        execution_args.remove("inferred_fields");
+
+        let proposal = crate::ProposedChange {
+            operation: "move".to_string(),
+            target_label: format!("task {}", display_ref),
+            description,
+            before: Some(before),
+            after: Some(Value::Object(display_args)),
+            arguments: Some(Value::Object(execution_args)),
+            observed_updated_at: Some(task.updated_at),
+        };
+        Ok(ToolOutput {
+            content: serde_json::to_string(&json!({"approval_required":true,"operation":proposal.operation,"target":proposal.target_label,"inferred_fields":inferred_fields,"why":why,"warnings":warnings})).unwrap(),
+            why,
+            warnings,
+            proposed_changes: vec![proposal],
+            inferred_fields,
+            schedule_dirty: false,
+            ..Default::default()
+        })
+    }
+}
+
 fn normalize_mutation_field(
     args: &mut serde_json::Map<String, Value>,
     name: &str,
@@ -1564,6 +1735,8 @@ fn validate_mutation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{Json, Router, routing::get};
+    use takusu_client::{ScheduleRow, SettingsResponse};
 
     fn task_row(
         id: &str,
@@ -2200,5 +2373,73 @@ mod tests {
         // Unparseable deadline fails closed.
         task.end_at = "not-a-date".to_string();
         assert!(!overdue_in_range(&task, Some(before), Some(after), &tz));
+    }
+
+    #[tokio::test]
+    async fn move_task_tool_proposes_move_with_existing_entry() {
+        let task = Arc::new(task_row("task-uuid", 42, "買い物", None, &[]));
+        let task_for_get = task.as_ref().clone();
+        let task_for_list = vec![task.as_ref().clone()];
+        let habits = vec![habit_row("habit-uuid", 1, "朝のランニング")];
+        let schedule = serde_json::to_string(&json!([{
+            "task_id": "task-uuid",
+            "start_at": "2025-06-05T18:00:00Z",
+            "end_at": "2025-06-05T18:30:00Z",
+        }]))
+        .unwrap();
+        let schedule_row = ScheduleRow {
+            id: "sched-1".into(),
+            created_at: "2025-06-01T00:00:00Z".into(),
+            updated_at: "2025-06-01T00:00:00Z".into(),
+            schedule,
+        };
+
+        let app = Router::new()
+            .route("/api/tasks/{id}", get(move || async { Json(task_for_get) }))
+            .route("/api/tasks", get(move || async { Json(task_for_list) }))
+            .route("/api/habits", get(move || async { Json(habits) }))
+            .route("/api/schedule", get(move || async { Json(schedule_row) }))
+            .route(
+                "/api/settings",
+                get(|| async {
+                    Json(SettingsResponse {
+                        tz: "Asia/Tokyo".into(),
+                        sleep_start: "23:00".into(),
+                        sleep_end: "07:00".into(),
+                        comfortable_minutes: None,
+                        maximum_minutes: None,
+                        solver: "auto".into(),
+                        time_budget_ms: None,
+                        seed: None,
+                        warm_start: false,
+                    })
+                }),
+            );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let client = Client::new(&format!("http://{addr}"), "");
+        let tz_cache = TimeZoneCache::new(client.clone());
+        let tool = MoveTaskTool { client, tz_cache };
+        let args = json!({"task_ref": "#42", "start_at": "2025-06-05T19:00:00+09:00"});
+        let output = tool.call(args).await.unwrap();
+
+        assert_eq!(output.proposed_changes.len(), 1);
+        let change = &output.proposed_changes[0];
+        assert_eq!(change.operation, "move");
+        assert_eq!(change.target_label, "task #42");
+
+        let before = change.before.as_ref().unwrap();
+        assert_eq!(before["schedule_start_at"], "2025-06-05T18:00:00Z");
+        assert_eq!(before["schedule_end_at"], "2025-06-05T18:30:00Z");
+
+        let after = change.after.as_ref().unwrap().as_object().unwrap();
+        assert_eq!(after["task_ref"], "#42");
+        assert!(after.get("end_at").is_some());
+
+        let execution = change.arguments.as_ref().unwrap().as_object().unwrap();
+        assert_eq!(execution["task_ref"], "42");
     }
 }
