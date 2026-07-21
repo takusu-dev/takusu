@@ -591,7 +591,7 @@ export function StatsView() {
     <View style={[styles.container, { backgroundColor: colors.white }]}>
       <View style={[styles.topBar, { paddingTop: 8 + insets.top }]}>
         <IconButton
-          icon="arrow-back"
+          icon="chevron-left"
           iconColor={BRAND_COLOR}
           size={28}
           onPress={handleBack}
