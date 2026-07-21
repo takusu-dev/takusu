@@ -22,8 +22,8 @@ use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use takusu_client::{
-    ClientError, CreateHabit, CreateMemory, CreateSkill, CreateTask, SaveScheduleRequest,
-    ScheduleEntry, UpdateHabit, UpdateMemory, UpdateSkill, UpdateTask,
+    ClientError, CreateHabit, CreateMemory, CreateSkill, CreateTask, MoveEntry,
+    SaveScheduleRequest, ScheduleEntry, UpdateHabit, UpdateMemory, UpdateSkill, UpdateTask,
 };
 use tools::memory::client_error;
 use uuid::Uuid;
@@ -983,6 +983,41 @@ impl AgentSession {
                     .map_err(|e| AgentError::Tool(client_error(e)))?;
                 (target_id.clone(), change.before.clone(), None, None)
             }
+            (Some("task"), "move") => {
+                let start_at = args
+                    .get("start_at")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        AgentError::Tool(ToolError::InvalidArgs("missing start_at".into()))
+                    })?
+                    .to_owned();
+                let force = args.get("force").and_then(Value::as_bool).unwrap_or(false);
+                let fixed = args.get("fixed").and_then(Value::as_bool).unwrap_or(true);
+                let move_result = self
+                    .client
+                    .move_entry(&target_id, &MoveEntry { start_at, force })
+                    .await
+                    .map_err(|error| match error {
+                        takusu_client::ClientError::Api { status: 409, body } => {
+                            AgentError::Tool(ToolError::Conflict(body))
+                        }
+                        _ => AgentError::Tool(ToolError::Other(Box::new(error))),
+                    })?;
+                if fixed {
+                    self.client
+                        .update_task(
+                            &target_id,
+                            &UpdateTask {
+                                fixed: Some(true),
+                                ..Default::default()
+                            },
+                        )
+                        .await
+                        .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?;
+                }
+                let after = Some(move_result);
+                (target_id.clone(), change.before.clone(), after, None)
+            }
             (_, "generate") | (_, "reschedule") => {
                 let entries = args.get("_preview_entries").cloned().ok_or_else(|| {
                     AgentError::Tool(ToolError::InvalidArgs("schedule preview is missing".into()))
@@ -1090,6 +1125,7 @@ impl AgentSession {
             - create_task: タスク作成の提案を生成
             - update_task: タスク更新の提案を生成
             - delete_task: タスク削除の提案を生成
+            - move_task: スケジュール内のタスクを指定時刻に移動する提案を生成（fixed はデフォルトで true）
             - create_habit: 習慣作成の提案を生成
             - update_habit: 習慣更新の提案を生成
             - delete_habit: 習慣削除の提案を生成
@@ -1103,7 +1139,7 @@ impl AgentSession {
             - memory_delete: 既存の記憶を削除する提案を生成
 
             ## Proposal / 承認フロー（最重要）
-            - `create_task` / `update_task` / `delete_task` / `create_habit` / `update_habit` / `delete_habit` / `generate_schedule` / `reschedule` / `skills_propose_add` / `skills_propose_edit` / `memory_save` / `memory_update` / `memory_delete` を呼ぶと、システムは自動的に承認要求（Proposal）を生成します。
+            - `create_task` / `update_task` / `delete_task` / `move_task` / `create_habit` / `update_habit` / `delete_habit` / `generate_schedule` / `reschedule` / `skills_propose_add` / `skills_propose_edit` / `memory_save` / `memory_update` / `memory_delete` を呼ぶと、システムは自動的に承認要求（Proposal）を生成します。
             - これらのツールを呼ぶこと自体が「変更を提案する」行為です。ツールを呼ぶ前に「～してもよいですか？」と口頭でユーザーに確認を挟まないでください。
             - 情報が揃っていれば躊躇せずツールを呼び出し、最後に変更内容とその理由を提示してください。ユーザーは Proposal を承認または否認できます。否認なら何も書き換わりません。
 
