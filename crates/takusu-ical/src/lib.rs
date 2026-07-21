@@ -310,6 +310,18 @@ END:VCALENDAR";
     }
 
     #[test]
+    fn regression_ical_all_day_without_dtend() {
+        // RFC 5545 allows a date-only VEVENT to omit DTEND/DURATION; it is
+        // interpreted as a one-day event ending on the following day.
+        let ical = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:all-day-001\r\nDTSTART;VALUE=DATE:20260605\r\nSUMMARY:All-day meeting\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+        let tasks = parse_ical(ical).unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].start_at, "2026-06-05T00:00:00");
+        assert_eq!(tasks[0].end_at, "2026-06-06T00:00:00");
+    }
+
+    #[test]
     fn parse_with_line_folding() {
         let ical = "\
 BEGIN:VCALENDAR
