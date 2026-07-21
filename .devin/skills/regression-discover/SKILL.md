@@ -80,6 +80,8 @@ You are a debugger for takusu. For the integration branch `<branch>` (parent iss
      `gh issue create --parent <issue-number> --title "bug: <...>" --body "<detailed description>\n\nThe failing regression test was added in #<pr-number> (branch \`<branch>\`).\nPlease fix this with a PR targeting \`<branch>\`. Do not open a PR directly to main."`
    - If that fails because `--parent` is unsupported, retry without `--parent` and put "Sub-issue of #<issue-number>" at the top of the body:
      `gh issue create --title "bug: <...>" --body "Sub-issue of #<issue-number>.\n\n<detailed description>\n\nThe failing regression test was added in #<pr-number> (branch \`<branch>\`).\nPlease fix this with a PR targeting \`<branch>\`. Do not open a PR directly to main."`
+   - Add the `regression` label to the newly created issue:
+     `gh issue edit <issue-number> --add-label regression`
 
 8. Report
    - Return the issue number (new or reused), PR URL, test file path, and a short summary of the failure message.
