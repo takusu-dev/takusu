@@ -128,9 +128,9 @@ class TakusuWidgetProvider : AppWidgetProvider() {
 
             when (size) {
                 WidgetSize.W4x2 -> render4x2(context, views, snapshot, updatedAt, widgetId, zone, scheme)
-                WidgetSize.W4x1 -> render4x1(views, snapshot, updatedAt, zone, scheme)
+                WidgetSize.W4x1 -> render4x1(context, views, snapshot, updatedAt, zone, scheme)
                 WidgetSize.W2x2 -> render2x2(context, views, snapshot, updatedAt, widgetId, zone, scheme)
-                WidgetSize.W2x1 -> render2x1(views, snapshot, updatedAt, zone, scheme)
+                WidgetSize.W2x1 -> render2x1(context, views, snapshot, updatedAt, zone, scheme)
             }
 
             setClickIntents(context, views, size)
@@ -213,6 +213,7 @@ class TakusuWidgetProvider : AppWidgetProvider() {
         }
 
         private fun render4x1(
+            context: Context,
             views: RemoteViews,
             snapshot: Snapshot?,
             updatedAt: Long,
@@ -233,7 +234,7 @@ class TakusuWidgetProvider : AppWidgetProvider() {
             views.setTextViewText(R.id.widget_title, primary.title)
             setOptionalTime(views, R.id.widget_time, formatTime(primary.startAt, zone))
             views.setViewVisibility(R.id.widget_dot, android.view.View.VISIBLE)
-            views.setImageViewResource(R.id.widget_dot, dotResource(primary))
+            views.setTextColor(R.id.widget_dot, WidgetDotColors.color(context, primary))
             renderRemaining(views, snapshot)
         }
 
@@ -289,6 +290,7 @@ class TakusuWidgetProvider : AppWidgetProvider() {
         }
 
         private fun render2x1(
+            context: Context,
             views: RemoteViews,
             snapshot: Snapshot?,
             updatedAt: Long,
@@ -307,7 +309,7 @@ class TakusuWidgetProvider : AppWidgetProvider() {
             views.setTextViewText(R.id.widget_title, primary.title)
             setOptionalTime(views, R.id.widget_time, formatTime(primary.startAt, zone))
             views.setViewVisibility(R.id.widget_dot, android.view.View.VISIBLE)
-            views.setImageViewResource(R.id.widget_dot, dotResource(primary))
+            views.setTextColor(R.id.widget_dot, WidgetDotColors.color(context, primary))
             renderRemaining(views, snapshot)
         }
 
@@ -376,7 +378,7 @@ class TakusuWidgetProvider : AppWidgetProvider() {
             val layout = if (mini) R.layout.takusu_widget_mini_item else R.layout.takusu_widget_item
             val views = RemoteViews(context.packageName, layout)
             setOptionalTime(views, R.id.widget_item_time, formatTime(task.startAt, zone))
-            views.setImageViewResource(R.id.widget_item_dot, dotResource(task))
+            views.setTextColor(R.id.widget_item_dot, WidgetDotColors.color(context, task))
             views.setTextViewText(R.id.widget_item_title, task.title)
 
             if (!mini) {
@@ -443,13 +445,6 @@ class TakusuWidgetProvider : AppWidgetProvider() {
             if (snapshot == null) return 0
             val doingCount = if (snapshot.doing != null) 1 else 0
             return doingCount + snapshot.upcoming.size + snapshot.unscheduledCount
-        }
-
-        private fun dotResource(task: UpcomingTask): Int {
-            if (task.fixed) return R.drawable.dot_brand
-            if (task.abandonability < 0.25) return R.drawable.dot_must
-            if (task.abandonability < 0.5) return R.drawable.dot_caution
-            return R.drawable.dot_calm
         }
 
         private fun parseSnapshot(json: String): Snapshot {

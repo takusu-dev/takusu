@@ -70,13 +70,15 @@
       android:textSize="10sp"
       android:textStyle="bold" />
 
-    <ImageView
+    <TextView
       android:id="@+id/widget_dot"
       android:layout_width="7dp"
       android:layout_height="7dp"
       android:layout_marginStart="6dp"
-      android:scaleType="centerCrop"
-      android:src="@drawable/dot_brand" />
+      android:gravity="center"
+      android:includeFontPadding="false"
+      android:text="●"
+      android:textSize="6sp" />
 
     <TextView
       android:id="@+id/widget_remaining"
