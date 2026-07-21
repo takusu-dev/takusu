@@ -194,6 +194,8 @@ The default loop for any task is:
    - An existing PR is already associated with the change and the user asked for an update.
    Otherwise, do **not** create a PR immediately. Notify the user via `dunstify`, report the result, and wait for feedback or an explicit request before opening a PR.
 
+> **Issue-driven PRs**: If the user hands you an issue (for example, by pasting an issue URL or saying "do #N"), treat it as explicit permission to push and create a PR that closes that issue. In that case, proceed through steps 2–4 directly without waiting for a separate "create PR" request.
+
 **Agents do step 2 themselves**: after finishing the work, the agent writes the commit message and reports the result. Pushing and PR creation only happen when the user explicitly requests them. Use `jj new` to start a fresh change on top of `@`, and `jj squash` / `jj amend` to consolidate work before pushing. Rebase onto `main` with `jj git fetch && jj rebase -r @ -d main` before pushing if `main` has moved.
 
 ### Conventions
