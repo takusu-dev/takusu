@@ -960,6 +960,42 @@ async fn settings_update_workload() {
 }
 
 #[tokio::test]
+async fn update_workers_config_updates_token_with_root() {
+    let (state, _) = setup().await;
+    let app = build_router(state.clone());
+    let req = Request::builder()
+        .method(Method::PUT)
+        .uri("/api/workers/config")
+        .header("authorization", format!("Bearer {ROOT_TOKEN}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({ "url": "https://new.example.com", "token": "new_token" }).to_string(),
+        ))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(state.token.read().await.as_ref(), "new_token");
+}
+
+#[tokio::test]
+async fn update_workers_config_rejects_normal_token() {
+    let (state, _) = setup().await;
+    let token_row = state.app.create_token(None).await.unwrap();
+    let app = build_router(state.clone());
+    let req = Request::builder()
+        .method(Method::PUT)
+        .uri("/api/workers/config")
+        .header("authorization", format!("Bearer {}", token_row.token))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({ "url": "https://new.example.com", "token": "new_token" }).to_string(),
+        ))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn schedule_generate_with_custom_sleep() {
     let (state, pool) = setup().await;
 

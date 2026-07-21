@@ -89,7 +89,7 @@ function newTtsProvider(): TtsProviderSettings {
 
 export function AgentSettingsView() {
   const colors = useColors();
-  const { client } = useServer();
+  const { client, pushAgentConfig } = useServer();
 
   const [llmProviders, setLlmProviders] = useState<LlmProviderSettings[]>([]);
   const [activeLlm, setActiveLlm] = useState<string | null>(null);
@@ -217,6 +217,7 @@ export function AgentSettingsView() {
     try {
       await saveAgentProviders(llmProviders, id, ttsProviders, activeTts);
       setActiveLlm(id);
+      await pushAgentConfig();
     } catch (e) {
       Alert.alert('保存失敗', e instanceof Error ? e.message : String(e));
     }
@@ -226,6 +227,7 @@ export function AgentSettingsView() {
     try {
       await saveAgentProviders(llmProviders, activeLlm, ttsProviders, id);
       setActiveTts(id);
+      await pushAgentConfig();
     } catch (e) {
       Alert.alert('保存失敗', e instanceof Error ? e.message : String(e));
     }
@@ -245,10 +247,8 @@ export function AgentSettingsView() {
       setActiveLlm(newActive);
       setEditingLlm(null);
       setEditingLlmKey('');
-      Alert.alert(
-        '保存しました',
-        'LLM Providerを保存しました。サーバー再起動後に反映されます',
-      );
+      await pushAgentConfig();
+      Alert.alert('保存しました', 'LLM Providerを保存しました');
     } catch (e) {
       Alert.alert('保存失敗', e instanceof Error ? e.message : String(e));
     } finally {
@@ -270,10 +270,8 @@ export function AgentSettingsView() {
       setActiveTts(newActive);
       setEditingTts(null);
       setEditingTtsKey('');
-      Alert.alert(
-        '保存しました',
-        'TTS Providerを保存しました。サーバー再起動後に反映されます',
-      );
+      await pushAgentConfig();
+      Alert.alert('保存しました', 'TTS Providerを保存しました');
     } catch (e) {
       Alert.alert('保存失敗', e instanceof Error ? e.message : String(e));
     } finally {
@@ -303,6 +301,7 @@ export function AgentSettingsView() {
             setLlmProviders(updated);
             if (newActive !== activeLlm) setActiveLlm(newActive);
             if (editingLlm?.id === id) setEditingLlm(null);
+            await pushAgentConfig();
           } catch (e) {
             Alert.alert('削除失敗', e instanceof Error ? e.message : String(e));
           } finally {
@@ -335,6 +334,7 @@ export function AgentSettingsView() {
             setTtsProviders(updated);
             if (newActive !== activeTts) setActiveTts(newActive);
             if (editingTts?.id === id) setEditingTts(null);
+            await pushAgentConfig();
           } catch (e) {
             Alert.alert('削除失敗', e instanceof Error ? e.message : String(e));
           } finally {
@@ -369,10 +369,8 @@ export function AgentSettingsView() {
             setEditingLlmKey('');
             setEditingTts(null);
             setEditingTtsKey('');
-            Alert.alert(
-              '削除しました',
-              'Provider設定を削除しました。サーバー再起動後に反映されます',
-            );
+            await pushAgentConfig();
+            Alert.alert('削除しました', 'Provider設定を削除しました');
           } catch (e) {
             Alert.alert('削除失敗', e instanceof Error ? e.message : String(e));
           } finally {

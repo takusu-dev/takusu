@@ -143,6 +143,13 @@ pub trait Storage: Send + Sync + 'static {
     async fn delete_gcal_mappings(&self, task_ids: &[String]) -> StorageResult<()>;
     async fn clear_gcal_mappings(&self) -> StorageResult<()>;
 
+    /// Update the Cloudflare Worker endpoint and token at runtime.
+    /// The default implementation is a no-op for backends that do not use
+    /// worker credentials (e.g. SQLite).
+    async fn update_workers_credentials(&self, _url: &str, _token: &str) -> StorageResult<()> {
+        Ok(())
+    }
+
     /// Backend health check. Returns a short human-readable status string.
     /// For `WorkersStorage` this pings the Cloudflare Worker `/health`;
     /// for `SqliteStorage` it reports the local DB is reachable.

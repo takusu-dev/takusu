@@ -417,6 +417,9 @@ export function SettingsDetailView({
     }
   }, [category, loadWorkloadSettings]);
   async function saveWorkerSettings() {
+    if (client) {
+      await client.updateWorkersConfig({ url: workerUrl, token: workerKey });
+    }
     await setWorkersUrl(workerUrl);
     await setWorkersToken(workerKey);
     setWorkerDirty(false);
@@ -1330,7 +1333,7 @@ export function SettingsDetailView({
 
               {workerDirty && (
                 <Text style={[styles.warning, { color: colors.red }]}>
-                  ⚠ 保存してからサーバーを再起動してください
+                  ⚠ 未保存の変更があります
                 </Text>
               )}
 

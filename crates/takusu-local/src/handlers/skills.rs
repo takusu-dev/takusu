@@ -12,7 +12,8 @@ pub async fn create_skill(
     Extension(token): Extension<String>,
     Json(body): Json<CreateSkill>,
 ) -> Result<(StatusCode, Json<SkillRow>), HttpError> {
-    let is_root = !state.root_token.is_empty() && token == state.root_token;
+    let root_token = state.token.read().await.clone();
+    let is_root = !root_token.is_empty() && token == root_token.as_ref();
     if body.built_in == Some(true) && !is_root {
         return Err(AppError::Unauthorized.into());
     }

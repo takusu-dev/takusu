@@ -13,18 +13,19 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use futures_util::StreamExt as _;
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::oneshot;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use uuid::Uuid;
 
 use crate::{
-    AgentError, AgentSession, ApprovalRequest, ApprovalResult, ToolError, TurnEvent, TurnResult,
-    UserInputAnswer, UserInputProvider, UserInputQuestion,
+    AgentConfig, AgentError, AgentSession, ApprovalRequest, ApprovalResult, ToolError, TurnEvent,
+    TurnResult, UserInputAnswer, UserInputProvider, UserInputQuestion,
 };
 
 pub const API_VERSION: u8 = 1;
@@ -93,24 +94,34 @@ impl<K: Clone + Eq + std::hash::Hash, V> BoundedMap<K, V> {
 /// Creates an AgentSession for an authenticated local user.
 ///
 /// The host owns configuration and secrets. They never arrive in a session
-/// creation request from JavaScript.
+/// creation request from JavaScript. The factory receives the current
+/// `AgentConfig` so sessions can reflect runtime setting changes.
 pub trait SessionFactory: Send + Sync {
-    fn create(&self) -> Result<AgentSession, AgentError>;
+    fn create(
+        &self,
+        config: &AgentConfig,
+        token: Arc<RwLock<Arc<str>>>,
+    ) -> Result<AgentSession, AgentError>;
 }
 
 impl<F> SessionFactory for F
 where
-    F: Fn() -> Result<AgentSession, AgentError> + Send + Sync,
+    F: Fn(&AgentConfig, Arc<RwLock<Arc<str>>>) -> Result<AgentSession, AgentError> + Send + Sync,
 {
-    fn create(&self) -> Result<AgentSession, AgentError> {
-        self()
+    fn create(
+        &self,
+        config: &AgentConfig,
+        token: Arc<RwLock<Arc<str>>>,
+    ) -> Result<AgentSession, AgentError> {
+        self(config, token)
     }
 }
 
 pub struct AgentApiState {
-    pub bearer_token: String,
+    pub token: Arc<RwLock<Arc<str>>>,
     pub factory: Arc<dyn SessionFactory>,
     user_input_provider: Arc<dyn UserInputProvider>,
+    config: RwLock<AgentConfig>,
     sessions: Mutex<BoundedMap<String, Arc<AgentSession>>>,
     turn_results: Mutex<BoundedMap<(String, String, &'static str), TurnResultDto>>,
     approval_results: Mutex<BoundedMap<(String, String), ApprovalResultDto>>,
@@ -118,14 +129,30 @@ pub struct AgentApiState {
 
 impl AgentApiState {
     pub fn new(
-        bearer_token: impl Into<String>,
+        token: impl AsRef<str>,
         factory: Arc<dyn SessionFactory>,
         user_input_provider: Arc<dyn UserInputProvider>,
+        config: AgentConfig,
     ) -> Self {
-        Self {
-            bearer_token: bearer_token.into(),
+        Self::new_with_token(
+            Arc::new(RwLock::new(Arc::from(token.as_ref()))),
             factory,
             user_input_provider,
+            config,
+        )
+    }
+
+    pub fn new_with_token(
+        token: Arc<RwLock<Arc<str>>>,
+        factory: Arc<dyn SessionFactory>,
+        user_input_provider: Arc<dyn UserInputProvider>,
+        config: AgentConfig,
+    ) -> Self {
+        Self {
+            token,
+            factory,
+            user_input_provider,
+            config: RwLock::new(config),
             sessions: Mutex::new(BoundedMap::new(MAX_SESSIONS)),
             turn_results: Mutex::new(BoundedMap::new(MAX_TURN_RESULTS)),
             approval_results: Mutex::new(BoundedMap::new(MAX_APPROVAL_RESULTS)),
@@ -232,6 +259,34 @@ pub struct RevertRequest {
     pub after_user: bool,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UpdateAgentLlmSettings {
+    pub base_url: Option<String>,
+    pub model: Option<String>,
+    pub api_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UpdateAgentTtsSettings {
+    pub backend: Option<String>,
+    pub api_key: Option<String>,
+    pub voice_id: Option<String>,
+    pub language: Option<String>,
+    pub sample_rate: Option<u32>,
+    pub speed: Option<f32>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UpdateAgentAudioSettings {
+    pub tts: Option<UpdateAgentTtsSettings>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UpdateAgentSettings {
+    pub llm: Option<UpdateAgentLlmSettings>,
+    pub audio: Option<UpdateAgentAudioSettings>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct TurnResultDto {
     pub text: String,
@@ -293,6 +348,7 @@ pub fn router(state: Arc<AgentApiState>) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/capabilities", get(capabilities))
+        .route("/settings", put(update_settings))
         .route("/sessions", post(create_session))
         .route("/sessions/{id}/turns", post(run_turn))
         .route("/sessions/{id}/turns/stream", post(run_turn_stream))
@@ -318,8 +374,8 @@ pub fn router(state: Arc<AgentApiState>) -> Router {
 }
 
 async fn health(State(state): State<Arc<AgentApiState>>, headers: HeaderMap) -> Response {
-    if !authorized(&headers, &state.bearer_token) {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Err(status) = auth_token(&state, &headers).await {
+        return status.into_response();
     }
     Json(Versioned {
         version: API_VERSION,
@@ -329,8 +385,8 @@ async fn health(State(state): State<Arc<AgentApiState>>, headers: HeaderMap) -> 
 }
 
 async fn capabilities(State(state): State<Arc<AgentApiState>>, headers: HeaderMap) -> Response {
-    if !authorized(&headers, &state.bearer_token) {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Err(status) = auth_token(&state, &headers).await {
+        return status.into_response();
     }
     Json(Versioned {
         version: API_VERSION,
@@ -344,11 +400,64 @@ async fn capabilities(State(state): State<Arc<AgentApiState>>, headers: HeaderMa
     .into_response()
 }
 
-async fn create_session(State(state): State<Arc<AgentApiState>>, headers: HeaderMap) -> Response {
-    if !authorized(&headers, &state.bearer_token) {
-        return StatusCode::UNAUTHORIZED.into_response();
+async fn update_settings(
+    State(state): State<Arc<AgentApiState>>,
+    headers: HeaderMap,
+    Json(body): Json<Versioned<UpdateAgentSettings>>,
+) -> Response {
+    if let Err(status) = auth_token(&state, &headers).await {
+        return status.into_response();
     }
-    let session = match state.factory.create() {
+    if body.version != API_VERSION {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let mut config = state.config.write().await;
+    if let Some(llm) = body.value.llm {
+        if let Some(base_url) = llm.base_url {
+            config.llm.base_url = base_url;
+        }
+        if let Some(model) = llm.model {
+            config.llm.model = model;
+        }
+        if let Some(api_key) = llm.api_key {
+            config.llm.api_key = api_key;
+        }
+    }
+    if let Some(audio) = body.value.audio
+        && let Some(tts) = audio.tts
+    {
+        if let Some(backend) = tts.backend {
+            config.audio.tts.backend = backend;
+        }
+        if let Some(api_key) = tts.api_key {
+            config.audio.tts.api_key = api_key;
+        }
+        if let Some(voice_id) = tts.voice_id {
+            config.audio.tts.voice_id = voice_id;
+        }
+        if let Some(language) = tts.language {
+            config.audio.tts.language = language;
+        }
+        if let Some(sample_rate) = tts.sample_rate {
+            config.audio.tts.sample_rate = sample_rate;
+        }
+        if let Some(speed) = tts.speed {
+            config.audio.tts.speed = Some(speed);
+        }
+    }
+    Json(Versioned {
+        version: API_VERSION,
+        value: serde_json::json!({ "ok": true }),
+    })
+    .into_response()
+}
+
+async fn create_session(State(state): State<Arc<AgentApiState>>, headers: HeaderMap) -> Response {
+    if let Err(status) = auth_token(&state, &headers).await {
+        return status.into_response();
+    }
+    let config = state.config.read().await;
+    let session = match state.factory.create(&config, state.token.clone()) {
         Ok(session) => Arc::new(session),
         Err(error) => return agent_error(error),
     };
@@ -371,8 +480,8 @@ async fn run_turn(
     headers: HeaderMap,
     Json(body): Json<Versioned<TurnRequest>>,
 ) -> Response {
-    if !authorized(&headers, &state.bearer_token) {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Err(status) = auth_token(&state, &headers).await {
+        return status.into_response();
     }
     if body.version != API_VERSION || body.value.text.trim().is_empty() {
         return StatusCode::BAD_REQUEST.into_response();
@@ -414,8 +523,8 @@ async fn run_turn_stream(
     headers: HeaderMap,
     Json(body): Json<Versioned<TurnRequest>>,
 ) -> Response {
-    if !authorized(&headers, &state.bearer_token) {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Err(status) = auth_token(&state, &headers).await {
+        return status.into_response();
     }
     if body.version != API_VERSION || body.value.text.trim().is_empty() {
         return StatusCode::BAD_REQUEST.into_response();
@@ -488,8 +597,8 @@ async fn edit_turn_stream(
     headers: HeaderMap,
     Json(body): Json<Versioned<EditTurnRequest>>,
 ) -> Response {
-    if !authorized(&headers, &state.bearer_token) {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Err(status) = auth_token(&state, &headers).await {
+        return status.into_response();
     }
     if body.version != API_VERSION || body.value.text.trim().is_empty() {
         return StatusCode::BAD_REQUEST.into_response();
@@ -562,8 +671,8 @@ async fn revert_turn(
     headers: HeaderMap,
     Json(body): Json<Versioned<RevertRequest>>,
 ) -> Response {
-    if !authorized(&headers, &state.bearer_token) {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Err(status) = auth_token(&state, &headers).await {
+        return status.into_response();
     }
     if body.version != API_VERSION {
         return StatusCode::BAD_REQUEST.into_response();
@@ -590,8 +699,8 @@ async fn get_approval(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    if !authorized(&headers, &state.bearer_token) {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Err(status) = auth_token(&state, &headers).await {
+        return status.into_response();
     }
     let Some(session) = state.session(&id) else {
         return StatusCode::NOT_FOUND.into_response();
@@ -616,8 +725,8 @@ async fn resolve_approval(
     headers: HeaderMap,
     Json(body): Json<Versioned<ApprovalDecisionRequest>>,
 ) -> Response {
-    if !authorized(&headers, &state.bearer_token) {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Err(status) = auth_token(&state, &headers).await {
+        return status.into_response();
     }
     if body.version != API_VERSION {
         return StatusCode::BAD_REQUEST.into_response();
@@ -662,8 +771,8 @@ async fn resolve_user_input(
     headers: HeaderMap,
     Json(body): Json<Versioned<UserInputResolutionRequest>>,
 ) -> Response {
-    if !authorized(&headers, &state.bearer_token) {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Err(status) = auth_token(&state, &headers).await {
+        return status.into_response();
     }
     if body.version != API_VERSION {
         return StatusCode::BAD_REQUEST.into_response();
@@ -690,8 +799,8 @@ async fn delete_session(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    if !authorized(&headers, &state.bearer_token) {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Err(status) = auth_token(&state, &headers).await {
+        return status.into_response();
     }
     match state.sessions.lock() {
         Ok(mut sessions) => {
@@ -710,6 +819,14 @@ fn authorized(headers: &HeaderMap, token: &str) -> bool {
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value == format!("Bearer {token}"))
+}
+
+async fn auth_token(state: &AgentApiState, headers: &HeaderMap) -> Result<(), StatusCode> {
+    let token = state.token.read().await;
+    if !authorized(headers, &token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(())
 }
 
 fn agent_error(error: AgentError) -> Response {
@@ -733,9 +850,42 @@ fn agent_error(error: AgentError) -> Response {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::time::Duration;
 
+    use axum::Json;
+    use axum::extract::State;
+    use axum::http::{HeaderMap, StatusCode, header::AUTHORIZATION};
+    use tokio::sync::RwLock;
+
     use super::*;
+
+    struct StubFactory;
+
+    impl SessionFactory for StubFactory {
+        fn create(
+            &self,
+            _config: &AgentConfig,
+            _token: Arc<RwLock<Arc<str>>>,
+        ) -> Result<AgentSession, AgentError> {
+            Err(AgentError::Tool(ToolError::InvalidArgs("stub".into())))
+        }
+    }
+
+    fn auth_headers(token: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
+        headers
+    }
+
+    fn make_state(token: &str) -> Arc<AgentApiState> {
+        Arc::new(AgentApiState::new(
+            token,
+            Arc::new(StubFactory),
+            Arc::new(ApiUserInputProvider::new()),
+            AgentConfig::default(),
+        ))
+    }
 
     #[tokio::test]
     async fn api_user_input_resolve_returns_answers() {
@@ -802,5 +952,82 @@ mod tests {
             )
             .await;
         assert!(matches!(result, Err(ToolError::Cancelled)));
+    }
+
+    #[tokio::test]
+    async fn update_settings_preserves_api_key_when_omitted() {
+        let state = make_state("test-token");
+        {
+            let mut config = state.config.write().await;
+            config.llm.base_url = "http://old".into();
+            config.llm.model = "old-model".into();
+            config.llm.api_key = "secret".into();
+            config.audio.tts.speed = Some(1.5);
+        }
+
+        let body = Versioned {
+            version: API_VERSION,
+            value: UpdateAgentSettings {
+                llm: Some(UpdateAgentLlmSettings {
+                    base_url: Some("http://new".into()),
+                    model: Some("new-model".into()),
+                    api_key: None,
+                }),
+                audio: Some(UpdateAgentAudioSettings {
+                    tts: Some(UpdateAgentTtsSettings {
+                        sample_rate: Some(48000),
+                        ..Default::default()
+                    }),
+                }),
+            },
+        };
+        let res =
+            update_settings(State(state.clone()), auth_headers("test-token"), Json(body)).await;
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let config = state.config.read().await;
+        assert_eq!(config.llm.base_url, "http://new");
+        assert_eq!(config.llm.model, "new-model");
+        assert_eq!(config.llm.api_key, "secret");
+        assert_eq!(config.audio.tts.sample_rate, 48000);
+        assert_eq!(config.audio.tts.speed, Some(1.5));
+    }
+
+    #[tokio::test]
+    async fn update_settings_overwrites_api_key_when_provided() {
+        let state = make_state("test-token");
+        {
+            let mut config = state.config.write().await;
+            config.llm.api_key = "old".into();
+        }
+
+        let body = Versioned {
+            version: API_VERSION,
+            value: UpdateAgentSettings {
+                llm: Some(UpdateAgentLlmSettings {
+                    base_url: None,
+                    model: None,
+                    api_key: Some("new".into()),
+                }),
+                ..Default::default()
+            },
+        };
+        let res =
+            update_settings(State(state.clone()), auth_headers("test-token"), Json(body)).await;
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let config = state.config.read().await;
+        assert_eq!(config.llm.api_key, "new");
+    }
+
+    #[tokio::test]
+    async fn update_settings_rejects_wrong_token() {
+        let state = make_state("test-token");
+        let body = Versioned {
+            version: API_VERSION,
+            value: UpdateAgentSettings::default(),
+        };
+        let res = update_settings(State(state), auth_headers("wrong"), Json(body)).await;
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
     }
 }

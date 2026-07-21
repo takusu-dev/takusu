@@ -10,6 +10,7 @@ import {
 import { Appearance, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { TakusuClient } from './client';
+import { AgentClient, type AgentUpdateSettings } from './agentClient';
 import { DEFAULT_LOCAL_PORT, ensureLocalServer } from './server';
 import TakusuServerModule from '@/modules/takusu-server/src/TakusuServerModule';
 import TakusuWidgetModule from '../../modules/takusu-widget/src/TakusuWidgetModule';
@@ -46,6 +47,7 @@ interface ServerContextValue extends ServerState {
   setTheme: (theme: AppTheme) => Promise<void>;
   setUndoSteps: (steps: number) => Promise<void>;
   setNotifications: (settings: NotificationSettings) => Promise<void>;
+  pushAgentConfig: () => Promise<void>;
 }
 
 const ServerContext = createContext<ServerContextValue>({
@@ -64,9 +66,49 @@ const ServerContext = createContext<ServerContextValue>({
   setTheme: async () => {},
   setUndoSteps: async () => {},
   setNotifications: async () => {},
+  pushAgentConfig: async () => {},
 });
 
 export const DEFAULT_PORT = DEFAULT_LOCAL_PORT;
+
+async function buildAgentUpdateSettings(): Promise<AgentUpdateSettings> {
+  const settings = await loadSettings();
+  const activeLlm = settings.llmProviders.find(
+    (p) => p.id === settings.activeLlmProvider,
+  );
+  const activeTts = settings.ttsProviders.find(
+    (p) => p.id === settings.activeTtsProvider,
+  );
+  const [llmKey, ttsKey] = await Promise.all([
+    activeLlm ? loadAgentApiKey('llm', activeLlm.id) : Promise.resolve(''),
+    activeTts ? loadAgentApiKey('tts', activeTts.id) : Promise.resolve(''),
+  ]);
+  const body: AgentUpdateSettings = {};
+  if (activeLlm) {
+    body.llm = {
+      base_url: activeLlm.baseUrl,
+      model: activeLlm.selectedModel,
+    };
+    if (llmKey) {
+      body.llm.api_key = llmKey;
+    }
+  }
+  if (activeTts) {
+    body.audio = {
+      tts: {
+        backend: activeTts.provider,
+        voice_id: activeTts.voiceId,
+        language: activeTts.language,
+        sample_rate: activeTts.sampleRate,
+        speed: activeTts.speed,
+      },
+    };
+    if (ttsKey) {
+      body.audio.tts.api_key = ttsKey;
+    }
+  }
+  return body;
+}
 
 function systemInitialTheme(): AppTheme {
   return Appearance.getColorScheme() === 'dark' ? 'dark' : 'light';
@@ -101,38 +143,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
         throw new Error('Workers URL and token are required');
       }
 
-      const agentSettings = await loadSettings();
-      const activeLlm = agentSettings.llmProviders.find(
-        (provider) => provider.id === agentSettings.activeLlmProvider,
-      );
-      const activeTts = agentSettings.ttsProviders.find(
-        (provider) => provider.id === agentSettings.activeTtsProvider,
-      );
-      const [llmKey, ttsKey] = await Promise.all([
-        activeLlm ? loadAgentApiKey('llm', activeLlm.id) : Promise.resolve(''),
-        activeTts ? loadAgentApiKey('tts', activeTts.id) : Promise.resolve(''),
-      ]);
-      const agentConfigJson = JSON.stringify({
-        llm: activeLlm
-          ? {
-              base_url: activeLlm.baseUrl,
-              model: activeLlm.selectedModel,
-              api_key: llmKey,
-            }
-          : undefined,
-        audio: activeTts
-          ? {
-              tts: {
-                backend: activeTts.provider,
-                api_key: ttsKey,
-                voice_id: activeTts.voiceId,
-                language: activeTts.language,
-                sample_rate: activeTts.sampleRate,
-                speed: activeTts.speed,
-              },
-            }
-          : undefined,
-      });
+      const agentConfigJson = JSON.stringify(await buildAgentUpdateSettings());
 
       const client = ensureLocalServer({
         workersUrl: finalUrl,
@@ -203,7 +214,12 @@ export function ServerProvider({ children }: { children: ReactNode }) {
 
   const setWorkersToken = useCallback(async (token: string) => {
     await saveWorkersToken(token);
-    setState((prev) => ({ ...prev, workersToken: token }));
+    setState((prev) => {
+      const client = prev.client
+        ? new TakusuClient(prev.client.baseUrl, token)
+        : prev.client;
+      return { ...prev, workersToken: token, client };
+    });
   }, []);
 
   const setTheme = useCallback(async (newTheme: AppTheme) => {
@@ -288,6 +304,17 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const pushAgentConfig = useCallback(async () => {
+    if (Platform.OS !== 'android' || !state.ready || !state.workersToken) {
+      return;
+    }
+    const agentClient = new AgentClient(
+      `http://127.0.0.1:${DEFAULT_PORT}`,
+      state.workersToken,
+    );
+    await agentClient.updateSettings(await buildAgentUpdateSettings());
+  }, [state.ready, state.workersToken]);
+
   const contextValue = useMemo<ServerContextValue>(
     () => ({
       ...state,
@@ -297,6 +324,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       setTheme,
       setUndoSteps,
       setNotifications,
+      pushAgentConfig,
     }),
     [
       state,
@@ -306,6 +334,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       setTheme,
       setUndoSteps,
       setNotifications,
+      pushAgentConfig,
     ],
   );
 

@@ -4,6 +4,7 @@ use takusu_local::router::router;
 use takusu_local::state::AppState;
 use takusu_local_lib::app::TakusuApp;
 use takusu_local_lib::config::LocalConfig;
+#[cfg(feature = "sqlite")]
 use takusu_local_lib::config::StorageKind;
 #[cfg(feature = "sqlite")]
 use takusu_local_lib::storage_sqlite::SqliteStorage;

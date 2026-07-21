@@ -2,8 +2,11 @@
 //!
 //! Provides types and a `Client` for interacting with the takusu REST API.
 
-use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 
 #[derive(Debug)]
 pub enum ClientError {
@@ -32,7 +35,7 @@ impl std::error::Error for ClientError {}
 pub struct Client {
     http: reqwest::Client,
     base_url: String,
-    token: String,
+    token: Arc<RwLock<Arc<str>>>,
 }
 
 /// Build a `reqwest::Client` that is safe to use on Android.
@@ -75,17 +78,26 @@ pub fn default_http_client(
 
 impl Client {
     pub fn new(base_url: &str, token: &str) -> Self {
+        Self::new_with_token(base_url, Arc::new(RwLock::new(Arc::from(token))))
+    }
+
+    pub fn new_with_token(base_url: &str, token: Arc<RwLock<Arc<str>>>) -> Self {
         Self {
             http: default_http_client(None).expect("failed to build HTTP client"),
             base_url: base_url.trim_end_matches('/').to_string(),
-            token: token.to_string(),
+            token,
         }
     }
 
+    async fn token(&self) -> Arc<str> {
+        self.token.read().await.clone()
+    }
+
     async fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+        let token = self.token().await;
         self.http
             .request(method, format!("{}{path}", self.base_url))
-            .bearer_auth(&self.token)
+            .bearer_auth(&*token)
     }
 
     // ── Health ──
@@ -103,7 +115,8 @@ impl Client {
 
     pub async fn list_tasks(&self, query: &TaskQuery) -> Result<Vec<TaskRow>, ClientError> {
         let url = format!("{}/api/tasks", self.base_url);
-        let mut req = self.http.get(&url).bearer_auth(&self.token);
+        let token = self.token().await;
+        let mut req = self.http.get(&url).bearer_auth(&*token);
         let mut params: Vec<(&str, &str)> = Vec::new();
         if let Some(ref s) = query.status {
             params.push(("status", s));
