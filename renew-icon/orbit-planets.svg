@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg-orbit" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1D3557"/>
+      <stop offset="100%" stop-color="#0B1D33"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="240" ry="240" fill="url(#bg-orbit)"/>
+  <ellipse cx="512" cy="512" rx="320" ry="160" fill="none" stroke="#FFFFFF" stroke-width="12" transform="rotate(20 512 512)" opacity="0.30"/>
+  <ellipse cx="512" cy="512" rx="260" ry="120" fill="none" stroke="#FFFFFF" stroke-width="12" transform="rotate(-30 512 512)" opacity="0.25"/>
+  <circle cx="760" cy="600" r="22" fill="#FFFFFF" opacity="0.9"/>
+  <circle cx="300" cy="460" r="18" fill="#FFFFFF" opacity="0.8"/>
+  <circle cx="640" cy="320" r="14" fill="#E94560" opacity="0.9"/>
+  <circle cx="420" cy="700" r="16" fill="#FFFFFF" opacity="0.8"/>
+  <line x1="512" y1="352" x2="512" y2="672" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" opacity="0.8"/>
+  <line x1="352" y1="512" x2="672" y2="512" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" opacity="0.8"/>
+  <circle cx="512" cy="512" r="64" fill="#FFFFFF"/>
+  <circle cx="280" cy="300" r="5" fill="#FFFFFF" opacity="0.5"/>
+  <circle cx="760" cy="260" r="4" fill="#FFFFFF" opacity="0.4"/>
+  <circle cx="220" cy="680" r="6" fill="#FFFFFF" opacity="0.5"/>
+  <circle cx="800" cy="720" r="5" fill="#FFFFFF" opacity="0.4"/>
+</svg>

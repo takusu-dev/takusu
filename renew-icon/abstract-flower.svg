@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg-flower" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#6A0572"/>
+      <stop offset="100%" stop-color="#2A0A3B"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="240" ry="240" fill="url(#bg-flower)"/>
+  <g transform="rotate(0 512 512)"><ellipse cx="512" cy="320" rx="40" ry="120" fill="#FFFFFF" opacity="0.85"/></g>
+  <g transform="rotate(45 512 512)"><ellipse cx="512" cy="320" rx="40" ry="120" fill="#FFFFFF" opacity="0.85"/></g>
+  <g transform="rotate(90 512 512)"><ellipse cx="512" cy="320" rx="40" ry="120" fill="#FFFFFF" opacity="0.85"/></g>
+  <g transform="rotate(135 512 512)"><ellipse cx="512" cy="320" rx="40" ry="120" fill="#FFFFFF" opacity="0.85"/></g>
+  <g transform="rotate(180 512 512)"><ellipse cx="512" cy="320" rx="40" ry="120" fill="#FFFFFF" opacity="0.85"/></g>
+  <g transform="rotate(225 512 512)"><ellipse cx="512" cy="320" rx="40" ry="120" fill="#FFFFFF" opacity="0.85"/></g>
+  <g transform="rotate(270 512 512)"><ellipse cx="512" cy="320" rx="40" ry="120" fill="#FFFFFF" opacity="0.85"/></g>
+  <g transform="rotate(315 512 512)"><ellipse cx="512" cy="320" rx="40" ry="120" fill="#FFFFFF" opacity="0.85"/></g>
+  <circle cx="512" cy="512" r="90" fill="#FFFFFF"/>
+  <circle cx="512" cy="512" r="36" fill="#6A0572"/>
+</svg>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg-plane" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#023E8A"/>
+      <stop offset="100%" stop-color="#001D3D"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="240" ry="240" fill="url(#bg-plane)"/>
+  <path d="M 280 704 C 440 704 440 560 512 560" fill="none" stroke="#FFFFFF" stroke-width="14" stroke-linecap="round" stroke-dasharray="24 24" opacity="0.5"/>
+  <path d="M 512 280 L 704 640 L 512 560 L 320 640 Z" fill="#FFFFFF"/>
+  <path d="M 512 280 L 512 560" stroke="#001D3D" stroke-width="12" stroke-linecap="round" opacity="0.3"/>
+  <path d="M 512 560 L 704 640" stroke="#001D3D" stroke-width="12" stroke-linecap="round" opacity="0.3"/>
+  <path d="M 320 640 L 512 560" stroke="#001D3D" stroke-width="12" stroke-linecap="round" opacity="0.3"/>
+  <circle cx="240" cy="720" r="6" fill="#FFFFFF" opacity="0.5"/>
+  <circle cx="320" cy="760" r="8" fill="#FFFFFF" opacity="0.4"/>
+  <circle cx="760" cy="240" r="6" fill="#FFFFFF" opacity="0.5"/>
+  <circle cx="800" cy="300" r="4" fill="#FFFFFF" opacity="0.4"/>
+</svg>

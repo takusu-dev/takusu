@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg-cal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#006D77"/>
+      <stop offset="100%" stop-color="#003D44"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="240" ry="240" fill="url(#bg-cal)"/>
+  <rect x="372" y="212" width="280" height="360" rx="28" fill="#FFFFFF" opacity="0.30"/>
+  <rect x="332" y="252" width="360" height="400" rx="30" fill="#FFFFFF" opacity="0.55"/>
+  <rect x="292" y="292" width="440" height="440" rx="34" fill="#FFFFFF"/>
+  <path d="M 652 292 L 732 292 L 732 372 Z" fill="#E0F7FA"/>
+  <circle cx="392" cy="392" r="16" fill="#006D77" opacity="0.7"/>
+  <circle cx="452" cy="392" r="16" fill="#006D77" opacity="0.7"/>
+  <circle cx="512" cy="392" r="16" fill="#006D77" opacity="0.7"/>
+  <circle cx="572" cy="392" r="16" fill="#006D77" opacity="0.7"/>
+  <circle cx="632" cy="392" r="16" fill="#006D77" opacity="0.7"/>
+  <circle cx="392" cy="452" r="16" fill="#006D77" opacity="0.7"/>
+  <circle cx="452" cy="452" r="16" fill="#006D77" opacity="0.7"/>
+  <circle cx="512" cy="452" r="16" fill="#006D77" opacity="0.7"/>
+  <circle cx="572" cy="452" r="16" fill="#006D77" opacity="0.7"/>
+  <circle cx="632" cy="452" r="16" fill="#006D77" opacity="0.7"/>
+  <circle cx="392" cy="512" r="16" fill="#006D77" opacity="0.7"/>
+  <circle cx="452" cy="512" r="16" fill="#006D77" opacity="0.7"/>
+  <circle cx="572" cy="512" r="16" fill="#006D77" opacity="0.7"/>
+  <circle cx="632" cy="512" r="16" fill="#006D77" opacity="0.7"/>
+  <path d="M 580 580 L 640 640 L 760 520" fill="none" stroke="#006D77" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

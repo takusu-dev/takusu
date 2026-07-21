@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <radialGradient id="bg-voice" cx="0.5" cy="0.5" r="0.7">
+      <stop offset="0%" stop-color="#4A3F8C"/>
+      <stop offset="100%" stop-color="#1D2A6C"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="240" ry="240" fill="url(#bg-voice)"/>
+  <path d="M 200 512 A 312 312 0 0 0 824 512" fill="none" stroke="#FFFFFF" stroke-width="20" stroke-linecap="round" opacity="0.25"/>
+  <path d="M 256 512 A 256 256 0 0 0 768 512" fill="none" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" opacity="0.40"/>
+  <path d="M 312 512 A 200 200 0 0 0 712 512" fill="none" stroke="#FFFFFF" stroke-width="28" stroke-linecap="round" opacity="0.55"/>
+  <circle cx="512" cy="512" r="120" fill="#FFFFFF"/>
+  <rect x="492" y="452" width="40" height="80" rx="20" fill="#1D2A6C"/>
+  <line x1="512" y1="532" x2="512" y2="600" stroke="#1D2A6C" stroke-width="16" stroke-linecap="round"/>
+  <line x1="472" y1="600" x2="552" y2="600" stroke="#1D2A6C" stroke-width="16" stroke-linecap="round"/>
+  <circle cx="512" cy="612" r="10" fill="#1D2A6C"/>
+  <circle cx="360" cy="360" r="8" fill="#FFFFFF" opacity="0.5"/>
+  <circle cx="720" cy="300" r="6" fill="#FFFFFF" opacity="0.4"/>
+  <circle cx="780" cy="680" r="10" fill="#FFFFFF" opacity="0.5"/>
+  <circle cx="260" cy="700" r="6" fill="#FFFFFF" opacity="0.4"/>
+</svg>
