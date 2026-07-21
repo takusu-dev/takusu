@@ -8,12 +8,13 @@ use async_trait::async_trait;
 
 use crate::error::StorageError;
 use crate::model::*;
+use takusu_util::TokenClaims;
 
 pub type StorageResult<T> = Result<T, StorageError>;
 
 #[async_trait]
 pub trait Storage: Send + Sync + 'static {
-    async fn verify_token(&self, token: &str) -> StorageResult<bool>;
+    async fn verify_token(&self, token: &str) -> StorageResult<Option<TokenClaims>>;
 
     async fn list_tasks(&self, query: &TaskQuery) -> StorageResult<Vec<TaskRow>>;
     async fn get_task(&self, id: &str) -> StorageResult<TaskRow>;

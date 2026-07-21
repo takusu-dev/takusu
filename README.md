@@ -84,6 +84,102 @@ TAKUSU_BUILD_VARIANT=dev nix develop --command bash -c \
 TAKUSU_ROOT_TOKEN=tsk_... cargo run -p takusu-local
 ```
 
+## デプロイ
+
+### ローカルサーバー (`takusu-local`)
+
+```sh
+cargo run -p takusu-local
+# または
+nix run .#takusu-local
+```
+
+主要な環境変数:
+
+| 変数 | 役割 | 備考 |
+|------|------|------|
+| `TAKUSU_JWT_SECRET` | JWT 署名・検証用シークレット | SQLite  backend では必須 |
+| `TAKUSU_STORAGE` | `sqlite` または `workers`/`cloudflare`/`d1` | デフォルト `sqlite` |
+| `TAKUSU_DB` | SQLite ファイルパス | デフォルト `sqlite:./takusu.db` |
+| `TAKUSU_BIND` | 待ち受けアドレス | デフォルト `127.0.0.1:3000` |
+| `TAKUSU_WORKERS_URL` | Worker バックエンド URL | `TAKUSU_STORAGE=workers` 時に使用 |
+| `TAKUSU_WORKERS_TOKEN` | Worker 認証トークン | 未設定時は `TAKUSU_ROOT_TOKEN` をフォールバック |
+| `TAKUSU_ROOT_TOKEN` | ルートトークン（Worker 認証のフォールバック） | クライアントがルート JWT を提示すれば root 操作可能 |
+
+### Cloudflare Worker (`takusu-worker`)
+
+`crates/takusu-worker/wrangler.toml` の D1 `database_id` を実際のデータベース UUID に更新してから実行する。
+
+```sh
+cd crates/takusu-worker
+
+# 必須シークレット
+wrangler secret put TAKUSU_JWT_SECRET
+
+# 任意: `wrangler.toml` の [vars] または --var フラグで設定
+# TAKUSU_ALLOWED_ORIGIN="https://app.example.com"  # 空白区切りで許可 origin を制限
+# TAKUSU_LOG=debug
+
+# ビルド・マイグレーション・デプロイ
+worker-build --release
+wrangler d1 migrations apply takusu --remote
+wrangler deploy
+```
+
+### リリースワークフロー (GitHub Actions)
+
+`.github/workflows/release.yaml` は `v*` タグの push または手動実行で起動する。
+
+1. **タグを切る**（推奨）
+
+   ```sh
+   ./scripts/release.sh              # v0.YYYYMMDD.n を自動生成
+   ./scripts/release.sh 1.0.0        # 明示的バージョン
+   ./scripts/release.sh 1.0.0 --no-push   # ローカル確認のみ
+   ```
+
+   このスクリプトは `Cargo.toml` / `Cargo.lock` / `mobile/app.json` / `mobile/package.json` のバージョンを更新し、`main` ブックマークを移動してからタグを push する。
+
+2. **GitHub Actions が実行するジョブ**
+
+   - `deploy-worker`: Worker をビルドし、D1 マイグレーションを適用して Cloudflare にデプロイ
+   - `build-cli`: `takusu-cli` を AppImage 化
+   - `build-android-apk`: 署名付き APK をビルド
+   - `prerelease`: 上記成果物を GitHub Releases にアップロード
+
+3. **必要な GitHub Secrets**
+
+   | Secret | 用途 |
+   |--------|------|
+   | `CLOUDFLARE_API_TOKEN` | Worker / D1 デプロイ（Workers & D1 書き込み権限） |
+   | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare アカウント ID |
+   | `D1_DATABASE_ID` | D1 データベース UUID（`wrangler.toml` 内 `database_id` プレースホルダの上書きに使用） |
+   | `TAKUSU_KEYSTORE_BASE64` | base64 エンコードされた Android リリース keystore |
+   | `TAKUSU_STORE_PASSWORD` | keystore パスワード |
+   | `TAKUSU_KEY_PASSWORD` | キーパスワード |
+   | `TAKUSU_KEY_ALIAS` | キー alias |
+   | `SENTRY_DSN` | Rust クライアント・サーバーの Sentry DSN |
+   | `EXPO_PUBLIC_SENTRY_DSN` | モバイル Sentry DSN |
+   | `SENTRY_AUTH_TOKEN` | モバイルソースマップアップロード用 |
+   | `SENTRY_URL` / `SENTRY_ORG` / `SENTRY_PROJECT` | Sentry 設定（オプション） |
+
+### 手動ビルド
+
+- CLI AppImage:
+
+  ```sh
+  nix bundle --bundler github:ralismark/nix-appimage \
+    .#takusu-cli -o takusu-cli-x86_64-linux.AppImage
+  ```
+
+- Android APK（リリース）:
+
+  ```sh
+  nix run .#build-android-apk
+  ```
+
+  開発ビルド / エミュレータビルドはそれぞれ `.#build-android-apk-dev` / `.#build-android-apk-emulator` を使用。
+
 ## 設計ドキュメント
 
 [`main.typ`](main.typ) — プロジェクト全体の設計思想 (Typst・日本語)

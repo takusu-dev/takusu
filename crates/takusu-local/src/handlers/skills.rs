@@ -1,6 +1,7 @@
 use axum::Json;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
+use takusu_local_lib::TokenClaims;
 use takusu_storage::{CreateSkill, SkillRow, UpdateSkill};
 
 use crate::error::HttpError;
@@ -9,12 +10,10 @@ use takusu_local_lib::error::AppError;
 
 pub async fn create_skill(
     State(state): State<AppState>,
-    Extension(token): Extension<String>,
+    Extension(claims): Extension<TokenClaims>,
     Json(body): Json<CreateSkill>,
 ) -> Result<(StatusCode, Json<SkillRow>), HttpError> {
-    let root_token = state.token.read().await.clone();
-    let is_root = !root_token.is_empty() && token == root_token.as_ref();
-    if body.built_in == Some(true) && !is_root {
+    if body.built_in == Some(true) && !claims.is_root() {
         return Err(AppError::Unauthorized.into());
     }
     let skill = state.app.create_skill(&body).await?;

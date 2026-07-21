@@ -253,11 +253,11 @@ export class TakusuClient {
     return this.request('GET', '/api/tokens');
   }
 
-  async createToken(description?: string): Promise<TokenCreateResponse> {
-    return this.request('POST', '/api/tokens', { description });
+  async createToken(label?: string): Promise<TokenCreateResponse> {
+    return this.request('POST', '/api/tokens', { label });
   }
 
-  async revokeToken(id: string): Promise<void> {
+  async revokeToken(id: number | string): Promise<void> {
     return this.request('DELETE', `/api/tokens/${id}`);
   }
 

@@ -10,6 +10,8 @@ pub struct LocalConfig {
     pub worker_url: String,
     #[serde(default = "default_storage")]
     pub storage: String,
+    #[serde(default)]
+    pub jwt_secret: String,
 }
 
 fn default_db_url() -> String {

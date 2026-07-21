@@ -1,4 +1,5 @@
 use sha2::{Digest, Sha256};
+use takusu_util::{TokenClaims, jwt};
 
 use crate::token_cache::{TokenCache, TokenState};
 
@@ -6,29 +7,29 @@ pub fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
     let result = hasher.finalize();
-    result.iter().map(|b| format!("{b:02x}")).collect()
+    jwt::hex(&result)
 }
 
 pub async fn verify_token_with_cache(
     token: &str,
     storage: &dyn takusu_storage::Storage,
     token_cache: &TokenCache,
-) -> Result<bool, takusu_storage::StorageError> {
+) -> Result<Option<TokenClaims>, takusu_storage::StorageError> {
     match token_cache.get(token) {
-        Some(TokenState::Valid) => return Ok(true),
-        Some(TokenState::Invalid) => return Ok(false),
+        Some(TokenState::Valid(claims)) => return Ok(Some(claims)),
+        Some(TokenState::Invalid) => return Ok(None),
         None => {}
     }
 
-    let valid = storage.verify_token(token).await?;
+    let claims = storage.verify_token(token).await?;
 
-    if valid {
-        token_cache.put(token, TokenState::Valid);
+    if let Some(ref claims) = claims {
+        token_cache.put(token, TokenState::Valid(claims.clone()));
     } else {
         token_cache.put(token, TokenState::Invalid);
     }
 
-    Ok(valid)
+    Ok(claims)
 }
 
 #[cfg(test)]
@@ -43,6 +44,7 @@ mod tests {
         TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit,
         UpdateSettings, UpdateTask,
     };
+    use takusu_util::{DEFAULT_AUD, DEFAULT_ISS};
 
     // hash_token should be deterministic and 64 hex chars (SHA-256).
     #[test]
@@ -64,15 +66,15 @@ mod tests {
     // Minimal mock storage that only implements verify_token; every other
     // method returns Internal. Counts verify_token calls.
     struct MockStorage {
-        valid_tokens: std::collections::HashSet<String>,
+        valid_tokens: std::collections::HashMap<String, TokenClaims>,
         call_count: Arc<AtomicUsize>,
     }
 
     impl MockStorage {
-        fn new(valid: &[&str]) -> (Self, Arc<AtomicUsize>) {
+        fn new(valid: &[(String, TokenClaims)]) -> (Self, Arc<AtomicUsize>) {
             let count = Arc::new(AtomicUsize::new(0));
             let s = Self {
-                valid_tokens: valid.iter().map(|s| s.to_string()).collect(),
+                valid_tokens: valid.iter().cloned().collect(),
                 call_count: count.clone(),
             };
             (s, count)
@@ -85,11 +87,27 @@ mod tests {
         ))
     }
 
+    fn dummy_claims(jti: &str) -> TokenClaims {
+        TokenClaims {
+            sub: jti.into(),
+            jti: jti.into(),
+            scope: "read-write".into(),
+            label: None,
+            aud: DEFAULT_AUD.into(),
+            iss: DEFAULT_ISS.into(),
+            iat: 0,
+            exp: None,
+        }
+    }
+
     #[async_trait::async_trait]
     impl Storage for MockStorage {
-        async fn verify_token(&self, token: &str) -> Result<bool, takusu_storage::StorageError> {
+        async fn verify_token(
+            &self,
+            token: &str,
+        ) -> Result<Option<TokenClaims>, takusu_storage::StorageError> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
-            Ok(self.valid_tokens.contains(token))
+            Ok(self.valid_tokens.get(token).cloned())
         }
         async fn list_tasks(
             &self,
@@ -383,18 +401,19 @@ mod tests {
 
     #[tokio::test]
     async fn verify_token_with_cache_caches_valid_answer() {
-        let (storage, calls) = MockStorage::new(&["real-token"]);
+        let token = "real-token".to_string();
+        let (storage, calls) = MockStorage::new(&[(token.clone(), dummy_claims("real-token"))]);
         let cache = TokenCache::new(std::time::Duration::from_secs(60));
-        let ok1 = verify_token_with_cache("real-token", &storage, &cache)
+        let ok1 = verify_token_with_cache(&token, &storage, &cache)
             .await
             .unwrap();
-        assert!(ok1);
+        assert!(ok1.is_some());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         // Second call should hit the cache, not storage.
-        let ok2 = verify_token_with_cache("real-token", &storage, &cache)
+        let ok2 = verify_token_with_cache(&token, &storage, &cache)
             .await
             .unwrap();
-        assert!(ok2);
+        assert!(ok2.is_some());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
@@ -405,13 +424,13 @@ mod tests {
         let ok1 = verify_token_with_cache("bogus", &storage, &cache)
             .await
             .unwrap();
-        assert!(!ok1);
+        assert!(ok1.is_none());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         // Cached Invalid → no second storage hit.
         let ok2 = verify_token_with_cache("bogus", &storage, &cache)
             .await
             .unwrap();
-        assert!(!ok2);
+        assert!(ok2.is_none());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

@@ -1,8 +1,7 @@
-use std::sync::Arc;
-
 use axum::Json;
 use axum::extract::{Extension, State};
 use serde::{Deserialize, Serialize};
+use takusu_local_lib::TokenClaims;
 use takusu_storage::{SettingsRow, UpdateSettings};
 
 use crate::error::HttpError;
@@ -43,10 +42,10 @@ pub struct UpdateWorkersConfig {
 }
 
 /// `PUT /api/workers/config` — updates the Worker endpoint and root token
-/// at runtime without restarting the server. Requires the current root token.
+/// at runtime without restarting the server. Requires a root token.
 pub async fn update_workers_config(
     State(state): State<AppState>,
-    Extension(token): Extension<String>,
+    Extension(claims): Extension<TokenClaims>,
     Json(body): Json<UpdateWorkersConfig>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
     if body.url.trim().is_empty() {
@@ -59,13 +58,12 @@ pub async fn update_workers_config(
             "workers token is required".into(),
         )));
     }
-    let app = state.app.clone();
-    let mut root_token = state.token.write().await;
-    if root_token.is_empty() || token != root_token.as_ref() {
+    if !claims.is_root() {
         return Err(HttpError(AppError::Unauthorized));
     }
+    // The token must be a JWT signed by the worker's TAKUSU_JWT_SECRET.
+    let app = state.app.clone();
     app.update_workers_credentials(&body.url, &body.token)
         .await?;
-    *root_token = Arc::from(body.token.into_boxed_str());
     Ok(Json(serde_json::json!({ "ok": true })))
 }

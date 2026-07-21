@@ -4,26 +4,36 @@ use http_body_util::BodyExt;
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use takusu_local::router::router as build_router;
 use takusu_local::state::AppState;
 use takusu_local_lib::app::TakusuApp;
 use takusu_local_lib::config::LocalConfig;
 use takusu_local_lib::storage_sqlite::SqliteStorage;
 use takusu_local_lib::token_cache::TokenCache;
+use takusu_local_lib::{DEFAULT_AUD, generate_root_jwt, jwt};
 use tower::ServiceExt;
 
-const ROOT_TOKEN: &str = "tsk_test_root_token_0000000000000000000000000001";
+const JWT_SECRET: &str = "test-secret-do-not-use-in-production";
+static ROOT_TOKEN: LazyLock<String> = LazyLock::new(|| {
+    generate_root_jwt(JWT_SECRET, None).expect("root token generation should not fail")
+});
+
+fn root_token() -> &'static str {
+    ROOT_TOKEN.as_str()
+}
 
 async fn setup() -> (AppState, SqlitePool) {
     let cfg = LocalConfig {
         db: "sqlite::memory:".into(),
+        jwt_secret: JWT_SECRET.into(),
         ..Default::default()
     };
     let storage = SqliteStorage::init(&cfg).await.unwrap();
     let pool = storage.pool().clone();
     let token_cache = Arc::new(TokenCache::with_default_ttl());
     let app = Arc::new(TakusuApp::new(Arc::new(storage), token_cache));
-    let state = AppState::new(app, ROOT_TOKEN);
+    let state = AppState::new(app);
     (state, pool)
 }
 
@@ -31,7 +41,7 @@ fn auth_req(method: Method, uri: &str) -> Request<Body> {
     Request::builder()
         .method(method)
         .uri(uri)
-        .header("authorization", format!("Bearer {ROOT_TOKEN}"))
+        .header("authorization", format!("Bearer {}", root_token()))
         .body(Body::empty())
         .unwrap()
 }
@@ -40,7 +50,7 @@ fn auth_req_body(method: Method, uri: &str, body: serde_json::Value) -> Request<
     Request::builder()
         .method(method)
         .uri(uri)
-        .header("authorization", format!("Bearer {ROOT_TOKEN}"))
+        .header("authorization", format!("Bearer {}", root_token()))
         .header("content-type", "application/json")
         .body(Body::from(body.to_string()))
         .unwrap()
@@ -112,27 +122,31 @@ async fn token_crud() {
     assert_eq!(res.status(), StatusCode::CREATED);
     let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
     let new_token = body["token"].as_str().unwrap();
-    assert!(new_token.starts_with("tsk_"));
+    assert_eq!(new_token.split('.').count(), 3, "token should be a JWT");
 
-    let hash = takusu_local_lib::auth::hash_token(new_token);
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tokens WHERE token_hash = ?")
-        .bind(&hash)
+    let claims = jwt::verify(JWT_SECRET, new_token, DEFAULT_AUD).unwrap();
+    let jti = claims.jti;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tokens WHERE jti = ?")
+        .bind(&jti)
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(count, 1);
 
     let (state2, pool2) = setup().await;
-    sqlx::query("INSERT INTO tokens (token_hash, label, created_by) VALUES (?, ?, 'root')")
-        .bind(&hash)
-        .bind("test-device")
-        .execute(&pool2)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO tokens (jti, scope, label, created_by) VALUES (?, 'read-write', ?, 'root')",
+    )
+    .bind(&jti)
+    .bind("test-device")
+    .execute(&pool2)
+    .await
+    .unwrap();
     let app2 = build_router(state2);
     let req = Request::builder()
         .uri("/api/tasks")
         .header("authorization", format!("Bearer {new_token}"))
+        // new_token is a JWT signed with JWT_SECRET, so it is still valid.
         .body(Body::empty())
         .unwrap();
     let res = app2.clone().oneshot(req).await.unwrap();
@@ -478,7 +492,7 @@ async fn ical_import() {
     let req = Request::builder()
         .method(Method::POST)
         .uri("/api/tasks/import/ical")
-        .header("authorization", format!("Bearer {ROOT_TOKEN}"))
+        .header("authorization", format!("Bearer {}", root_token()))
         .header("content-type", "text/calendar")
         .body(Body::from(ical.to_string()))
         .unwrap();
@@ -502,7 +516,7 @@ async fn ical_import_skips_duplicate() {
     let req = Request::builder()
         .method(Method::POST)
         .uri("/api/tasks/import/ical")
-        .header("authorization", format!("Bearer {ROOT_TOKEN}"))
+        .header("authorization", format!("Bearer {}", root_token()))
         .header("content-type", "text/calendar")
         .body(Body::from(ical.to_string()))
         .unwrap();
@@ -572,11 +586,10 @@ async fn schedule_not_found_initially() {
 async fn token_revoke() {
     let (state, pool) = setup().await;
 
-    let hash = takusu_local_lib::auth::hash_token("tsk_test_revoke_token");
     sqlx::query(
-        "INSERT INTO tokens (token_hash, label, created_by) VALUES (?, 'to-revoke', 'root')",
+        "INSERT INTO tokens (jti, scope, label, created_by) VALUES (?, 'read-write', 'to-revoke', 'root')",
     )
-    .bind(&hash)
+    .bind("tsk_test_revoke_token")
     .execute(&pool)
     .await
     .unwrap();
@@ -966,7 +979,7 @@ async fn update_workers_config_updates_token_with_root() {
     let req = Request::builder()
         .method(Method::PUT)
         .uri("/api/workers/config")
-        .header("authorization", format!("Bearer {ROOT_TOKEN}"))
+        .header("authorization", format!("Bearer {}", root_token()))
         .header("content-type", "application/json")
         .body(Body::from(
             json!({ "url": "https://new.example.com", "token": "new_token" }).to_string(),
@@ -974,7 +987,7 @@ async fn update_workers_config_updates_token_with_root() {
         .unwrap();
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    assert_eq!(state.token.read().await.as_ref(), "new_token");
+    // Worker credentials are updated inside WorkersStorage; no AppState.token to assert.
 }
 
 #[tokio::test]

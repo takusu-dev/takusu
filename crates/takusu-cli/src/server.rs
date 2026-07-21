@@ -7,7 +7,6 @@ use takusu_local::router::router;
 use takusu_local::state::AppState;
 use takusu_local_lib::app::TakusuApp;
 use takusu_local_lib::error::AppError;
-use takusu_util::generate_root_token;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
@@ -18,8 +17,9 @@ pub struct LocalServer {
 }
 
 pub async fn start_in_process(app: Arc<TakusuApp>) -> Result<LocalServer, AppError> {
-    let token = generate_root_token();
-    let state = AppState::new(app, &token);
+    let resp = app.create_token(None).await?;
+    let token = resp.token;
+    let state = AppState::new(app);
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| AppError::Internal(format!("failed to bind local server: {e}")))?;
@@ -72,6 +72,7 @@ mod tests {
     async fn test_app() -> Arc<TakusuApp> {
         let cfg = LocalConfig {
             db: "sqlite::memory:".to_string(),
+            jwt_secret: "test-secret-do-not-use-in-production".to_string(),
             ..Default::default()
         };
 

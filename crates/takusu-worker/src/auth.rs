@@ -1,23 +1,41 @@
 use sha2::{Digest, Sha256};
-use worker::Env;
+use worker::{Env, Request};
 
 use crate::error::WorkerError;
 
-pub fn root_token(env: &Env) -> Result<String, WorkerError> {
-    env.secret("TAKUSU_ROOT_TOKEN")
+pub fn jwt_secret(env: &Env) -> Result<String, WorkerError> {
+    env.secret("TAKUSU_JWT_SECRET")
         .map(|s| s.to_string())
-        .map_err(|e| WorkerError::Internal(format!("TAKUSU_ROOT_TOKEN secret not set: {e}")))
+        .map_err(|e| WorkerError::Internal(format!("TAKUSU_JWT_SECRET secret not set: {e}")))
 }
 
 pub fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
     let result = hasher.finalize();
-    result.iter().map(|b| format!("{b:02x}")).collect()
+    takusu_util::jwt::hex(&result)
 }
 
+#[cfg(test)]
 pub fn new_token() -> String {
     format!("tsk_{}", uuid::Uuid::now_v7())
+}
+
+pub fn verify_token(req: &Request, env: &Env) -> Result<takusu_util::TokenClaims, WorkerError> {
+    let header = req
+        .headers()
+        .get("authorization")
+        .map_err(|e| WorkerError::Internal(format!("failed to read authorization header: {e}")))?
+        .and_then(|v| v.strip_prefix("Bearer ").map(|s| s.to_string()))
+        .ok_or(WorkerError::Unauthorized)?;
+
+    let secret = jwt_secret(env)?;
+    takusu_util::jwt::verify(&secret, &header, takusu_util::DEFAULT_AUD)
+        .map_err(|_| WorkerError::Unauthorized)
+}
+
+pub fn is_root(req: &Request, env: &Env) -> Result<bool, WorkerError> {
+    Ok(verify_token(req, env)?.is_root())
 }
 
 #[cfg(test)]

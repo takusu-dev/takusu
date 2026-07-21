@@ -10,6 +10,7 @@ use takusu_storage::{
     TaskWorkSessionRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit,
     UpdateMemory, UpdateSettings, UpdateSkill, UpdateTask, storage::StorageResult,
 };
+use takusu_util::{DEFAULT_AUD, SCOPE_READ_WRITE};
 
 use std::str::FromStr;
 
@@ -41,6 +42,7 @@ const MIGRATION_015: &str = include_str!("../migrations/015_skills.sql");
 const MIGRATION_016: &str = include_str!("../migrations/016_memory.sql");
 const MIGRATION_017: &str = include_str!("../migrations/017_solver.sql");
 const MIGRATION_018: &str = include_str!("../migrations/018_progress.sql");
+const MIGRATION_019: &str = include_str!("../migrations/019_jwt.sql");
 // Migration 013 one-time backfill: drops the old global unique index, renumbers
 // existing habit tasks to start from 1 per habit, and seeds the per-habit
 // sequences. Non-idempotent (DROP + UPDATE renumber) — guarded by a check
@@ -120,11 +122,26 @@ WHERE (SELECT COUNT(*) FROM habit_display_id_seq) = 0;
 
 pub struct SqliteStorage {
     pool: SqlitePool,
+    jwt_secret: String,
 }
 
 impl SqliteStorage {
     pub async fn init(cfg: &LocalConfig) -> Result<Self, Box<dyn std::error::Error>> {
         let url = ensure_create_mode(cfg.db_url());
+
+        let jwt_secret = if !cfg.jwt_secret.is_empty() {
+            cfg.jwt_secret.clone()
+        } else if let Some(v) = std::env::var("TAKUSU_JWT_SECRET")
+            .ok()
+            .filter(|s| !s.is_empty())
+        {
+            v
+        } else {
+            return Err(
+                "TAKUSU_JWT_SECRET (or jwt_secret in LocalConfig) is required for sqlite storage"
+                    .into(),
+            );
+        };
 
         if let Some(path) = extract_db_path(&url)
             && let Some(parent) = std::path::Path::new(&path).parent()
@@ -316,7 +333,17 @@ impl SqliteStorage {
             sqlx::raw_sql(MIGRATION_018).execute(&pool).await?;
         }
 
-        Ok(Self { pool })
+        // Migration 019 migrates tokens to JWT metadata (jti, scope, expires_at).
+        let has_jti: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('tokens') WHERE name = 'jti'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        if !has_jti {
+            sqlx::raw_sql(MIGRATION_019).execute(&pool).await?;
+        }
+
+        Ok(Self { pool, jwt_secret })
     }
 
     pub fn pool(&self) -> &SqlitePool {
@@ -348,17 +375,28 @@ fn map_err(e: sqlx::Error) -> StorageError {
 
 #[async_trait]
 impl Storage for SqliteStorage {
-    /// DB 内のトークンは SHA-256 でハッシュ化して保存、比較は hash vs hash。
-    async fn verify_token(&self, token: &str) -> StorageResult<bool> {
-        let hash = crate::auth::hash_token(token);
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM tokens WHERE token_hash = ? AND revoked_at IS NULL",
-        )
-        .bind(&hash)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_err)?;
-        Ok(count > 0)
+    /// Verify a JWT and, for non-root tokens, check the jti is not revoked.
+    async fn verify_token(&self, token: &str) -> StorageResult<Option<takusu_util::TokenClaims>> {
+        let claims = match takusu_util::jwt::verify(&self.jwt_secret, token, DEFAULT_AUD) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::debug!("JWT verification failed: {e}");
+                return Ok(None);
+            }
+        };
+
+        // Root tokens are self-authenticating via the signature and scope claim.
+        if claims.is_root() {
+            return Ok(Some(claims));
+        }
+
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM tokens WHERE jti = ? AND revoked_at IS NULL")
+                .bind(&claims.jti)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_err)?;
+        Ok(if count > 0 { Some(claims) } else { None })
     }
 
     async fn list_tasks(&self, query: &TaskQuery) -> StorageResult<Vec<TaskRow>> {
@@ -1093,28 +1131,37 @@ impl Storage for SqliteStorage {
     }
 
     async fn create_token(&self, label: Option<&str>) -> StorageResult<TokenCreateResponse> {
-        let new_token = format!("tsk_{}", uuid::Uuid::now_v7());
-        let hash = crate::auth::hash_token(&new_token);
         let label_opt = label.filter(|s| !s.is_empty());
-        sqlx::query(
-            "INSERT INTO tokens (token_hash, label, created_by) VALUES (?, ?, 'authenticated')",
+        let (new_token, jti) = takusu_util::jwt::generate_token_jwt(
+            &self.jwt_secret,
+            SCOPE_READ_WRITE,
+            label_opt,
+            None,
         )
-        .bind(&hash)
+        .map_err(|e| StorageError::Internal(e.to_string()))?;
+        let expires_at = token_expires_at(takusu_util::jwt::DEFAULT_TOKEN_TTL_SECONDS);
+        sqlx::query(
+            "INSERT INTO tokens (jti, scope, label, created_by, expires_at) VALUES (?, ?, ?, 'authenticated', ?)",
+        )
+        .bind(&jti)
+        .bind(SCOPE_READ_WRITE)
         .bind(label_opt)
+        .bind(&expires_at)
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
-        let row: TokenRow =
-            sqlx::query_as::<_, TokenRow>("SELECT * FROM tokens WHERE token_hash = ?")
-                .bind(&hash)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(map_err)?;
+        let row: TokenRow = sqlx::query_as::<_, TokenRow>("SELECT * FROM tokens WHERE jti = ?")
+            .bind(&jti)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_err)?;
         Ok(TokenCreateResponse {
             id: row.id,
             token: new_token,
+            scope: row.scope,
             label: row.label,
             created_at: row.created_at,
+            expires_at: row.expires_at,
         })
     }
 
@@ -2655,4 +2702,13 @@ fn parse_calendar_date(s: &str) -> Option<(i64, u32, u32)> {
         return None;
     }
     Some((y, m, d))
+}
+
+/// Compute the ISO-8601 expiration timestamp `ttl_seconds` from now.
+fn token_expires_at(ttl_seconds: i64) -> Option<String> {
+    let now = jiff::Timestamp::now().as_second();
+    let exp = now.saturating_add(ttl_seconds);
+    jiff::Timestamp::from_second(exp)
+        .ok()
+        .map(|t| t.to_string())
 }

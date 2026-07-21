@@ -8,10 +8,13 @@ use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post};
-use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
-use takusu_local_lib::storage_workers::WorkersStorage;
+use std::sync::LazyLock;
+use takusu_local_lib::{
+    DEFAULT_AUD, SCOPE_READ_WRITE, TokenClaims, generate_root_jwt, jwt,
+    storage_workers::WorkersStorage,
+};
 use takusu_storage::{
     CreateHabit, CreateHabitScheduledSpan, CreateMemory, CreateTask, HabitRow,
     HabitScheduledSpanRow, MemoryQuery, MemoryRow, SimilarTaskQuery, SimilarTaskRow, Storage,
@@ -19,12 +22,15 @@ use takusu_storage::{
 };
 use tokio::net::TcpListener;
 
-const ROOT_TOKEN: &str = "tsk_test_root_token_e2e_workers";
+const JWT_SECRET: &str = "test-secret-do-not-use-in-production";
+static ROOT_TOKEN: LazyLock<String> = LazyLock::new(|| {
+    generate_root_jwt(JWT_SECRET, None).expect("root token generation should not fail")
+});
 
 #[derive(Clone)]
 struct MockState {
     pool: SqlitePool,
-    root_token: String,
+    jwt_secret: String,
 }
 
 async fn setup_mock_db() -> SqlitePool {
@@ -53,6 +59,7 @@ async fn setup_mock_db() -> SqlitePool {
         include_str!("../../takusu-local-lib/migrations/016_memory.sql"),
         include_str!("../../takusu-local-lib/migrations/017_solver.sql"),
         include_str!("../../takusu-local-lib/migrations/018_progress.sql"),
+        include_str!("../../takusu-local-lib/migrations/019_jwt.sql"),
     ];
     for s in sqls {
         sqlx::raw_sql(*s).execute(&pool).await.unwrap();
@@ -102,31 +109,33 @@ fn mock_router(state: MockState) -> Router {
         .with_state(state)
 }
 
-async fn verify(State(state): State<MockState>, headers: axum::http::HeaderMap) -> StatusCode {
+async fn verify(
+    State(state): State<MockState>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<TokenClaims>, StatusCode> {
     let token = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
     let token = match token {
-        Some(t) => t,
-        None => return StatusCode::UNAUTHORIZED,
+        Some(t) => t.to_string(),
+        None => return Err(StatusCode::UNAUTHORIZED),
     };
-    if token == state.root_token {
-        return StatusCode::OK;
+    let claims = jwt::verify(&state.jwt_secret, &token, DEFAULT_AUD)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    if claims.is_root() {
+        return Ok(Json(claims));
     }
-    let hash = hash_token(token);
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM tokens WHERE token_hash = ? AND revoked_at IS NULL",
-    )
-    .bind(&hash)
-    .fetch_one(&state.pool)
-    .await
-    .unwrap_or(0);
-    if count > 0 {
-        StatusCode::OK
-    } else {
-        StatusCode::UNAUTHORIZED
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM tokens WHERE jti = ? AND revoked_at IS NULL")
+            .bind(&claims.jti)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
+    if count == 0 {
+        return Err(StatusCode::UNAUTHORIZED);
     }
+    Ok(Json(claims))
 }
 
 /// SQL predicate for tasks whose deadline has passed but are not finished.
@@ -385,7 +394,7 @@ async fn delete_task(State(state): State<MockState>, Path(id): Path<String>) -> 
 
 async fn list_tokens(State(state): State<MockState>) -> Json<Vec<TokenRow>> {
     let rows: Vec<TokenRow> = sqlx::query_as::<_, TokenRow>(
-        "SELECT id, token_hash, label, created_by, created_at, revoked_at FROM tokens ORDER BY created_at DESC",
+        "SELECT id, jti, scope, label, created_by, created_at, revoked_at, expires_at FROM tokens ORDER BY created_at DESC",
     )
     .fetch_all(&state.pool)
     .await
@@ -397,24 +406,26 @@ async fn create_token(
     State(state): State<MockState>,
     axum::Json(body): axum::Json<serde_json::Value>,
 ) -> Result<(StatusCode, Json<TokenCreateResponse>), StatusCode> {
-    let new_token = format!("tsk_{}", uuid::Uuid::now_v7());
-    let hash = hash_token(&new_token);
     let label = body
         .get("label")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    let label_opt = label.as_deref().filter(|s| !s.is_empty());
+    let (new_token, jti) =
+        jwt::generate_token_jwt(&state.jwt_secret, SCOPE_READ_WRITE, label_opt, None)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     sqlx::query(
-        "INSERT INTO tokens (token_hash, label, created_by) VALUES (?, ?, 'authenticated')",
+        "INSERT INTO tokens (jti, scope, label, created_by) VALUES (?, 'read-write', ?, 'authenticated')",
     )
-    .bind(&hash)
-    .bind(label.as_deref())
+    .bind(&jti)
+    .bind(label_opt)
     .execute(&state.pool)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let row: TokenRow = sqlx::query_as::<_, TokenRow>(
-        "SELECT id, token_hash, label, created_by, created_at, revoked_at FROM tokens WHERE token_hash = ?",
+        "SELECT id, jti, scope, label, created_by, created_at, revoked_at, expires_at FROM tokens WHERE jti = ?",
     )
-    .bind(&hash)
+    .bind(&jti)
     .fetch_one(&state.pool)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -423,8 +434,10 @@ async fn create_token(
         Json(TokenCreateResponse {
             id: row.id,
             token: new_token,
+            scope: row.scope,
             label: row.label,
             created_at: row.created_at,
+            expires_at: row.expires_at,
         }),
     ))
 }
@@ -681,18 +694,11 @@ async fn delete_habit_scheduled_span(
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn hash_token(token: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(token.as_bytes());
-    let result = hasher.finalize();
-    result.iter().map(|b| format!("{b:02x}")).collect()
-}
-
 async fn spawn_mock_worker() -> String {
     let pool = setup_mock_db().await;
     let state = MockState {
         pool,
-        root_token: ROOT_TOKEN.to_string(),
+        jwt_secret: JWT_SECRET.to_string(),
     };
     let app = mock_router(state);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -708,8 +714,14 @@ async fn workers_storage_e2e() {
     let base_url = spawn_mock_worker().await;
     let storage = WorkersStorage::new_with(base_url.clone(), ROOT_TOKEN.to_string());
 
-    assert!(storage.verify_token(ROOT_TOKEN).await.unwrap());
-    assert!(!storage.verify_token("tsk_bogus").await.unwrap());
+    assert!(
+        storage
+            .verify_token(ROOT_TOKEN.as_str())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(storage.verify_token("tsk_bogus").await.unwrap().is_none());
 
     let create_body = CreateTask {
         title: "e2e task".to_string(),
@@ -772,7 +784,7 @@ async fn workers_storage_e2e() {
     ));
 
     let resp = storage.create_token(Some("e2e")).await.unwrap();
-    assert!(resp.token.starts_with("tsk_"));
+    assert!(resp.token.starts_with("eyJ"));
     let tokens = storage.list_tokens().await.unwrap();
     assert_eq!(tokens.len(), 1);
     storage.revoke_token(resp.id).await.unwrap();

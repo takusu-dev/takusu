@@ -1,10 +1,18 @@
 pub mod bool_compat;
+pub mod jwt;
 pub mod memory;
 pub mod option_bool_compat;
 
 use std::str::FromStr;
 use uuid::Uuid;
 
+pub use jwt::{
+    Claims as TokenClaims, DEFAULT_AUD, DEFAULT_ISS, JwtError, SCOPE_READ_WRITE, SCOPE_ROOT,
+};
+
+/// Generate a legacy-style random token string (`tsk_<UUID>`).
+///
+/// Prefer `jwt::generate_root_jwt` / `jwt::generate_token_jwt` for auth tokens.
 pub fn generate_root_token() -> String {
     format!("tsk_{}", Uuid::now_v7())
 }
