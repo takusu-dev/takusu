@@ -188,9 +188,13 @@ The default loop for any task is:
 1. Do the work (explore, edit, run `cargo check` / `cargo nextest run` / `cargo clippy` as needed).
 2. `jj describe` to write a commit message for `@` (present tense, lowercase first word, no trailing period).
 3. `jj git push --change` to push the current change to GitHub (creates/updates a branch named after the change-id).
-4. `gh pr create` (or `gh pr edit` if the PR already exists) to open or update the pull request.
+4. Open or update a pull request **only when** one of the following is true:
+   - The user explicitly provided an issue to close (`Closes #N` in the PR body).
+   - The user explicitly asked you to create or update a PR.
+   - An existing PR is already associated with the change and the user asked for an update.
+   Otherwise, do **not** create a PR immediately. Notify the user via `dunstify`, report the result, and wait for feedback or an explicit request before opening a PR.
 
-**Agents do steps 2–4 themselves**: after finishing the work, the agent writes the commit message, pushes the change, and creates/updates the PR without asking the user. Repeat per change. Use `jj new` to start a fresh change on top of `@`, and `jj squash` / `jj amend` to consolidate work before pushing. Rebase onto `main` with `jj git fetch && jj rebase -r @ -d main` before pushing if `main` has moved.
+**Agents do steps 2–3 themselves**: after finishing the work, the agent writes the commit message and pushes the change. If a PR is required per step 4, the agent also creates/updates it without asking the user. Repeat per change. Use `jj new` to start a fresh change on top of `@`, and `jj squash` / `jj amend` to consolidate work before pushing. Rebase onto `main` with `jj git fetch && jj rebase -r @ -d main` before pushing if `main` has moved.
 
 ### Conventions
 
