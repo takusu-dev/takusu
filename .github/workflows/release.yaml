@@ -36,18 +36,34 @@ env:
 jobs:
   deploy-worker:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Nix
         uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
-
-      - name: Restore binary cache
-        uses: asa1984/infra/.github/actions/binary-cache@44165003348ea3578a66f8c879bfaf23a3c7cc18
         with:
-          package: .#ci-worker
+          extra_nix_config: |
+            keep-outputs = true
+            keep-env-derivations = true
+
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          gc-max-store-size-linux: 4G
+          purge: true
+          purge-prefixes: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          purge-last-accessed: P6D
+          purge-primary-key: never
 
       - run: nix profile install .#ci-worker
+      - run: nix build ".#devShells.${{ runner.arch == 'ARM64' && 'aarch64-linux' || 'x86_64-linux' }}.worker" -o /tmp/worker-shell
 
       - uses: Swatinem/rust-cache@v2
 
@@ -81,6 +97,9 @@ jobs:
 
   build-cli:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
     env:
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
     steps:
@@ -88,13 +107,25 @@ jobs:
 
       - name: Install Nix
         uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
-
-      # Cache the takusu-cli closure directly — `nix bundle` builds it, so no
-      # separate `nix profile install` is needed.
-      - name: Restore binary cache
-        uses: asa1984/infra/.github/actions/binary-cache@44165003348ea3578a66f8c879bfaf23a3c7cc18
         with:
-          package: .#takusu-cli
+          extra_nix_config: |
+            keep-outputs = true
+            keep-env-derivations = true
+
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          gc-max-store-size-linux: 8G
+          purge: true
+          purge-prefixes: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          purge-last-accessed: P6D
+          purge-primary-key: never
+
+      - run: nix profile install .#takusu-cli
 
       - uses: Swatinem/rust-cache@v2
 
@@ -114,6 +145,9 @@ jobs:
 
   build-android-apk:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
@@ -132,22 +166,26 @@ jobs:
           # with the Nix store instead of the daemon's default TMPDIR.
           extra_nix_config: |
             build-dir = /nix/tmp
+            keep-outputs = true
+            keep-env-derivations = true
 
       - name: Create Nix build directory
         run: sudo install -d -m 1777 /nix/tmp
 
-      # The binary-cache action hardcodes /tmp/binary-cache as its cache
-      # directory. Symlink it to /nix/tmp so the multi-GB .so closure stays on
-      # the same filesystem as the Nix store.
-      - name: Symlink binary cache to /nix/tmp
-        run: |
-          mkdir -p /nix/tmp/binary-cache
-          ln -sfn /nix/tmp/binary-cache /tmp/binary-cache
-
-      - name: Restore binary cache
-        uses: asa1984/infra/.github/actions/binary-cache@44165003348ea3578a66f8c879bfaf23a3c7cc18
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
         with:
-          package: .#ci-android-libs
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          gc-max-store-size-linux: 8G
+          purge: true
+          purge-prefixes: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          purge-last-accessed: P6D
+          purge-primary-key: never
+
+      - run: nix profile install .#build-android-apk
 
       - uses: Swatinem/rust-cache@v2
 
@@ -189,7 +227,7 @@ jobs:
 
       - name: Build APK (Nix-managed .so + uniffi-bindgen + Gradle)
         run: |
-          nix run .#build-android-apk
+          build-android-apk
         env:
           EXPO_PUBLIC_WORKERS_URL: ${{ secrets.EXPO_PUBLIC_WORKERS_URL }}
           EXPO_PUBLIC_ROOT_TOKEN: ${{ secrets.EXPO_PUBLIC_ROOT_TOKEN }}

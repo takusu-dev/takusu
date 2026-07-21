@@ -44,17 +44,33 @@ jobs:
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - name: Install Nix
         uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
-
-      - name: Restore binary cache
-        uses: asa1984/infra/.github/actions/binary-cache@44165003348ea3578a66f8c879bfaf23a3c7cc18
         with:
-          package: .#ci-rust
+          extra_nix_config: |
+            keep-outputs = true
+            keep-env-derivations = true
+
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          gc-max-store-size-linux: 6G
+          purge: true
+          purge-prefixes: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          purge-last-accessed: P6D
+          purge-primary-key: never
 
       - run: nix profile install .#ci-rust
+      - run: nix build ".#devShells.${{ runner.arch == 'ARM64' && 'aarch64-linux' || 'x86_64-linux' }}.rust" -o /tmp/rust-shell
 
       - uses: Swatinem/rust-cache@v2
 
@@ -72,13 +88,26 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Nix
         uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
-
-      - name: Restore binary cache
-        uses: asa1984/infra/.github/actions/binary-cache@44165003348ea3578a66f8c879bfaf23a3c7cc18
         with:
-          package: .#ci-rust
+          extra_nix_config: |
+            keep-outputs = true
+            keep-env-derivations = true
+
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          gc-max-store-size-linux: 6G
+          purge: true
+          purge-prefixes: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          purge-last-accessed: P6D
+          purge-primary-key: never
 
       - run: nix profile install .#ci-rust
+      - run: nix build ".#devShells.${{ runner.arch == 'ARM64' && 'aarch64-linux' || 'x86_64-linux' }}.rust" -o /tmp/rust-shell
 
       - uses: Swatinem/rust-cache@v2
 
@@ -92,6 +121,9 @@ jobs:
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
@@ -109,14 +141,27 @@ jobs:
           # with the Nix store instead of the daemon's default TMPDIR.
           extra_nix_config: |
             build-dir = /nix/tmp
+            keep-outputs = true
+            keep-env-derivations = true
 
       - name: Create Nix build directory
         run: sudo install -d -m 1777 /nix/tmp
 
-      # Install the CI environment directly; the binary-cache action is not
-      # used here because ci-android is small enough to substitute/build on the
-      # runner.
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          gc-max-store-size-linux: 6G
+          purge: true
+          purge-prefixes: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          purge-last-accessed: P6D
+          purge-primary-key: never
+
       - run: nix profile install .#ci-android
+      - run: nix build ".#devShells.${{ runner.arch == 'ARM64' && 'aarch64-linux' || 'x86_64-linux' }}.android" -o /tmp/android-shell
 
       - uses: Swatinem/rust-cache@v2
 
@@ -165,15 +210,30 @@ jobs:
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       needs.changes.outputs.kotlin == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - name: Install Nix
         uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
-
-      - name: Restore binary cache
-        uses: asa1984/infra/.github/actions/binary-cache@44165003348ea3578a66f8c879bfaf23a3c7cc18
         with:
-          package: .#ci-kotlin
+          extra_nix_config: |
+            keep-outputs = true
+            keep-env-derivations = true
+
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          gc-max-store-size-linux: 4G
+          purge: true
+          purge-prefixes: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          purge-last-accessed: P6D
+          purge-primary-key: never
 
       - run: nix profile install .#ci-kotlin
 
@@ -188,6 +248,9 @@ jobs:
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       needs.changes.outputs.kotlin == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -205,18 +268,30 @@ jobs:
         with:
           extra_nix_config: |
             build-dir = /nix/tmp
+            keep-outputs = true
+            keep-env-derivations = true
 
       - name: Create Nix build directory
         run: sudo install -d -m 1777 /nix/tmp
 
-      - name: Restore binary cache
-        uses: asa1984/infra/.github/actions/binary-cache@44165003348ea3578a66f8c879bfaf23a3c7cc18
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
         with:
-          package: .#ci-android-libs
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          gc-max-store-size-linux: 8G
+          purge: true
+          purge-prefixes: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          purge-last-accessed: P6D
+          purge-primary-key: never
+
+      - run: nix profile install .#test-android-unit
 
       - name: Install Expo dependencies
         working-directory: mobile
         run: npm install --legacy-peer-deps
 
       - name: Run Android unit tests
-        run: nix run .#test-android-unit
+        run: test-android-unit

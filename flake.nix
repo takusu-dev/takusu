@@ -141,7 +141,45 @@
                 chmod -R +w $out/lib
               '';
 
-          src = lib.cleanSource ./.;
+          rootSrc = lib.cleanSource ./.;
+          src = lib.cleanSourceWith {
+            src = rootSrc;
+            name = "takusu-source";
+            filter =
+              path: type:
+              let
+                base = baseNameOf path;
+                parent = baseNameOf (dirOf path);
+                pathStr = toString path;
+                srcPrefix = toString rootSrc + "/";
+                isInCrates = lib.hasPrefix (srcPrefix + "crates/") pathStr;
+                excludedDirs = [
+                  "mobile"
+                  "scripts"
+                  ".devin"
+                  ".github"
+                  ".serena"
+                  "design"
+                  ".wrangler"
+                  "target"
+                  "node_modules"
+                ];
+                isExtraFile =
+                  (
+                    isInCrates
+                    && (lib.any (ext: lib.hasSuffix ".${ext}" base) [
+                      "sql"
+                      "json"
+                      "ics"
+                    ])
+                  )
+                  || (lib.hasSuffix ".md" base && parent == "skills");
+              in
+              if type == "directory" then
+                !(lib.elem base excludedDirs)
+              else
+                (craneLib.filterCargoSources path type) || isExtraFile;
+          };
 
           inherit (craneLib.crateNameFromCargoToml { inherit src; }) version;
           cargoArtifacts = craneLib.buildDepsOnly {
@@ -720,8 +758,8 @@
               };
 
               # Combined closure of the two Nix-built Android derivations
-              # (cross-compiled .so + uniffi-bindgen) so a single binary-cache
-              # action can warm/restore both at once.
+              # (cross-compiled .so + uniffi-bindgen) so they are cached and
+              # restored together from the Nix store cache in CI.
               ci-android-libs = pkgs.buildEnv {
                 name = "ci-android-libs";
                 paths = [
