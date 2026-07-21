@@ -704,6 +704,66 @@ mod tests {
     }
 
     #[test]
+    fn regression_depend_penalty_capped_at_sched_end() {
+        // When a dependency ends after the dependent task ends, the dependency
+        // penalty should only count the slots where the dependent task is
+        // actually running before the dependency finishes. The current
+        // implementation adds dep_end - sched_start even when dep_end exceeds
+        // sched_end, overpenalizing short dependent tasks.
+        let mut p = make_planner();
+
+        let a = p
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(100),
+                cost_estimate: NormalDist::new(10, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+
+        let b = p
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(100),
+                cost_estimate: NormalDist::new(1, 0),
+                depends: vec![a],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+
+        // Valid: B starts exactly when A finishes.
+        let valid = plan_with(vec![(Point(0), Point(10), a), (Point(10), Point(11), b)]);
+        // Invalid: B starts before A ends and finishes before A even starts.
+        // B runs for 1 slot while A is unfinished, so the dependency violation
+        // should be 1 slot, not A's end time minus B's start (12 slots).
+        let invalid = plan_with(vec![(Point(2), Point(12), a), (Point(0), Point(1), b)]);
+
+        let score_valid = evaluate(&p, &valid, 0.0, 1.0);
+        let score_invalid = evaluate(&p, &invalid, 0.0, 1.0);
+
+        // Both plans have the same duration and capped early-bonus terms, and
+        // the invalid schedule has no parallel overlap, so the score difference
+        // should be exactly the dependency violation penalty: 1 slot * W_DEPEND_BASE.
+        let expected_penalty = 1.0 * W_DEPEND_BASE;
+        let actual_gap = score_valid - score_invalid;
+        assert!(
+            (actual_gap - expected_penalty).abs() < 1e-6,
+            "expected gap {expected_penalty}, got {actual_gap} (dependency penalty overcounts when dep end > sched end)"
+        );
+    }
+
+    #[test]
     fn buffer_prefers_high_sigma_later() {
         let mut p = make_planner();
         let a = add_simple_task(&mut p, 1, 0, 5);
