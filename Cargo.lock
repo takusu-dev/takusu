@@ -4310,9 +4310,9 @@ dependencies = [
 name = "takusu-worker"
 version = "0.20260721.1"
 dependencies = [
- "chrono",
  "console_error_panic_hook",
  "getrandom 0.4.3",
+ "jiff",
  "log",
  "serde",
  "serde_json",

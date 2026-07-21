@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use wasm_bindgen::JsValue;
 use worker::{Env, Request, Response};
 
@@ -85,12 +87,15 @@ fn now_seconds() -> i64 {
 fn parse_timestamp(s: &str) -> Result<i64, WorkerError> {
     // Accept RFC 3339 (used by progress timestamps) or legacy D1
     // `datetime('now')` output for backward compatibility.
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
-        return Ok(dt.timestamp());
+    if let Ok(ts) = jiff::Timestamp::from_str(s) {
+        return Ok(ts.as_second());
     }
-    let dt = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+    let dt = jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M:%S", s)
         .map_err(|e| WorkerError::Internal(format!("invalid timestamp {s}: {e}")))?;
-    Ok(dt.and_utc().timestamp())
+    let zdt = dt
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .map_err(|e| WorkerError::Internal(format!("invalid timestamp {s}: {e}")))?;
+    Ok(zdt.timestamp().as_second())
 }
 
 /// Return the later of two timestamp strings.
