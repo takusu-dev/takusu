@@ -575,6 +575,16 @@ END:VCALENDAR";
     }
 
     #[test]
+    fn regression_ical_duration_instead_of_dtend() {
+        // RFC 5545 allows VEVENT to specify DURATION instead of DTEND.
+        let ical = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:dur\r\nDTSTART:20260605T090000Z\r\nDURATION:PT2H\r\nSUMMARY:Meeting with duration\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let tasks = parse_ical(ical).unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].start_at, "2026-06-05T09:00:00Z");
+        assert_eq!(tasks[0].end_at, "2026-06-05T11:00:00Z");
+    }
+
+    #[test]
     fn format_ical_date_offset_unit() {
         assert_eq!(
             format_ical_date("20250101T090000+0900").unwrap(),
