@@ -194,6 +194,9 @@ fn build_tts(config: &TtsConfig) -> TtsBuildResult {
             let speed = config.speed;
             Ok((Box::new(CartesiaSonic::new(tts_config)), voice_id, speed))
         }
+        // Android TTS is handled by the native mobile module, not by the
+        // generic tokio-based AudioAdapter used on desktop.
+        "android" => Err(AudioError::UnsupportedBackend("android".to_string())),
         other => Err(AudioError::UnsupportedBackend(other.to_string())),
     }
 }
@@ -320,5 +323,18 @@ mod tests {
             ..TtsConfig::default()
         };
         assert!(build_tts(&config).is_err());
+    }
+
+    #[test]
+    fn build_tts_rejects_android_backend() {
+        let config = TtsConfig {
+            backend: "android".to_string(),
+            ..TtsConfig::default()
+        };
+        let result = build_tts(&config);
+        match result {
+            Err(e) => assert!(e.to_string().contains("android")),
+            Ok(_) => panic!("expected android backend to be rejected"),
+        }
     }
 }

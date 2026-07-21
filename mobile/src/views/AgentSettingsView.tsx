@@ -563,11 +563,12 @@ export function AgentSettingsView() {
       </Pressable>
       {editingTts && (
         <TtsProviderEditor
+          key={editingTts.id}
           provider={editingTts}
           apiKey={editingTtsKey}
           onChangeProvider={setEditingTts}
           onChangeApiKey={setEditingTtsKey}
-          onSave={() => saveTts(editingTts, editingTtsKey)}
+          onSave={(provider) => saveTts(provider, editingTtsKey)}
           onCancel={() => setEditingTts(null)}
           onDelete={
             ttsProviders.some((p) => p.id === editingTts.id)

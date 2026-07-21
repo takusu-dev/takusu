@@ -39,10 +39,19 @@ export interface LlmProviderSettings {
   cost?: string;
 }
 
+export type TtsProvider = 'cartesia' | 'android';
+
+const VALID_TTS_PROVIDERS: TtsProvider[] = ['cartesia', 'android'];
+
+export const TTS_PROVIDER_LABELS: Record<TtsProvider, string> = {
+  cartesia: 'Cartesia',
+  android: 'Android 標準 TTS',
+};
+
 export interface TtsProviderSettings {
   id: string;
   name: string;
-  provider: 'cartesia';
+  provider: TtsProvider;
   voiceId: string;
   model?: string;
   language: string;
@@ -130,7 +139,7 @@ export async function loadSettings(): Promise<PersistedSettings> {
     notifications,
     llmProviders: parseJsonArray<LlmProviderSettings>(llmProvidersStr),
     activeLlmProvider: activeLlmProvider ?? null,
-    ttsProviders: parseJsonArray<TtsProviderSettings>(ttsProvidersStr),
+    ttsProviders: parseTtsProviders(ttsProvidersStr),
     activeTtsProvider: activeTtsProvider ?? null,
   };
 }
@@ -143,6 +152,51 @@ function parseJsonArray<T>(value: string | null): T[] {
   } catch {
     return [];
   }
+}
+
+function isValidTtsProvider(value: unknown): value is TtsProvider {
+  return (
+    typeof value === 'string' &&
+    VALID_TTS_PROVIDERS.includes(value as TtsProvider)
+  );
+}
+
+// Internal helper exposed for testing. Normal callers should use loadSettings().
+export function parseTtsProviders(value: string | null): TtsProviderSettings[] {
+  const parsed = parseJsonArray<unknown>(value);
+  const result: TtsProviderSettings[] = [];
+  for (const item of parsed) {
+    if (item == null || typeof item !== 'object') continue;
+    const raw = item as Record<string, unknown>;
+    if (typeof raw.id !== 'string' || !raw.id) continue;
+    const provider = isValidTtsProvider(raw.provider)
+      ? raw.provider
+      : 'cartesia';
+    const sampleRate =
+      typeof raw.sampleRate === 'number' &&
+      Number.isFinite(raw.sampleRate) &&
+      raw.sampleRate > 0
+        ? raw.sampleRate
+        : 44100;
+    const speed =
+      typeof raw.speed === 'number' &&
+      Number.isFinite(raw.speed) &&
+      raw.speed > 0
+        ? raw.speed
+        : undefined;
+    result.push({
+      id: raw.id,
+      name:
+        typeof raw.name === 'string' ? raw.name : TTS_PROVIDER_LABELS[provider],
+      provider,
+      voiceId: typeof raw.voiceId === 'string' ? raw.voiceId : '',
+      model: typeof raw.model === 'string' ? raw.model : undefined,
+      language: typeof raw.language === 'string' ? raw.language : 'ja',
+      sampleRate,
+      speed,
+    });
+  }
+  return result;
 }
 
 export async function saveAgentProviders(

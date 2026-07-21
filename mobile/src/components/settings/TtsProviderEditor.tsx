@@ -9,20 +9,20 @@ import {
   View,
 } from 'react-native';
 import { useColors, BRAND_COLOR, COLORS } from '@/src/theme';
-import { type TtsProviderSettings } from '@/src/api/settingsStore';
+import {
+  TTS_PROVIDER_LABELS,
+  type TtsProvider,
+  type TtsProviderSettings,
+} from '@/src/api/settingsStore';
 
-const TTS_PROVIDER_TYPES: TtsProviderSettings['provider'][] = ['cartesia'];
-
-const TTS_PROVIDER_DEFAULTS: Record<TtsProviderSettings['provider'], string> = {
-  cartesia: 'Cartesia',
-};
+const TTS_PROVIDER_TYPES: TtsProvider[] = ['cartesia', 'android'];
 
 interface Props {
   provider: TtsProviderSettings;
   apiKey: string;
   onChangeProvider: (provider: TtsProviderSettings) => void;
   onChangeApiKey: (apiKey: string) => void;
-  onSave: () => void;
+  onSave: (provider: TtsProviderSettings) => void;
   onCancel: () => void;
   onDelete?: () => void;
   saving?: boolean;
@@ -39,7 +39,13 @@ export function TtsProviderEditor({
   saving,
 }: Props) {
   const colors = useColors();
+  const [isExpanded, setIsExpanded] = useState(false);
   const [sampleRate, setSampleRate] = useState(String(provider.sampleRate));
+  const [speed, setSpeed] = useState(
+    provider.speed !== undefined ? String(provider.speed) : '',
+  );
+
+  const isAndroid = provider.provider === 'android';
 
   function updateSampleRate(text: string) {
     setSampleRate(text);
@@ -49,12 +55,62 @@ export function TtsProviderEditor({
     }
   }
 
+  function updateSpeed(text: string) {
+    setSpeed(text);
+    if (text.trim() === '') {
+      onChangeProvider({ ...provider, speed: undefined });
+      return;
+    }
+    const parsed = parseFloat(text);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      onChangeProvider({ ...provider, speed: parsed });
+    }
+  }
+
+  function selectProvider(type: TtsProvider) {
+    setIsExpanded(false);
+    onChangeApiKey('');
+    onChangeProvider({
+      ...provider,
+      provider: type,
+      name: TTS_PROVIDER_LABELS[type],
+      voiceId: '',
+    });
+  }
+
   function handleSave() {
-    if (!provider.voiceId.trim()) {
+    if (!isAndroid && !provider.voiceId.trim()) {
       Alert.alert('入力不足', 'Voice IDを入力してください');
       return;
     }
-    onSave();
+
+    let nextProvider = provider;
+
+    if (!isAndroid) {
+      const parsedSampleRate = parseInt(sampleRate, 10);
+      if (
+        sampleRate.trim() === '' ||
+        !Number.isFinite(parsedSampleRate) ||
+        parsedSampleRate <= 0
+      ) {
+        Alert.alert('入力不足', 'サンプルレートは正の整数を入力してください');
+        return;
+      }
+      nextProvider = { ...nextProvider, sampleRate: parsedSampleRate };
+    }
+
+    if (speed.trim() !== '') {
+      const parsedSpeed = parseFloat(speed);
+      if (!Number.isFinite(parsedSpeed) || parsedSpeed <= 0) {
+        Alert.alert('入力不足', '速度は正の数値を入力してください');
+        return;
+      }
+      nextProvider = { ...nextProvider, speed: parsedSpeed };
+    } else {
+      nextProvider = { ...nextProvider, speed: undefined };
+    }
+
+    onSave(nextProvider);
   }
 
   return (
@@ -68,26 +124,49 @@ export function TtsProviderEditor({
         onChangeText={(name) => onChangeProvider({ ...provider, name })}
         placeholder="表示名"
       />
-      <Pressable
-        onPress={() => {
-          Alert.alert('TTS Provider', '', [
-            { text: 'キャンセル', style: 'cancel' },
-            ...TTS_PROVIDER_TYPES.map((type) => ({
-              text: type,
-              onPress: () =>
-                onChangeProvider({
-                  ...provider,
-                  provider: type,
-                  name: TTS_PROVIDER_DEFAULTS[type],
-                }),
-            })),
-          ]);
-        }}
-        style={[styles.dropdown, { borderColor: colors.separator }]}
-      >
-        <Text style={{ color: colors.black }}>{provider.provider}</Text>
-        <Text style={{ color: colors.gray }}>▼</Text>
-      </Pressable>
+
+      <View>
+        <Pressable
+          onPress={() => setIsExpanded((prev) => !prev)}
+          style={[styles.dropdown, { borderColor: colors.separator }]}
+        >
+          <Text style={{ color: colors.black }}>
+            {TTS_PROVIDER_LABELS[provider.provider]}
+          </Text>
+          <Text style={{ color: colors.gray }}>{isExpanded ? '▲' : '▼'}</Text>
+        </Pressable>
+
+        {isExpanded && (
+          <View
+            style={[
+              styles.dropdownList,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.separator,
+              },
+            ]}
+          >
+            {TTS_PROVIDER_TYPES.map((type) => (
+              <Pressable
+                key={type}
+                onPress={() => selectProvider(type)}
+                style={[
+                  styles.dropdownItem,
+                  provider.provider === type && {
+                    backgroundColor: colors.surfaceTint,
+                  },
+                ]}
+              >
+                <Text style={{ color: colors.black }}>
+                  {provider.provider === type ? '● ' : '○ '}
+                  {TTS_PROVIDER_LABELS[type]}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
+      </View>
+
       <TextInput
         style={[
           styles.input,
@@ -96,19 +175,23 @@ export function TtsProviderEditor({
         value={provider.voiceId}
         onChangeText={(voiceId) => onChangeProvider({ ...provider, voiceId })}
         autoCapitalize="none"
-        placeholder="Voice ID"
+        placeholder={isAndroid ? 'Voice（任意、空欄で既定の声）' : 'Voice ID'}
       />
-      <TextInput
-        style={[
-          styles.input,
-          { color: colors.black, borderColor: colors.separator },
-        ]}
-        value={apiKey}
-        onChangeText={onChangeApiKey}
-        autoCapitalize="none"
-        secureTextEntry
-        placeholder="Cartesia API key"
-      />
+
+      {!isAndroid && (
+        <TextInput
+          style={[
+            styles.input,
+            { color: colors.black, borderColor: colors.separator },
+          ]}
+          value={apiKey}
+          onChangeText={onChangeApiKey}
+          autoCapitalize="none"
+          secureTextEntry
+          placeholder="Cartesia API key"
+        />
+      )}
+
       <View style={styles.row}>
         <TextInput
           style={[
@@ -123,18 +206,51 @@ export function TtsProviderEditor({
           autoCapitalize="none"
           placeholder="言語"
         />
+        {!isAndroid && (
+          <TextInput
+            style={[
+              styles.input,
+              styles.sampleRate,
+              { color: colors.black, borderColor: colors.separator },
+            ]}
+            value={sampleRate}
+            onChangeText={updateSampleRate}
+            onBlur={() => {
+              const parsed = parseInt(sampleRate, 10);
+              if (
+                sampleRate.trim() === '' ||
+                !Number.isFinite(parsed) ||
+                parsed <= 0
+              ) {
+                setSampleRate(String(provider.sampleRate));
+              }
+            }}
+            keyboardType="numeric"
+            placeholder="サンプルレート"
+          />
+        )}
         <TextInput
           style={[
             styles.input,
-            styles.sampleRate,
+            styles.speed,
             { color: colors.black, borderColor: colors.separator },
           ]}
-          value={sampleRate}
-          onChangeText={updateSampleRate}
+          value={speed}
+          onChangeText={updateSpeed}
+          onBlur={() => {
+            if (speed.trim() === '') return;
+            const parsed = parseFloat(speed);
+            if (!Number.isFinite(parsed) || parsed <= 0) {
+              setSpeed(
+                provider.speed !== undefined ? String(provider.speed) : '',
+              );
+            }
+          }}
           keyboardType="numeric"
-          placeholder="サンプルレート"
+          placeholder="速度"
         />
       </View>
+
       <View style={styles.actions}>
         <Pressable onPress={handleSave} style={styles.save} disabled={saving}>
           {saving ? (
@@ -179,9 +295,21 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 12,
   },
+  dropdownList: {
+    marginTop: 4,
+    borderWidth: 1,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  dropdownItem: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
   row: { flexDirection: 'row', gap: 8 },
   language: { flex: 1 },
   sampleRate: { flex: 1.5 },
+  speed: { flex: 1 },
   actions: { flexDirection: 'row', gap: 8, marginTop: 4 },
   save: {
     flex: 1,

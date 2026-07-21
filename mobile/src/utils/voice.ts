@@ -33,14 +33,16 @@ async function doConfigure(): Promise<void> {
   }
   const apiKey = await loadAgentApiKey('tts', provider.id);
   // Intentionally exclude the raw API key from the cache key.
-  const configKey = `${provider.id}:${provider.voiceId}:${provider.language}:${provider.sampleRate}`;
+  const configKey = `${provider.id}:${provider.provider}:${provider.voiceId}:${provider.language}:${provider.sampleRate}:${provider.speed}`;
   if (configKey === lastConfigKey) return;
   await TakusuAudioModule.configure({
+    provider: provider.provider,
     modelDir: '',
     apiKey,
     voiceId: provider.voiceId,
     language: provider.language,
     sampleRate: provider.sampleRate,
+    speed: provider.speed == null ? 1 : provider.speed,
   });
   lastConfigKey = configKey;
 }
