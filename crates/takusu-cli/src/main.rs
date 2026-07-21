@@ -28,8 +28,9 @@ use takusu_local_lib::{
     token_cache::TokenCache,
 };
 use takusu_storage::{
-    CreateHabit, CreateHabitScheduledSpan, CreateSkill, CreateTask, ScheduleEntry, TaskQuery,
-    UpdateHabit, UpdateSettings,
+    CreateHabit, CreateHabitScheduledSpan, CreateMemory, CreateSkill, CreateTask, MemoryQuery,
+    RecordProgress, ScheduleEntry, SimilarTaskQuery, SplitTask, TaskQuery, UpdateHabit,
+    UpdateMemory, UpdateSettings,
 };
 use takusu_util::{generate_root_token, parse_datetime_tz, parse_duration};
 
@@ -124,6 +125,12 @@ enum Commands {
         command: SkillCommands,
     },
 
+    /// Memory and similar-task search
+    Memory {
+        #[command(subcommand)]
+        command: MemoryCommands,
+    },
+
     /// Agent assistant
     Agent {
         #[command(subcommand)]
@@ -160,6 +167,61 @@ enum AgentConfigCommands {
     Show,
     /// Set a config value by key path (e.g. llm.base_url https://api.openai.com/v1)
     Set { key: String, value: String },
+}
+
+#[derive(Subcommand)]
+enum MemoryCommands {
+    /// Show a memory entry
+    Show { id: String },
+
+    /// Create a memory entry
+    Create {
+        kind: String,
+        key: String,
+        content: String,
+        #[arg(long)]
+        subject_type: Option<String>,
+        #[arg(long)]
+        subject_id: Option<String>,
+        #[arg(long)]
+        upsert: bool,
+    },
+
+    /// Update a memory entry
+    Update {
+        id: String,
+        #[arg(long)]
+        revision: i64,
+        #[arg(long)]
+        content: String,
+    },
+
+    /// Delete a memory entry
+    Delete {
+        id: String,
+        #[arg(long)]
+        revision: i64,
+    },
+
+    /// Search memory entries
+    Search {
+        q: String,
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long)]
+        subject_type: Option<String>,
+        #[arg(long)]
+        subject_id: Option<String>,
+        #[arg(long)]
+        limit: Option<i64>,
+    },
+
+    /// Find completed tasks similar to a title
+    Similar {
+        title: String,
+        #[arg(long)]
+        limit: Option<i64>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -206,6 +268,24 @@ enum ConfigCommands {
         #[arg(long)]
         warm_start: Option<bool>,
     },
+
+    /// Worker storage configuration
+    #[command(subcommand)]
+    Workers(WorkersCommands),
+}
+
+#[derive(Subcommand)]
+enum WorkersCommands {
+    /// Update Worker endpoint and token at runtime
+    Set {
+        #[arg(long)]
+        url: String,
+        #[arg(long)]
+        token: String,
+    },
+
+    /// Check storage backend health
+    Health,
 }
 
 #[derive(Subcommand)]
@@ -385,6 +465,50 @@ enum TaskCommands {
     ImportIcal {
         /// Path to the .ics file, or "-" to read from stdin
         file: String,
+    },
+
+    /// Active-session work commands
+    #[command(subcommand)]
+    Work(WorkCommands),
+}
+
+#[derive(Subcommand)]
+enum WorkCommands {
+    /// Start work on a task (creates a session, status -> in_progress)
+    Start { id: String },
+
+    /// Pause work on a task (closes the open session)
+    Pause { id: String },
+
+    /// Complete work on a task (closes the session, status -> completed)
+    Complete { id: String },
+
+    /// Record progress on a task
+    Progress {
+        id: String,
+        #[arg(long)]
+        quantity: i64,
+        #[arg(long)]
+        note: Option<String>,
+    },
+
+    /// Show work sessions and progress events for a task
+    #[command(name = "progress-show")]
+    ProgressShow { id: String },
+
+    /// Split a task into the original (retained quantity) and a remainder
+    Split {
+        id: String,
+        #[arg(long)]
+        retained_quantity: i64,
+        #[arg(long)]
+        set_dependency: bool,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long, help = "Deadline for the remainder task")]
+        end_at: Option<String>,
     },
 }
 
@@ -716,6 +840,9 @@ enum SyncCommands {
     /// Delete all mapped Google Calendar events and clear local mappings
     #[command(visible_alias = "cleanup")]
     DeleteAll,
+
+    /// List Google Calendar event mappings
+    Mappings,
 }
 
 fn main() {
@@ -828,6 +955,7 @@ fn main() {
                     }
                     cfg = config::load();
                 }
+                ConfigCommands::Workers(_) => {}
             }
         }
 
@@ -935,6 +1063,7 @@ async fn run(
         Commands::Sync { command } => run_sync(app.as_ref(), command).await?,
         Commands::Habit { command } => run_habit(mode, app.as_ref(), command).await?,
         Commands::Skill { command } => run_skill(mode, app.as_ref(), command).await?,
+        Commands::Memory { command } => run_memory(app.as_ref(), command).await?,
         Commands::Agent { command } => match command {
             AgentCommands::Run { text, yes } => agent::run(app, text, yes).await?,
             AgentCommands::Config { command } => match command {
@@ -1222,6 +1351,94 @@ async fn run_task(
                     DisplayMode::Rich => display_rich::display_tasks(&tasks, tz, &habit_map),
                     DisplayMode::Simple => display_simple::display_tasks(&tasks, tz, &habit_map),
                 }
+            }
+        }
+        TaskCommands::Work(command) => {
+            run_work(mode, app, tz, &habit_map, command).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn run_work(
+    mode: DisplayMode,
+    app: &TakusuApp,
+    tz: &jiff::tz::TimeZone,
+    habit_map: &std::collections::HashMap<String, i64>,
+    cmd: WorkCommands,
+) -> Result<(), AppError> {
+    match cmd {
+        WorkCommands::Start { id } => {
+            let task = app.start_task_work(&id, None).await?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_tasks(&[task], tz, habit_map),
+                DisplayMode::Simple => display_simple::display_tasks(&[task], tz, habit_map),
+            }
+        }
+        WorkCommands::Pause { id } => {
+            let task = app.pause_task_work(&id, None).await?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_tasks(&[task], tz, habit_map),
+                DisplayMode::Simple => display_simple::display_tasks(&[task], tz, habit_map),
+            }
+        }
+        WorkCommands::Complete { id } => {
+            let task = app.complete_task_work(&id, None).await?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_tasks(&[task], tz, habit_map),
+                DisplayMode::Simple => display_simple::display_tasks(&[task], tz, habit_map),
+            }
+        }
+        WorkCommands::Progress { id, quantity, note } => {
+            let body = RecordProgress {
+                quantity_done: quantity,
+                note,
+            };
+            let result = app.record_progress(&id, &body, None).await?;
+            match mode {
+                DisplayMode::Rich => display_rich::display_tasks(&[result.task], tz, habit_map),
+                DisplayMode::Simple => display_simple::display_tasks(&[result.task], tz, habit_map),
+            }
+            if let Some(event) = result.event {
+                println!(
+                    "recorded: quantity {} (+{}), active {}min",
+                    event.quantity_done.unwrap_or(quantity),
+                    event.delta_quantity.unwrap_or(0),
+                    event.active_minutes
+                );
+            } else {
+                println!("no change");
+            }
+            if result.suggests_completion {
+                println!("suggests completion");
+            }
+        }
+        WorkCommands::ProgressShow { id } => {
+            let progress = app.get_task_progress(&id).await?;
+            println!("{}", serde_json::to_string_pretty(&progress).unwrap());
+        }
+        WorkCommands::Split {
+            id,
+            retained_quantity,
+            set_dependency,
+            title,
+            description,
+            end_at,
+        } => {
+            let end_at = end_at.map(|s| parse_dt(&s, tz)).transpose()?;
+            let body = SplitTask {
+                retained_quantity,
+                set_dependency: Some(set_dependency),
+                title,
+                description,
+                end_at,
+            };
+            let result = app.split_task(&id, &body, None).await?;
+            let (original, remainder) = (result.original, result.remainder);
+            let tasks = vec![original, remainder];
+            match mode {
+                DisplayMode::Rich => display_rich::display_tasks(&tasks, tz, habit_map),
+                DisplayMode::Simple => display_simple::display_tasks(&tasks, tz, habit_map),
             }
         }
     }
@@ -1609,6 +1826,73 @@ async fn run_skill(mode: DisplayMode, app: &TakusuApp, cmd: SkillCommands) -> Re
     Ok(())
 }
 
+async fn run_memory(app: &TakusuApp, cmd: MemoryCommands) -> Result<(), AppError> {
+    match cmd {
+        MemoryCommands::Show { id } => {
+            let memory = app.get_memory(&id).await?;
+            println!("{}", serde_json::to_string_pretty(&memory).unwrap());
+        }
+        MemoryCommands::Create {
+            kind,
+            key,
+            content,
+            subject_type,
+            subject_id,
+            upsert,
+        } => {
+            let body = CreateMemory {
+                kind,
+                key,
+                content,
+                subject_type,
+                subject_id,
+                upsert,
+            };
+            let memory = app.create_memory(&body, None).await?;
+            println!("{}", serde_json::to_string_pretty(&memory).unwrap());
+        }
+        MemoryCommands::Update {
+            id,
+            revision,
+            content,
+        } => {
+            let body = UpdateMemory {
+                observed_revision: revision,
+                content: Some(content),
+            };
+            let memory = app.update_memory(&id, &body, None).await?;
+            println!("{}", serde_json::to_string_pretty(&memory).unwrap());
+        }
+        MemoryCommands::Delete { id, revision } => {
+            app.delete_memory(&id, revision, None).await?;
+            println!("Memory {id} deleted.");
+        }
+        MemoryCommands::Search {
+            q,
+            kind,
+            subject_type,
+            subject_id,
+            limit,
+        } => {
+            let query = MemoryQuery {
+                q,
+                kind,
+                subject_type,
+                subject_id,
+                limit,
+            };
+            let rows = app.search_memories(&query).await?;
+            println!("{}", serde_json::to_string_pretty(&rows).unwrap());
+        }
+        MemoryCommands::Similar { title, limit } => {
+            let query = SimilarTaskQuery { title, limit };
+            let rows = app.find_similar_tasks(&query).await?;
+            println!("{}", serde_json::to_string_pretty(&rows).unwrap());
+        }
+    }
+    Ok(())
+}
+
 async fn read_skill_body(path: Option<String>) -> Result<Option<String>, AppError> {
     match path.as_deref() {
         None => Ok(None),
@@ -1862,6 +2146,16 @@ async fn run_sync(app: &TakusuApp, cmd: SyncCommands) -> Result<(), AppError> {
                 }
             }
         }
+        SyncCommands::Mappings => {
+            let rows = app.list_gcal_mappings().await?;
+            if rows.is_empty() {
+                println!("(no mappings)");
+            } else {
+                for row in rows {
+                    println!("{} -> {}", row.task_id, row.google_event_id);
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -2086,6 +2380,18 @@ async fn run_config(cmd: ConfigCommands, app: &TakusuApp, cfg: &CliConfig) -> Re
                 resp.warm_start
             );
         }
+        ConfigCommands::Workers(cmd) => match cmd {
+            WorkersCommands::Set { url, token } => {
+                app.update_workers_credentials(&url, &token).await?;
+                config::set("worker_url", &url).map_err(AppError::Internal)?;
+                config::set("workers_token", &token).map_err(AppError::Internal)?;
+                println!("Worker config updated.");
+            }
+            WorkersCommands::Health => {
+                let status = app.health_check().await?;
+                println!("{status}");
+            }
+        },
     }
     Ok(())
 }
