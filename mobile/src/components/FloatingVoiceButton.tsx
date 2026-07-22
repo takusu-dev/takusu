@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
@@ -9,11 +9,9 @@ import Reanimated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { usePathname, useRouter } from 'expo-router';
-import * as Sentry from '@sentry/react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useServer, DEFAULT_PORT } from '@/src/api/ServerProvider';
+import { useServer } from '@/src/api/ServerProvider';
 import { useVoice } from '@/src/api/VoiceContext';
-import { AgentClient } from '@/src/api/agentClient';
 import { BRAND_COLOR, COLORS } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
 
@@ -27,11 +25,6 @@ export function FloatingVoiceButton() {
   const insets = useSafeAreaInsets();
   const { workersToken } = useServer();
   const { setPendingSessionId } = useVoice();
-
-  const agentClient = useMemo(
-    () => new AgentClient(`http://127.0.0.1:${DEFAULT_PORT}`, workersToken),
-    [workersToken],
-  );
 
   const [state, setState] = useState<ButtonState>('idle');
   const stateRef = useRef<ButtonState>('idle');
@@ -82,31 +75,21 @@ export function FloatingVoiceButton() {
     setPendingSessionId(null);
   }, [buttonY, setPendingSessionId]);
 
-  const pushAgent = useCallback(async () => {
+  const pushAgent = useCallback(() => {
     if (transitionedRef.current || pathname === '/agent') return;
 
-    // Mark the transition immediately so a second press/release while
-    // createSession is still in flight cannot open another Agent and create
-    // a duplicate empty session.
+    // Mark the transition immediately so a second press cannot queue another
+    // new-session request while the first one is being handled.
     transitionedRef.current = true;
 
-    // When the user is not authenticated we have no session to create, but
-    // we still open Agent so the setup flow is reachable.
+    // Queue a new session request. AgentView will create the actual session
+    // only if there is no existing empty session.
     if (workersToken) {
-      try {
-        const sessionId = await agentClient.createSession();
-        if (sessionId) {
-          setPendingSessionId(sessionId);
-        }
-      } catch (e) {
-        // If creating a session fails we still open Agent; the user can start
-        // a new session from the composer.
-        Sentry.captureException(e);
-      }
+      setPendingSessionId(`__new__${Date.now()}`);
     }
 
     router.push('/agent');
-  }, [agentClient, pathname, router, setPendingSessionId, workersToken]);
+  }, [pathname, router, setPendingSessionId, workersToken]);
 
   const pushTaskAdd = useCallback(() => {
     if (transitionedRef.current) return;
@@ -134,13 +117,13 @@ export function FloatingVoiceButton() {
     buttonY.value = 0;
   }, [buttonY]);
 
-  const handleRelease = useCallback(async () => {
+  const handleRelease = useCallback(() => {
     if (isSlideRef.current || transitionedRef.current) {
       reset();
       return;
     }
     if (stateRef.current === 'pending') {
-      await pushAgent();
+      pushAgent();
       return;
     }
     reset();
