@@ -2155,6 +2155,52 @@ mod tests {
         );
     }
 
+    // Regression (#780): build_initial_partial must respect dependency order
+    // even when the dependent task has a lower freeness (more urgent) than its
+    // dependency. Currently unpinned tasks are sorted only by freeness, so a
+    // dependent can be placed before the task it depends on.
+    #[test]
+    fn regression_780_build_initial_partial_dependency_order() {
+        let dep = Task {
+            id: 0,
+            start: Some(Point(0)),
+            end: Point(100),
+            cost_estimate: NormalDist { avg: 2, sigma: 0 },
+            depends: vec![],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: false,
+            habit_group: None,
+        };
+        let dependent = Task {
+            id: 1,
+            start: Some(Point(0)),
+            end: Point(10),
+            cost_estimate: NormalDist { avg: 2, sigma: 0 },
+            depends: vec![0],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: false,
+            habit_group: None,
+        };
+        let p = test_planner(vec![dep, dependent]);
+        let plan = build_initial_partial(&p, &[]);
+
+        let dep_entry = plan.schedules.iter().find(|(_, _, id)| *id == 0).unwrap();
+        let dependent_entry = plan.schedules.iter().find(|(_, _, id)| *id == 1).unwrap();
+
+        assert!(
+            dependent_entry.0.0 >= dep_entry.1.0,
+            "dependent task [{}, {}) must start after dependency [{}, {}) ends",
+            dependent_entry.0.0,
+            dependent_entry.1.0,
+            dep_entry.0.0,
+            dep_entry.1.0
+        );
+    }
+
     // Regression (#391): greedy_rebuild must also place fixed tasks first.
     #[test]
     fn greedy_rebuild_fixed_task_no_overlap() {
