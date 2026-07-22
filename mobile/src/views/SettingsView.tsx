@@ -72,17 +72,25 @@ const CATEGORY_LABELS: Record<SettingsCategory, string> = {
   info: '情報',
 };
 
-const CATEGORY_ORDER: SettingsCategory[] = [
-  'general',
-  'sleep',
-  'workload',
-  'solver',
-  'notifications',
-  'agent',
-  'skills',
-  'worker',
-  'google',
-  'info',
+type SettingsCategoryGroup = {
+  id: string;
+  label: string;
+  categories: SettingsCategory[];
+};
+
+const CATEGORY_GROUPS: SettingsCategoryGroup[] = [
+  {
+    id: 'app',
+    label: 'アプリ',
+    categories: ['general', 'notifications', 'info'],
+  },
+  {
+    id: 'schedule',
+    label: 'スケジュール',
+    categories: ['sleep', 'workload', 'solver'],
+  },
+  { id: 'agent', label: 'エージェント', categories: ['agent', 'skills'] },
+  { id: 'integrations', label: '連携', categories: ['worker', 'google'] },
 ];
 
 // Convert stored minutes back to hours for the workload inputs.
@@ -163,23 +171,34 @@ export function SettingsCategoryView() {
           { paddingBottom: 16 + insets.bottom },
         ]}
       >
-        {CATEGORY_ORDER.map((key) => (
-          <Pressable
-            key={key}
-            style={[
-              styles.categoryRow,
-              { borderBottomColor: colors.separator },
-            ]}
-            onPress={() => {
-              haptic.select();
-              router.push(`/settings/${key}`);
-            }}
-          >
-            <Text style={[styles.categoryLabel, { color: colors.black }]}>
-              {CATEGORY_LABELS[key]}
+        {CATEGORY_GROUPS.map((group) => (
+          <View key={group.id}>
+            <Text style={[styles.groupLabel, { color: colors.gray }]}>
+              {group.label}
             </Text>
-            <Ionicons name="chevron-forward" size={20} color={colors.gray} />
-          </Pressable>
+            {group.categories.map((key) => (
+              <Pressable
+                key={key}
+                style={[
+                  styles.categoryRow,
+                  { borderBottomColor: colors.separator },
+                ]}
+                onPress={() => {
+                  haptic.select();
+                  router.push(`/settings/${key}`);
+                }}
+              >
+                <Text style={[styles.categoryLabel, { color: colors.black }]}>
+                  {CATEGORY_LABELS[key]}
+                </Text>
+                <Ionicons
+                  name="chevron-forward"
+                  size={20}
+                  color={colors.gray}
+                />
+              </Pressable>
+            ))}
+          </View>
         ))}
 
         <View style={styles.field}>
@@ -1995,6 +2014,12 @@ const styles = StyleSheet.create({
   },
   categoryLabel: {
     fontSize: 16,
+  },
+  groupLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 4,
+    paddingHorizontal: 4,
   },
   settingRow: {
     flexDirection: 'row',
