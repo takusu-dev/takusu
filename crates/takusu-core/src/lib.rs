@@ -580,8 +580,8 @@ impl Planner {
         let mut pinned: Vec<(Point, Point, usize)> = Vec::new();
 
         for (s, e, id) in current_schedule {
-            let out_of_range = e.0 <= range.from.0 || s.0 >= range.until.0;
-            if out_of_range || extra_pinned.contains(id) {
+            let in_range = s.0 >= range.from.0 && e.0 <= range.until.0;
+            if !in_range || extra_pinned.contains(id) {
                 pinned.push((*s, *e, *id));
             }
         }
@@ -601,7 +601,7 @@ impl Planner {
         let pinned: Vec<_> = current_schedule
             .iter()
             .filter(|(s, e, id)| {
-                (e.0 <= range.from.0 || s.0 >= range.until.0) || extra_pinned.contains(id)
+                !(s.0 >= range.from.0 && e.0 <= range.until.0) || extra_pinned.contains(id)
             })
             .copied()
             .collect();
