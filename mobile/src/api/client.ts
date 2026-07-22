@@ -96,6 +96,8 @@ export class TakusuClient {
       params.push(`status=${encodeURIComponent(query.status)}`);
     if (query?.from) params.push(`from=${encodeURIComponent(query.from)}`);
     if (query?.until) params.push(`until=${encodeURIComponent(query.until)}`);
+    if (query?.no_overdue !== undefined)
+      params.push(`no_overdue=${query.no_overdue}`);
     if (query?.habit_id)
       params.push(`habit_id=${encodeURIComponent(query.habit_id)}`);
     if (query?.ical_uid)
@@ -105,7 +107,7 @@ export class TakusuClient {
   }
 
   async getTask(id: string): Promise<TaskRow> {
-    return this.request('GET', `/api/tasks/${id}`);
+    return this.request('GET', `/api/tasks/${encodeURIComponent(id)}`);
   }
 
   async createTask(body: CreateTask): Promise<TaskRow> {
@@ -113,39 +115,56 @@ export class TakusuClient {
   }
 
   async updateTask(id: string, body: UpdateTask): Promise<TaskRow> {
-    return this.request('PATCH', `/api/tasks/${id}`, body);
+    return this.request('PATCH', `/api/tasks/${encodeURIComponent(id)}`, body);
   }
 
   async replaceTask(id: string, body: CreateTask): Promise<TaskRow> {
-    return this.request('PUT', `/api/tasks/${id}`, body);
+    return this.request('PUT', `/api/tasks/${encodeURIComponent(id)}`, body);
   }
 
   async deleteTask(id: string): Promise<void> {
-    return this.request('DELETE', `/api/tasks/${id}`);
+    return this.request('DELETE', `/api/tasks/${encodeURIComponent(id)}`);
   }
 
   // ── Task progress (#757) ──
   async startTaskWork(id: string): Promise<TaskRow> {
-    return this.request('POST', `/api/tasks/${id}/work/start`);
+    return this.request(
+      'POST',
+      `/api/tasks/${encodeURIComponent(id)}/work/start`,
+    );
   }
 
   async pauseTaskWork(id: string): Promise<TaskRow> {
-    return this.request('POST', `/api/tasks/${id}/work/pause`);
+    return this.request(
+      'POST',
+      `/api/tasks/${encodeURIComponent(id)}/work/pause`,
+    );
   }
 
   async recordProgress(
     id: string,
     body: RecordProgress,
   ): Promise<ProgressResult> {
-    return this.request('POST', `/api/tasks/${id}/progress`, body);
+    return this.request(
+      'POST',
+      `/api/tasks/${encodeURIComponent(id)}/progress`,
+      body,
+    );
   }
 
   async completeTaskWork(id: string): Promise<TaskRow> {
-    return this.request('POST', `/api/tasks/${id}/work/complete`);
+    return this.request(
+      'POST',
+      `/api/tasks/${encodeURIComponent(id)}/work/complete`,
+    );
   }
 
   async splitTask(id: string, body: SplitTask): Promise<SplitResult> {
-    return this.request('POST', `/api/tasks/${id}/split`, body);
+    return this.request(
+      'POST',
+      `/api/tasks/${encodeURIComponent(id)}/split`,
+      body,
+    );
   }
 
   // ── Composite dependency analysis (#355) ──
@@ -179,7 +198,7 @@ export class TakusuClient {
   }
 
   async getHabit(id: string): Promise<HabitDetail> {
-    return this.request('GET', `/api/habits/${id}`);
+    return this.request('GET', `/api/habits/${encodeURIComponent(id)}`);
   }
 
   async createHabit(body: CreateHabit): Promise<HabitRow> {
@@ -187,20 +206,23 @@ export class TakusuClient {
   }
 
   async updateHabit(id: string, body: UpdateHabit): Promise<HabitRow> {
-    return this.request('PATCH', `/api/habits/${id}`, body);
+    return this.request('PATCH', `/api/habits/${encodeURIComponent(id)}`, body);
   }
 
   async replaceHabit(id: string, body: CreateHabit): Promise<HabitRow> {
-    return this.request('PUT', `/api/habits/${id}`, body);
+    return this.request('PUT', `/api/habits/${encodeURIComponent(id)}`, body);
   }
 
   async deleteHabit(id: string): Promise<void> {
-    return this.request('DELETE', `/api/habits/${id}`);
+    return this.request('DELETE', `/api/habits/${encodeURIComponent(id)}`);
   }
 
   // ── Habit scheduled spans (#303 / #503) ──
   async listHabitScheduledSpans(id: string): Promise<HabitScheduledSpanRow[]> {
-    return this.request('GET', `/api/habits/${id}/scheduled-spans`);
+    return this.request(
+      'GET',
+      `/api/habits/${encodeURIComponent(id)}/scheduled-spans`,
+    );
   }
 
   async listAllHabitScheduledSpans(): Promise<HabitScheduledSpanRow[]> {
@@ -211,19 +233,23 @@ export class TakusuClient {
     id: string,
     body: CreateHabitScheduledSpan,
   ): Promise<HabitScheduledSpanRow> {
-    return this.request('POST', `/api/habits/${id}/scheduled-spans`, body);
+    return this.request(
+      'POST',
+      `/api/habits/${encodeURIComponent(id)}/scheduled-spans`,
+      body,
+    );
   }
 
   async deleteHabitScheduledSpan(id: string, spanId: string): Promise<void> {
     return this.request(
       'DELETE',
-      `/api/habits/${id}/scheduled-spans/${spanId}`,
+      `/api/habits/${encodeURIComponent(id)}/scheduled-spans/${encodeURIComponent(spanId)}`,
     );
   }
 
   // ── Habit steps (#95) ──
   async listHabitSteps(id: string): Promise<HabitStepRow[]> {
-    return this.request('GET', `/api/habits/${id}/steps`);
+    return this.request('GET', `/api/habits/${encodeURIComponent(id)}/steps`);
   }
 
   async listAllHabitSteps(): Promise<HabitStepRow[]> {
@@ -234,13 +260,20 @@ export class TakusuClient {
     id: string,
     steps: HabitStepInput[],
   ): Promise<HabitStepRow[]> {
-    return this.request('PUT', `/api/habits/${id}/steps`, steps);
+    return this.request(
+      'PUT',
+      `/api/habits/${encodeURIComponent(id)}/steps`,
+      steps,
+    );
   }
 
   async analyzeHabitStepDependencies(
     id: string,
   ): Promise<DependencyAnalysisResponse> {
-    return this.request('GET', `/api/habits/${id}/steps/dependency-analysis`);
+    return this.request(
+      'GET',
+      `/api/habits/${encodeURIComponent(id)}/steps/dependency-analysis`,
+    );
   }
 
   // ── Schedule ──
@@ -260,7 +293,11 @@ export class TakusuClient {
     taskId: string,
     body: MoveEntryRequest,
   ): Promise<ScheduleRow> {
-    return this.request('PATCH', `/api/schedule/entries/${taskId}`, body);
+    return this.request(
+      'PATCH',
+      `/api/schedule/entries/${encodeURIComponent(taskId)}`,
+      body,
+    );
   }
 
   async clearSchedule(): Promise<void> {
@@ -286,7 +323,7 @@ export class TakusuClient {
   }
 
   async revokeToken(id: number | string): Promise<void> {
-    return this.request('DELETE', `/api/tokens/${id}`);
+    return this.request('DELETE', `/api/tokens/${encodeURIComponent(id)}`);
   }
 
   // ── Sync / Google Calendar ──
@@ -318,7 +355,7 @@ export class TakusuClient {
   }
 
   async getSkill(slug: string): Promise<SkillRow> {
-    return this.request('GET', `/api/skills/${slug}`);
+    return this.request('GET', `/api/skills/${encodeURIComponent(slug)}`);
   }
 
   async createSkill(body: CreateSkill): Promise<SkillRow> {
@@ -326,11 +363,15 @@ export class TakusuClient {
   }
 
   async updateSkill(slug: string, body: UpdateSkill): Promise<SkillRow> {
-    return this.request('PATCH', `/api/skills/${slug}`, body);
+    return this.request(
+      'PATCH',
+      `/api/skills/${encodeURIComponent(slug)}`,
+      body,
+    );
   }
 
   async deleteSkill(slug: string): Promise<void> {
-    return this.request('DELETE', `/api/skills/${slug}`);
+    return this.request('DELETE', `/api/skills/${encodeURIComponent(slug)}`);
   }
 
   // ── Health ──

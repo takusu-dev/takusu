@@ -803,6 +803,12 @@ impl TakusuApp {
         if let Some(tz) = &body.tz {
             validate_timezone(tz)?;
         }
+        if let Some(s) = &body.sleep_start {
+            validate_hhmm(s)?;
+        }
+        if let Some(s) = &body.sleep_end {
+            validate_hhmm(s)?;
+        }
         self.storage
             .update_settings(body)
             .await

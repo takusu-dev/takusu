@@ -7,6 +7,7 @@ use crate::handlers::auth::db;
 use crate::handlers::d1::safe_all;
 use crate::handlers::tokens::{json_ok, parse_json};
 use crate::models::{SettingsRow, UpdateSettings};
+use crate::validate::validate_settings;
 
 pub async fn get(_req: worker::Request, env: Env) -> Result<Response, WorkerError> {
     let database = db(&env)?;
@@ -16,6 +17,7 @@ pub async fn get(_req: worker::Request, env: Env) -> Result<Response, WorkerErro
 
 pub async fn update(mut req: worker::Request, env: Env) -> Result<Response, WorkerError> {
     let body: UpdateSettings = parse_json(&mut req).await?;
+    validate_settings(&body)?;
     let database = db(&env)?;
     let existing = get_inner(&database).await?;
     let tz = body.tz.clone().unwrap_or(existing.tz);

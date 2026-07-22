@@ -476,7 +476,7 @@ pub struct SimilarTaskRow {
     pub similarity: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UpdateSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tz: Option<String>,
