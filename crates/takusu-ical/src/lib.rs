@@ -176,6 +176,211 @@ fn format_ical_date(raw: &str) -> Result<String, IcalError> {
     Err(IcalError::InvalidDate(raw.to_string()))
 }
 
+/// Parse an RFC 5545 duration value and return its total seconds.
+fn parse_duration_seconds(dur: &str) -> Result<i64, IcalError> {
+    let mut chars = dur.chars().peekable();
+    let sign = match chars.peek() {
+        Some(&'+') => {
+            chars.next();
+            1
+        }
+        Some(&'-') => {
+            chars.next();
+            -1
+        }
+        _ => 1,
+    };
+    let Some(p) = chars.next() else {
+        return Err(IcalError::InvalidDate(dur.to_string()));
+    };
+    if !p.eq_ignore_ascii_case(&'P') {
+        return Err(IcalError::InvalidDate(dur.to_string()));
+    }
+
+    let mut total: i64 = 0;
+    let mut in_time = false;
+    let mut has_component = false;
+    while let Some(c) = chars.next() {
+        if c.eq_ignore_ascii_case(&'T') {
+            in_time = true;
+            continue;
+        }
+        if !c.is_ascii_digit() {
+            return Err(IcalError::InvalidDate(dur.to_string()));
+        }
+        let mut num = String::new();
+        num.push(c);
+        while let Some(&d) = chars.peek() {
+            if d.is_ascii_digit() || d == '.' {
+                num.push(chars.next().unwrap());
+            } else {
+                break;
+            }
+        }
+        let Some(unit) = chars.next() else {
+            return Err(IcalError::InvalidDate(dur.to_string()));
+        };
+        let value = num
+            .parse::<f64>()
+            .map_err(|_| IcalError::InvalidDate(dur.to_string()))?;
+        let seconds = match unit.to_ascii_uppercase() {
+            'W' if !in_time => (value * 7.0 * 86400.0) as i64,
+            'D' if !in_time => (value * 86400.0) as i64,
+            'H' if in_time => (value * 3600.0) as i64,
+            'M' if in_time => (value * 60.0) as i64,
+            'S' if in_time => value.round() as i64,
+            _ => return Err(IcalError::InvalidDate(dur.to_string())),
+        };
+        total += seconds;
+        has_component = true;
+    }
+    if !has_component {
+        return Err(IcalError::InvalidDate(dur.to_string()));
+    }
+    Ok(total * sign)
+}
+
+fn is_leap_year(y: i32) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)
+}
+
+fn days_in_month(y: i32, m: u8) -> u8 {
+    match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year(y) => 29,
+        2 => 28,
+        _ => 31,
+    }
+}
+
+fn add_days_to_ymd(mut y: i32, mut m: u8, mut d: u8, mut delta: i64) -> (i32, u8, u8) {
+    if delta == 0 {
+        return (y, m, d);
+    }
+    if delta > 0 {
+        while delta > 0 {
+            let dim = days_in_month(y, m);
+            let rem = (dim - d + 1) as i64;
+            if delta < rem {
+                d += delta as u8;
+                delta = 0;
+            } else {
+                delta -= rem;
+                d = 1;
+                m += 1;
+                if m > 12 {
+                    m = 1;
+                    y += 1;
+                }
+            }
+        }
+    } else {
+        delta = -delta;
+        while delta > 0 {
+            if delta < d as i64 {
+                d -= delta as u8;
+                delta = 0;
+            } else {
+                delta -= d as i64;
+                if m == 1 {
+                    m = 12;
+                    y -= 1;
+                } else {
+                    m -= 1;
+                }
+                d = days_in_month(y, m);
+            }
+        }
+    }
+    (y, m, d)
+}
+
+struct FormattedDateTime {
+    year: i32,
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
+    suffix: String,
+}
+
+impl FormattedDateTime {
+    fn parse(s: &str) -> Result<Self, IcalError> {
+        let Some(t_idx) = s.find('T') else {
+            return Err(IcalError::InvalidDate(s.to_string()));
+        };
+        let date = &s[..t_idx];
+        let rest = &s[t_idx + 1..];
+        if date.len() != 10 || date.as_bytes()[4] != b'-' || date.as_bytes()[7] != b'-' {
+            return Err(IcalError::InvalidDate(s.to_string()));
+        }
+        let year = date[..4]
+            .parse::<i32>()
+            .map_err(|_| IcalError::InvalidDate(s.to_string()))?;
+        let month = date[5..7]
+            .parse::<u8>()
+            .map_err(|_| IcalError::InvalidDate(s.to_string()))?;
+        let day = date[8..10]
+            .parse::<u8>()
+            .map_err(|_| IcalError::InvalidDate(s.to_string()))?;
+        if rest.len() < 8 || rest.as_bytes()[2] != b':' || rest.as_bytes()[5] != b':' {
+            return Err(IcalError::InvalidDate(s.to_string()));
+        }
+        let time = &rest[..8];
+        let suffix = rest[8..].to_string();
+        let hour = time[..2]
+            .parse::<u8>()
+            .map_err(|_| IcalError::InvalidDate(s.to_string()))?;
+        let minute = time[3..5]
+            .parse::<u8>()
+            .map_err(|_| IcalError::InvalidDate(s.to_string()))?;
+        let second = time[6..8]
+            .parse::<u8>()
+            .map_err(|_| IcalError::InvalidDate(s.to_string()))?;
+        Ok(Self {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            suffix,
+        })
+    }
+
+    fn format(&self) -> String {
+        format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}",
+            self.year, self.month, self.day, self.hour, self.minute, self.second, self.suffix
+        )
+    }
+}
+
+fn add_duration_to_formatted(start: &str, secs: i64) -> Result<String, IcalError> {
+    let mut dt = FormattedDateTime::parse(start)?;
+    let total = dt.hour as i64 * 3600 + dt.minute as i64 * 60 + dt.second as i64 + secs;
+    let day_delta = total.div_euclid(86400);
+    let rem = total.rem_euclid(86400);
+    (dt.year, dt.month, dt.day) = add_days_to_ymd(dt.year, dt.month, dt.day, day_delta);
+    dt.hour = (rem / 3600) as u8;
+    dt.minute = ((rem % 3600) / 60) as u8;
+    dt.second = (rem % 60) as u8;
+    Ok(dt.format())
+}
+
+fn add_days_to_formatted(start: &str, days: i64) -> Result<String, IcalError> {
+    let mut dt = FormattedDateTime::parse(start)?;
+    (dt.year, dt.month, dt.day) = add_days_to_ymd(dt.year, dt.month, dt.day, days);
+    Ok(dt.format())
+}
+
+fn add_ical_duration(start_at: &str, dur: &str) -> Result<String, IcalError> {
+    let secs = parse_duration_seconds(dur)?;
+    add_duration_to_formatted(start_at, secs)
+}
+
 /// iCalendar文字列をパースして`IcalTask`のリストを返す。
 pub fn parse_ical(input: &str) -> Result<Vec<IcalTask>, IcalError> {
     let lines = unfold_lines(input);
@@ -218,10 +423,17 @@ pub fn parse_ical(input: &str) -> Result<Vec<IcalTask>, IcalError> {
                     let uid = properties.get("UID").map(|s| unescape_ical_text(s));
 
                     let start_raw = parse_date(&properties, "DTSTART")?;
-                    let end_raw = parse_date(&properties, "DTEND")?;
-
                     let start_at = format_ical_date(start_raw)?;
-                    let end_at = format_ical_date(end_raw)?;
+
+                    let end_at = if let Some(end_raw) = properties.get("DTEND") {
+                        format_ical_date(end_raw)?
+                    } else if let Some(dur) = properties.get("DURATION") {
+                        add_ical_duration(&start_at, dur)?
+                    } else if start_raw.contains('T') {
+                        return Err(IcalError::MissingProperty("DTEND".to_string()));
+                    } else {
+                        add_days_to_formatted(&start_at, 1)?
+                    };
 
                     tasks.push(IcalTask {
                         title,
@@ -305,6 +517,18 @@ END:VEVENT
 END:VCALENDAR";
 
         let tasks = parse_ical(ical).unwrap();
+        assert_eq!(tasks[0].start_at, "2026-06-05T00:00:00");
+        assert_eq!(tasks[0].end_at, "2026-06-06T00:00:00");
+    }
+
+    #[test]
+    fn regression_ical_all_day_without_dtend() {
+        // RFC 5545 allows a date-only VEVENT to omit DTEND/DURATION; it is
+        // interpreted as a one-day event ending on the following day.
+        let ical = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:all-day-001\r\nDTSTART;VALUE=DATE:20260605\r\nSUMMARY:All-day meeting\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+        let tasks = parse_ical(ical).unwrap();
+        assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].start_at, "2026-06-05T00:00:00");
         assert_eq!(tasks[0].end_at, "2026-06-06T00:00:00");
     }
@@ -560,6 +784,16 @@ END:VCALENDAR";
         let ical = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:t\r\nDTSTART:20250101T090000+0000\r\nDTEND:20250101T100000+0000\r\nSUMMARY:Test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
         let tasks = parse_ical(ical).unwrap();
         assert_eq!(tasks[0].start_at, "2025-01-01T09:00:00+00:00");
+    }
+
+    #[test]
+    fn regression_ical_duration_instead_of_dtend() {
+        // RFC 5545 allows VEVENT to specify DURATION instead of DTEND.
+        let ical = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:dur\r\nDTSTART:20260605T090000Z\r\nDURATION:PT2H\r\nSUMMARY:Meeting with duration\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let tasks = parse_ical(ical).unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].start_at, "2026-06-05T09:00:00Z");
+        assert_eq!(tasks[0].end_at, "2026-06-05T11:00:00Z");
     }
 
     #[test]

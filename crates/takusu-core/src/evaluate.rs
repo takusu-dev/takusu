@@ -252,7 +252,8 @@ fn task_and_depend_scores(
             if let Some(Some((_, dep_end))) = index.get(*dep_id)
                 && *dep_end > sched_start
             {
-                depend_penalty_slots += dep_end.0 - sched_start.0;
+                let violation_end = dep_end.0.min(sched_end.0);
+                depend_penalty_slots += violation_end - sched_start.0;
             }
         }
     }
@@ -471,11 +472,17 @@ fn parallel_violation_score(planner: &Planner, sorted: &[Placement]) -> f64 {
     let tasks = &planner.tasks;
     for i in 0..n {
         let (a_start, a_end, a_id) = sorted[i];
+        if a_id >= tasks.len() {
+            continue;
+        }
         for (b_start, b_end, b_id) in &sorted[(i + 1)..n] {
             if b_start.0 >= a_end.0 {
                 break;
             }
             if b_end.0 <= a_start.0 {
+                continue;
+            }
+            if *b_id >= tasks.len() {
                 continue;
             }
             let task_a = &tasks[a_id];
@@ -701,6 +708,66 @@ mod tests {
         let score_ok = evaluate(&p, &ok, 0.0, 1.0);
         let score_bad = evaluate(&p, &violated, 0.0, 1.0);
         assert!(score_ok > score_bad, "ok={score_ok} bad={score_bad}");
+    }
+
+    #[test]
+    fn regression_depend_penalty_capped_at_sched_end() {
+        // When a dependency ends after the dependent task ends, the dependency
+        // penalty should only count the slots where the dependent task is
+        // actually running before the dependency finishes. The current
+        // implementation adds dep_end - sched_start even when dep_end exceeds
+        // sched_end, overpenalizing short dependent tasks.
+        let mut p = make_planner();
+
+        let a = p
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(100),
+                cost_estimate: NormalDist::new(10, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+
+        let b = p
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(100),
+                cost_estimate: NormalDist::new(1, 0),
+                depends: vec![a],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+
+        // Valid: B starts exactly when A finishes.
+        let valid = plan_with(vec![(Point(0), Point(10), a), (Point(10), Point(11), b)]);
+        // Invalid: B starts before A ends and finishes before A even starts.
+        // B runs for 1 slot while A is unfinished, so the dependency violation
+        // should be 1 slot, not A's end time minus B's start (12 slots).
+        let invalid = plan_with(vec![(Point(2), Point(12), a), (Point(0), Point(1), b)]);
+
+        let score_valid = evaluate(&p, &valid, 0.0, 1.0);
+        let score_invalid = evaluate(&p, &invalid, 0.0, 1.0);
+
+        // Both plans have the same duration and capped early-bonus terms, and
+        // the invalid schedule has no parallel overlap, so the score difference
+        // should be exactly the dependency violation penalty: 1 slot * W_DEPEND_BASE.
+        let expected_penalty = 1.0 * W_DEPEND_BASE;
+        let actual_gap = score_valid - score_invalid;
+        assert!(
+            (actual_gap - expected_penalty).abs() < 1e-6,
+            "expected gap {expected_penalty}, got {actual_gap} (dependency penalty overcounts when dep end > sched end)"
+        );
     }
 
     #[test]
@@ -1343,6 +1410,20 @@ mod tests {
         // Should not panic; score is just inclusion_bonus for the bogus entry.
         let score = evaluate(&p, &plan, 0.0, 1.0);
         assert!(score.is_finite());
+    }
+
+    #[test]
+    fn regression_780_evaluate_ignores_overlapping_unknown_ids() {
+        // Two bogus task ids that overlap in time should not cause evaluate()
+        // to panic when computing parallel violations.
+        let mut p = make_planner();
+        let _id = add_simple_task(&mut p, 2, 0, 10);
+        let plan = plan_with(vec![(Point(0), Point(2), 99), (Point(1), Point(3), 100)]);
+        let score = evaluate(&p, &plan, 0.0, 1.0);
+        assert!(
+            score.is_finite(),
+            "evaluate must not panic on overlapping unknown ids"
+        );
     }
 
     // #306: habit consistency bonus

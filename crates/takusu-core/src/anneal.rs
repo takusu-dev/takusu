@@ -124,6 +124,62 @@ fn topological_order(planner: &Planner, active: &FxHashSet<usize>) -> Vec<usize>
     result
 }
 
+/// トポロジカル順序を満たしつつ、配置可能になったタスクの中で freeness が
+/// 最も低い (最も切迫している) タスクを優先して選ぶ順序を返す。
+///
+/// `active` に含まれるタスクだけを対象とし、active 外の依存は既に配置済みとして
+/// 無視する。これにより、未ピンのタスク同士の依存関係を保ちながら freeness 順に
+/// 並べることができる。
+fn topological_order_by_freeness(planner: &Planner, active: &FxHashSet<usize>) -> Vec<usize> {
+    let n = planner.tasks.len();
+    let mut in_degree = vec![0usize; n];
+    let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); n];
+
+    for task in &planner.tasks {
+        if !active.contains(&task.id) {
+            continue;
+        }
+        for dep in &task.depends {
+            if active.contains(dep) {
+                dependents[*dep].push(task.id);
+                in_degree[task.id] += 1;
+            }
+        }
+    }
+
+    let mut ready: Vec<usize> = (0..n)
+        .filter(|i| active.contains(i) && in_degree[*i] == 0)
+        .collect();
+    let mut result = Vec::with_capacity(active.len());
+    let mut in_result = vec![false; n];
+
+    while !ready.is_empty() {
+        let idx = ready
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| planner.freeness(**a).total_cmp(&planner.freeness(**b)))
+            .map(|(i, _)| i)
+            .unwrap();
+        let u = ready.swap_remove(idx);
+        result.push(u);
+        in_result[u] = true;
+        for &v in &dependents[u] {
+            in_degree[v] -= 1;
+            if in_degree[v] == 0 {
+                ready.push(v);
+            }
+        }
+    }
+
+    // 環があった場合やその他の理由で配置できなかったタスクも、freeness 順に末尾に追加して
+    // すべての active タスクが結果に含まれるようにする。
+    let mut remaining: Vec<usize> = active.iter().copied().filter(|&i| !in_result[i]).collect();
+    remaining.sort_by(|a, b| planner.freeness(*a).total_cmp(&planner.freeness(*b)));
+    result.extend(remaining);
+
+    result
+}
+
 /// 貪欲法で初期解を構築。
 ///
 /// 方針: 切迫したタスク (freeness 低い) から順に、依存を満たす最も早い位置に配置。
@@ -1202,19 +1258,14 @@ fn repair_polish(planner: &Planner, best: Plan, pinned_ids: Option<&FxHashSet<us
 fn build_initial_partial(planner: &Planner, pinned: &[Placement]) -> Plan {
     let pinned_ids: FxHashSet<usize> = pinned.iter().map(|(_, _, id)| *id).collect();
 
-    let mut unpinned: Vec<usize> = planner
+    let unpinned_ids: FxHashSet<usize> = planner
         .tasks
         .iter()
         .filter(|t| !pinned_ids.contains(&t.id))
         .map(|t| t.id)
         .collect();
 
-    unpinned.sort_by(|a, b| {
-        planner
-            .freeness(*a)
-            .partial_cmp(&planner.freeness(*b))
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    let unpinned = topological_order_by_freeness(planner, &unpinned_ids);
 
     let mut schedules: Vec<Placement> = pinned.to_vec();
 
@@ -2152,6 +2203,52 @@ mod tests {
             n.1.0,
             f.0.0,
             f.1.0
+        );
+    }
+
+    // Regression (#780): build_initial_partial must respect dependency order
+    // even when the dependent task has a lower freeness (more urgent) than its
+    // dependency. Currently unpinned tasks are sorted only by freeness, so a
+    // dependent can be placed before the task it depends on.
+    #[test]
+    fn regression_780_build_initial_partial_dependency_order() {
+        let dep = Task {
+            id: 0,
+            start: Some(Point(0)),
+            end: Point(100),
+            cost_estimate: NormalDist { avg: 2, sigma: 0 },
+            depends: vec![],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: false,
+            habit_group: None,
+        };
+        let dependent = Task {
+            id: 1,
+            start: Some(Point(0)),
+            end: Point(10),
+            cost_estimate: NormalDist { avg: 2, sigma: 0 },
+            depends: vec![0],
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            fixed: false,
+            habit_group: None,
+        };
+        let p = test_planner(vec![dep, dependent]);
+        let plan = build_initial_partial(&p, &[]);
+
+        let dep_entry = plan.schedules.iter().find(|(_, _, id)| *id == 0).unwrap();
+        let dependent_entry = plan.schedules.iter().find(|(_, _, id)| *id == 1).unwrap();
+
+        assert!(
+            dependent_entry.0.0 >= dep_entry.1.0,
+            "dependent task [{}, {}) must start after dependency [{}, {}) ends",
+            dependent_entry.0.0,
+            dependent_entry.1.0,
+            dep_entry.0.0,
+            dep_entry.1.0
         );
     }
 

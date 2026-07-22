@@ -75,7 +75,7 @@ impl Point {
     /// jiff の `Timestamp` から `per` 分単位の Point に変換。
     /// 通常 `per` は 5。
     pub fn from_timestamp(ts: Timestamp, per: u16) -> Point {
-        Point(ts.as_second() / per as i64 / 60)
+        Point(ts.as_second().div_euclid(per as i64 * 60))
     }
 
     /// 現在時刻の Point。
@@ -580,8 +580,8 @@ impl Planner {
         let mut pinned: Vec<(Point, Point, usize)> = Vec::new();
 
         for (s, e, id) in current_schedule {
-            let out_of_range = e.0 <= range.from.0 || s.0 >= range.until.0;
-            if out_of_range || extra_pinned.contains(id) {
+            let in_range = s.0 >= range.from.0 && e.0 <= range.until.0;
+            if !in_range || extra_pinned.contains(id) {
                 pinned.push((*s, *e, *id));
             }
         }
@@ -601,7 +601,7 @@ impl Planner {
         let pinned: Vec<_> = current_schedule
             .iter()
             .filter(|(s, e, id)| {
-                (e.0 <= range.from.0 || s.0 >= range.until.0) || extra_pinned.contains(id)
+                !(s.0 >= range.from.0 && e.0 <= range.until.0) || extra_pinned.contains(id)
             })
             .copied()
             .collect();
@@ -632,10 +632,13 @@ impl Planner {
     /// `freeness()` の結果でソートし、値が小さい順に greedy 配置される。
     /// 「freeness」＝「(slack - avg) / slack」のイメージ。
     pub(crate) fn freeness(&self, id: usize) -> f64 {
-        let slack = Point::diff(
-            self.tasks[id].start.unwrap_or(Point(0)).max(self.now),
+        let slack = Point::delta(
             self.tasks[id].end,
+            self.tasks[id].start.unwrap_or(Point(0)).max(self.now),
         );
+        if slack < 0 {
+            return f64::NEG_INFINITY;
+        }
         if slack == 0 {
             return 0.;
         }
@@ -1248,6 +1251,50 @@ mod tests {
         assert!((0.0..=1.0).contains(&f));
     }
 
+    // Regression (#780): a task whose deadline is already before `now` must
+    // be treated as the most urgent. `freeness()` currently uses
+    // `Point::diff` (absolute difference), which turns the negative slack
+    // into a positive number and deprioritizes the task.
+    #[test]
+    fn regression_780_freeness_past_deadline_priority() {
+        let mut planner = Planner::new(Point(100), SleepConfig::disabled());
+        let late = planner
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(50),
+                cost_estimate: NormalDist::new(5, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+        let tight = planner
+            .add(Task {
+                id: 0,
+                start: None,
+                end: Point(101),
+                cost_estimate: NormalDist::new(5, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+
+        let late_freeness = planner.freeness(late);
+        let tight_freeness = planner.freeness(tight);
+        assert!(
+            late_freeness < tight_freeness,
+            "past-deadline task should be more urgent than a tight but feasible task: late={late_freeness} tight={tight_freeness}"
+        );
+    }
+
     #[test]
     fn plan_is_scheduled() {
         let planner = simple_two_task_planner();
@@ -1269,6 +1316,21 @@ mod tests {
         let ts = jiff::Timestamp::from_second(0).unwrap();
         let p = Point::from_timestamp(ts, 5);
         assert_eq!(p.0, 0);
+    }
+
+    // Regression (#780): Point::from_timestamp must use Euclidean (floor)
+    // division so timestamps before the epoch map to the correct slot. The
+    // current left-associative integer division truncates toward zero,
+    // collapsing the slot immediately before the epoch into slot 0.
+    #[test]
+    fn regression_point_from_timestamp_negative_floor() {
+        // -1s falls in the slot [-300, 0) -> Point(-1).
+        let just_before = jiff::Timestamp::from_second(-1).unwrap();
+        assert_eq!(Point::from_timestamp(just_before, 5).0, -1);
+
+        // -599s falls in the slot [-600, -300) -> Point(-2).
+        let well_before = jiff::Timestamp::from_second(-599).unwrap();
+        assert_eq!(Point::from_timestamp(well_before, 5).0, -2);
     }
 
     #[test]
@@ -1476,6 +1538,53 @@ mod tests {
         assert!(
             a_start.0 >= 0,
             "rescheduled task should not start before now"
+        );
+    }
+
+    // Regression (#780): plan_in_range must pin tasks that partially overlap
+    // the requested range, not only tasks completely outside it. The current
+    // condition `e <= from || s >= until` misses left-overlapping intervals
+    // (start < from but end > from), causing them to be rescheduled instead of
+    // preserved.
+    #[test]
+    fn regression_plan_in_range_pins_left_overlap() {
+        let mut p = Planner::new(Point(100), SleepConfig::disabled());
+        let a = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(200),
+                cost_estimate: NormalDist::new(3, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+
+        // Task a overlaps the range on the left: it starts before the range
+        // and ends inside it, so it is not fully contained in [20, 80).
+        let current_schedule = vec![(Point(0), Point(30), a)];
+        let range = RescheduleRange {
+            from: Point(20),
+            until: Point(80),
+        };
+
+        let replanned = p.plan_in_range(&range, &current_schedule, &[]);
+        let (s, e, _) = replanned
+            .schedules
+            .iter()
+            .find(|(_, _, id)| *id == a)
+            .unwrap();
+        assert_eq!(
+            s.0, 0,
+            "left-overlapping task should keep its original start, got {s:?}"
+        );
+        assert_eq!(
+            e.0, 30,
+            "left-overlapping task should keep its original end, got {e:?}"
         );
     }
 
