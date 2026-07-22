@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 uuid = { workspace = true, features = ["js"] }
 jiff.workspace = true
+web-time.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 unicode-normalization = "0.1.25"

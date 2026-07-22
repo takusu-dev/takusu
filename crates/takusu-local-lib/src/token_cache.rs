@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use web_time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
 use takusu_util::{TokenClaims, jwt};

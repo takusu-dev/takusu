@@ -5,6 +5,7 @@ pub mod option_bool_compat;
 
 use std::str::FromStr;
 use uuid::Uuid;
+use web_time::{SystemTime, UNIX_EPOCH};
 
 pub use jwt::{
     Claims as TokenClaims, DEFAULT_AUD, DEFAULT_ISS, JwtError, SCOPE_READ_WRITE, SCOPE_ROOT,
@@ -115,6 +116,16 @@ pub fn minutes_between(start: &str, end: &str) -> i64 {
     }
 }
 
+fn now_timestamp() -> Result<jiff::Timestamp, String> {
+    let nanos: i128 = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .map_err(|_| "system clock error".to_string())?
+        .try_into()
+        .map_err(|_| "system clock out of range".to_string())?;
+    jiff::Timestamp::from_nanosecond(nanos).map_err(|e| format!("invalid timestamp: {e}"))
+}
+
 pub fn parse_datetime_tz(s: &str, tz: &jiff::tz::TimeZone) -> Result<String, String> {
     parse_datetime_to_timestamp(s, tz).map(|ts| ts.to_string())
 }
@@ -126,10 +137,10 @@ pub fn parse_datetime_to_timestamp(
     let s = s.trim();
 
     if s.eq_ignore_ascii_case("now") {
-        return Ok(jiff::Timestamp::now());
+        return now_timestamp();
     }
 
-    let today = jiff::Timestamp::now().to_zoned(tz.clone()).date();
+    let today = now_timestamp()?.to_zoned(tz.clone()).date();
 
     // Full ISO 8601 timestamp
     if let Ok(ts) = jiff::Timestamp::from_str(s) {
@@ -260,10 +271,10 @@ pub fn parse_date_expression(
     let s = s.trim();
 
     if s.eq_ignore_ascii_case("now") {
-        return Ok(jiff::Timestamp::now());
+        return now_timestamp();
     }
 
-    let today = jiff::Timestamp::now().to_zoned(tz.clone()).date();
+    let today = now_timestamp()?.to_zoned(tz.clone()).date();
 
     if s.eq_ignore_ascii_case("today") {
         let dt = if end_of_day {
@@ -482,7 +493,7 @@ mod tests {
 
     #[test]
     fn parse_datetime_now_keyword() {
-        let now = jiff::Timestamp::now();
+        let now = now_timestamp().unwrap();
         let result = parse_datetime("now").unwrap();
         let ts = jiff::Timestamp::from_str(&result).unwrap();
         assert!((ts.as_second() - now.as_second()).abs() <= 2);
@@ -512,7 +523,7 @@ mod tests {
 
     #[test]
     fn parse_date_expression_now() {
-        let now = jiff::Timestamp::now();
+        let now = now_timestamp().unwrap();
         let tz = jiff::tz::TimeZone::UTC;
         let result = parse_date_expression("now", &tz, false).unwrap();
         assert!((result.as_second() - now.as_second()).abs() <= 2);
@@ -521,7 +532,7 @@ mod tests {
     #[test]
     fn parse_date_expression_today_start_and_end() {
         let tz = jiff::tz::TimeZone::UTC;
-        let today = jiff::Timestamp::now().to_zoned(tz.clone()).date();
+        let today = now_timestamp().unwrap().to_zoned(tz.clone()).date();
         let start = parse_date_expression("today", &tz, false).unwrap();
         let end = parse_date_expression("today", &tz, true).unwrap();
         assert_eq!(
@@ -539,7 +550,7 @@ mod tests {
     #[test]
     fn parse_date_expression_relative_days() {
         let tz = jiff::tz::TimeZone::UTC;
-        let today = jiff::Timestamp::now().to_zoned(tz.clone()).date();
+        let today = now_timestamp().unwrap().to_zoned(tz.clone()).date();
         let expected = today.checked_add(jiff::Span::new().days(7)).unwrap();
         let start = parse_date_expression("7d", &tz, false).unwrap();
         let end = parse_date_expression("7d", &tz, true).unwrap();
@@ -562,7 +573,7 @@ mod tests {
     #[test]
     fn parse_date_expression_today_and_relative_in_non_utc_timezone() {
         let tz = jiff::tz::TimeZone::get("Asia/Tokyo").unwrap();
-        let today = jiff::Timestamp::now().to_zoned(tz.clone()).date();
+        let today = now_timestamp().unwrap().to_zoned(tz.clone()).date();
 
         let start = parse_date_expression("today", &tz, false).unwrap();
         let end = parse_date_expression("today", &tz, true).unwrap();
@@ -595,7 +606,7 @@ mod tests {
     #[test]
     fn parse_date_expression_negative_days() {
         let tz = jiff::tz::TimeZone::UTC;
-        let today = jiff::Timestamp::now().to_zoned(tz.clone()).date();
+        let today = now_timestamp().unwrap().to_zoned(tz.clone()).date();
         let expected = today.checked_add(jiff::Span::new().days(-3)).unwrap();
         let start = parse_date_expression("-3d", &tz, false).unwrap();
         assert_eq!(

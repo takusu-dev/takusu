@@ -33,7 +33,7 @@ async fn setup() -> (AppState, SqlitePool) {
     let pool = storage.pool().clone();
     let token_cache = Arc::new(TokenCache::with_default_ttl());
     let app = Arc::new(TakusuApp::new(Arc::new(storage), token_cache));
-    let state = AppState::new(app);
+    let state = AppState::new(app, root_token().to_string());
     (state, pool)
 }
 
