@@ -1538,6 +1538,53 @@ mod tests {
         );
     }
 
+    // Regression (#780): plan_in_range must pin tasks that partially overlap
+    // the requested range, not only tasks completely outside it. The current
+    // condition `e <= from || s >= until` misses left-overlapping intervals
+    // (start < from but end > from), causing them to be rescheduled instead of
+    // preserved.
+    #[test]
+    fn regression_plan_in_range_pins_left_overlap() {
+        let mut p = Planner::new(Point(100), SleepConfig::disabled());
+        let a = p
+            .add(Task {
+                id: 0,
+                start: Some(Point(0)),
+                end: Point(200),
+                cost_estimate: NormalDist::new(3, 0),
+                depends: vec![],
+                parallelizable: false,
+                allows_parallel: false,
+                abandonability: 0.5,
+                fixed: false,
+                habit_group: None,
+            })
+            .unwrap();
+
+        // Task a overlaps the range on the left: it starts before the range
+        // and ends inside it, so it is not fully contained in [20, 80).
+        let current_schedule = vec![(Point(0), Point(30), a)];
+        let range = RescheduleRange {
+            from: Point(20),
+            until: Point(80),
+        };
+
+        let replanned = p.plan_in_range(&range, &current_schedule, &[]);
+        let (s, e, _) = replanned
+            .schedules
+            .iter()
+            .find(|(_, _, id)| *id == a)
+            .unwrap();
+        assert_eq!(
+            s.0, 0,
+            "left-overlapping task should keep its original start, got {s:?}"
+        );
+        assert_eq!(
+            e.0, 30,
+            "left-overlapping task should keep its original end, got {e:?}"
+        );
+    }
+
     fn simple_two_task_planner() -> Planner {
         let mut planner = Planner::new(Point(0), SleepConfig::disabled());
         planner
