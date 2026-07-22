@@ -97,6 +97,30 @@ function dateLabel(key: string, tz?: string): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+// Number of days between two YYYY-MM-DD keys, computed without interpreting
+// the keys in the device timezone. This avoids DST/local-midnight issues when
+// comparing server-timezone date keys.
+function daysBetweenDateKeys(a: string, b: string): number {
+  const [ay, am, ad] = a.split('-').map(Number);
+  const [by, bm, bd] = b.split('-').map(Number);
+  return Math.round(
+    (Date.UTC(ay, am - 1, ad) - Date.UTC(by, bm - 1, bd)) /
+      (1000 * 60 * 60 * 24),
+  );
+}
+
+// Human-readable label for a future task's scheduled date, relative to today.
+// Only called when taskKey > todayKey, so diff is always positive.
+function futureTaskDateLabel(taskKey: string, todayKey: string): string {
+  const diff = daysBetweenDateKeys(taskKey, todayKey);
+  if (diff === 1) return '明日';
+  if (diff > 1 && diff <= 6) return `${diff}日後`;
+  const [y, m, d] = taskKey.split('-').map(Number);
+  const [ty] = todayKey.split('-').map(Number);
+  if (y === ty) return `${m}/${d}`;
+  return `${y}/${m}/${d}`;
+}
+
 // A separator that marks a real day boundary (今日 / 明日 / M/D). Excludes
 // the non-day separators: 'pending', '過去', and the "load more past" row.
 function isDaySeparator(item: DateSeparator): boolean {
@@ -183,6 +207,8 @@ export function HomeView() {
   notificationsRef.current = notifications;
   const clientRef = useRef(client);
   clientRef.current = client;
+  const serverTzRef = useRef(serverTz);
+  serverTzRef.current = serverTz;
 
   // Navigation buttons visibility — shown when scrolling, hidden when idle
   // (#308). Uses a shared value for smooth opacity animation.
@@ -894,6 +920,29 @@ export function HomeView() {
     const next =
       scheduled[0] ?? tasksRef.current.find((t) => t.status === 'pending');
     if (!next) return;
+    if (next.start_at) {
+      const currentTz = serverTzRef.current;
+      const taskDate = dateKey(next.start_at, currentTz);
+      const today = todayDateKey(currentTz);
+      if (taskDate > today) {
+        const confirmed = await new Promise<boolean>((resolve) => {
+          Alert.alert(
+            '明日以降のタスクを開始',
+            `「${next.title}」は${futureTaskDateLabel(taskDate, today)}のタスクです。本当に開始しますか？`,
+            [
+              {
+                text: 'キャンセル',
+                style: 'cancel',
+                onPress: () => resolve(false),
+              },
+              { text: '開始', onPress: () => resolve(true) },
+            ],
+            { cancelable: true, onDismiss: () => resolve(false) },
+          );
+        });
+        if (!confirmed) return;
+      }
+    }
     haptic.medium();
     try {
       await currentClient.startTaskWork(next.id);
