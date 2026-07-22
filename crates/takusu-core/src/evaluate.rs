@@ -1405,6 +1405,20 @@ mod tests {
         assert!(score.is_finite());
     }
 
+    #[test]
+    fn regression_780_evaluate_ignores_overlapping_unknown_ids() {
+        // Two bogus task ids that overlap in time should not cause evaluate()
+        // to panic when computing parallel violations.
+        let mut p = make_planner();
+        let _id = add_simple_task(&mut p, 2, 0, 10);
+        let plan = plan_with(vec![(Point(0), Point(2), 99), (Point(1), Point(3), 100)]);
+        let score = evaluate(&p, &plan, 0.0, 1.0);
+        assert!(
+            score.is_finite(),
+            "evaluate must not panic on overlapping unknown ids"
+        );
+    }
+
     // #306: habit consistency bonus
     fn add_habit_task(p: &mut Planner, avg: u64, end: i64, habit_group: usize) -> usize {
         p.add(Task {
