@@ -1315,6 +1315,21 @@ mod tests {
         assert_eq!(p.0, 0);
     }
 
+    // Regression (#780): Point::from_timestamp must use Euclidean (floor)
+    // division so timestamps before the epoch map to the correct slot. The
+    // current left-associative integer division truncates toward zero,
+    // collapsing the slot immediately before the epoch into slot 0.
+    #[test]
+    fn regression_point_from_timestamp_negative_floor() {
+        // -1s falls in the slot [-300, 0) -> Point(-1).
+        let just_before = jiff::Timestamp::from_second(-1).unwrap();
+        assert_eq!(Point::from_timestamp(just_before, 5).0, -1);
+
+        // -599s falls in the slot [-600, -300) -> Point(-2).
+        let well_before = jiff::Timestamp::from_second(-599).unwrap();
+        assert_eq!(Point::from_timestamp(well_before, 5).0, -2);
+    }
+
     #[test]
     fn evaluate_empty_schedule_is_inclusion_loss() {
         let planner = simple_two_task_planner();
