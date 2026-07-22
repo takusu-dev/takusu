@@ -75,6 +75,7 @@ import {
   deleteSessionSnapshot,
   loadSessionHistory,
   loadSessionSnapshot,
+  type AgentSessionSnapshot,
   type Message,
   type MessageSegment,
   type ToolCallItem,
@@ -924,6 +925,7 @@ export function AgentView() {
 
   const activateSessionId = useCallback(
     async (id: string, isNew = false) => {
+      const previousActiveId = sessionIdRef.current;
       let ids = sessionIdsRef.current;
       const existingIndex = ids.indexOf(id);
       if (isNew && existingIndex !== -1) {
@@ -932,10 +934,15 @@ export function AgentView() {
       if (existingIndex === -1 || isNew) {
         ids = [...ids, id];
         const max = sessionHistoryCountRef.current;
-        if (ids.length > max) {
-          const removed = ids.shift()!;
-          await deleteSessionSnapshot(removed);
-        }
+        const { ids: trimmed, removed } = trimSessionIds(
+          ids,
+          max,
+          previousActiveId,
+        );
+        ids = trimmed;
+        await Promise.all(removed.map((r) => deleteSessionSnapshot(r))).catch(
+          () => {},
+        );
       }
       const index = ids.indexOf(id);
       const snapshot = await loadSessionSnapshot(id);
@@ -994,8 +1001,46 @@ export function AgentView() {
     };
   }
 
+  function isEmptySnapshot(snapshot: AgentSessionSnapshot | null): boolean {
+    if (!snapshot) return false;
+    if (snapshot.messages.length > 0) return false;
+    if (snapshot.approval !== null) return false;
+    if (Object.keys(snapshot.permissions ?? {}).length > 0) return false;
+    return true;
+  }
+
+  async function findEmptySession(
+    ids: string[],
+    preferredId?: string | null,
+  ): Promise<string | null> {
+    if (ids.length === 0) return null;
+    const snapshots = await Promise.all(
+      ids.map((id) => loadSessionSnapshot(id)),
+    );
+    const preferredIndex = preferredId ? ids.indexOf(preferredId) : -1;
+    if (
+      preferredIndex !== -1 &&
+      preferredId != null &&
+      isEmptySnapshot(snapshots[preferredIndex])
+    ) {
+      return preferredId;
+    }
+    for (let i = snapshots.length - 1; i >= 0; i--) {
+      if (i === preferredIndex) continue;
+      if (isEmptySnapshot(snapshots[i])) return ids[i];
+    }
+    return null;
+  }
+
   async function ensureSession(): Promise<string> {
     if (sessionIdRef.current) return sessionIdRef.current;
+    if (messages.length === 0 && approval === null) {
+      const emptyId = await findEmptySession(sessionIdsRef.current);
+      if (emptyId) {
+        await activateSessionId(emptyId, false);
+        return emptyId;
+      }
+    }
     const created = await client.createSession(sessionPermissionsRef.current);
     await activateSessionId(created, true);
     return created;
@@ -1022,9 +1067,46 @@ export function AgentView() {
         if (pendingSessionId) {
           if (lastPendingSessionIdRef.current !== pendingSessionId) {
             // FloatingVoiceButton queued a brand-new session.
+            // Restore the saved history so the new session is appended to it
+            // instead of replacing it.
+            let pendingIndex = history.activeIndex;
+            if (pendingIndex < 0 || pendingIndex >= ids.length) {
+              pendingIndex = Math.max(0, ids.length - 1);
+            }
+            const previousActiveId = ids[pendingIndex] ?? null;
+            sessionIdsRef.current = ids;
+            sessionIdRef.current = previousActiveId;
+            activeIndexRef.current = pendingIndex;
             lastPendingSessionIdRef.current = pendingSessionId;
-            await activateSessionId(pendingSessionId, true);
-            setPendingSessionId(null);
+
+            const emptyId = await findEmptySession(ids, previousActiveId);
+            if (emptyId) {
+              const {
+                ids: trimmed,
+                index,
+                removed,
+              } = trimSessionIds(ids, count, emptyId);
+              if (removed.length > 0) {
+                await Promise.all(
+                  removed.map((id) => deleteSessionSnapshot(id)),
+                ).catch(() => {});
+              }
+              sessionIdsRef.current = trimmed;
+              sessionIdRef.current = emptyId;
+              activeIndexRef.current = index;
+              setPendingSessionId(null);
+              // If a concrete session id was queued (legacy), it is no longer needed.
+              if (!pendingSessionId.startsWith('__new__')) {
+                client.deleteSession(pendingSessionId).catch(() => {});
+              }
+              await activateSessionId(emptyId, false);
+            } else {
+              const created = pendingSessionId.startsWith('__new__')
+                ? await client.createSession({})
+                : pendingSessionId;
+              await activateSessionId(created, true);
+              setPendingSessionId(null);
+            }
           }
           if (!cancelled) setHistoryReady(true);
           return;
@@ -1451,8 +1533,13 @@ export function AgentView() {
           sessionIdsRef.current = remaining;
           setSessionIds(remaining);
           try {
-            const created = await client.createSession();
-            await activateSessionId(created, true);
+            const emptyId = await findEmptySession(remaining);
+            if (emptyId) {
+              await activateSessionId(emptyId, true);
+            } else {
+              const created = await client.createSession();
+              await activateSessionId(created, true);
+            }
           } catch {
             sessionIdRef.current = null;
           }
@@ -1767,6 +1854,26 @@ export function AgentView() {
     isSwitchingRef.current = true;
     setIsSwitching(true);
     const currentId = sessionIdRef.current;
+
+    const emptyId = await findEmptySession(sessionIdsRef.current, currentId);
+    if (emptyId) {
+      if (emptyId === currentId) {
+        setText('');
+        resetToCenter();
+        return;
+      }
+      if (currentId) {
+        await saveSessionSnapshot(currentId, {
+          messages,
+          approval,
+          permissions: sessionPermissionsRef.current,
+        }).catch(() => {});
+      }
+      await activateSessionId(emptyId, false);
+      resetToCenter();
+      return;
+    }
+
     const previousMessages = messages;
     const previousApproval = approval;
     if (currentId) {
@@ -1785,11 +1892,9 @@ export function AgentView() {
       const created = await client.createSession({});
       let ids = [...sessionIdsRef.current, created];
       const max = sessionHistoryCountRef.current;
-      const removed: string[] = [];
-      while (ids.length > max) {
-        removed.push(ids.shift()!);
-      }
-      const nextIndex = ids.length - 1;
+      const { ids: trimmed, removed } = trimSessionIds(ids, max, currentId);
+      ids = trimmed;
+      const nextIndex = ids.indexOf(created);
       await Promise.all(removed.map((id) => deleteSessionSnapshot(id))).catch(
         () => {},
       );
