@@ -1,0 +1,60 @@
+name: Kotlin Regression CI
+
+on:
+  push:
+    branches:
+      - 'regression-*'
+      - '!regression-*-discover-*'
+      - '!regression-*-fix-*'
+  pull_request:
+    branches:
+      - 'regression-*'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
+        with:
+          extra_nix_config: |
+            keep-outputs = true
+            keep-env-derivations = true
+
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'rust-toolchain.toml') }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          gc-max-store-size-linux: 8G
+          purge: true
+          purge-prefixes: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          purge-last-accessed: P6D
+          purge-primary-key: never
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: true
+
+      - name: Create Nix build directory
+        run: sudo install -d -m 1777 /nix/tmp
+
+      - run: nix profile install .#test-android-unit
+
+      - name: Install Expo dependencies
+        working-directory: mobile
+        run: npm install --legacy-peer-deps
+
+      - name: Run differential regression tests
+        run: python3 .github/scripts/run-regression-kotlin.py

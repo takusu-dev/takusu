@@ -35,7 +35,7 @@ jobs:
       - name: Restore and save Nix store
         uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ matrix.bench.name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ matrix.bench.name }}-${{ hashFiles('flake.lock', 'flake.nix', 'rust-toolchain.toml') }}
           restore-prefixes-first-match: |
             nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ matrix.bench.name }}-
             nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
