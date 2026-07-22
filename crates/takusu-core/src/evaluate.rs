@@ -471,11 +471,17 @@ fn parallel_violation_score(planner: &Planner, sorted: &[Placement]) -> f64 {
     let tasks = &planner.tasks;
     for i in 0..n {
         let (a_start, a_end, a_id) = sorted[i];
+        if a_id >= tasks.len() {
+            continue;
+        }
         for (b_start, b_end, b_id) in &sorted[(i + 1)..n] {
             if b_start.0 >= a_end.0 {
                 break;
             }
             if b_end.0 <= a_start.0 {
+                continue;
+            }
+            if *b_id >= tasks.len() {
                 continue;
             }
             let task_a = &tasks[a_id];
