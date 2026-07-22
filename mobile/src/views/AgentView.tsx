@@ -58,6 +58,7 @@ import TakusuAudioModule from '../../modules/takusu-server/src/TakusuAudioModule
 import {
   AGENT_SESSION_HISTORY_DEFAULT,
   loadSettings,
+  saveAgentProviders,
 } from '@/src/api/settingsStore';
 import {
   AgentClient,
@@ -816,7 +817,7 @@ export function AgentView() {
   );
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const { workersToken, ready } = useServer();
+  const { workersToken, ready, pushAgentConfig } = useServer();
   const { pendingSessionId, setPendingSessionId } = useVoice();
   const [pendingResult, setPendingResult] = useState<VoiceResult | null>(null);
   const sendTextRef = useRef(sendText);
@@ -1760,11 +1761,28 @@ export function AgentView() {
     [colors.gray],
   );
 
-  async function resolve(approve: boolean) {
+  async function resolve(
+    approve: boolean,
+    grantedPermissions?: PermissionsMap,
+    persistToProvider?: boolean,
+  ) {
     if (!sessionIdRef.current || !approval || busy || isSwitchingRef.current)
       return;
     setBusy(true);
     setError(null);
+    const positiveGranted: PermissionsMap = {};
+    if (approve && grantedPermissions) {
+      for (const [key, value] of Object.entries(grantedPermissions)) {
+        if (value) positiveGranted[key] = true;
+      }
+    }
+    let newSessionPermissions: PermissionsMap | undefined;
+    if (Object.keys(positiveGranted).length > 0) {
+      newSessionPermissions = {
+        ...sessionPermissionsRef.current,
+        ...positiveGranted,
+      };
+    }
     try {
       const result = await client.resolveApproval(
         sessionIdRef.current,
@@ -1786,6 +1804,53 @@ export function AgentView() {
           collapsedGroups: [],
         },
       ]);
+
+      if (result.approved && newSessionPermissions) {
+        sessionPermissionsRef.current = newSessionPermissions;
+        setSessionPermissions(newSessionPermissions);
+
+        await client
+          .updateSessionSettings(sessionIdRef.current, newSessionPermissions)
+          .catch((e: unknown) => {
+            const message = e instanceof Error ? e.message : String(e);
+            const errorText = `セッション権限の保存に失敗しました: ${message}`;
+            setError((prev) => (prev ? `${prev}; ${errorText}` : errorText));
+            console.error('Failed to update session permissions:', e);
+          });
+
+        if (persistToProvider) {
+          (async () => {
+            const settings = await loadSettings();
+            const active = settings.llmProviders.find(
+              (p) => p.id === settings.activeLlmProvider,
+            );
+            if (!active) return;
+            const updatedProviders = settings.llmProviders.map((p) =>
+              p.id === active.id
+                ? {
+                    ...p,
+                    permissions: {
+                      ...(p.permissions ?? {}),
+                      ...positiveGranted,
+                    },
+                  }
+                : p,
+            );
+            await saveAgentProviders(
+              updatedProviders,
+              settings.activeLlmProvider,
+              settings.ttsProviders,
+              settings.activeTtsProvider,
+            );
+            await pushAgentConfig();
+          })().catch((e: unknown) => {
+            const message = e instanceof Error ? e.message : String(e);
+            const errorText = `Provider 設定の保存に失敗しました: ${message}`;
+            setError((prev) => (prev ? `${prev}; ${errorText}` : errorText));
+            console.error('Failed to persist provider permissions:', e);
+          });
+        }
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -2049,10 +2114,11 @@ export function AgentView() {
         {approval && (
           <ApprovalPanel
             approval={approval}
-            colors={colors}
             busy={busy || isSwitching}
-            onApprove={() => resolve(true)}
+            colors={colors}
+            onApprove={(granted, persist) => resolve(true, granted, persist)}
             onDeny={() => resolve(false)}
+            permissions={sessionPermissions}
           />
         )}
         {userInput && (

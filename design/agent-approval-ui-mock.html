@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>agent approval UI mock (#700)</title>
+  <title>agent approval + permission grant UI mock (#866)</title>
   <style>
     :root {
       --bg: #ffffff;
@@ -239,7 +239,8 @@
     .badge.create { background: var(--success); }
     .badge.update { background: var(--brand); }
     .badge.delete { background: var(--error); }
-    .badge.schedule { background: var(--muted); }
+    .badge.reschedule { background: var(--muted); }
+    .badge.generate { background: var(--muted); }
 
     .fixed-badge {
       margin-left: auto;
@@ -430,13 +431,213 @@
       background: var(--card);
       color: var(--text);
     }
+
+    /* Permission grant section in the approval panel */
+    .permission-section {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: var(--surface);
+    }
+
+    .permission-section.folded {
+      gap: 0;
+      padding: 0;
+      background: transparent;
+      border-color: transparent;
+    }
+
+    .permission-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      user-select: none;
+      min-height: 34px;
+    }
+
+    .permission-header-main {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+    }
+
+    .permission-arrow {
+      color: var(--brand);
+      font-size: 11px;
+      width: 12px;
+      text-align: center;
+    }
+
+    .permission-section-title {
+      font-weight: 700;
+      font-size: 14px;
+    }
+
+    .permission-header-meta {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .permission-master {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: var(--surfaceTint);
+      border: 1px solid var(--border);
+      min-height: 40px;
+    }
+
+    .permission-master.on {
+      background: rgba(114, 97, 163, 0.12);
+      background: color-mix(in srgb, var(--brand) 12%, transparent);
+      border-color: var(--brand);
+    }
+
+    .permission-master-title {
+      font-weight: 700;
+      font-size: 14px;
+    }
+
+    .permission-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .permission-persist {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 2px;
+      font-size: 12px;
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .permission-persist input {
+      width: 14px;
+      height: 14px;
+      accent-color: var(--brand);
+      cursor: pointer;
+      margin: 0;
+    }
+
+    .permission-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 8px;
+      background: var(--surfaceTint);
+      border: 1px solid var(--border);
+      min-height: 32px;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s;
+    }
+
+    .permission-row.on {
+      background: rgba(114, 97, 163, 0.12);
+      background: color-mix(in srgb, var(--brand) 13%, transparent);
+      border-color: var(--brand);
+    }
+
+    .permission-row.danger {
+      border-color: var(--error);
+      background: rgba(198, 107, 107, 0.05);
+      background: color-mix(in srgb, var(--error) 5%, transparent);
+      border-color: var(--error);
+    }
+
+    .permission-row.danger.on {
+      background: rgba(198, 107, 107, 0.12);
+      background: color-mix(in srgb, var(--error) 13%, transparent);
+    }
+
+    .permission-icon {
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+
+    .permission-title-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .permission-title {
+      font-weight: 600;
+      font-size: 13px;
+    }
+
+    .permission-meta {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .permission-toggle {
+      width: 34px;
+      height: 18px;
+      border-radius: 9px;
+      background: var(--border);
+      position: relative;
+      cursor: pointer;
+      transition: background 0.2s;
+      flex-shrink: 0;
+    }
+
+    .permission-toggle.on {
+      background: var(--brand);
+    }
+
+    .permission-toggle.disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .permission-toggle::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #fff;
+      transition: transform 0.2s;
+    }
+
+    .permission-toggle.on::after {
+      transform: translateX(16px);
+    }
   </style>
 </head>
 <body data-theme="catppuccin">
-  <h1>agent approval UI mock</h1>
+  <h1>agent approval + permission grant UI mock</h1>
   <p>
-    Issue <a href="https://github.com/takusu-dev/takusu/issues/700">#700</a>
-    — ツール承認画面で「いつ」「どんなタスクが追加されるか」をもっと分かりやすくする。
+    Issue <a href="https://github.com/takusu-dev/takusu/issues/866">#866</a>
+    — 承認画面から権限付与。操作内容の確認と同時に、今後の自動承認権限を付与できる UI を検討する。
   </p>
 
   <div class="controls">
@@ -451,6 +652,8 @@
     <button class="scenario-btn" data-scenario="habit">習慣作成</button>
     <button class="scenario-btn" data-scenario="update">期限変更</button>
     <button class="scenario-btn" data-scenario="habitSteps">習慣（steps）</button>
+    <button class="scenario-btn" data-scenario="multi">複数操作</button>
+    <button class="scenario-btn" data-scenario="delete">タスク削除</button>
   </div>
 
   <div class="mock-wrap">
@@ -476,21 +679,55 @@
         <li>habit の steps は各 step の固定/非固定と、step 間の依存関係を表示。</li>
         <li>警告は実際の approval.warnings のみ表示。常時表示の汎用メッセージは不要。</li>
         <li>補完理由など自明な inferred fields は非表示。</li>
+        <li>権限セクションは default で折りたたみ。ヘッダーに展開矢印と許可状況を表示。</li>
+        <li>すでに許可済みの権限は UI に出さない。未許可のものだけ表示する。</li>
+        <li>権限は <code>target:operation</code>（例: <code>task:create</code>）から導出する。</li>
+        <li>展開すると「すべて許可」ボタンが表示され、未許可の権限をまとめて ON/OFF できる。</li>
+        <li>「すべて許可」は ON 時に brand 色で塗りつぶされ、許可中であることを強調する。</li>
+        <li>トグル ON の行は brand/error の背景で変化を示す。</li>
+        <li>削除など破壊的な操作は赤枠で目立たせる。</li>
       </ul>
       <p>
         この HTML はあくまで mock です。実装時は
-        <code>mobile/src/views/AgentView.tsx</code>
-        の <code>approval</code> 部分を置き換えてください。
+        <code>mobile/src/components/ApprovalPanel.tsx</code>
+        の approval 部分を、<code>PermissionsEditor</code> の概念と組み合わせて置き換えてください。
       </p>
     </div>
   </div>
 
   <script>
+    const permissionMeta = {
+      'task:create': { title: 'タスク作成', icon: '📝', danger: false },
+      'task:update': { title: 'タスク更新', icon: '✏️', danger: false },
+      'task:delete': { title: 'タスク削除', icon: '🗑️', danger: true },
+      'task:move': { title: 'タスク移動', icon: '↔️', danger: false },
+      'task:start': { title: 'タスク開始', icon: '▶️', danger: false },
+      'task:pause': { title: 'タスク一時停止', icon: '⏸️', danger: false },
+      'task:progress': { title: 'タスク進捗', icon: '📊', danger: false },
+      'task:complete': { title: 'タスク完了', icon: '✅', danger: false },
+      'task:split': { title: 'タスク分割', icon: '✂️', danger: false },
+      'habit:create': { title: '習慣作成', icon: '➕', danger: false },
+      'habit:update': { title: '習慣更新', icon: '✏️', danger: false },
+      'habit:delete': { title: '習慣削除', icon: '🗑️', danger: true },
+      'schedule:generate': { title: 'スケジュール生成', icon: '🏗️', danger: false },
+      'schedule:reschedule': { title: 'スケジュール再生成', icon: '🔁', danger: false },
+      'memory:create': { title: '記憶作成', icon: '💾', danger: false },
+      'memory:update': { title: '記憶更新', icon: '✏️', danger: false },
+      'memory:delete': { title: '記憶削除', icon: '🗑️', danger: true },
+      'skill:create': { title: 'スキル作成', icon: '➕', danger: false },
+      'skill:update': { title: 'スキル更新', icon: '✏️', danger: false },
+      'skill:delete': { title: 'スキル削除', icon: '🗑️', danger: true },
+    };
+
     const scenarios = {
       task: {
         user: '新しい作業を 1 時間入れて',
         assistant: 'かしこまりました。今日中に 1 時間の作業を追加します。',
         why: 'ユーザーが追加を依頼したため、新しいタスクを作成します。',
+        scope: 'session',
+        permissions: [
+          { key: 'task:create', ...permissionMeta['task:create'], granted: false },
+        ],
         changes: [
           {
             op: 'create',
@@ -507,6 +744,10 @@
         user: '明日 16 時から 1 時間会議を入れて',
         assistant: 'かしこまりました。7/21 (火) 16:00 から 1 時間の固定予定を入れます。',
         why: 'ユーザーが固定予定を依頼したため、時間を確保します。',
+        scope: 'session',
+        permissions: [
+          { key: 'task:create', ...permissionMeta['task:create'], granted: false },
+        ],
         changes: [
           {
             op: 'create',
@@ -523,6 +764,10 @@
         user: '朝 7 時から 30 分ランニングの習慣を作って',
         assistant: 'かしこまりました。毎朝のランニング習慣を作成します。',
         why: 'ユーザーが習慣を依頼したため、毎日の時間を確保します。',
+        scope: 'session',
+        permissions: [
+          { key: 'habit:create', ...permissionMeta['habit:create'], granted: false },
+        ],
         changes: [
           {
             op: 'create',
@@ -540,6 +785,10 @@
         user: '買い物の期限を 18 時に変えて',
         assistant: 'かしこまりました。買い物の期限を 18:00 に変更します。',
         why: 'ユーザーが期限変更を依頼したため、タスクを更新します。',
+        scope: 'session',
+        permissions: [
+          { key: 'task:update', ...permissionMeta['task:update'], granted: false },
+        ],
         changes: [
           {
             op: 'update',
@@ -555,6 +804,10 @@
         user: '朝 7 時から 30 分ランニングの習慣を作って',
         assistant: 'かしこまりました。3 ステップのランニング習慣を作成します。',
         why: 'ユーザーが複数ステップの習慣を依頼したため、作成します。',
+        scope: 'session',
+        permissions: [
+          { key: 'habit:create', ...permissionMeta['habit:create'], granted: false },
+        ],
         changes: [
           {
             op: 'create',
@@ -573,9 +826,59 @@
           },
         ],
       },
+      multi: {
+        user: 'スケジュールを立てて、買い物も追加して',
+        assistant: 'かしこまりました。今週のスケジュールを生成し、買い物タスクを追加します。',
+        why: 'ユーザーがスケジュール生成とタスク作成を依頼したため、実行します。',
+        scope: 'session',
+        permissions: [
+          { key: 'task:create', ...permissionMeta['task:create'], granted: false },
+          { key: 'schedule:generate', ...permissionMeta['schedule:generate'], granted: false },
+        ],
+        changes: [
+          {
+            op: 'create',
+            target: '買い物',
+            desc: 'タスク「買い物」を作成（プランナーが自動スケジュール）',
+            rows: [
+              { label: '期限', value: '7/20 (月) 18:00' },
+              { label: '所要', value: '30分' },
+            ],
+          },
+          {
+            op: 'generate',
+            target: 'スケジュール',
+            desc: '7/20 (月) 〜 7/27 (月) のスケジュールを生成',
+            rows: [
+              { label: '範囲', value: '7/20 (月) 〜 7/27 (月)' },
+              { label: '対象', value: '全タスク' },
+            ],
+          },
+        ],
+      },
+      delete: {
+        user: '買い物を削除して',
+        assistant: 'かしこまりました。タスク #12（買い物）を削除します。',
+        why: 'ユーザーが削除を依頼したため、タスクを削除します。',
+        scope: 'session',
+        permissions: [
+          { key: 'task:delete', ...permissionMeta['task:delete'], granted: false },
+        ],
+        changes: [
+          {
+            op: 'delete',
+            target: '#12 買い物',
+            desc: 'タスク #12（買い物）を削除',
+            rows: [
+              { label: '削除対象', value: '#12 買い物' },
+            ],
+          },
+        ],
+      },
     };
 
     let activeScenario = 'task';
+    let uiState = { expanded: false, persistent: false, granted: {} };
 
     function escapeHtml(text) {
       return String(text)
@@ -585,8 +888,21 @@
         .replace(/"/g, '&quot;');
     }
 
+    function resetUiState() {
+      const s = scenarios[activeScenario];
+      uiState = {
+        expanded: false,
+        persistent: (s.scope || 'session') === 'provider',
+        granted: {},
+      };
+    }
+
+    function isGranted(p) {
+      return p.granted || !!uiState.granted[p.key];
+    }
+
     function renderBadge(op) {
-      const labels = { create: '作成', update: '更新', delete: '削除', schedule: '再調整' };
+      const labels = { create: '作成', update: '更新', delete: '削除', reschedule: '再調整', generate: '生成' };
       const text = labels[op] || op;
       return `<span class="badge ${op}">${escapeHtml(text)}</span>`;
     }
@@ -661,6 +977,65 @@
       `;
     }
 
+    function renderToggle(on, disabled) {
+      return `<div class="permission-toggle ${on ? 'on' : ''} ${disabled ? 'disabled' : ''}"></div>`;
+    }
+
+    function renderPermissionSection(permissions) {
+      if (!permissions) return '';
+      const visible = permissions.filter((p) => !p.granted);
+      if (visible.length === 0) return '';
+      const allRequiredOn = visible.every(isGranted);
+      const enabledCount = visible.filter(isGranted).length;
+      const folded = !uiState.expanded;
+      const arrow = folded ? '&#9654;' : '&#9660;';
+      const header = `
+        <div class="permission-header" data-action="toggle-fold">
+          <div class="permission-header-main">
+            <span class="permission-arrow">${arrow}</span>
+            <span class="permission-section-title">権限</span>
+            <span class="permission-header-meta">${enabledCount}/${visible.length}</span>
+          </div>
+        </div>
+      `;
+      if (folded) {
+        return `<div class="permission-section folded">${header}</div>`;
+      }
+      const master = `
+        <div class="permission-master ${allRequiredOn ? 'on' : ''}" data-perm="MASTER">
+          <span class="permission-master-title">すべて許可</span>
+          ${renderToggle(allRequiredOn, false)}
+        </div>
+      `;
+      const rows = visible.map((p) => {
+        const on = isGranted(p);
+        const cls = `permission-row ${p.danger ? 'danger' : ''} ${on ? 'on' : ''}`;
+        return `
+          <div class="${cls}" data-key="${escapeHtml(p.key)}">
+            <div class="permission-icon">${p.icon}</div>
+            <div class="permission-title-wrap">
+              <div class="permission-title">${escapeHtml(p.title)}</div>
+            </div>
+            ${renderToggle(on, false)}
+          </div>
+        `;
+      }).join('');
+      const persist = `
+        <label class="permission-persist">
+          <input type="checkbox" data-action="toggle-persistent" ${uiState.persistent ? 'checked' : ''}>
+          <span>永続（Provider 設定にも保存）</span>
+        </label>
+      `;
+      return `
+        <div class="permission-section">
+          ${header}
+          ${master}
+          <div class="permission-list">${rows}</div>
+          ${persist}
+        </div>
+      `;
+    }
+
     function render() {
       const s = scenarios[activeScenario];
       const chat = document.getElementById('chat');
@@ -678,6 +1053,8 @@
           <div class="approval-summary">${s.changes.length} 件の変更</div>
 
           <div class="change-list">${changes}</div>
+
+          ${renderPermissionSection(s.permissions)}
 
           ${s.warnings && s.warnings.length > 0 ? `
             <div class="warning-box">
@@ -704,10 +1081,44 @@
     document.querySelectorAll('.scenario-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         activeScenario = btn.dataset.scenario;
+        resetUiState();
         document.querySelectorAll('.scenario-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         render();
       });
+    });
+
+    document.getElementById('chat').addEventListener('click', (e) => {
+      const header = e.target.closest('[data-action="toggle-fold"]');
+      if (header) {
+        uiState.expanded = !uiState.expanded;
+        render();
+        return;
+      }
+      const permEl = e.target.closest('[data-perm]') || e.target.closest('[data-key]');
+      if (!permEl) return;
+      const key = permEl.dataset.perm || permEl.dataset.key;
+      const permissions = scenarios[activeScenario].permissions;
+      if (key === 'MASTER') {
+        const visible = permissions.filter((p) => !p.granted);
+        const allOn = visible.every(isGranted);
+        visible.forEach((p) => {
+          uiState.granted[p.key] = !allOn;
+        });
+      } else {
+        const p = permissions.find((x) => x.key === key);
+        if (p && !p.granted) {
+          uiState.granted[p.key] = !isGranted(p);
+        }
+      }
+      render();
+    });
+
+    document.getElementById('chat').addEventListener('change', (e) => {
+      const input = e.target.closest('[data-action="toggle-persistent"]');
+      if (!input) return;
+      uiState.persistent = input.checked;
+      render();
     });
 
     const params = new URLSearchParams(location.search);
@@ -717,6 +1128,7 @@
     document.querySelectorAll('.scenario-btn').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.scenario === activeScenario);
     });
+    resetUiState();
     render();
   </script>
 </body>
