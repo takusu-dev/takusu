@@ -265,51 +265,7 @@ pub(crate) fn validate_settings(body: &UpdateSettings) -> Result<(), WorkerError
 }
 
 fn parse_fixed_offset_timezone(s: &str) -> Option<jiff::tz::TimeZone> {
-    let s = s.trim();
-    if s.is_empty() {
-        return None;
-    }
-    let (sign, rest) = match s.as_bytes().first()? {
-        b'+' => (1, &s[1..]),
-        b'-' => (-1, &s[1..]),
-        _ => return None,
-    };
-    let (hours, minutes, seconds) = if rest.contains(':') {
-        let parts: Vec<&str> = rest.split(':').collect();
-        if parts.is_empty() || parts.len() > 3 {
-            return None;
-        }
-        let h: i32 = parts[0].parse().ok()?;
-        let m: i32 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-        let sec: i32 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-        (h, m, sec)
-    } else {
-        match rest.len() {
-            0 => return None,
-            1 | 2 => {
-                let h: i32 = rest.parse().ok()?;
-                (h, 0, 0)
-            }
-            4 => {
-                let h: i32 = rest[..2].parse().ok()?;
-                let m: i32 = rest[2..].parse().ok()?;
-                (h, m, 0)
-            }
-            6 => {
-                let h: i32 = rest[..2].parse().ok()?;
-                let m: i32 = rest[2..4].parse().ok()?;
-                let sec: i32 = rest[4..].parse().ok()?;
-                (h, m, sec)
-            }
-            _ => return None,
-        }
-    };
-    if !(0..=25).contains(&hours) || !(0..60).contains(&minutes) || !(0..60).contains(&seconds) {
-        return None;
-    }
-    let total_seconds = sign * (hours * 3600 + minutes * 60 + seconds);
-    let offset = jiff::tz::Offset::from_seconds(total_seconds).ok()?;
-    Some(jiff::tz::TimeZone::fixed(offset))
+    takusu_util::parse_fixed_offset_timezone(s)
 }
 
 /// Validate a bulk-replace step array (#95): per-field sanity + DAG integrity
@@ -601,13 +557,18 @@ mod tests {
         assert!(validate_timezone(" +09:00").is_ok());
         assert!(validate_timezone("+0900").is_ok());
         assert!(validate_timezone("+09").is_ok());
-        assert!(validate_timezone("+25:59:59").is_ok());
     }
 
     #[test]
     fn timezone_rejects_unknown() {
         assert!(validate_timezone("Asia/Tokyoo").is_err());
         assert!(validate_timezone("not/a/tz").is_err());
+        // UTC±14 is the widest real-world offset.
+        assert!(validate_timezone("+14:00:00").is_ok());
+        assert!(validate_timezone("-14:00:00").is_ok());
+        assert!(validate_timezone("+14:00:01").is_err());
+        assert!(validate_timezone("+24:00:00").is_err());
+        assert!(validate_timezone("+25:59:59").is_err());
         assert!(validate_timezone("+26:00:00").is_err());
     }
 

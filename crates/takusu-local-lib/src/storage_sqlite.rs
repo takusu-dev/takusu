@@ -2536,19 +2536,6 @@ async fn compute_updated_estimate<'a, E>(
 where
     E: sqlx::Executor<'a, Database = sqlx::Sqlite>,
 {
-    const MIN_MINUTES: f64 = 5.0;
-    const MAX_MINUTES: f64 = 24.0 * 60.0;
-
-    let total = match quantity_total {
-        Some(t) if t > 0 => t as f64,
-        _ => return Ok((avg_minutes, sigma_minutes)),
-    };
-
-    let minutes_per_unit = active_minutes as f64 / delta_quantity as f64;
-    let projected = (minutes_per_unit * total).clamp(MIN_MINUTES, MAX_MINUTES);
-    let new_avg_f = 0.5 * avg_minutes as f64 + 0.5 * projected;
-    let new_avg = new_avg_f.round() as i64;
-
     // Collect all positive progress observations for this task.
     let events: Vec<ProgressEventRow> = sqlx::query_as(
         "SELECT id, task_id, at, quantity_done, delta_quantity, active_minutes, note FROM progress_events WHERE task_id = ? AND delta_quantity > 0 AND active_minutes > 0 ORDER BY id ASC",
@@ -2558,24 +2545,19 @@ where
     .await
     .map_err(map_err)?;
 
-    let projections: Vec<f64> = events
+    let observations: Vec<(i64, i64)> = events
         .iter()
-        .map(|e| {
-            (e.active_minutes as f64 / e.delta_quantity.unwrap_or(1) as f64 * total)
-                .clamp(MIN_MINUTES, MAX_MINUTES)
-        })
+        .map(|e| (e.active_minutes, e.delta_quantity.unwrap_or(1).max(1)))
         .collect();
-    if projections.len() < 2 {
-        return Ok((new_avg, sigma_minutes));
-    }
 
-    let mean = projections.iter().sum::<f64>() / projections.len() as f64;
-    let variance = projections.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
-        / (projections.len() - 1) as f64;
-    let stddev = variance.sqrt().clamp(MIN_MINUTES, MAX_MINUTES);
-    let new_sigma = stddev.round() as i64;
-
-    Ok((new_avg, new_sigma.max(1)))
+    Ok(takusu_util::estimate_progress(
+        avg_minutes,
+        sigma_minutes,
+        quantity_total,
+        active_minutes,
+        delta_quantity,
+        &observations,
+    ))
 }
 
 async fn resolve_task_id<'c, E>(executor: E, id: &str) -> StorageResult<String>
@@ -2753,4 +2735,35 @@ fn token_expires_at(ttl_seconds: i64) -> Option<String> {
     jiff::Timestamp::from_second(exp)
         .ok()
         .map(|t| t.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn compute_updated_estimate_rejects_non_positive_delta() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE progress_events (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                at TEXT NOT NULL,
+                quantity_done INTEGER,
+                delta_quantity INTEGER,
+                active_minutes INTEGER NOT NULL,
+                note TEXT
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Non-positive delta must not panic; return the original estimate unchanged.
+        let result = compute_updated_estimate(&pool, "task-1", 60, 10, Some(10), 30, 0).await;
+        assert_eq!(result.unwrap(), (60, 10));
+
+        let result = compute_updated_estimate(&pool, "task-1", 60, 10, Some(10), 30, -5).await;
+        assert_eq!(result.unwrap(), (60, 10));
+    }
 }

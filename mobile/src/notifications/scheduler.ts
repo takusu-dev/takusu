@@ -17,7 +17,7 @@ import { CATEGORY_TASK_IN_PROGRESS, CATEGORY_TASK_START } from './categories';
 // so the total stays under the platform limit.
 const MAX_SCHEDULED_PER_TYPE = 15;
 
-interface ScheduleData {
+export interface ScheduleData {
   tasks: TaskRow[];
   schedule: ScheduleEntry[];
   settings: NotificationSettings;
@@ -175,12 +175,11 @@ export async function rescheduleNotifications(
   }
 
   // ── 2. Pre-start reminder + 3. Start overdue (per-task, today/tomorrow only) ──
+  // Only tasks that have actually been scheduled by the planner should get
+  // start-time reminders. Pending tasks are not yet scheduled and may have
+  // stale/outdated schedule entries, so they must be excluded.
   const upcomingTasks = tasks
-    .filter(
-      (t) =>
-        (t.status === 'scheduled' || t.status === 'pending') &&
-        scheduleMap.has(t.id),
-    )
+    .filter((t) => t.status === 'scheduled' && scheduleMap.has(t.id))
     .map((t) => ({
       task: t,
       entry: scheduleMap.get(t.id)!,

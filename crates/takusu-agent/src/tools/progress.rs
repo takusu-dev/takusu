@@ -123,41 +123,19 @@ fn estimate_preview(
     delta_quantity: i64,
     events: &[ProgressEventRow],
 ) -> (i64, i64) {
-    const MIN_MINUTES: f64 = 5.0;
-    const MAX_MINUTES: f64 = 24.0 * 60.0;
-
-    let total = match quantity_total {
-        Some(t) if t > 0 => t as f64,
-        _ => return (avg_minutes, sigma_minutes),
-    };
-
-    if delta_quantity <= 0 || active_minutes <= 0 {
-        return (avg_minutes, sigma_minutes);
-    }
-
-    let minutes_per_unit = active_minutes as f64 / delta_quantity as f64;
-    let projected = (minutes_per_unit * total).clamp(MIN_MINUTES, MAX_MINUTES);
-    let new_avg = (0.5 * avg_minutes as f64 + 0.5 * projected).round() as i64;
-
-    let projections: Vec<f64> = events
+    let observations: Vec<(i64, i64)> = events
         .iter()
-        .filter(|e| e.delta_quantity.map(|d| d > 0).unwrap_or(false) && e.active_minutes > 0)
-        .map(|e| {
-            let d = e.delta_quantity.unwrap_or(1).max(1) as f64;
-            (e.active_minutes as f64 / d * total).clamp(MIN_MINUTES, MAX_MINUTES)
-        })
+        .map(|e| (e.active_minutes, e.delta_quantity.unwrap_or(1).max(1)))
         .collect();
 
-    if projections.len() < 2 {
-        return (new_avg, sigma_minutes);
-    }
-
-    let mean = projections.iter().sum::<f64>() / projections.len() as f64;
-    let variance = projections.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
-        / (projections.len() - 1) as f64;
-    let stddev = variance.sqrt().clamp(MIN_MINUTES, MAX_MINUTES);
-    let new_sigma = stddev.round() as i64;
-    (new_avg, new_sigma.max(1))
+    takusu_util::estimate_progress(
+        avg_minutes,
+        sigma_minutes,
+        quantity_total,
+        active_minutes,
+        delta_quantity,
+        &observations,
+    )
 }
 
 fn apply_estimate_preview(
