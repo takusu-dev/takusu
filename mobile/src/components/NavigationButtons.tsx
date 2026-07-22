@@ -118,7 +118,12 @@ export function NavigationButtons({
         />
       </View>
 
-      <Modal visible={calendarOpen} transparent animationType="fade">
+      <Modal
+        visible={calendarOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCalendarOpen(false)}
+      >
         <Pressable
           style={styles.overlay}
           onPress={() => setCalendarOpen(false)}

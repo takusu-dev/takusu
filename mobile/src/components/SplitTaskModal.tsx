@@ -80,7 +80,12 @@ export function SplitTaskModal({
   }
 
   return (
-    <Modal visible={visible} transparent animationType="slide">
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onCancel}
+    >
       <Pressable style={styles.overlay} onPress={onCancel}>
         <View
           style={[

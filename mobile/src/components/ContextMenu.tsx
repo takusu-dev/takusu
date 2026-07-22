@@ -203,7 +203,12 @@ export function ContextMenu({
         <Ionicons name="menu" size={24} color={BRAND_COLOR} />
       </Pressable>
 
-      <Modal visible={open} transparent animationType="fade">
+      <Modal
+        visible={open}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setOpen(false)}
+      >
         <Pressable style={styles.overlay} onPress={() => setOpen(false)}>
           <View style={[styles.menu, { backgroundColor: colors.white }]}>
             {alwaysItems.map(renderItem)}
@@ -221,7 +226,12 @@ export function ContextMenu({
       </Modal>
 
       {/* Status submenu */}
-      <Modal visible={statusSubmenu} transparent animationType="fade">
+      <Modal
+        visible={statusSubmenu}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setStatusSubmenu(false)}
+      >
         <Pressable
           style={styles.overlay}
           onPress={() => setStatusSubmenu(false)}
