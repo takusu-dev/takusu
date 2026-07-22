@@ -3039,4 +3039,27 @@ mod tests {
         assert!(point_to_local_date(i64::MAX, &tz).is_err());
         assert!(point_to_local_date(i64::MIN, &tz).is_err());
     }
+
+    // Regression (#780): parse_sleep must reject invalid HH:MM strings.
+    // parse_hhmm currently swallows parse errors and does not validate ranges,
+    // so custom sleep strings like "22:70-06:00" are accepted silently.
+    #[test]
+    fn regression_parse_sleep_rejects_invalid_hhmm() {
+        let tz = jiff::tz::TimeZone::UTC;
+        let settings = default_settings_row();
+
+        // Minutes out of range and hours out of range should both error.
+        assert!(
+            parse_sleep("22:70-06:00", &settings, &tz).is_err(),
+            "custom sleep with invalid minutes should be rejected"
+        );
+        assert!(
+            parse_sleep("22:00-25:00", &settings, &tz).is_err(),
+            "custom sleep with invalid hours should be rejected"
+        );
+        assert!(
+            parse_sleep("22:00-06:00", &settings, &tz).is_ok(),
+            "valid custom sleep should still be accepted"
+        );
+    }
 }
