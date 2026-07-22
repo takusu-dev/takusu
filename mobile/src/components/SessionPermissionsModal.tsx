@@ -26,7 +26,12 @@ export function SessionPermissionsModal({
   const colors = useColors();
 
   return (
-    <Modal visible={visible} transparent animationType="fade">
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
       <View style={styles.overlay}>
         <Pressable style={styles.backdrop} onPress={onClose} />
         <View style={[styles.card, { backgroundColor: colors.white }]}>

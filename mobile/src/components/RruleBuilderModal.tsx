@@ -344,7 +344,12 @@ export function RruleBuilderModal({
 
   return (
     <>
-      <Modal visible={visible} transparent animationType="slide">
+      <Modal
+        visible={visible}
+        transparent
+        animationType="slide"
+        onRequestClose={onCancel}
+      >
         <View style={styles.overlay}>
           <Pressable
             style={StyleSheet.absoluteFill}
