@@ -1,12 +1,20 @@
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
   StyleSheet,
+  Switch,
   Text,
   View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import type { ApprovalRequest, ProposedChange } from '@/src/api/agentTypes';
+import type { PermissionsMap } from '@/src/api/settingsStore';
 import type { ColorSet } from '@/src/theme';
+import {
+  getPermissionTitle,
+  resolvePermission,
+} from '@/src/components/PermissionsEditor';
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 
@@ -90,7 +98,7 @@ function formatRecurrence(rrule: string): string {
 function getTargetType(change: ProposedChange): string {
   const label = change.target_label;
   const first = label.split(' ')[0];
-  return first ?? 'task';
+  return first || 'task';
 }
 
 function getTargetName(change: ProposedChange): string {
@@ -119,6 +127,25 @@ function getOperationBadge(operation: string): {
     default:
       return { label: operation, color: 'muted' };
   }
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  const sanitized = hex.replace('#', '');
+  const full =
+    sanitized.length === 3
+      ? sanitized
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : sanitized;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function getPermissionKey(change: ProposedChange): string {
+  return `${getTargetType(change)}:${change.operation}`;
 }
 
 interface DateTimeDiffProps {
@@ -841,21 +868,249 @@ function ChangeCard({ change, colors }: ChangeCardProps) {
   );
 }
 
+interface PermissionSectionValue {
+  granted: PermissionsMap;
+  persist: boolean;
+}
+
+interface PermissionSectionProps {
+  approvalId: string;
+  changes: ProposedChange[];
+  colors: ColorSet;
+  onChange: (value: PermissionSectionValue) => void;
+  permissions?: PermissionsMap;
+  value: PermissionSectionValue;
+}
+
+interface VisiblePermission {
+  key: string;
+  title: string;
+  danger: boolean;
+}
+
+function PermissionSection({
+  approvalId,
+  changes,
+  colors,
+  onChange,
+  permissions,
+  value,
+}: PermissionSectionProps) {
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [approvalId]);
+
+  const visiblePermissions = useMemo(() => {
+    const seen = new Set<string>();
+    const result: VisiblePermission[] = [];
+    for (const change of changes) {
+      const key = getPermissionKey(change);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (resolvePermission(key, permissions)) continue;
+      result.push({
+        key,
+        title: getPermissionTitle(key),
+        danger: change.operation === 'delete',
+      });
+    }
+    return result;
+  }, [changes, permissions]);
+
+  useEffect(() => {
+    const visibleKeys = new Set(visiblePermissions.map((p) => p.key));
+    let changed = false;
+    const filtered: PermissionsMap = {};
+    for (const [key, val] of Object.entries(value.granted)) {
+      if (visibleKeys.has(key)) {
+        filtered[key] = val;
+      } else {
+        changed = true;
+      }
+    }
+    if (changed) {
+      onChange({ ...value, granted: filtered });
+    }
+  }, [visiblePermissions, value, onChange]);
+
+  if (visiblePermissions.length === 0) return null;
+
+  const enabledCount = visiblePermissions.filter(
+    (p) => value.granted[p.key],
+  ).length;
+  const allOn = enabledCount === visiblePermissions.length;
+
+  function toggleAll() {
+    const next: PermissionsMap = { ...value.granted };
+    for (const p of visiblePermissions) {
+      next[p.key] = !allOn;
+    }
+    onChange({ ...value, granted: next });
+  }
+
+  function toggleOne(key: string) {
+    onChange({
+      ...value,
+      granted: { ...value.granted, [key]: !value.granted[key] },
+    });
+  }
+
+  function togglePersist() {
+    onChange({ ...value, persist: !value.persist });
+  }
+
+  const header = (
+    <Pressable
+      onPress={() => setExpanded(!expanded)}
+      style={[
+        styles.permissionHeader,
+        { backgroundColor: colors.surface, borderColor: colors.separator },
+      ]}
+    >
+      <View style={styles.permissionHeaderMain}>
+        <Ionicons
+          name={expanded ? 'chevron-down' : 'chevron-forward'}
+          size={16}
+          color={colors.brand}
+        />
+        <Text style={[styles.permissionHeaderTitle, { color: colors.black }]}>
+          権限
+        </Text>
+        <Text style={{ color: colors.gray }}>
+          {enabledCount}/{visiblePermissions.length}
+        </Text>
+      </View>
+    </Pressable>
+  );
+
+  if (!expanded) {
+    return <View style={styles.permissionSectionFolded}>{header}</View>;
+  }
+
+  return (
+    <View
+      style={[
+        styles.permissionSectionExpanded,
+        { backgroundColor: colors.surface, borderColor: colors.separator },
+      ]}
+    >
+      {header}
+      <Pressable
+        onPress={toggleAll}
+        style={[
+          styles.permissionMaster,
+          {
+            backgroundColor: allOn
+              ? hexToRgba(colors.brand, 0.12)
+              : colors.surfaceTint,
+            borderColor: allOn ? colors.brand : colors.separator,
+          },
+        ]}
+      >
+        <Text style={[styles.permissionMasterTitle, { color: colors.black }]}>
+          すべて許可
+        </Text>
+        <Switch
+          value={allOn}
+          onValueChange={toggleAll}
+          accessibilityLabel="すべて許可"
+          trackColor={{ false: colors.grayLight, true: colors.brand }}
+        />
+      </Pressable>
+      <View style={styles.permissionList}>
+        {visiblePermissions.map((p) => {
+          const on = !!value.granted[p.key];
+          return (
+            <Pressable
+              key={p.key}
+              onPress={() => toggleOne(p.key)}
+              style={[
+                styles.permissionRow,
+                {
+                  backgroundColor: on
+                    ? p.danger
+                      ? hexToRgba(colors.red, 0.12)
+                      : hexToRgba(colors.brand, 0.12)
+                    : p.danger
+                      ? hexToRgba(colors.red, 0.05)
+                      : colors.surfaceTint,
+                  borderColor: p.danger
+                    ? colors.red
+                    : on
+                      ? colors.brand
+                      : colors.separator,
+                },
+              ]}
+            >
+              <Text
+                style={[styles.permissionRowTitle, { color: colors.black }]}
+              >
+                {p.title}
+              </Text>
+              <Switch
+                value={on}
+                onValueChange={() => toggleOne(p.key)}
+                accessibilityLabel={p.title}
+                trackColor={{
+                  false: colors.grayLight,
+                  true: p.danger ? colors.red : colors.brand,
+                }}
+              />
+            </Pressable>
+          );
+        })}
+      </View>
+      <Pressable onPress={togglePersist} style={styles.permissionPersist}>
+        <Switch
+          value={value.persist}
+          onValueChange={togglePersist}
+          accessibilityLabel="永続"
+          trackColor={{ false: colors.grayLight, true: colors.brand }}
+        />
+        <Text style={[styles.permissionPersistText, { color: colors.gray }]}>
+          永続（Provider 設定にも保存）
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
 interface ApprovalPanelProps {
   approval: ApprovalRequest;
-  colors: ColorSet;
   busy: boolean;
-  onApprove: () => void;
+  colors: ColorSet;
+  onApprove: (
+    grantedPermissions: PermissionsMap,
+    persistToProvider: boolean,
+  ) => void;
   onDeny: () => void;
+  permissions?: PermissionsMap;
 }
 
 export function ApprovalPanel({
   approval,
-  colors,
   busy,
+  colors,
   onApprove,
   onDeny,
+  permissions,
 }: ApprovalPanelProps) {
+  const [permissionValue, setPermissionValue] =
+    useState<PermissionSectionValue>({
+      granted: {},
+      persist: false,
+    });
+
+  useEffect(() => {
+    setPermissionValue({ granted: {}, persist: false });
+  }, [approval.id]);
+
+  function handleApprove() {
+    onApprove(permissionValue.granted, permissionValue.persist);
+  }
+
   return (
     <View
       style={[
@@ -893,6 +1148,15 @@ export function ApprovalPanel({
         ))}
       </View>
 
+      <PermissionSection
+        approvalId={approval.id}
+        changes={approval.changes}
+        colors={colors}
+        onChange={setPermissionValue}
+        permissions={permissions}
+        value={permissionValue}
+      />
+
       {approval.warnings.length > 0 && (
         <View style={[styles.warningBox, { borderColor: '#A65B00' }]}>
           {approval.warnings.map((warning) => (
@@ -913,7 +1177,7 @@ export function ApprovalPanel({
         </Pressable>
         <Pressable
           disabled={busy}
-          onPress={onApprove}
+          onPress={handleApprove}
           style={[styles.approve, { backgroundColor: colors.brand }]}
         >
           {busy ? (
@@ -1062,4 +1326,73 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   approveText: { fontWeight: '700' },
+  permissionSectionFolded: {
+    backgroundColor: 'transparent',
+    borderColor: 'transparent',
+  },
+  permissionSectionExpanded: {
+    padding: 10,
+    borderWidth: 1,
+    borderRadius: 12,
+    gap: 8,
+  },
+  permissionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 8,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderRadius: 10,
+    minHeight: 34,
+  },
+  permissionHeaderMain: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  permissionHeaderTitle: {
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  permissionMaster: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 8,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderRadius: 10,
+    minHeight: 40,
+  },
+  permissionMasterTitle: {
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  permissionList: { gap: 6 },
+  permissionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 6,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderRadius: 8,
+    minHeight: 32,
+  },
+  permissionRowTitle: {
+    fontWeight: '600',
+    fontSize: 13,
+    flex: 1,
+  },
+  permissionPersist: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    padding: 4,
+  },
+  permissionPersistText: {
+    fontSize: 12,
+  },
 });

@@ -8,7 +8,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useColors, BRAND_COLOR } from '@/src/theme';
+import { useColors } from '@/src/theme';
 import type { PermissionsMap } from '@/src/api/settingsStore';
 
 // Keep this list in sync with the operations produced by Rust tools:
@@ -88,7 +88,10 @@ interface Props {
   onChange: (permissions: PermissionsMap) => void;
 }
 
-function resolvePermission(key: string, permissions?: PermissionsMap): boolean {
+export function resolvePermission(
+  key: string,
+  permissions?: PermissionsMap,
+): boolean {
   const map = permissions ?? {};
   const exact = map[key];
   if (exact !== undefined) return exact;
@@ -118,6 +121,14 @@ function isCategoryOn(
   permissions?: PermissionsMap,
 ): boolean {
   return cat.permissions.every((p) => resolvePermission(p.key, permissions));
+}
+
+export function getPermissionTitle(key: string): string {
+  for (const cat of CATEGORIES) {
+    const found = cat.permissions.find((p) => p.key === key);
+    if (found) return found.title;
+  }
+  return key;
 }
 
 export function PermissionsEditor({ permissions, onChange }: Props) {
@@ -216,7 +227,7 @@ export function PermissionsEditor({ permissions, onChange }: Props) {
           value={allOn}
           onValueChange={toggleMaster}
           accessibilityLabel="すべて自動承認"
-          trackColor={{ false: colors.grayLight, true: BRAND_COLOR }}
+          trackColor={{ false: colors.grayLight, true: colors.brand }}
         />
       </Pressable>
 
@@ -263,7 +274,7 @@ export function PermissionsEditor({ permissions, onChange }: Props) {
                 onValueChange={() => toggleCategory(cat)}
                 disabled={allOn}
                 accessibilityLabel={cat.title}
-                trackColor={{ false: colors.grayLight, true: BRAND_COLOR }}
+                trackColor={{ false: colors.grayLight, true: colors.brand }}
               />
             </View>
 
@@ -299,7 +310,7 @@ export function PermissionsEditor({ permissions, onChange }: Props) {
                         accessibilityLabel={p.title}
                         trackColor={{
                           false: colors.grayLight,
-                          true: BRAND_COLOR,
+                          true: p.danger ? colors.red : colors.brand,
                         }}
                       />
                     </Pressable>
