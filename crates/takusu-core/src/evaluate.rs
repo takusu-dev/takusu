@@ -252,7 +252,8 @@ fn task_and_depend_scores(
             if let Some(Some((_, dep_end))) = index.get(*dep_id)
                 && *dep_end > sched_start
             {
-                depend_penalty_slots += dep_end.0 - sched_start.0;
+                let violation_end = dep_end.0.min(sched_end.0);
+                depend_penalty_slots += violation_end - sched_start.0;
             }
         }
     }
