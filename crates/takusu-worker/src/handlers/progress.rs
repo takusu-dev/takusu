@@ -173,7 +173,7 @@ pub async fn start_task_work(req: Request, env: Env, id: &str) -> Result<Respons
     let status_stmt = database.prepare("SELECT status FROM tasks WHERE id = ?1");
     let status: Option<String> = status_stmt
         .bind(&[JsValue::from_str(&full)])?
-        .first(None)
+        .first(Some("status"))
         .await
         .map_err(WorkerError::Worker)?;
     if status.as_deref() == Some("completed") || status.as_deref() == Some("skipped") {
@@ -226,7 +226,7 @@ pub async fn pause_task_work(req: Request, env: Env, id: &str) -> Result<Respons
     let status_stmt = database.prepare("SELECT status FROM tasks WHERE id = ?1");
     let status: Option<String> = status_stmt
         .bind(&[JsValue::from_str(&full)])?
-        .first(None)
+        .first(Some("status"))
         .await
         .map_err(WorkerError::Worker)?;
     if status.as_deref() == Some("completed") || status.as_deref() == Some("skipped") {
