@@ -118,16 +118,14 @@ impl RecurrenceGenerator {
             Frequency::Yearly => {
                 let years = date.year() as i64 - self.start_date.year() as i64;
                 let in_interval = years >= 0 && years % (self.rule.interval as i64) == 0;
-                if self.rule.by_day.is_empty()
-                    && self.rule.by_month.is_empty()
-                    && self.rule.by_month_day.is_empty()
-                {
-                    in_interval
-                        && date.month() == self.start_date.month()
-                        && date.day() == self.start_date.day()
-                } else {
-                    in_interval
+                let mut matches = in_interval;
+                if self.rule.by_month.is_empty() {
+                    matches = matches && date.month() == self.start_date.month();
                 }
+                if self.rule.by_day.is_empty() && self.rule.by_month_day.is_empty() {
+                    matches = matches && date.day() == self.start_date.day();
+                }
+                matches
             }
         }
     }
