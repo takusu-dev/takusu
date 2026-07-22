@@ -118,8 +118,12 @@ export function FloatingVoiceButton() {
   }, [buttonY]);
 
   const handleRelease = useCallback(() => {
-    if (isSlideRef.current || transitionedRef.current) {
+    if (isSlideRef.current) {
       reset();
+      return;
+    }
+    if (transitionedRef.current) {
+      // Already transitioning; do not reset the queued request.
       return;
     }
     if (stateRef.current === 'pending') {

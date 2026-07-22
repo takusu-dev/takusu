@@ -972,9 +972,10 @@ export function AgentView() {
     activeId: string | null,
   ): { ids: string[]; index: number; removed: string[] } {
     if (ids.length <= max) {
+      const found = activeId ? ids.indexOf(activeId) : -1;
       return {
         ids,
-        index: activeId ? ids.indexOf(activeId) : ids.length - 1,
+        index: found !== -1 ? found : Math.max(0, ids.length - 1),
         removed: [],
       };
     }
@@ -1037,7 +1038,17 @@ export function AgentView() {
     if (messages.length === 0 && approval === null) {
       const emptyId = await findEmptySession(sessionIdsRef.current);
       if (emptyId) {
+        const permissions = sessionPermissionsRef.current;
         await activateSessionId(emptyId, false);
+        if (Object.keys(permissions).length > 0) {
+          sessionPermissionsRef.current = permissions;
+          setSessionPermissions(permissions);
+          client
+            .updateSessionSettings(emptyId, permissions)
+            .catch((e: unknown) => {
+              console.error('Failed to update session settings:', e);
+            });
+        }
         return emptyId;
       }
     }
@@ -1080,6 +1091,8 @@ export function AgentView() {
             lastPendingSessionIdRef.current = pendingSessionId;
 
             const emptyId = await findEmptySession(ids, previousActiveId);
+            if (cancelled) return;
+
             if (emptyId) {
               const {
                 ids: trimmed,
@@ -1091,20 +1104,27 @@ export function AgentView() {
                   removed.map((id) => deleteSessionSnapshot(id)),
                 ).catch(() => {});
               }
+              if (cancelled) return;
+
               sessionIdsRef.current = trimmed;
               sessionIdRef.current = emptyId;
               activeIndexRef.current = index;
               setPendingSessionId(null);
               // If a concrete session id was queued (legacy), it is no longer needed.
               if (!pendingSessionId.startsWith('__new__')) {
-                client.deleteSession(pendingSessionId).catch(() => {});
+                client.deleteSession(pendingSessionId).catch((e: unknown) => {
+                  console.error('Failed to delete unused pending session:', e);
+                });
               }
               await activateSessionId(emptyId, false);
+              if (cancelled) return;
             } else {
               const created = pendingSessionId.startsWith('__new__')
                 ? await client.createSession({})
                 : pendingSessionId;
+              if (cancelled) return;
               await activateSessionId(created, true);
+              if (cancelled) return;
               setPendingSessionId(null);
             }
           }
@@ -1134,25 +1154,33 @@ export function AgentView() {
           index: trimmedIndex,
           removed,
         } = trimSessionIds(ids, count, activeId);
+        if (cancelled) return;
+
         if (removed.length > 0) {
           await Promise.all(
             removed.map((id) => deleteSessionSnapshot(id)),
           ).catch(() => {});
         }
+        if (cancelled) return;
 
         sessionIdsRef.current = trimmed;
         setSessionIds(trimmed);
         setActiveIndex(trimmedIndex);
         activeIndexRef.current = trimmedIndex;
+        if (cancelled) return;
 
         if (trimmed.length === 0) {
           const created = await client.createSession();
+          if (cancelled) return;
           await activateSessionId(created, true);
+          if (cancelled) return;
         } else {
           const newActiveId = trimmed[trimmedIndex];
           await activateSessionId(newActiveId, false);
+          if (cancelled) return;
           try {
             const pending = await client.getApproval(newActiveId);
+            if (cancelled) return;
             setApproval(pending);
           } catch (e) {
             if (e instanceof AgentApiError && e.status === 404) {
@@ -1858,6 +1886,16 @@ export function AgentView() {
     const emptyId = await findEmptySession(sessionIdsRef.current, currentId);
     if (emptyId) {
       if (emptyId === currentId) {
+        if (
+          currentId &&
+          Object.keys(sessionPermissionsRef.current).length > 0
+        ) {
+          sessionPermissionsRef.current = {};
+          setSessionPermissions({});
+          client.updateSessionSettings(currentId, {}).catch((e: unknown) => {
+            console.error('Failed to clear session permissions:', e);
+          });
+        }
         setText('');
         resetToCenter();
         return;
