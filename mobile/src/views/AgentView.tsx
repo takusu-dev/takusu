@@ -833,6 +833,7 @@ export function AgentView() {
   );
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [busy, setBusy] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const [audioReady, setAudioReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(Keyboard.isVisible());
@@ -1399,6 +1400,7 @@ export function AgentView() {
       setApproval(result.approval_request);
       const ttsText = markdownToSpeech(result.text);
       if (audioReady && ttsText.trim()) {
+        setIsSpeaking(true);
         try {
           await TakusuAudioModule.synthesizeAndPlay(ttsText);
         } catch (ttsError: unknown) {
@@ -1463,6 +1465,7 @@ export function AgentView() {
       streamAbortRef.current = null;
       setUserInput(null);
       setBusy(false);
+      setIsSpeaking(false);
     }
   }
   sendTextRef.current = sendText;
@@ -2097,7 +2100,7 @@ export function AgentView() {
             onChangeText={setText}
             placeholder="メッセージ"
             placeholderTextColor={colors.gray}
-            editable={!busy && !isSwitching && historyReady}
+            editable={(!busy || isSpeaking) && !isSwitching && historyReady}
             multiline
             textAlignVertical="top"
             onContentSizeChange={(e) => {
