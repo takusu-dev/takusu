@@ -75,7 +75,7 @@ impl Point {
     /// jiff の `Timestamp` から `per` 分単位の Point に変換。
     /// 通常 `per` は 5。
     pub fn from_timestamp(ts: Timestamp, per: u16) -> Point {
-        Point(ts.as_second() / per as i64 / 60)
+        Point(ts.as_second().div_euclid(per as i64 * 60))
     }
 
     /// 現在時刻の Point。
