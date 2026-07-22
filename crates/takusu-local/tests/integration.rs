@@ -1879,6 +1879,19 @@ async fn settings_update_rejects_invalid_timezone() {
 }
 
 #[tokio::test]
+async fn settings_update_rejects_invalid_sleep_time() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let req = auth_req_body(
+        Method::PUT,
+        "/api/settings",
+        json!({ "sleep_start": "25:00" }),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn task_replace_rejects_negative_avg_minutes() {
     let (state, _) = setup().await;
     let app = build_router(state);

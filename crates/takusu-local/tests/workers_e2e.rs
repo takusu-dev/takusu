@@ -978,3 +978,49 @@ async fn workers_storage_memory_e2e() {
         Err(takusu_storage::StorageError::NotFound(_))
     ));
 }
+
+#[tokio::test]
+async fn workers_storage_list_tasks_no_overdue_filter() {
+    let base_url = spawn_mock_worker().await;
+    let storage = WorkersStorage::new_with(base_url, ROOT_TOKEN.to_string());
+
+    let overdue = CreateTask {
+        title: "overdue task".into(),
+        description: None,
+        start_at: None,
+        end_at: "2020-01-01T00:00:00+00:00".into(),
+        avg_minutes: 10,
+        sigma_minutes: Some(2),
+        depends: Some(vec![]),
+        parallelizable: Some(false),
+        allows_parallel: Some(false),
+        abandonability: Some(0.5),
+        ical_uid: None,
+        habit_id: None,
+        fixed: None,
+        habit_step_id: None,
+        quantity_total: None,
+        quantity_done: None,
+        quantity_unit: None,
+        original_quantity_total: None,
+    };
+    let future = CreateTask {
+        title: "future task".into(),
+        description: None,
+        start_at: None,
+        end_at: "2030-01-01T00:00:00+00:00".into(),
+        ..overdue.clone()
+    };
+    storage.create_task(&overdue).await.unwrap();
+    storage.create_task(&future).await.unwrap();
+
+    let tasks = storage
+        .list_tasks(&TaskQuery {
+            no_overdue: Some(true),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].title, "future task");
+}

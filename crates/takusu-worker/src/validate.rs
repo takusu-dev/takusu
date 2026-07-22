@@ -7,6 +7,7 @@
 use serde::Deserialize;
 
 use crate::error::WorkerError;
+use crate::models::UpdateSettings;
 
 /// Mirror of `takusu_habit::RecurrenceRule` used only for JSON validation.
 /// We duplicate the shape here to avoid pulling `takusu-habit` (and its
@@ -216,7 +217,7 @@ pub(crate) fn validate_window_mode(mode: &str) -> Result<(), WorkerError> {
 }
 
 /// Validate a `HH:MM` time string. Returns `()` if valid, else an error.
-fn validate_hhmm(s: &str) -> Result<(), WorkerError> {
+pub(crate) fn validate_hhmm(s: &str) -> Result<(), WorkerError> {
     let parts: Vec<&str> = s.split(':').collect();
     if parts.len() != 2 {
         return Err(WorkerError::BadRequest(format!("invalid time: {s}")));
@@ -231,6 +232,84 @@ fn validate_hhmm(s: &str) -> Result<(), WorkerError> {
         return Err(WorkerError::BadRequest(format!("invalid time: {s}")));
     }
     Ok(())
+}
+
+/// Validate a timezone string. Accepts IANA identifiers and fixed-offset
+/// strings supported by `jiff`.
+pub(crate) fn validate_timezone(tz: &str) -> Result<(), WorkerError> {
+    if jiff::tz::TimeZone::get(tz).is_ok() {
+        return Ok(());
+    }
+    // jiff's named-timezone loader does not accept fixed-offset strings, so
+    // parse them manually (same rules as `takusu-local-lib::app`).
+    if parse_fixed_offset_timezone(tz).is_some() {
+        return Ok(());
+    }
+    Err(WorkerError::BadRequest(format!("invalid timezone: {tz}")))
+}
+
+/// Validate the fields of a `PUT /api/settings` request. Only fields that
+/// are present in the body are checked; missing fields inherit valid values
+/// from the existing row.
+pub(crate) fn validate_settings(body: &UpdateSettings) -> Result<(), WorkerError> {
+    if let Some(tz) = &body.tz {
+        validate_timezone(tz)?;
+    }
+    if let Some(s) = &body.sleep_start {
+        validate_hhmm(s)?;
+    }
+    if let Some(s) = &body.sleep_end {
+        validate_hhmm(s)?;
+    }
+    Ok(())
+}
+
+fn parse_fixed_offset_timezone(s: &str) -> Option<jiff::tz::TimeZone> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let (sign, rest) = match s.as_bytes().first()? {
+        b'+' => (1, &s[1..]),
+        b'-' => (-1, &s[1..]),
+        _ => return None,
+    };
+    let (hours, minutes, seconds) = if rest.contains(':') {
+        let parts: Vec<&str> = rest.split(':').collect();
+        if parts.is_empty() || parts.len() > 3 {
+            return None;
+        }
+        let h: i32 = parts[0].parse().ok()?;
+        let m: i32 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let sec: i32 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+        (h, m, sec)
+    } else {
+        match rest.len() {
+            0 => return None,
+            1 | 2 => {
+                let h: i32 = rest.parse().ok()?;
+                (h, 0, 0)
+            }
+            4 => {
+                let h: i32 = rest[..2].parse().ok()?;
+                let m: i32 = rest[2..].parse().ok()?;
+                (h, m, 0)
+            }
+            6 => {
+                let h: i32 = rest[..2].parse().ok()?;
+                let m: i32 = rest[2..4].parse().ok()?;
+                let sec: i32 = rest[4..].parse().ok()?;
+                (h, m, sec)
+            }
+            _ => return None,
+        }
+    };
+    if !(0..=25).contains(&hours) || !(0..60).contains(&minutes) || !(0..60).contains(&seconds) {
+        return None;
+    }
+    let total_seconds = sign * (hours * 3600 + minutes * 60 + seconds);
+    let offset = jiff::tz::Offset::from_seconds(total_seconds).ok()?;
+    Some(jiff::tz::TimeZone::fixed(offset))
 }
 
 /// Validate a bulk-replace step array (#95): per-field sanity + DAG integrity
@@ -498,5 +577,56 @@ mod tests {
     fn window_mode_rejects_unknown() {
         assert!(validate_window_mode("weekly").is_err());
         assert!(validate_window_mode("").is_err());
+    }
+
+    #[test]
+    fn hhmm_accepts_valid() {
+        assert!(validate_hhmm("00:00").is_ok());
+        assert!(validate_hhmm("23:59").is_ok());
+    }
+
+    #[test]
+    fn hhmm_rejects_invalid() {
+        assert!(validate_hhmm("24:00").is_err());
+        assert!(validate_hhmm("12:60").is_err());
+        assert!(validate_hhmm("notatime").is_err());
+    }
+
+    #[test]
+    fn timezone_accepts_iana_and_offsets() {
+        assert!(validate_timezone("Asia/Tokyo").is_ok());
+        assert!(validate_timezone("UTC").is_ok());
+        assert!(validate_timezone("+09:00").is_ok());
+        assert!(validate_timezone("-05:30").is_ok());
+        assert!(validate_timezone(" +09:00").is_ok());
+        assert!(validate_timezone("+0900").is_ok());
+        assert!(validate_timezone("+09").is_ok());
+        assert!(validate_timezone("+25:59:59").is_ok());
+    }
+
+    #[test]
+    fn timezone_rejects_unknown() {
+        assert!(validate_timezone("Asia/Tokyoo").is_err());
+        assert!(validate_timezone("not/a/tz").is_err());
+        assert!(validate_timezone("+26:00:00").is_err());
+    }
+
+    #[test]
+    fn validate_settings_rejects_invalid_sleep_time() {
+        let body = UpdateSettings {
+            sleep_start: Some("25:00".into()),
+            ..Default::default()
+        };
+        assert!(validate_settings(&body).is_err());
+    }
+
+    #[test]
+    fn validate_settings_accepts_valid_partial_update() {
+        let body = UpdateSettings {
+            sleep_start: Some("23:00".into()),
+            sleep_end: Some("07:00".into()),
+            ..Default::default()
+        };
+        assert!(validate_settings(&body).is_ok());
     }
 }

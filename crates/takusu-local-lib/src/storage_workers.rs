@@ -281,6 +281,9 @@ impl Storage for WorkersStorage {
         if let Some(u) = &q.until {
             parts.push(format!("until={}", url_encode(u)));
         }
+        if q.no_overdue == Some(true) {
+            parts.push("no_overdue=true".into());
+        }
         if let Some(h) = &q.habit_id {
             parts.push(format!("habit_id={}", url_encode(h)));
         }
