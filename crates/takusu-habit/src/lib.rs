@@ -522,6 +522,41 @@ mod tests {
         );
     }
 
+    // Regression (#780): YEARLY with BYDAY (but no BYMONTH/BYMONTHDAY)
+    // should default to the start date's month, not match the nth weekday
+    // in every month of each year.
+    #[test]
+    fn regression_yearly_by_day_defaults_to_start_month() {
+        let tz = utc();
+        let start = point_at(date(2025, 3, 1), &TimeOfDay::new(9, 0).unwrap(), &tz);
+        let until = point_at(date(2027, 4, 1), &TimeOfDay::new(9, 0).unwrap(), &tz);
+
+        let iter = RecurrenceGenerator::new(
+            RecurrenceRule::yearly().by_day(vec![NWeekday::nth(2, Weekday::Fri)]),
+            TimeOfDay::new(9, 0).unwrap(),
+            tz.clone(),
+            NormalDist::new(6, 0),
+            None,
+            false,
+            false,
+            0.0,
+            false,
+            start,
+            until,
+        );
+
+        let tasks: Vec<_> = iter.collect();
+        let dates: Vec<_> = tasks
+            .iter()
+            .map(|gt| date_at(gt.task.start.unwrap(), &tz))
+            .collect();
+        // 2nd Friday of March in 2025-2027.
+        assert_eq!(
+            dates,
+            vec![date(2025, 3, 14), date(2026, 3, 13), date(2027, 3, 12)]
+        );
+    }
+
     #[test]
     fn deadline_slots_overrides_duration() {
         let tz = utc();
