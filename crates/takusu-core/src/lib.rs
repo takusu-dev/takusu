@@ -632,10 +632,13 @@ impl Planner {
     /// `freeness()` の結果でソートし、値が小さい順に greedy 配置される。
     /// 「freeness」＝「(slack - avg) / slack」のイメージ。
     pub(crate) fn freeness(&self, id: usize) -> f64 {
-        let slack = Point::diff(
-            self.tasks[id].start.unwrap_or(Point(0)).max(self.now),
+        let slack = Point::delta(
             self.tasks[id].end,
+            self.tasks[id].start.unwrap_or(Point(0)).max(self.now),
         );
+        if slack < 0 {
+            return f64::NEG_INFINITY;
+        }
         if slack == 0 {
             return 0.;
         }
