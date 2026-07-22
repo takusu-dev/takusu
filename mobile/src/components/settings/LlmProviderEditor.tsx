@@ -6,6 +6,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useColors, BRAND_COLOR, COLORS } from '@/src/theme';
@@ -86,9 +87,14 @@ export function LlmProviderEditor({
   saving,
 }: Props) {
   const colors = useColors();
+  const { height: windowHeight } = useWindowDimensions();
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelFilter, setModelFilter] = useState('');
   const [modelCosts, setModelCosts] = useState<Record<string, string>>({});
+  const [modelsExpanded, setModelsExpanded] = useState(true);
+  const [modelListHeight, setModelListHeight] = useState(0);
+  const showBottomFold =
+    modelsExpanded && modelListHeight > (windowHeight * 3) / 5;
 
   useEffect(() => {
     setModelCosts({});
@@ -215,42 +221,74 @@ export function LlmProviderEditor({
         )}
       </Pressable>
       {provider.cachedModels.length > 0 && (
-        <TextInput
-          style={[
-            styles.input,
-            { color: colors.black, borderColor: colors.separator },
-          ]}
-          value={modelFilter}
-          onChangeText={setModelFilter}
-          autoCapitalize="none"
-          placeholder="モデルを検索"
-        />
-      )}
-      {filteredModels.map((model) => (
         <Pressable
-          key={model}
-          onPress={() =>
-            onChangeProvider({
-              ...provider,
-              selectedModel: model,
-              cost: modelCosts[model],
-            })
-          }
-          style={[styles.modelRow, { borderColor: colors.separator }]}
+          onPress={() => setModelsExpanded((v) => !v)}
+          style={[styles.modelListHeader, { borderColor: colors.separator }]}
         >
-          <View style={styles.modelRowContent}>
-            <Text style={[styles.modelName, { color: colors.black }]}>
-              {provider.selectedModel === model ? '● ' : '○ '}
-              {model}
-            </Text>
-            {modelCosts[model] && (
-              <Text style={{ color: colors.gray, fontSize: 12 }}>
-                {modelCosts[model]}
-              </Text>
-            )}
-          </View>
+          <Text style={[styles.modelListHeaderText, { color: colors.black }]}>
+            モデル一覧
+          </Text>
+          <Text style={{ color: colors.gray }}>
+            {modelsExpanded ? '▼' : '▶'}
+          </Text>
         </Pressable>
-      ))}
+      )}
+      {modelsExpanded && provider.cachedModels.length > 0 && (
+        <View
+          testID="model-list-expanded"
+          style={styles.modelListExpanded}
+          onLayout={(e) => setModelListHeight(e.nativeEvent.layout.height)}
+        >
+          <View style={styles.modelListContent}>
+            <TextInput
+              style={[
+                styles.input,
+                { color: colors.black, borderColor: colors.separator },
+              ]}
+              value={modelFilter}
+              onChangeText={setModelFilter}
+              autoCapitalize="none"
+              placeholder="モデルを検索"
+            />
+            {filteredModels.map((model) => (
+              <Pressable
+                key={model}
+                onPress={() =>
+                  onChangeProvider({
+                    ...provider,
+                    selectedModel: model,
+                    cost: modelCosts[model],
+                  })
+                }
+                style={[styles.modelRow, { borderColor: colors.separator }]}
+              >
+                <View style={styles.modelRowContent}>
+                  <Text style={[styles.modelName, { color: colors.black }]}>
+                    {provider.selectedModel === model ? '● ' : '○ '}
+                    {model}
+                  </Text>
+                  {modelCosts[model] && (
+                    <Text style={{ color: colors.gray, fontSize: 12 }}>
+                      {modelCosts[model]}
+                    </Text>
+                  )}
+                </View>
+              </Pressable>
+            ))}
+          </View>
+          {showBottomFold && (
+            <Pressable
+              onPress={() => setModelsExpanded(false)}
+              style={[
+                styles.modelListFooter,
+                { borderColor: colors.separator },
+              ]}
+            >
+              <Text style={{ color: colors.black }}>▲ 畳む</Text>
+            </Pressable>
+          )}
+        </View>
+      )}
       <TextInput
         style={[
           styles.input,
@@ -315,6 +353,24 @@ const styles = StyleSheet.create({
     minHeight: 44,
     borderWidth: 1,
     borderColor: BRAND_COLOR,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modelListHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 10,
+    borderWidth: 1,
+    borderRadius: 8,
+  },
+  modelListHeaderText: { fontSize: 15, fontWeight: '700' },
+  modelListExpanded: { gap: 10 },
+  modelListContent: { gap: 10 },
+  modelListFooter: {
+    minHeight: 44,
+    borderWidth: 1,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
