@@ -168,6 +168,10 @@ impl WorkersStorage {
         F: Fn() -> Fut,
         Fut: Future<Output = reqwest::Result<reqwest::Request>> + Send,
     {
+        let creds = self.credentials().await;
+        if creds.url.is_empty() || creds.token.is_empty() {
+            return Err(StorageError::Internal("worker not configured".into()));
+        }
         let mut attempt = 0;
         loop {
             let req = build()
@@ -237,6 +241,10 @@ fn map_status(status: u16, body: String) -> StorageError {
 #[async_trait]
 impl Storage for WorkersStorage {
     async fn verify_token(&self, token: &str) -> StorageResult<Option<TokenClaims>> {
+        let creds = self.credentials().await;
+        if creds.url.is_empty() || creds.token.is_empty() {
+            return Ok(None);
+        }
         let resp = self
             .send_with_retry(move || async move {
                 let creds = self.credentials().await;
@@ -775,6 +783,9 @@ impl Storage for WorkersStorage {
 
     async fn health_check(&self) -> StorageResult<String> {
         let creds = self.credentials().await;
+        if creds.url.is_empty() || creds.token.is_empty() {
+            return Ok("worker not configured".into());
+        }
         let url = format!("{}/health", creds.url.as_ref());
         // Per-request timeout so an unreachable worker fails fast instead of
         // hanging indefinitely (the shared client has no default timeout).

@@ -48,20 +48,9 @@ pub async fn update_workers_config(
     Extension(claims): Extension<TokenClaims>,
     Json(body): Json<UpdateWorkersConfig>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    if body.url.trim().is_empty() {
-        return Err(HttpError(AppError::BadRequest(
-            "workers url is required".into(),
-        )));
-    }
-    if body.token.trim().is_empty() {
-        return Err(HttpError(AppError::BadRequest(
-            "workers token is required".into(),
-        )));
-    }
     if !claims.is_root() {
         return Err(HttpError(AppError::Unauthorized));
     }
-    // The token must be a JWT signed by the worker's TAKUSU_JWT_SECRET.
     let app = state.app.clone();
     app.update_workers_credentials(&body.url, &body.token)
         .await?;

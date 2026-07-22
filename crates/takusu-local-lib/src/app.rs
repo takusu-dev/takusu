@@ -504,12 +504,17 @@ fn parse_workload(settings: &SettingsRow) -> WorkloadConfig {
     }
 }
 
-/// #772: 設定文字列から `Solver` を構築する。不明・空の場合は `Auto`。
+/// #772: 設定文字列から `Solver` を構築する。不明・空の場合は `Sa`。
 fn parse_solver(s: &str) -> Solver {
-    match s.trim().to_ascii_lowercase().as_str() {
-        "sa" => Solver::Sa,
-        "priority" => Solver::Priority,
-        _ => Solver::Auto,
+    let t = s.trim();
+    if t.eq_ignore_ascii_case("sa") {
+        Solver::Sa
+    } else if t.eq_ignore_ascii_case("priority") {
+        Solver::Priority
+    } else if t.eq_ignore_ascii_case("auto") {
+        Solver::Auto
+    } else {
+        Solver::Sa
     }
 }
 
@@ -732,7 +737,7 @@ fn default_settings_row() -> SettingsRow {
         sleep_end: "06:00".to_string(),
         comfortable_minutes: None,
         maximum_minutes: None,
-        solver: "auto".to_string(),
+        solver: "sa".to_string(),
         time_budget_ms: None,
         seed: None,
         warm_start: false,

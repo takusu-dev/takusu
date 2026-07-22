@@ -218,12 +218,17 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({ ...prev, workersUrl: url }));
   }, []);
 
+  // Clearing the token also drops the client so that subsequent local API
+  // calls do not run with an empty/invalid bearer token. On non-Android
+  // platforms this removes the in-memory TakusuClient until a new token is
+  // saved and the server is (re)started.
   const setWorkersToken = useCallback(async (token: string) => {
     await saveWorkersToken(token);
     setState((prev) => {
-      const client = prev.client
-        ? new TakusuClient(prev.client.baseUrl, token)
-        : prev.client;
+      const client =
+        prev.client && token
+          ? new TakusuClient(prev.client.baseUrl, token)
+          : null;
       return { ...prev, workersToken: token, client };
     });
   }, []);

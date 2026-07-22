@@ -326,7 +326,6 @@ export function SettingsDetailView({
   useEffect(() => {
     setWorkerUrl(savedUrl);
     setWorkerKey(savedToken);
-    setWorkerDirty(false);
   }, [savedUrl, savedToken]);
 
   // Keep local undo-steps input in sync with the persisted value
@@ -448,12 +447,37 @@ export function SettingsDetailView({
     }
   }, [category, loadSolverSettings]);
   async function saveWorkerSettings() {
-    if (client) {
-      await client.updateWorkersConfig({ url: workerUrl, token: workerKey });
+    const url = workerUrl.trim();
+    const token = workerKey.trim();
+    try {
+      await setWorkersUrl(url);
+      await setWorkersToken(token);
+    } catch (e) {
+      Alert.alert(
+        'エラー',
+        `保存に失敗: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
     }
-    await setWorkersUrl(workerUrl);
-    await setWorkersToken(workerKey);
-    setWorkerDirty(false);
+    if (client) {
+      try {
+        await client.updateWorkersConfig({ url, token });
+        setWorkerDirty(false);
+        haptic.success();
+        Alert.alert('保存しました', 'Worker設定を保存しました');
+      } catch (e) {
+        Alert.alert(
+          '保存しました',
+          `Worker設定は保存されましたが、サーバーへの反映に失敗しました。再起動してください。 (${
+            e instanceof Error ? e.message : String(e)
+          })`,
+        );
+      }
+    } else {
+      setWorkerDirty(false);
+      haptic.success();
+      Alert.alert('保存しました', 'Worker設定を保存しました');
+    }
   }
 
   async function saveSleepSettings() {
@@ -1495,7 +1519,7 @@ export function SettingsDetailView({
 
               {workerDirty && (
                 <Text style={[styles.warning, { color: colors.red }]}>
-                  ⚠ 未保存の変更があります
+                  未保存の変更があります
                 </Text>
               )}
 

@@ -887,6 +887,7 @@ async fn settings_get_default() {
     assert_eq!(body["tz"], "UTC");
     assert_eq!(body["sleep_start"], "22:00");
     assert_eq!(body["sleep_end"], "06:00");
+    assert_eq!(body["solver"], "sa");
 }
 
 #[tokio::test]
@@ -1006,6 +1007,21 @@ async fn update_workers_config_rejects_normal_token() {
         .unwrap();
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn update_workers_config_allows_empty_url_and_token() {
+    let (state, _) = setup().await;
+    let app = build_router(state.clone());
+    let req = Request::builder()
+        .method(Method::PUT)
+        .uri("/api/workers/config")
+        .header("authorization", format!("Bearer {}", root_token()))
+        .header("content-type", "application/json")
+        .body(Body::from(json!({ "url": "", "token": "" }).to_string()))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
 }
 
 #[tokio::test]

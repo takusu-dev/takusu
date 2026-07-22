@@ -61,6 +61,7 @@ async fn setup_mock_db() -> SqlitePool {
         include_str!("../../takusu-local-lib/migrations/018_progress.sql"),
         include_str!("../../takusu-local-lib/migrations/019_jwt.sql"),
         include_str!("../../takusu-local-lib/migrations/020_task_actual_minutes_view.sql"),
+        include_str!("../../takusu-local-lib/migrations/021_solver_default_sa.sql"),
     ];
     for s in sqls {
         sqlx::raw_sql(*s).execute(&pool).await.unwrap();

@@ -247,11 +247,19 @@ export async function deleteAgentApiKey(
 }
 
 export async function saveWorkersUrl(url: string): Promise<void> {
-  await SecureStore.setItemAsync(KEYS.workersUrl, url);
+  if (url) {
+    await SecureStore.setItemAsync(KEYS.workersUrl, url);
+  } else {
+    await SecureStore.deleteItemAsync(KEYS.workersUrl);
+  }
 }
 
 export async function saveWorkersToken(token: string): Promise<void> {
-  await SecureStore.setItemAsync(KEYS.workersToken, token);
+  if (token) {
+    await SecureStore.setItemAsync(KEYS.workersToken, token);
+  } else {
+    await SecureStore.deleteItemAsync(KEYS.workersToken);
+  }
 }
 
 export async function saveTheme(theme: AppTheme): Promise<void> {
