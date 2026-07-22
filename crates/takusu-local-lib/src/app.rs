@@ -23,11 +23,21 @@ use crate::error::AppError;
 use crate::error::storage_to_app;
 use crate::token_cache::TokenCache;
 
-fn parse_hhmm(s: &str) -> (u8, u8) {
+fn parse_hhmm(s: &str) -> Result<(u8, u8), AppError> {
     let parts: Vec<&str> = s.split(':').collect();
-    let h: u8 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let m: u8 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-    (h, m)
+    if parts.len() != 2 {
+        return Err(AppError::BadRequest(format!("invalid time: {s}")));
+    }
+    let h: u8 = parts[0]
+        .parse()
+        .map_err(|_| AppError::BadRequest(format!("invalid time: {s}")))?;
+    let m: u8 = parts[1]
+        .parse()
+        .map_err(|_| AppError::BadRequest(format!("invalid time: {s}")))?;
+    if h > 23 || m > 59 {
+        return Err(AppError::BadRequest(format!("invalid time: {s}")));
+    }
+    Ok((h, m))
 }
 
 /// Resolve a timezone string to a `jiff::tz::TimeZone`.
@@ -227,20 +237,7 @@ fn validate_memory(create: &CreateMemory) -> Result<(), AppError> {
 
 /// Validate a `HH:MM` time string (#95).
 fn validate_hhmm(s: &str) -> Result<(), AppError> {
-    let parts: Vec<&str> = s.split(':').collect();
-    if parts.len() != 2 {
-        return Err(AppError::BadRequest(format!("invalid time: {s}")));
-    }
-    let h: u32 = parts[0]
-        .parse()
-        .map_err(|_| AppError::BadRequest(format!("invalid time: {s}")))?;
-    let m: u32 = parts[1]
-        .parse()
-        .map_err(|_| AppError::BadRequest(format!("invalid time: {s}")))?;
-    if h > 23 || m > 59 {
-        return Err(AppError::BadRequest(format!("invalid time: {s}")));
-    }
-    Ok(())
+    parse_hhmm(s).map(|_| ())
 }
 
 /// Validate a bulk-replace step array (#95): per-field sanity + DAG integrity
@@ -320,13 +317,13 @@ fn step_to_core_task(
 ) -> Result<CoreTask, AppError> {
     let date = takusu_habit::point_to_date(occ_start, tz)
         .ok_or_else(|| AppError::Internal("occurrence date out of range".into()))?;
-    let (sh, sm) = parse_hhmm(&step.start_time);
+    let (sh, sm) = parse_hhmm(&step.start_time)?;
     let start_time = takusu_habit::TimeOfDay::new(sh, sm).ok_or_else(|| {
         AppError::BadRequest(format!("invalid step start_time: {}", step.start_time))
     })?;
     let start_pt = takusu_habit::date_time_to_point(date, &start_time, tz)
         .ok_or_else(|| AppError::Internal("step start point out of range".into()))?;
-    let (eh, em) = parse_hhmm(&step.end_time);
+    let (eh, em) = parse_hhmm(&step.end_time)?;
     let start_minutes = sh as i64 * 60 + sm as i64;
     let end_minutes = eh as i64 * 60 + em as i64;
     let avg_slots = (step.avg_minutes / 5) as u64;
@@ -448,16 +445,16 @@ fn parse_sleep(
 ) -> Result<SleepConfig, AppError> {
     match s {
         "recommended" => {
-            let (sh, sm) = parse_hhmm(&settings.sleep_start);
-            let (eh, em) = parse_hhmm(&settings.sleep_end);
+            let (sh, sm) = parse_hhmm(&settings.sleep_start)?;
+            let (eh, em) = parse_hhmm(&settings.sleep_end)?;
             Ok(SleepConfig::from_local(5, tz, sh, sm, eh, em))
         }
         "disabled" => Ok(SleepConfig::disabled()),
         custom => {
             let parts: Vec<&str> = custom.splitn(2, '-').collect();
             if parts.len() == 2 {
-                let (sh, sm) = parse_hhmm(parts[0]);
-                let (eh, em) = parse_hhmm(parts[1]);
+                let (sh, sm) = parse_hhmm(parts[0])?;
+                let (eh, em) = parse_hhmm(parts[1])?;
                 Ok(SleepConfig::from_local(5, tz, sh, sm, eh, em))
             } else {
                 Ok(SleepConfig::disabled())
@@ -615,11 +612,11 @@ fn habit_row_to_config(
 ) -> Result<takusu_habit::Habit, AppError> {
     let recurrence: takusu_habit::RecurrenceRule = serde_json::from_str(&row.recurrence)
         .map_err(|e| AppError::BadRequest(format!("invalid recurrence: {e}")))?;
-    let (sh, sm) = parse_hhmm(&row.start_time);
+    let (sh, sm) = parse_hhmm(&row.start_time)?;
     let start_time = takusu_habit::TimeOfDay::new(sh, sm)
         .ok_or_else(|| AppError::BadRequest(format!("invalid start_time: {}", row.start_time)))?;
     let duration = NormalDist::new((row.avg_minutes / 5) as u64, (row.sigma_minutes / 5) as u64);
-    let (eh, em) = parse_hhmm(&row.end_time);
+    let (eh, em) = parse_hhmm(&row.end_time)?;
     // fixed habit のみ end_time を deadline として使う: end_time - start_time の
     // スロット数を deadline_slots に設定する。これにより Planner は
     // [start_time, end_time] の範囲内でタスクを配置できる。
