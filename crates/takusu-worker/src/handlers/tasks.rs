@@ -17,6 +17,13 @@ const OVERDUE_SQL: &str =
 const NOT_OVERDUE_SQL: &str =
     "(status IN ('completed', 'skipped') OR datetime(end_at) >= datetime('now'))";
 
+/// Parse a boolean query parameter. Accepts `true`/`false` (case-insensitive)
+/// and the numeric strings `1`/`0` for compatibility with common clients.
+pub(crate) fn parse_boolish(s: &str) -> bool {
+    let s = s.trim();
+    s.eq_ignore_ascii_case("true") || s == "1"
+}
+
 pub(crate) fn select_tasks() -> String {
     format!("SELECT {TASK_COLS} FROM {TASK_FROM}")
 }
@@ -50,7 +57,7 @@ pub async fn list(req: Request, env: Env) -> Result<Response, WorkerError> {
                 bindings.push(JsValue::from_str(&v));
             }
             "no_overdue" => {
-                if v.parse::<bool>().unwrap_or(false) {
+                if parse_boolish(&v) {
                     sql.push_str(" AND ");
                     sql.push_str(NOT_OVERDUE_SQL);
                 }
@@ -535,6 +542,24 @@ pub(crate) async fn allocate_display_id(
         let row: Option<DisplayIdRow> = seq_stmt.first(None).await.map_err(WorkerError::Worker)?;
         row.ok_or_else(|| WorkerError::Internal("display_id sequence is empty".into()))
             .map(|r| r.display_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_boolish_accepts_numeric_and_literal_true() {
+        assert!(parse_boolish("true"));
+        assert!(parse_boolish("True"));
+        assert!(parse_boolish("TRUE"));
+        assert!(parse_boolish("1"));
+        assert!(parse_boolish(" 1 "));
+        assert!(!parse_boolish("false"));
+        assert!(!parse_boolish("False"));
+        assert!(!parse_boolish("0"));
+        assert!(!parse_boolish("no"));
     }
 }
 

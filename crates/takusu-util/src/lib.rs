@@ -18,6 +18,118 @@ pub fn generate_root_token() -> String {
     format!("tsk_{}", Uuid::now_v7())
 }
 
+/// Parse a fixed-offset timezone string such as `+09:00`, `+0900`, `+09`,
+/// or `-05:30:15`. Returns `None` for invalid formats or offsets outside
+/// the real-world UTC±14 range.
+pub fn parse_fixed_offset_timezone(s: &str) -> Option<jiff::tz::TimeZone> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let (sign, rest) = match s.as_bytes().first()? {
+        b'+' => (1, &s[1..]),
+        b'-' => (-1, &s[1..]),
+        _ => return None,
+    };
+    let (hours, minutes, seconds) = if rest.contains(':') {
+        let parts: Vec<&str> = rest.split(':').collect();
+        if parts.is_empty() || parts.len() > 3 {
+            return None;
+        }
+        let h: i32 = parts[0].parse().ok()?;
+        let m: i32 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let sec: i32 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+        (h, m, sec)
+    } else {
+        match rest.len() {
+            0 => return None,
+            1 | 2 => {
+                let h: i32 = rest.parse().ok()?;
+                (h, 0, 0)
+            }
+            4 => {
+                let h: i32 = rest[..2].parse().ok()?;
+                let m: i32 = rest[2..].parse().ok()?;
+                (h, m, 0)
+            }
+            6 => {
+                let h: i32 = rest[..2].parse().ok()?;
+                let m: i32 = rest[2..4].parse().ok()?;
+                let sec: i32 = rest[4..].parse().ok()?;
+                (h, m, sec)
+            }
+            _ => return None,
+        }
+    };
+    if !(0..=23).contains(&hours) || !(0..60).contains(&minutes) || !(0..60).contains(&seconds) {
+        return None;
+    }
+    let total_seconds_i64 = sign * (hours as i64 * 3600 + minutes as i64 * 60 + seconds as i64);
+    // Real-world timezones are within UTC±14 (e.g. Line Islands, Baker/Howland).
+    if total_seconds_i64.abs() > 14 * 3600 {
+        return None;
+    }
+    let total_seconds = i32::try_from(total_seconds_i64).ok()?;
+    let offset = jiff::tz::Offset::from_seconds(total_seconds).ok()?;
+    Some(jiff::tz::TimeZone::fixed(offset))
+}
+
+const MIN_ESTIMATE_MINUTES: f64 = 5.0;
+const MAX_ESTIMATE_MINUTES: f64 = 24.0 * 60.0;
+
+/// Compute an updated `(avg_minutes, sigma_minutes)` estimate from a new
+/// progress observation and a history of prior observations.
+///
+/// `events` is a slice of `(active_minutes, delta_quantity)` pairs. Pairs
+/// with non-positive values are ignored.
+///
+/// Returns the original estimate when there is no usable `quantity_total`,
+/// no positive progress in this observation, or fewer than 2 prior events
+/// (sigma is left unchanged in that case).
+pub fn estimate_progress(
+    avg_minutes: i64,
+    sigma_minutes: i64,
+    quantity_total: Option<i64>,
+    active_minutes: i64,
+    delta_quantity: i64,
+    events: &[(i64, i64)],
+) -> (i64, i64) {
+    let total = match quantity_total {
+        Some(t) if t > 0 => t as f64,
+        _ => return (avg_minutes, sigma_minutes),
+    };
+
+    if delta_quantity <= 0 || active_minutes <= 0 {
+        return (avg_minutes, sigma_minutes);
+    }
+
+    let minutes_per_unit = active_minutes as f64 / delta_quantity as f64;
+    let projected = (minutes_per_unit * total).clamp(MIN_ESTIMATE_MINUTES, MAX_ESTIMATE_MINUTES);
+    let new_avg_f = 0.5 * avg_minutes as f64 + 0.5 * projected;
+    let new_avg = new_avg_f.round() as i64;
+
+    let projections: Vec<f64> = events
+        .iter()
+        .filter(|(a, d)| *a > 0 && *d > 0)
+        .map(|(a, d)| {
+            ((*a as f64 / *d as f64) * total).clamp(MIN_ESTIMATE_MINUTES, MAX_ESTIMATE_MINUTES)
+        })
+        .collect();
+
+    if projections.len() < 2 {
+        return (new_avg, sigma_minutes);
+    }
+
+    let mean = projections.iter().sum::<f64>() / projections.len() as f64;
+    let variance = projections.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
+        / (projections.len() - 1) as f64;
+    let stddev = variance
+        .sqrt()
+        .clamp(MIN_ESTIMATE_MINUTES, MAX_ESTIMATE_MINUTES);
+    let new_sigma = stddev.round() as i64;
+    (new_avg, new_sigma.max(1))
+}
+
 pub fn parse_duration(s: &str) -> Result<i64, String> {
     let s = s.trim();
     if s.is_empty() {
