@@ -1,4 +1,11 @@
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { BRAND_COLOR, COLORS, useColors } from '@/src/theme';
 import type { PermissionsMap } from '@/src/api/settingsStore';
 import { PermissionsEditor } from '@/src/components/PermissionsEditor';
@@ -29,7 +36,9 @@ export function SessionPermissionsModal({
           <Text style={[styles.hint, { color: colors.gray }]}>
             ここで設定した値がProviderの権限を上書きします
           </Text>
-          <PermissionsEditor permissions={permissions} onChange={onChange} />
+          <ScrollView style={styles.editorScroll}>
+            <PermissionsEditor permissions={permissions} onChange={onChange} />
+          </ScrollView>
           <Pressable
             onPress={onClose}
             style={[styles.close, { backgroundColor: BRAND_COLOR }]}
@@ -60,11 +69,12 @@ const styles = StyleSheet.create({
   },
   card: {
     width: '100%',
-    maxHeight: '80%',
+    height: '80%',
     borderRadius: 16,
     padding: 16,
     gap: 8,
   },
+  editorScroll: { flex: 1 },
   title: { fontSize: 18, fontWeight: '700' },
   hint: { fontSize: 12, marginBottom: 4 },
   close: {
