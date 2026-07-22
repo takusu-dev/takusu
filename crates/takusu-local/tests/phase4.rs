@@ -55,13 +55,22 @@ impl Counters {
 fn make_state(storage: Arc<dyn Storage>) -> AppState {
     let token_cache = Arc::new(TokenCache::with_default_ttl());
     let app = Arc::new(TakusuApp::new(storage, token_cache));
-    AppState::new(app)
+    AppState::new(app, (*ROOT_TOKEN).clone())
 }
 
 fn counting_storage(counters: Arc<Counters>) -> Arc<dyn Storage> {
     Arc::new(CountingStorage {
         counters,
         jwt_secret: JWT_SECRET.into(),
+        verify_error: false,
+    })
+}
+
+fn counting_storage_with_verify_error(counters: Arc<Counters>) -> Arc<dyn Storage> {
+    Arc::new(CountingStorage {
+        counters,
+        jwt_secret: JWT_SECRET.into(),
+        verify_error: true,
     })
 }
 
@@ -81,11 +90,16 @@ async fn body_str(body: axum::body::Body) -> String {
 struct CountingStorage {
     counters: Arc<Counters>,
     jwt_secret: String,
+    verify_error: bool,
 }
 
 #[async_trait]
 impl Storage for CountingStorage {
     async fn verify_token(&self, t: &str) -> StorageResult<Option<TokenClaims>> {
+        if self.verify_error {
+            self.counters.verify.fetch_add(1, Ordering::SeqCst);
+            return Err(StorageError::Internal("mock worker unreachable".into()));
+        }
         match takusu_local_lib::jwt::verify(&self.jwt_secret, t, takusu_local_lib::DEFAULT_AUD) {
             Ok(claims) if claims.is_root() => Ok(Some(claims)),
             Ok(claims) => {
@@ -381,6 +395,38 @@ async fn token_cache_caches_invalid_responses() {
         counters.verify_get(),
         1,
         "invalid token should also be cached"
+    );
+}
+
+#[tokio::test]
+async fn root_token_bypasses_storage_when_unreachable() {
+    let counters = Arc::new(Counters::default());
+    let storage: Arc<dyn Storage> = counting_storage_with_verify_error(counters.clone());
+    let state = make_state(storage);
+    let app = router(state.clone());
+
+    let update_req = Request::builder()
+        .method(Method::PUT)
+        .uri("/api/workers/config")
+        .header("authorization", format!("Bearer {}", ROOT_TOKEN.as_str()))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            json!({ "url": "http://new-worker.example", "token": "new-token" }).to_string(),
+        ))
+        .unwrap();
+    let r = app.oneshot(update_req).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(
+        counters.verify_get(),
+        0,
+        "root token should bypass storage verify"
+    );
+
+    let root = state.root_token.read().await;
+    assert_eq!(
+        root.as_str(),
+        "new-token",
+        "root_token should be updated to the new worker token"
     );
 }
 

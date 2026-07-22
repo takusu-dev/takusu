@@ -19,7 +19,7 @@ pub struct LocalServer {
 pub async fn start_in_process(app: Arc<TakusuApp>) -> Result<LocalServer, AppError> {
     let resp = app.create_token(None).await?;
     let token = resp.token;
-    let state = AppState::new(app);
+    let state = AppState::new(app, token.clone());
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| AppError::Internal(format!("failed to bind local server: {e}")))?;

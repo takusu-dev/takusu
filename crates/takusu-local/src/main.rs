@@ -43,6 +43,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok()
             .filter(|s| !s.is_empty());
 
+        let workers_url = std::env::var("TAKUSU_WORKERS_URL")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| cfg.workers_url().split('|').next().map(|s| s.to_string()))
+            .unwrap_or_default();
+        let workers_token = std::env::var("TAKUSU_WORKERS_TOKEN")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| env_root.clone())
+            .unwrap_or_default();
+
         let storage: Arc<dyn Storage> = match cfg.storage_kind() {
             #[cfg(feature = "sqlite")]
             StorageKind::Sqlite => {
@@ -54,36 +65,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             #[allow(unreachable_patterns)]
             _ => {
-                let url = std::env::var("TAKUSU_WORKERS_URL")
-                    .ok()
-                    .filter(|s| !s.is_empty())
-                    .or_else(|| cfg.workers_url().split('|').next().map(|s| s.to_string()))
-                    .unwrap_or_default();
-                let token = std::env::var("TAKUSU_WORKERS_TOKEN")
-                    .ok()
-                    .filter(|s| !s.is_empty())
-                    .or_else(|| env_root.clone())
-                    .unwrap_or_default();
-                if url.is_empty() {
+                if workers_url.is_empty() {
                     return Err("TAKUSU_WORKERS_URL is required for the workers backend".into());
                 }
-                if token.is_empty() {
+                if workers_token.is_empty() {
                     return Err("TAKUSU_WORKERS_TOKEN (or TAKUSU_ROOT_TOKEN) is required for the workers backend".into());
                 }
-                tracing::info!("storage backend: workers ({url})");
-                Arc::new(WorkersStorage::new_with(url, token))
+                tracing::info!("storage backend: workers ({workers_url})");
+                Arc::new(WorkersStorage::new_with(workers_url, workers_token.clone()))
             }
         };
 
-        let root_token = env_root.unwrap_or_default();
+        if env_root.is_none() && !workers_token.is_empty() {
+            tracing::info!(
+                "TAKUSU_ROOT_TOKEN is not set; using TAKUSU_WORKERS_TOKEN as the local root-token fallback"
+            );
+        }
+        let root_token = env_root.unwrap_or(workers_token);
         if root_token.is_empty() {
             tracing::warn!(
-                "TAKUSU_ROOT_TOKEN is not set; it will not be used as a fallback for TAKUSU_WORKERS_TOKEN. Root-only operations are still available when a client presents a valid root JWT."
+                "TAKUSU_ROOT_TOKEN is not set and no worker token is configured; the local root-token bypass is disabled and root-only operations may fail"
             );
         }
         let token_cache = Arc::new(TokenCache::with_default_ttl());
         let app = Arc::new(TakusuApp::new(storage, token_cache));
-        let state = AppState::new(app);
+        let state = AppState::new(app, root_token);
         let bind_addr = cfg.bind_addr().to_string();
         let app_router = router(state);
 

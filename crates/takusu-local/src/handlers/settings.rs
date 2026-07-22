@@ -54,5 +54,9 @@ pub async fn update_workers_config(
     let app = state.app.clone();
     app.update_workers_credentials(&body.url, &body.token)
         .await?;
+    // Keep the local root-token bypass in sync with the newly saved worker
+    // token so that subsequent root-only requests (e.g. further config
+    // updates) can still succeed even if the new worker is unreachable.
+    *state.root_token.write().await = body.token.clone();
     Ok(Json(serde_json::json!({ "ok": true })))
 }

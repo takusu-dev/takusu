@@ -1,3 +1,4 @@
+use web_time::{SystemTime, UNIX_EPOCH};
 use worker::{Env, Request, Response};
 
 use crate::auth;
@@ -20,7 +21,10 @@ fn require_root(req: &Request, env: &Env) -> Result<(), WorkerError> {
 }
 
 fn token_expires_at(ttl_seconds: i64) -> Option<String> {
-    let now = jiff::Timestamp::now().as_second();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
     let exp = now.saturating_add(ttl_seconds);
     jiff::Timestamp::from_second(exp)
         .ok()

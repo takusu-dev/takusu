@@ -48,6 +48,7 @@ google-cal = { path = "crates/google-cal" }
 
 futures-util = "0.3"
 petgraph = { version = "0.8", default-features = false }
+web-time = "1.1"
 toml = "0.8"
 
 [profile.dev.package."tikv-jemalloc-sys"]

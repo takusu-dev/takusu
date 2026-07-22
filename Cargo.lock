@@ -4281,6 +4281,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "web-time",
 ]
 
 [[package]]
@@ -4308,6 +4309,7 @@ dependencies = [
  "sha2 0.11.0",
  "unicode-normalization",
  "uuid",
+ "web-time",
 ]
 
 [[package]]
@@ -4326,6 +4328,7 @@ dependencies = [
  "uuid",
  "wasm-bindgen",
  "wasm-logger",
+ "web-time",
  "worker",
 ]
 

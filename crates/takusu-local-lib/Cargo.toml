@@ -27,6 +27,7 @@ tracing-subscriber.workspace = true
 sentry.workspace = true
 thiserror.workspace = true
 jiff.workspace = true
+web-time.workspace = true
 async-trait.workspace = true
 reqwest = { workspace = true }
 petgraph.workspace = true
