@@ -2,6 +2,10 @@ name: CI
 
 on:
   push:
+    branches:
+      - '**'
+      - '!regression-*-discover-*'
+      - '!regression-*-fix-*'
   workflow_dispatch:
 
 jobs:
@@ -59,7 +63,7 @@ jobs:
       - name: Restore and save Nix store
         uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'rust-toolchain.toml') }}
           restore-prefixes-first-match: |
             nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
           gc-max-store-size-linux: 6G
@@ -96,7 +100,7 @@ jobs:
       - name: Restore and save Nix store
         uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'rust-toolchain.toml') }}
           restore-prefixes-first-match: |
             nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
           gc-max-store-size-linux: 6G
@@ -150,7 +154,7 @@ jobs:
       - name: Restore and save Nix store
         uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'rust-toolchain.toml') }}
           restore-prefixes-first-match: |
             nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
           gc-max-store-size-linux: 6G
@@ -225,7 +229,7 @@ jobs:
       - name: Restore and save Nix store
         uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'rust-toolchain.toml') }}
           restore-prefixes-first-match: |
             nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
           gc-max-store-size-linux: 4G
@@ -277,7 +281,7 @@ jobs:
       - name: Restore and save Nix store
         uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'rust-toolchain.toml') }}
           restore-prefixes-first-match: |
             nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
           gc-max-store-size-linux: 8G

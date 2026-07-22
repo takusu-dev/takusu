@@ -1,0 +1,104 @@
+name: Regression Lint and Format
+
+on:
+  push:
+    branches:
+      - 'regression-*'
+      - '!regression-*-discover-*'
+      - '!regression-*-fix-*'
+  pull_request:
+    branches:
+      - 'regression-*'
+  workflow_dispatch:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
+        with:
+          extra_nix_config: |
+            keep-outputs = true
+            keep-env-derivations = true
+
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'rust-toolchain.toml') }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          gc-max-store-size-linux: 6G
+          purge: true
+          purge-prefixes: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          purge-last-accessed: P6D
+          purge-primary-key: never
+
+      - run: nix profile install .#ci-rust
+      - run: nix build ".#devShells.${{ runner.arch == 'ARM64' && 'aarch64-linux' || 'x86_64-linux' }}.rust" -o /tmp/rust-shell
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: nix develop .#rust --command bash -c "cargo clippy --all-targets --all-features -- -D warnings"
+
+  js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        working-directory: mobile
+        run: npm install --legacy-peer-deps
+
+      - name: oxlint
+        working-directory: mobile
+        run: npm run lint
+
+      - name: oxfmt check
+        working-directory: mobile
+        run: npm run fmt:check
+
+  kotlin:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
+        with:
+          extra_nix_config: |
+            keep-outputs = true
+            keep-env-derivations = true
+
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'rust-toolchain.toml') }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          gc-max-store-size-linux: 4G
+          purge: true
+          purge-prefixes: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          purge-last-accessed: P6D
+          purge-primary-key: never
+
+      - run: nix profile install .#ci-kotlin
+
+      - name: ktlint
+        working-directory: mobile
+        run: ktlint 'modules/**/*.kt' '!modules/takusu-server/android/src/main/java/uniffi/**'

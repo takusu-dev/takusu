@@ -1,0 +1,27 @@
+name: Jest Regression CI
+
+on:
+  push:
+    branches:
+      - 'regression-*'
+      - '!regression-*-discover-*'
+      - '!regression-*-fix-*'
+  pull_request:
+    branches:
+      - 'regression-*'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Run differential regression tests
+        run: python3 .github/scripts/run-regression-jest.py
