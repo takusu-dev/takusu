@@ -153,6 +153,16 @@ enum AgentCommands {
         /// Auto-approve any pending changes without prompting
         #[arg(long)]
         yes: bool,
+
+        /// Auto-approve a permission for this session (e.g. task:create, *:*).
+        /// If the same key is also passed to --deny, --deny wins.
+        #[arg(long, value_name = "PERM")]
+        allow: Vec<String>,
+
+        /// Deny a permission for this session, overriding provider settings
+        /// and any --allow for the same key
+        #[arg(long, value_name = "PERM")]
+        deny: Vec<String>,
     },
     /// Show or edit agent configuration
     Config {
@@ -165,8 +175,22 @@ enum AgentCommands {
 enum AgentConfigCommands {
     /// Show current agent config file
     Show,
-    /// Set a config value by key path (e.g. llm.base_url https://api.openai.com/v1)
+    /// Set a config value by key path (e.g. llm.base_url https://api.openai.com/v1).
+    /// Use the `permissions` subcommand for llm.permissions.
     Set { key: String, value: String },
+    /// Manage agent permissions
+    #[command(subcommand)]
+    Permissions(AgentPermissionsCommands),
+}
+
+#[derive(Subcommand)]
+enum AgentPermissionsCommands {
+    /// Show current permissions
+    Show,
+    /// Set a permission (e.g. task:create true)
+    Set { key: String, value: String },
+    /// Unset a permission
+    Unset { key: String },
 }
 
 #[derive(Subcommand)]
@@ -1088,10 +1112,22 @@ async fn run(
         Commands::Skill { command } => run_skill(mode, app.as_ref(), command).await?,
         Commands::Memory { command } => run_memory(app.as_ref(), command).await?,
         Commands::Agent { command } => match command {
-            AgentCommands::Run { text, yes } => agent::run(app, text, yes).await?,
+            AgentCommands::Run {
+                text,
+                yes,
+                allow,
+                deny,
+            } => agent::run(app, text, yes, allow, deny).await?,
             AgentCommands::Config { command } => match command {
                 AgentConfigCommands::Show => agent::config_show()?,
                 AgentConfigCommands::Set { key, value } => agent::config_set(&key, &value)?,
+                AgentConfigCommands::Permissions(command) => match command {
+                    AgentPermissionsCommands::Show => agent::permissions_show()?,
+                    AgentPermissionsCommands::Set { key, value } => {
+                        agent::permissions_set(&key, &value)?
+                    }
+                    AgentPermissionsCommands::Unset { key } => agent::permissions_unset(&key)?,
+                },
             },
         },
         #[cfg(feature = "mcp")]
