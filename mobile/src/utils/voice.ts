@@ -83,6 +83,7 @@ export async function startRecording(): Promise<void> {
       notifyRecordingChanged(false);
       throw new Error('録音がキャンセルされました');
     }
+    TakusuAudioModule.stopPlayback();
     TakusuAudioModule.startRecording();
   } catch (e) {
     if (isRecording) {
