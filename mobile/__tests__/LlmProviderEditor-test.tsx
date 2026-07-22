@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import { ThemeProvider } from '@/src/theme';
 import { type LlmProviderSettings } from '@/src/api/settingsStore';
@@ -183,6 +183,60 @@ describe('LlmProviderEditor', () => {
         }),
       ),
     );
+  });
+
+  it('toggles the model list visibility when the header is pressed', async () => {
+    const { getByText, queryByText } = await setup({
+      provider: {
+        ...baseProvider,
+        cachedModels: ['existing-model'],
+        selectedModel: 'existing-model',
+        cost: '$5 / 1M tokens',
+      },
+    });
+
+    expect(getByText('● existing-model')).toBeTruthy();
+
+    fireEvent.press(getByText('モデル一覧'));
+    await waitFor(() => {
+      expect(queryByText('● existing-model')).toBeNull();
+    });
+
+    fireEvent.press(getByText('モデル一覧'));
+    await waitFor(() => {
+      expect(getByText('● existing-model')).toBeTruthy();
+    });
+  });
+
+  it('shows the bottom fold button when the model list exceeds 3/5 of the screen height', async () => {
+    const { getByText, getByTestId, queryByText } = await setup({
+      provider: {
+        ...baseProvider,
+        cachedModels: ['model-a', 'model-b', 'model-c'],
+        selectedModel: 'model-a',
+      },
+    });
+
+    const list = getByTestId('model-list-expanded');
+    await act(async () => {
+      list.props.onLayout({
+        nativeEvent: { layout: { width: 100, height: 10000, x: 0, y: 0 } },
+      });
+    });
+
+    await waitFor(() => {
+      expect(getByText('▲ 畳む')).toBeTruthy();
+    });
+
+    await act(async () => {
+      list.props.onLayout({
+        nativeEvent: { layout: { width: 100, height: 0, x: 0, y: 0 } },
+      });
+    });
+
+    await waitFor(() => {
+      expect(queryByText('▲ 畳む')).toBeNull();
+    });
   });
 
   it('fetches models, displays cost on cards, and updates provider cost', async () => {
