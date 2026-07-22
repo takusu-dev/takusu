@@ -35,7 +35,7 @@ export function useSolverSettings(
   const [solverSettings, setSolverSettings] = useState<SettingsRow | null>(
     null,
   );
-  const [solverValue, setSolverValue] = useState<SolverOption>('auto');
+  const [solverValue, setSolverValue] = useState<SolverOption>('sa');
   const [timeBudgetInput, setTimeBudgetInput] = useState('');
   const [seedInput, setSeedInput] = useState('');
   const [warmStartValue, setWarmStartValue] = useState(false);
@@ -51,7 +51,7 @@ export function useSolverSettings(
       setSolverSettings(s);
       const solver = SOLVER_OPTIONS.includes(s.solver as SolverOption)
         ? (s.solver as SolverOption)
-        : 'auto';
+        : 'sa';
       setSolverValue(solver);
       setTimeBudgetInput(
         s.time_budget_ms != null ? String(s.time_budget_ms) : '',
@@ -91,7 +91,7 @@ export function useSolverSettings(
       setSolverSettings(s);
       const nextSolver = SOLVER_OPTIONS.includes(s.solver as SolverOption)
         ? (s.solver as SolverOption)
-        : 'auto';
+        : 'sa';
       setSolverValue(nextSolver);
       setTimeBudgetInput(
         s.time_budget_ms != null ? String(s.time_budget_ms) : '',
@@ -123,7 +123,7 @@ export function useSolverSettings(
       solverSettings.solver as SolverOption,
     )
       ? (solverSettings.solver as SolverOption)
-      : 'auto';
+      : 'sa';
     const currentTimeBudget =
       parseOptionalNonNegativeInt(timeBudgetInput) ?? -1;
     const currentSeed = parseOptionalNonNegativeInt(seedInput) ?? -1;

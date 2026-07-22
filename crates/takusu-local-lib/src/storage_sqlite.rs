@@ -42,6 +42,7 @@ const MIGRATION_017: &str = include_str!("../migrations/017_solver.sql");
 const MIGRATION_018: &str = include_str!("../migrations/018_progress.sql");
 const MIGRATION_019: &str = include_str!("../migrations/019_jwt.sql");
 const MIGRATION_020: &str = include_str!("../migrations/020_task_actual_minutes_view.sql");
+const MIGRATION_021: &str = include_str!("../migrations/021_solver_default_sa.sql");
 // Migration 013 one-time backfill: drops the old global unique index, renumbers
 // existing habit tasks to start from 1 per habit, and seeds the per-habit
 // sequences. Non-idempotent (DROP + UPDATE renumber) — guarded by a check
@@ -345,6 +346,10 @@ impl SqliteStorage {
         // Migration 020 creates a view that pre-computes per-task active work
         // minutes from task_work_sessions (idempotent).
         sqlx::raw_sql(MIGRATION_020).execute(&pool).await?;
+
+        // Migration 021 changes the default solver from 'auto' to 'sa' for
+        // existing rows (idempotent).
+        sqlx::raw_sql(MIGRATION_021).execute(&pool).await?;
 
         Ok(Self { pool, jwt_secret })
     }

@@ -375,7 +375,7 @@ pub struct SettingsRow {
     pub comfortable_minutes: Option<i64>,
     /// #459: 1 日の最大作業時間（分）。`None` または未設定の場合はデフォルトを使う。
     pub maximum_minutes: Option<i64>,
-    /// 使用する solver。`"sa"` / `"priority"` / `"auto"`。空または不明な場合は `auto`。
+    /// 使用する solver。`"sa"` / `"priority"` / `"auto"`。空または不明な場合は `sa`。
     #[serde(default)]
     pub solver: String,
     /// 求解時間の上限（ミリ秒）。`None` または `0` の場合は制限なし。
