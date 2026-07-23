@@ -413,6 +413,25 @@ impl Client {
         Ok(resp.json().await?)
     }
 
+    pub async fn estimate_habit(
+        &self,
+        id: &str,
+        body: &HabitEstimateRequest,
+    ) -> Result<HabitEstimateResult, ClientError> {
+        let resp = self
+            .request(reqwest::Method::POST, &format!("/api/habits/{id}/estimate"))
+            .await
+            .json(body)
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api { status, body });
+        }
+        Ok(resp.json().await?)
+    }
+
     pub async fn create_habit(&self, body: &CreateHabit) -> Result<HabitRow, ClientError> {
         let resp = self
             .request(reqwest::Method::POST, "/api/habits")
@@ -1430,6 +1449,50 @@ pub struct HabitDetail {
     #[serde(flatten)]
     pub habit: HabitRow,
     pub steps: Vec<HabitStepRow>,
+}
+
+/// Request body for `POST /api/habits/{id}/estimate` (#919).
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct HabitEstimateRequest {
+    #[serde(default)]
+    pub detect_outliers: bool,
+    #[serde(default)]
+    pub apply: bool,
+}
+
+/// One completed task observation included in a habit estimate (#919).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitEstimateSample {
+    pub task_id: String,
+    pub title: String,
+    pub actual_minutes: i64,
+    pub excluded: bool,
+}
+
+/// Estimate result for a single habit step (#919).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitEstimateStep {
+    pub step_id: String,
+    pub title: String,
+    pub avg_minutes: i64,
+    pub sigma_minutes: i64,
+    pub sample_count: usize,
+    pub excluded_count: usize,
+    pub applied: bool,
+}
+
+/// Response from `POST /api/habits/{id}/estimate` (#919).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitEstimateResult {
+    pub avg_minutes: i64,
+    pub sigma_minutes: i64,
+    pub sample_count: usize,
+    pub excluded_count: usize,
+    pub samples: Vec<HabitEstimateSample>,
+    pub steps: Vec<HabitEstimateStep>,
+    pub applied: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub habit: Option<HabitRow>,
 }
 
 /// A node on a dependency witness path (#355).

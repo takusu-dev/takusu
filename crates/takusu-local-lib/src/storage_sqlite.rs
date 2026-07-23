@@ -3,12 +3,13 @@ use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 use takusu_storage::{
     CreateHabit, CreateHabitScheduledSpan, CreateMemory, CreateSkill, CreateTask,
-    GoogleCalEventRow, GoogleCalSettingsRow, HabitRow, HabitScheduledSpanRow, HabitStepInput,
-    HabitStepRow, MemoryQuery, MemoryRow, ProgressEventRow, ProgressResult, RecordProgress,
-    SaveScheduleRequest, ScheduleRow, SettingsRow, SimilarTaskQuery, SimilarTaskRow, SkillRow,
-    SplitResult, SplitTask, Storage, StorageError, TaskProgress, TaskQuery, TaskRow,
-    TaskWorkSessionRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit,
-    UpdateMemory, UpdateSettings, UpdateSkill, UpdateTask, storage::StorageResult,
+    GoogleCalEventRow, GoogleCalSettingsRow, HabitRow, HabitScheduledSpanRow,
+    HabitStepEstimateInput, HabitStepInput, HabitStepRow, MemoryQuery, MemoryRow, ProgressEventRow,
+    ProgressResult, RecordProgress, SaveScheduleRequest, ScheduleRow, SettingsRow,
+    SimilarTaskQuery, SimilarTaskRow, SkillRow, SplitResult, SplitTask, Storage, StorageError,
+    TaskProgress, TaskQuery, TaskRow, TaskWorkSessionRow, TokenCreateResponse, TokenRow,
+    UpdateGoogleCalSettings, UpdateHabit, UpdateMemory, UpdateSettings, UpdateSkill, UpdateTask,
+    storage::StorageResult,
 };
 use takusu_util::{DEFAULT_AUD, SCOPE_READ_WRITE};
 
@@ -1088,6 +1089,53 @@ impl Storage for SqliteStorage {
         .fetch_all(&self.pool)
         .await
         .map_err(map_err)
+    }
+
+    async fn apply_habit_estimate(
+        &self,
+        habit_id: &str,
+        avg_minutes: i64,
+        sigma_minutes: i64,
+        step_estimates: &[HabitStepEstimateInput],
+    ) -> StorageResult<()> {
+        let full = resolve_habit_id(&self.pool, habit_id).await?;
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+
+        let fixed: bool = sqlx::query_scalar("SELECT fixed FROM habits WHERE id = ?")
+            .bind(&full)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        if fixed {
+            return Err(StorageError::BadRequest(
+                "cannot apply estimate to fixed habit".into(),
+            ));
+        }
+
+        for step in step_estimates {
+            // Only update non-fixed steps; fixed steps are intentionally preserved.
+            sqlx::query(
+                "UPDATE habit_steps SET avg_minutes = ?, sigma_minutes = ? WHERE id = ? AND habit_id = ? AND fixed = 0",
+            )
+            .bind(step.avg_minutes)
+            .bind(step.sigma_minutes)
+            .bind(&step.step_id)
+            .bind(&full)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        }
+
+        sqlx::query("UPDATE habits SET avg_minutes = ?, sigma_minutes = ? WHERE id = ?")
+            .bind(avg_minutes)
+            .bind(sigma_minutes)
+            .bind(&full)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+
+        tx.commit().await.map_err(map_err)?;
+        Ok(())
     }
 
     async fn get_schedule(&self) -> StorageResult<Option<ScheduleRow>> {

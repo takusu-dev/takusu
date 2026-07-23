@@ -8,13 +8,13 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use takusu_storage::{
-    CreateHabit, CreateHabitScheduledSpan, CreateMemory, CreateSkill, CreateTask,
-    GoogleCalEventRow, GoogleCalSettingsRow, HabitRow, HabitScheduledSpanRow, HabitStepInput,
-    HabitStepRow, MemoryQuery, MemoryRow, ProgressResult, RecordProgress, SaveScheduleRequest,
-    ScheduleRow, SettingsRow, SimilarTaskQuery, SimilarTaskRow, SkillRow, SplitResult, SplitTask,
-    Storage, StorageError, TaskProgress, TaskQuery, TaskRow, TokenCreateResponse, TokenRow,
-    UpdateGoogleCalSettings, UpdateHabit, UpdateMemory, UpdateSettings, UpdateSkill, UpdateTask,
-    storage::StorageResult,
+    ApplyHabitEstimateRequest, CreateHabit, CreateHabitScheduledSpan, CreateMemory, CreateSkill,
+    CreateTask, GoogleCalEventRow, GoogleCalSettingsRow, HabitRow, HabitScheduledSpanRow,
+    HabitStepEstimateInput, HabitStepInput, HabitStepRow, MemoryQuery, MemoryRow, ProgressResult,
+    RecordProgress, SaveScheduleRequest, ScheduleRow, SettingsRow, SimilarTaskQuery,
+    SimilarTaskRow, SkillRow, SplitResult, SplitTask, Storage, StorageError, TaskProgress,
+    TaskQuery, TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit,
+    UpdateMemory, UpdateSettings, UpdateSkill, UpdateTask, storage::StorageResult,
 };
 use takusu_util::TokenClaims;
 use tokio::sync::RwLock;
@@ -462,6 +462,27 @@ impl Storage for WorkersStorage {
             &steps,
         )
         .await
+    }
+
+    async fn apply_habit_estimate(
+        &self,
+        habit_id: &str,
+        avg_minutes: i64,
+        sigma_minutes: i64,
+        step_estimates: &[HabitStepEstimateInput],
+    ) -> StorageResult<()> {
+        let body = ApplyHabitEstimateRequest {
+            avg_minutes,
+            sigma_minutes,
+            steps: step_estimates.to_vec(),
+        };
+        self.request_body_empty(
+            reqwest::Method::POST,
+            &format!("/api/habits/{}/estimate", url_encode(habit_id)),
+            &body,
+        )
+        .await?;
+        Ok(())
     }
 
     async fn get_schedule(&self) -> StorageResult<Option<ScheduleRow>> {

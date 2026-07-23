@@ -279,6 +279,22 @@ pub struct HabitStepInput {
     pub depends_on: Vec<String>,
 }
 
+/// Step estimate update element for `POST /api/habits/:id/estimate` (#919).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitStepEstimateInput {
+    pub step_id: String,
+    pub avg_minutes: i64,
+    pub sigma_minutes: i64,
+}
+
+/// Request body for `POST /api/habits/:id/estimate` (#919).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplyHabitEstimateRequest {
+    pub avg_minutes: i64,
+    pub sigma_minutes: i64,
+    pub steps: Vec<HabitStepEstimateInput>,
+}
+
 /// Habit detail response: the habit row plus its steps (#95).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HabitDetail {
