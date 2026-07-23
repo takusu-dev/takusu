@@ -1,5 +1,26 @@
 # AGENTS.md
 
+## Agent Contract
+
+The agent must follow these rules on every task. When in doubt, ask the user
+before acting.
+
+- **Version control**: Use Jujutsu (`jj`) for all mutations. Do not use `git` to
+  rewrite history. See [Version Control Workflow](#version-control-workflow) and
+  [`.devin/rules/pr-workflow.md`](./.devin/rules/pr-workflow.md).
+- **No surprise pushes**: Do not push to GitHub or create/update a PR unless the
+  user explicitly asks, an issue was provided to close, or an existing PR needs
+  updating. See [`.devin/rules/pr-workflow.md`](./.devin/rules/pr-workflow.md).
+- **Notify on finish**: Send a desktop notification with `dunstify` once at the
+  end of a task, or when asking the user for input.
+- **Verify before finishing**: Run the checks appropriate to the changed code
+  (`cargo check`, `cargo nextest run`, `cargo clippy`; mobile `npm run lint`,
+  `npx tsc --noEmit`, `npm run fmt:check`).
+- **Write the commit**: After finishing work, run `jj describe`. Commit messages
+  are present tense, lowercase first word, no trailing period.
+- **Rebase before push**: Never rewrite `main`. Before pushing, run
+  `jj git fetch && jj rebase -r @ -d main`.
+
 ## Project Overview
 
 takusu is a planner that automatically builds user schedules and a voice assistant using LLM as the UI. The design document is `main.typ` (in Japanese).
@@ -100,14 +121,17 @@ takusu/
 ├── flake.nix                 # Nix development environment
 ├── rust-toolchain.toml       # Rust toolchain config
 ├── .envrc                    # direnv config
-├── .devin/skills/            # Devin CLI skills (thin wrappers around scripts/)
-│   ├── issue-view/SKILL.md
-│   ├── issue-assign/SKILL.md
-│   ├── pr-watch/SKILL.md
-│   ├── jj-resolve/SKILL.md
-│   ├── discord-notify/SKILL.md
-│   ├── profile/SKILL.md     # Perf flamegraph + top-function summary helper
-│   └── optimize/SKILL.md    # Benchmark-driven takusu-core optimization workflow
+├── .devin/
+│   ├── rules/                # Focused always-on agent rules
+│   │   └── pr-workflow.md    # When and how to push / create PRs
+│   └── skills/               # Devin CLI skills (thin wrappers around scripts/)
+│       ├── issue-view/SKILL.md
+│       ├── issue-assign/SKILL.md
+│       ├── pr-watch/SKILL.md
+│       ├── jj-resolve/SKILL.md
+│       ├── discord-notify/SKILL.md
+│       ├── profile/SKILL.md  # Perf flamegraph + top-function summary helper
+│       └── optimize/SKILL.md # Benchmark-driven takusu-core optimization workflow
 └── scripts/                  # Agent + user helper scripts
     ├── issue-view.sh         # GitHub issue list/show (label/assignee/state filters)
     ├── issue-assign.sh       # Assign an unassigned issue to the current user
@@ -158,54 +182,12 @@ Use `nix develop` or `direnv allow` to enter the development shell. The flake pr
 
 ## Version Control Workflow
 
-This workspace uses **Jujutsu (`jj`) as the primary VCS**, backed by a Git remote on GitHub. Prefer `jj` commands over raw `git` for everyday work.
+This workspace uses **Jujutsu (`jj`)** as the primary VCS, backed by a Git
+remote on GitHub. `git` may be used read-only (`git log`, `git diff`).
 
-### Why Jujutsu
-
-- Commits are first-class and amendable without history-rewriting ceremony.
-- Working copy is always a commit (`@`); edits become a commit automatically.
-- Rebases, splits, and squashes are cheap and safe.
-
-### Common Commands
-
-| Command | Purpose |
-|---------|---------|
-| `jj st` | Show working copy status |
-| `jj log -r 'main..@'` | Show commits ahead of main |
-| `jj new` | Create a new empty change on top of `@` |
-| `jj squash` | Squash `@` into its parent |
-| `jj amend` | Amend `@` with working copy changes (default behavior, but explicit form useful) |
-| `jj rebase -r <rev> -d <dest>` | Rebase a change onto another |
-| `jj split <rev>` | Split a change into two interactively |
-| `jj describe` | Edit the description of `@` |
-| `jj git push` | Push to the Git remote (GitHub) |
-| `jj git fetch` | Fetch from the Git remote |
-
-### Basic Workflow
-
-The default loop for any task is:
-
-1. Do the work (explore, edit, run `cargo check` / `cargo nextest run` / `cargo clippy` as needed).
-2. `jj describe` to write a commit message for `@` (present tense, lowercase first word, no trailing period).
-3. Push to GitHub with `jj git push --change` **only when** the user explicitly asked you to push or to create/update a PR. Do **not** push by default.
-4. Open or update a pull request **only when** one of the following is true:
-   - The user explicitly provided an issue to close (`Closes #N` in the PR body).
-   - The user explicitly asked you to create or update a PR.
-   - An existing PR is already associated with the change and the user asked for an update.
-   Otherwise, do **not** create a PR immediately. Notify the user via `dunstify`, report the result, and wait for feedback or an explicit request before opening a PR.
-
-> **Issue-driven PRs**: If the user hands you an issue (for example, by pasting an issue URL or saying "do #N"), treat it as explicit permission to push and create a PR that closes that issue. In that case, proceed through steps 2–4 directly without waiting for a separate "create PR" request.
-
-**Agents do step 2 themselves**: after finishing the work, the agent writes the commit message and reports the result. Pushing and PR creation only happen when the user explicitly requests them. Use `jj new` to start a fresh change on top of `@`, and `jj squash` / `jj amend` to consolidate work before pushing. Rebase onto `main` with `jj git fetch && jj rebase -r @ -d main` before pushing if `main` has moved.
-
-### Conventions
-
-- **Commit messages**: write in the present tense, lowercase first word, no trailing period. Match the style of recent history (`iroiro fix`, `chore: fmt`, `separate takusu-local`).
-- **Pushing**: use `jj git push --change` to push a single change as a reviewable branch (this is the default for PR work). Plain `jj git push` pushes all bookmarks; prefer `--change` for feature work.
-- **Branches**: this repo uses a single `main` bookmark; feature work happens in separate change-ids and is rebased onto `main` before push.
-- **Do not rewrite `main`**: never force-push or rebase `main` itself. Rebase your own changes onto `main` instead.
-- **Git compatibility**: `git` commands still work for read-only inspection (`git log`, `git diff`) since `.jj` backs onto `.git`. Prefer `jj` for anything that mutates history.
-- **Issue closing**: link issues to PRs using `Closes #N` lines in the PR body so GitHub auto-closes them on merge. Do **not** post "Fixed in #N" comments on the issues themselves.
+The critical rules are summarized in the [Agent Contract](#agent-contract). For
+the full workflow, command reference, and PR decision tree, see
+[`.devin/rules/pr-workflow.md`](./.devin/rules/pr-workflow.md).
 
 ## Agent Helpers
 
