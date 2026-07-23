@@ -194,6 +194,91 @@ async fn task_create_and_list() {
 }
 
 #[tokio::test]
+async fn task_create_rejects_reversed_datetimes() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let req = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "bad",
+            "start_at": "2026-06-05T18:00:00+09:00",
+            "end_at": "2026-06-05T09:00:00+09:00",
+            "avg_minutes": 30,
+            "depends": []
+        }),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn task_update_rejects_reversed_datetimes() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "original",
+            "end_at": "2026-06-05T18:00:00+09:00",
+            "avg_minutes": 30,
+            "depends": []
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let task_id = body["id"].as_str().unwrap();
+
+    let update = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{task_id}"),
+        json!({
+            "start_at": "2026-06-05T19:00:00+09:00"
+        }),
+    );
+    let res = app.oneshot(update).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn split_rejects_end_at_before_start_at() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "split-me",
+            "start_at": "2026-07-22T10:00:00+09:00",
+            "end_at": "2026-07-22T18:00:00+09:00",
+            "avg_minutes": 30,
+            "quantity_total": 10,
+            "quantity_done": 0
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let task: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let id = task["id"].as_str().unwrap();
+
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/tasks/{id}/split"),
+        json!({
+            "retained_quantity": 5,
+            "end_at": "2026-07-22T09:00:00+09:00"
+        }),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn task_get_update_delete() {
     let (state, _) = setup().await;
     let app = build_router(state);
