@@ -70,7 +70,7 @@ takusu/
 │   │       ├── model.rs      #   Shared types (TaskRow, HabitRow, ScheduleEntry, etc.)
 │   │       └── error.rs      #   StorageError enum
 │   ├── takusu-ical/          # iCalendar parser (pure, no HTTP dependency)
-│   │   └── src/lib.rs        #   parse_ical() → Vec<IcalTask>
+│   │   └── src/lib.rs        #   parse_ical(input, tz) → Result<Vec<IcalTask>, IcalError>
 │   ├── takusu-habit/         # Recurrence rule engine (RRULE expansion)
 │   │   └── src/lib.rs
 │   ├── takusu-audio/         # Audio processing (recording + STT backends + TTS trait)

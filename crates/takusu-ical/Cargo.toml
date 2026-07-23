@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 thiserror.workspace = true
 serde = { workspace = true, features = ["derive"] }
+jiff.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

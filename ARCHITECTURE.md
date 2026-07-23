@@ -379,16 +379,15 @@ do_sync():
 純粋 Rust の iCalendar パーサー。HTTP依存なし。
 
 ```
-parse_ical(input: &str) -> Result<Vec<IcalTask>>
+parse_ical(input: &str, tz: &jiff::tz::TimeZone) -> Result<Vec<IcalTask>, IcalError>
 
 入力: BEGIN:VCALENDAR ... VEVENT ... END:VCALENDAR
-出力: Vec<IcalTask { dtstart, dtend, summary, description, uid }>
+出力: Vec<IcalTask { title, start_at, end_at, description, uid }>
 ```
 
 - LINE FOLDING 対応 (RFC 5545 §3.1)
-- DTSTART/DTEND: UTC (`Z` サフィックス)、浮動時間、日付のみ (終日) に対応。
-  `TZID` パラメータは未対応（無視され、浮動時間として扱われる）
-- DURATION 未対応（DTEND 必須。DTEND のない VEVENT はスキップ）
+- DTSTART/DTEND: UTC (`Z` サフィックス)、明示的 UTC オフセット、浮動時間、日付のみ (終日)、`TZID` パラメータに対応。結果は UTC に正規化される。
+- `DURATION` も `DTEND` の代替として使用可能。日付のみで `DTEND`/`DURATION` がない場合は翌日終日として扱う。
 - UID 重複スキップ（インポート時）
 
 ## 9. 習慣生成 (takusu-habit)
