@@ -124,13 +124,36 @@ fn solve_sa_partial_with_seed(
     sa_lns_partial(planner, pinned, &mut StdRng::seed_from_u64(seed))
 }
 
+/// 並列 ALNS チェーンを使うタスク数の閾値。小規模問題では rayon の
+/// オーバーヘッドが並列化の利益を上回るため、単一チェーンで実行する。
+const PARALLEL_ALNS_MIN_TASKS: usize = 50;
+
 fn solve_priority_result(
     planner: &Planner,
     pinned: &[(Point, Point, usize)],
     override_seed: Option<u64>,
 ) -> DecodeResult {
-    let seed = base_seed(planner, override_seed);
-    alns_search_pinned(planner, pinned, &mut StdRng::seed_from_u64(seed))
+    let base = base_seed(planner, override_seed);
+
+    if planner.tasks.len() < PARALLEL_ALNS_MIN_TASKS {
+        return alns_search_pinned(planner, pinned, &mut StdRng::seed_from_u64(base));
+    }
+
+    let num_chains = rayon::current_num_threads().clamp(1, MAX_CHAINS);
+
+    (0..num_chains)
+        .into_par_iter()
+        .map(|i| alns_search_pinned(planner, pinned, &mut StdRng::seed_from_u64(base + i as u64)))
+        .max_by(|a, b| {
+            evaluate(planner, &a.plan, 0.0, 1.0)
+                .partial_cmp(&evaluate(planner, &b.plan, 0.0, 1.0))
+                .unwrap_or(Ordering::Equal)
+        })
+        .unwrap_or_else(|| DecodeResult {
+            plan: Plan { schedules: vec![] },
+            diagnostics: DecodeDiagnostics::default(),
+            status: DecodeStatus::Infeasible,
+        })
 }
 
 fn solve_priority(

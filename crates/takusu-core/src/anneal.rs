@@ -54,6 +54,7 @@ use evaluate::evaluate_with_scratch;
 
 struct TabuList {
     entries: VecDeque<(usize, i64, i64)>,
+    set: FxHashSet<(usize, i64, i64)>,
     capacity: usize,
 }
 
@@ -61,21 +62,24 @@ impl TabuList {
     fn new(capacity: usize) -> Self {
         Self {
             entries: VecDeque::new(),
+            set: FxHashSet::default(),
             capacity,
         }
     }
 
     fn push(&mut self, task_id: usize, start: Point, duration: i64) {
-        if self.entries.len() >= self.capacity {
-            self.entries.pop_front();
+        let key = (task_id, start.0, duration);
+        if self.entries.len() >= self.capacity
+            && let Some(old) = self.entries.pop_front()
+        {
+            self.set.remove(&old);
         }
-        self.entries.push_back((task_id, start.0, duration));
+        self.entries.push_back(key);
+        self.set.insert(key);
     }
 
     fn contains(&self, task_id: usize, start: Point, duration: i64) -> bool {
-        self.entries
-            .iter()
-            .any(|(id, s, d)| *id == task_id && *s == start.0 && *d == duration)
+        self.set.contains(&(task_id, start.0, duration))
     }
 }
 
@@ -384,7 +388,8 @@ impl Default for AlnsConfig {
                 DestroyOperator::Worst,
                 DestroyOperator::Related,
             ],
-            // 初期設定は軽量な repair のみ。Regret2/LowestDelta はオプション。
+            // 初期設定は軽量な repair のみ。Regret2/LowestDelta は decode が高コスト
+            // (O(n²) per placement) のためデフォルトでは無効。
             repair_operators: vec![
                 RepairOperator::Earliest,
                 RepairOperator::Deadline,
@@ -410,7 +415,7 @@ fn sa_polish(
     rng: &mut impl Rng,
     deadline: Option<Instant>,
 ) -> Plan {
-    sa_polish_inner(planner, plan, pinned_ids, rng, deadline, 10)
+    sa_polish_inner(planner, plan, pinned_ids, rng, deadline, 5)
 }
 
 fn sa_polish_inner(
@@ -439,7 +444,7 @@ fn sa_polish_inner(
     // full SA の T₀ (= total_avg * 0.1) より低い温度から始める。
     // 既に良い解からの改善なので、大きな跳躍は不要。
     let t0 = (total_avg as f64 * 0.02).max(1.0);
-    let alpha = 0.90;
+    let alpha = 0.85;
     let t_min = t0 * 1e-3;
     let has_pinned = !pinned_ids.is_empty();
     let movable_count = if has_pinned {
@@ -856,13 +861,14 @@ pub(crate) fn destroy_priority(
     }
     let count = count.min(movable.len());
 
-    let scheduled = |id: usize| -> (Point, Point) {
-        plan.schedules
-            .iter()
-            .find(|(_, _, sid)| *sid == id)
-            .map(|(s, e, _)| (*s, *e))
-            .unwrap_or((Point(0), Point(0)))
-    };
+    let n = planner.tasks.len();
+    let mut pos_index: Vec<Option<(Point, Point)>> = vec![None; n];
+    for (s, e, id) in &plan.schedules {
+        if *id < n {
+            pos_index[*id] = Some((*s, *e));
+        }
+    }
+    let scheduled = |id: usize| -> (Point, Point) { pos_index[id].unwrap_or((Point(0), Point(0))) };
 
     match op {
         DestroyOperator::Random => {
@@ -1003,22 +1009,33 @@ pub(crate) fn repair_priority(
         return result;
     }
 
+    let n = planner.tasks.len();
+    let mut pos_index: Vec<usize> = vec![usize::MAX; n];
+    for (i, &id) in result.iter().enumerate() {
+        pos_index[id] = i;
+    }
+
     for id in remaining {
-        let pos = earliest_valid_position(planner, &result, id);
+        let mut max_dep_pos: Option<usize> = None;
+        for &dep in &planner.tasks[id].depends {
+            if dep < n {
+                let pos = pos_index[dep];
+                if pos == usize::MAX {
+                    max_dep_pos = Some(result.len());
+                    break;
+                }
+                max_dep_pos = Some(max_dep_pos.map_or(pos, |m| m.max(pos)));
+            }
+        }
+        let pos = max_dep_pos.map_or(0, |p| p + 1).min(result.len());
+
+        for i in pos..result.len() {
+            pos_index[result[i]] += 1;
+        }
         result.insert(pos, id);
+        pos_index[id] = pos;
     }
     result
-}
-
-fn earliest_valid_position(planner: &Planner, priority: &[usize], id: usize) -> usize {
-    let mut max_dep_pos: Option<usize> = None;
-    for &dep in &planner.tasks[id].depends {
-        match priority.iter().position(|&x| x == dep) {
-            Some(pos) => max_dep_pos = Some(max_dep_pos.map_or(pos, |m| m.max(pos))),
-            None => return priority.len(),
-        }
-    }
-    max_dep_pos.map_or(0, |p| p + 1)
 }
 
 fn repair_mode_for(op: RepairOperator) -> RepairMode {
