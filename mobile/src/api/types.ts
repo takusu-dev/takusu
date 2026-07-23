@@ -208,6 +208,40 @@ export interface HabitDetail extends HabitRow {
   steps: HabitStepRow[];
 }
 
+// Habit estimate from completed task actuals (#919).
+export interface HabitEstimateRequest {
+  detect_outliers?: boolean;
+  apply?: boolean;
+}
+
+export interface HabitEstimateSample {
+  task_id: string;
+  title: string;
+  actual_minutes: number;
+  excluded: boolean;
+}
+
+export interface HabitEstimateStep {
+  step_id: string;
+  title: string;
+  avg_minutes: number;
+  sigma_minutes: number;
+  sample_count: number;
+  excluded_count: number;
+  applied: boolean;
+}
+
+export interface HabitEstimateResult {
+  avg_minutes: number;
+  sigma_minutes: number;
+  sample_count: number;
+  excluded_count: number;
+  samples: HabitEstimateSample[];
+  steps: HabitEstimateStep[];
+  applied: boolean;
+  habit?: HabitRow;
+}
+
 export interface ScheduleEntry {
   task_id: string;
   start_at: string;

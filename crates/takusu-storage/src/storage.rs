@@ -67,6 +67,23 @@ pub trait Storage: Send + Sync + 'static {
         steps: &[HabitStepInput],
     ) -> StorageResult<Vec<HabitStepRow>>;
 
+    /// Apply a habit estimate atomically: update the habit's avg/sigma and
+    /// update only the estimate fields of the given steps. Steps not listed
+    /// are left untouched. Backends that cannot provide atomic updates should
+    /// implement this as a best-effort sequence of updates.
+    async fn apply_habit_estimate(
+        &self,
+        habit_id: &str,
+        avg_minutes: i64,
+        sigma_minutes: i64,
+        step_estimates: &[HabitStepEstimateInput],
+    ) -> StorageResult<()> {
+        let _ = (habit_id, avg_minutes, sigma_minutes, step_estimates);
+        Err(StorageError::Internal(
+            "apply_habit_estimate not implemented".into(),
+        ))
+    }
+
     async fn get_schedule(&self) -> StorageResult<Option<ScheduleRow>>;
     async fn save_schedule(&self, req: &SaveScheduleRequest) -> StorageResult<ScheduleRow>;
     async fn clear_schedule(&self) -> StorageResult<()>;

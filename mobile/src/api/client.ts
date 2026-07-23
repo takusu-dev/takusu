@@ -5,6 +5,8 @@ import type {
   TaskQuery,
   HabitRow,
   HabitDetail,
+  HabitEstimateRequest,
+  HabitEstimateResult,
   CreateHabit,
   UpdateHabit,
   HabitScheduledSpanRow,
@@ -199,6 +201,17 @@ export class TakusuClient {
 
   async getHabit(id: string): Promise<HabitDetail> {
     return this.request('GET', `/api/habits/${encodeURIComponent(id)}`);
+  }
+
+  async estimateHabit(
+    id: string,
+    body: HabitEstimateRequest,
+  ): Promise<HabitEstimateResult> {
+    return this.request(
+      'POST',
+      `/api/habits/${encodeURIComponent(id)}/estimate`,
+      body,
+    );
   }
 
   async createHabit(body: CreateHabit): Promise<HabitRow> {

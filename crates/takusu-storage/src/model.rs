@@ -329,6 +329,26 @@ pub struct HabitStepInput {
     pub depends_on: Vec<String>,
 }
 
+/// Step estimate update element for `Storage::apply_habit_estimate` (#919).
+/// Only the estimate fields are updated; the step row is otherwise left
+/// untouched.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitStepEstimateInput {
+    pub step_id: String,
+    pub avg_minutes: i64,
+    pub sigma_minutes: i64,
+}
+
+/// Request body for the backend-specific apply-habit-estimate call (#919).
+/// `TakusuApp` computes estimates locally and asks the storage backend to
+/// persist the habit and step values in one batch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplyHabitEstimateRequest {
+    pub avg_minutes: i64,
+    pub sigma_minutes: i64,
+    pub steps: Vec<HabitStepEstimateInput>,
+}
+
 /// Habit detail response: the habit row plus its steps (#95). Used by
 /// `GET /api/habits/:id` so clients receive steps in one round-trip.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -666,6 +686,60 @@ pub struct SplitTask {
 pub struct SplitResult {
     pub original: TaskRow,
     pub remainder: TaskRow,
+}
+
+// ── Habit estimation from completed task actuals (#919) ────────────────────
+
+/// Request body for `POST /api/habits/{id}/estimate`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct HabitEstimateRequest {
+    /// When true, detect and exclude outliers using the median absolute
+    /// deviation (MAD) before computing the estimate.
+    #[serde(default)]
+    pub detect_outliers: bool,
+    /// When true, persist the computed `avg_minutes` / `sigma_minutes` to the
+    /// habit (and its steps). When false, return a preview only.
+    #[serde(default)]
+    pub apply: bool,
+}
+
+/// One completed task observation included in a habit estimate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitEstimateSample {
+    pub task_id: String,
+    pub title: String,
+    pub actual_minutes: i64,
+    pub excluded: bool,
+}
+
+/// Estimate result for a single habit step.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitEstimateStep {
+    pub step_id: String,
+    pub title: String,
+    pub avg_minutes: i64,
+    pub sigma_minutes: i64,
+    pub sample_count: usize,
+    pub excluded_count: usize,
+    pub applied: bool,
+}
+
+/// Response from `POST /api/habits/{id}/estimate`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HabitEstimateResult {
+    pub avg_minutes: i64,
+    pub sigma_minutes: i64,
+    pub sample_count: usize,
+    pub excluded_count: usize,
+    /// Task-level samples for non-step habits. Empty for step-based habits.
+    pub samples: Vec<HabitEstimateSample>,
+    /// Per-step estimates for step-based habits.
+    pub steps: Vec<HabitEstimateStep>,
+    /// True when the result was written back to the habit/steps.
+    pub applied: bool,
+    /// The updated habit row, present only when `apply` was true.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub habit: Option<HabitRow>,
 }
 
 #[cfg(test)]

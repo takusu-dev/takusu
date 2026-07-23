@@ -61,6 +61,10 @@ pub fn router(state: AppState) -> Router {
         .route("/habits/{id}", patch(handlers::habit::update_habit))
         .route("/habits/{id}", delete(handlers::habit::delete_habit))
         .route(
+            "/habits/{id}/estimate",
+            post(handlers::habit::estimate_habit),
+        )
+        .route(
             "/habits/{id}/scheduled-spans",
             get(handlers::habit::list_habit_scheduled_spans),
         )

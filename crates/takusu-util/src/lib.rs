@@ -74,8 +74,8 @@ pub fn parse_fixed_offset_timezone(s: &str) -> Option<jiff::tz::TimeZone> {
     Some(jiff::tz::TimeZone::fixed(offset))
 }
 
-const MIN_ESTIMATE_MINUTES: f64 = 5.0;
-const MAX_ESTIMATE_MINUTES: f64 = 24.0 * 60.0;
+pub const MIN_ESTIMATE_MINUTES: f64 = 5.0;
+pub const MAX_ESTIMATE_MINUTES: f64 = 24.0 * 60.0;
 
 /// Compute an updated `(avg_minutes, sigma_minutes)` estimate from a new
 /// progress observation and a history of prior observations.
@@ -128,6 +128,123 @@ pub fn estimate_progress(
         .clamp(MIN_ESTIMATE_MINUTES, MAX_ESTIMATE_MINUTES);
     let new_sigma = stddev.round() as i64;
     (new_avg, new_sigma.max(1))
+}
+
+/// Median of a sorted slice of `f64` values.
+fn median_sorted(sorted: &[f64]) -> f64 {
+    let n = sorted.len();
+    if n == 0 {
+        return 0.0;
+    }
+    if n % 2 == 1 {
+        sorted[n / 2]
+    } else {
+        (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
+    }
+}
+
+/// Detect outlier indices in `samples` using the median absolute deviation
+/// (MAD). Values whose distance from the median exceeds `3 * MAD` are
+/// considered outliers. When the MAD is zero (many identical values), the
+/// median itself is used as a scale to avoid missing a clear outlier.
+pub fn detect_outlier_indices(samples: &[i64]) -> Vec<usize> {
+    if samples.len() < 3 {
+        return Vec::new();
+    }
+    let mut values: Vec<f64> = samples.iter().map(|&x| x as f64).collect();
+    values.sort_by(|a, b| a.total_cmp(b));
+    let median = median_sorted(&values);
+
+    let mut deviations: Vec<f64> = values.iter().map(|v| (v - median).abs()).collect();
+    deviations.sort_by(|a, b| a.total_cmp(b));
+    let mad = median_sorted(&deviations);
+
+    // If every value has the same deviation (typically because most values are
+    // identical), fall back to the median as a scale so that a value several
+    // times larger is still flagged.
+    let scale = if mad > 0.0 { mad } else { median };
+    let threshold = 3.0 * scale;
+
+    samples
+        .iter()
+        .enumerate()
+        .filter(|&(_, x)| (*x as f64 - median).abs() > threshold)
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Estimate an `(avg_minutes, sigma_minutes)` pair from a collection of
+/// observed durations in minutes, optionally excluding outliers detected by
+/// `detect_outlier_indices`.
+///
+/// Returns `(0, 0)` for an empty slice. With a single sample the sigma is
+/// `0`. Otherwise the sample standard deviation is computed and clamped to
+/// the same `[MIN_ESTIMATE_MINUTES, MAX_ESTIMATE_MINUTES]` range as the
+/// average. Sigma is therefore at least `MIN_ESTIMATE_MINUTES` (5 minutes)
+/// when two or more samples exist.
+///
+/// Also returns the indices of any excluded outliers.
+pub fn estimate_from_samples_with_outliers(
+    samples: &[i64],
+    exclude_outliers: bool,
+) -> (i64, i64, Vec<usize>) {
+    let excluded = if exclude_outliers {
+        detect_outlier_indices(samples)
+    } else {
+        Vec::new()
+    };
+    let excluded_set: std::collections::HashSet<usize> = excluded.iter().copied().collect();
+    let used: Vec<i64> = samples
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !excluded_set.contains(i))
+        .map(|(_, &x)| x)
+        .collect();
+
+    let (avg, sigma) = estimate_from_samples_internal(&used);
+    (avg, sigma, excluded)
+}
+
+fn estimate_from_samples_internal(samples: &[i64]) -> (i64, i64) {
+    if samples.is_empty() {
+        return (0, 0);
+    }
+    if samples.len() == 1 {
+        let avg = (samples[0] as f64)
+            .clamp(MIN_ESTIMATE_MINUTES, MAX_ESTIMATE_MINUTES)
+            .round() as i64;
+        return (avg, 0);
+    }
+
+    // Use f64 accumulation to avoid i64 overflow with very large samples.
+    let mean = samples.iter().map(|&x| x as f64).sum::<f64>() / samples.len() as f64;
+    let variance = samples
+        .iter()
+        .map(|&x| {
+            let diff = x as f64 - mean;
+            diff * diff
+        })
+        .sum::<f64>()
+        / (samples.len() - 1) as f64;
+    let stddev = variance.sqrt();
+
+    let avg = mean
+        .clamp(MIN_ESTIMATE_MINUTES, MAX_ESTIMATE_MINUTES)
+        .round() as i64;
+    let sigma = stddev
+        .clamp(MIN_ESTIMATE_MINUTES, MAX_ESTIMATE_MINUTES)
+        .round() as i64;
+    (avg, sigma)
+}
+
+/// Estimate an `(avg_minutes, sigma_minutes)` pair from a collection of
+/// observed durations in minutes.
+///
+/// Equivalent to `estimate_from_samples_with_outliers(samples, false)`
+/// without returning outlier indices.
+pub fn estimate_from_samples(samples: &[i64]) -> (i64, i64) {
+    let (avg, sigma, _) = estimate_from_samples_with_outliers(samples, false);
+    (avg, sigma)
 }
 
 pub fn parse_duration(s: &str) -> Result<i64, String> {
@@ -752,5 +869,69 @@ mod tests {
         let tz = jiff::tz::TimeZone::UTC;
         assert!(parse_date_expression("hello", &tz, false).is_err());
         assert!(parse_date_expression("", &tz, false).is_err());
+    }
+
+    // ── estimate_from_samples ───────────────────────────────────────────
+
+    #[test]
+    fn estimate_from_samples_empty() {
+        assert_eq!(estimate_from_samples(&[]), (0, 0));
+    }
+
+    #[test]
+    fn estimate_from_samples_single() {
+        assert_eq!(estimate_from_samples(&[42]), (42, 0));
+    }
+
+    #[test]
+    fn estimate_from_samples_two() {
+        let (avg, sigma) = estimate_from_samples(&[40, 60]);
+        assert_eq!(avg, 50);
+        assert_eq!(sigma, 14); // sample stddev of 40,60 is ~14.14
+    }
+
+    #[test]
+    fn estimate_from_samples_clamps_avg() {
+        assert_eq!(estimate_from_samples(&[99999]).0, 24 * 60);
+        assert_eq!(estimate_from_samples(&[-10]).0, 5);
+    }
+
+    #[test]
+    fn estimate_from_samples_sigma_minimum_clamp() {
+        // Identical samples have stddev 0; clamped to 5 minutes (1 slot).
+        let (_, sigma) = estimate_from_samples(&[10, 10]);
+        assert_eq!(sigma, 5);
+    }
+
+    #[test]
+    fn detect_outlier_indices_finds_clear_outlier() {
+        let samples = &[30, 32, 31, 29, 28, 120];
+        let outliers = detect_outlier_indices(samples);
+        assert_eq!(outliers, vec![5]);
+
+        let short = &[30, 32, 31, 210];
+        let outliers_short = detect_outlier_indices(short);
+        assert_eq!(outliers_short, vec![3]);
+    }
+
+    #[test]
+    fn detect_outlier_indices_ignores_small_samples() {
+        assert!(detect_outlier_indices(&[10, 100]).is_empty());
+        assert!(detect_outlier_indices(&[100]).is_empty());
+    }
+
+    #[test]
+    fn estimate_from_samples_with_outliers_excludes_and_returns_indices() {
+        let samples = &[30, 32, 31, 29, 28, 120];
+        let (avg, sigma, excluded) = estimate_from_samples_with_outliers(samples, true);
+        assert_eq!(excluded, vec![5]);
+        assert_eq!(avg, 30); // mean of 28..32, rounded
+        assert_eq!(sigma, 5); // stddev clamped to MIN_ESTIMATE_MINUTES
+
+        let (avg2, sigma2, excluded2) = estimate_from_samples_with_outliers(samples, false);
+        assert!(excluded2.is_empty());
+        // With outlier included, avg and sigma are much larger.
+        assert!(avg2 > avg);
+        assert!(sigma2 > sigma);
     }
 }

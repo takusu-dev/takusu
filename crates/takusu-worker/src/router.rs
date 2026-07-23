@@ -145,6 +145,9 @@ async fn dispatch(req: Request, env: Env) -> Result<Response, crate::error::Work
         (Method::Put, ["habits", id, "steps"]) => {
             handlers::habits::replace_steps(req, env, id).await
         }
+        (Method::Post, ["habits", id, "estimate"]) => {
+            handlers::habits::apply_estimate(req, env, id).await
+        }
         (Method::Get, ["schedule"]) => handlers::schedule::get(req, env).await,
         (Method::Post, ["schedule", "save"]) => handlers::schedule::save(req, env).await,
         (Method::Delete, ["schedule"]) => handlers::schedule::clear(req, env).await,

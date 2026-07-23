@@ -7,8 +7,8 @@ use crate::handlers::auth::db;
 use crate::handlers::d1::safe_all;
 use crate::handlers::tokens::{json_created, json_ok, parse_json};
 use crate::models::{
-    CreateHabit, CreateHabitScheduledSpan, HabitDetail, HabitRow, HabitScheduledSpanRow,
-    HabitStepInput, HabitStepRow, UpdateHabit,
+    ApplyHabitEstimateRequest, CreateHabit, CreateHabitScheduledSpan, HabitDetail, HabitRow,
+    HabitScheduledSpanRow, HabitStepInput, HabitStepRow, UpdateHabit,
 };
 use crate::validate::{
     validate_minutes, validate_recurrence, validate_scheduled_span_dates, validate_steps,
@@ -547,6 +547,50 @@ pub async fn replace_steps(
 
     let rows = select_steps_for_habit(&database, &full).await?;
     json_ok(&rows)
+}
+
+pub async fn apply_estimate(
+    mut req: worker::Request,
+    env: Env,
+    id: &str,
+) -> Result<Response, WorkerError> {
+    let body: ApplyHabitEstimateRequest = parse_json(&mut req).await?;
+    validate_minutes(body.avg_minutes, Some(body.sigma_minutes))?;
+
+    let database = db(&env)?;
+    let full = resolve_habit_id(&database, id).await?;
+
+    let habit = select_one(&database, &full).await?;
+    if habit.fixed {
+        return Err(WorkerError::BadRequest(
+            "cannot apply estimate to fixed habit".into(),
+        ));
+    }
+
+    let mut stmts: Vec<worker::D1PreparedStatement> = Vec::new();
+    for step in &body.steps {
+        // Only update non-fixed steps; fixed steps are intentionally preserved.
+        let stmt = database.prepare(
+            "UPDATE habit_steps SET avg_minutes = ?1, sigma_minutes = ?2 WHERE id = ?3 AND habit_id = ?4 AND fixed = 0",
+        );
+        stmts.push(stmt.bind(&[
+            JsValue::from_f64(step.avg_minutes as f64),
+            JsValue::from_f64(step.sigma_minutes as f64),
+            JsValue::from_str(&step.step_id),
+            JsValue::from_str(&full),
+        ])?);
+    }
+
+    let habit_stmt =
+        database.prepare("UPDATE habits SET avg_minutes = ?1, sigma_minutes = ?2 WHERE id = ?3");
+    stmts.push(habit_stmt.bind(&[
+        JsValue::from_f64(body.avg_minutes as f64),
+        JsValue::from_f64(body.sigma_minutes as f64),
+        JsValue::from_str(&full),
+    ])?);
+
+    database.batch(stmts).await.map_err(WorkerError::Worker)?;
+    Ok(Response::empty()?)
 }
 
 #[derive(serde::Deserialize)]

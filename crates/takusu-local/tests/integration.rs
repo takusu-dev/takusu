@@ -3814,3 +3814,343 @@ async fn update_task_completed_at_follows_status() {
     assert_eq!(pending["status"], "pending");
     assert!(pending["completed_at"].is_null());
 }
+
+#[tokio::test]
+async fn estimate_habit_from_completed_task_actuals() {
+    let (state, pool) = setup().await;
+    let app = build_router(state);
+
+    sqlx::query(
+        "INSERT INTO habits (id, title, recurrence, start_time, end_time, avg_minutes, sigma_minutes, fixed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("habit-1")
+    .bind("Morning run")
+    .bind(r#"{"rrule":"FREQ=DAILY"}"#)
+    .bind("07:00")
+    .bind("08:00")
+    .bind(60i64)
+    .bind(10i64)
+    .bind(false)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, status, habit_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("task-1")
+    .bind("Morning run instance")
+    .bind("2026-07-22T08:00:00Z")
+    .bind(60i64)
+    .bind(10i64)
+    .bind("completed")
+    .bind("habit-1")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO task_work_sessions (id, task_id, started_at, ended_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind("ws-1")
+    .bind("task-1")
+    .bind("2026-07-22T07:00:00Z")
+    .bind("2026-07-22T07:50:00Z")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = auth_req_body(
+        Method::POST,
+        "/api/habits/habit-1/estimate",
+        json!({ "apply": true }),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let result: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(result["sample_count"], 1);
+    assert_eq!(result["avg_minutes"], 50);
+    assert_eq!(result["sigma_minutes"], 0);
+    assert!(result["steps"].as_array().unwrap().is_empty());
+    assert!(result["applied"].as_bool().unwrap());
+    assert!(result["habit"].is_object());
+    assert_eq!(result["habit"]["avg_minutes"], 50);
+}
+
+#[tokio::test]
+async fn estimate_habit_detects_outliers_when_enabled() {
+    let (state, pool) = setup().await;
+    let app = build_router(state);
+
+    sqlx::query(
+        "INSERT INTO habits (id, title, recurrence, start_time, end_time, avg_minutes, sigma_minutes, fixed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("habit-2")
+    .bind("Reading")
+    .bind(r#"{"freq":"Daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"exdates":[]}"#)
+    .bind("20:00")
+    .bind("21:00")
+    .bind(60i64)
+    .bind(10i64)
+    .bind(false)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    for (task, started, ended) in [
+        ("task-a", "2026-07-20T20:00:00Z", "2026-07-20T20:30:00Z"),
+        ("task-b", "2026-07-21T20:00:00Z", "2026-07-21T20:30:00Z"),
+        ("task-c", "2026-07-22T20:00:00Z", "2026-07-22T20:30:00Z"),
+        ("task-d", "2026-07-23T20:00:00Z", "2026-07-23T23:30:00Z"),
+    ] {
+        sqlx::query(
+            "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, status, habit_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(task)
+        .bind(task)
+        .bind("2026-07-22T08:00:00Z")
+        .bind(60i64)
+        .bind(10i64)
+        .bind("completed")
+        .bind("habit-2")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO task_work_sessions (id, task_id, started_at, ended_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(format!("ws-{}", task))
+        .bind(task)
+        .bind(started)
+        .bind(ended)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let req = auth_req_body(
+        Method::POST,
+        "/api/habits/habit-2/estimate",
+        json!({ "detect_outliers": true, "apply": false }),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let result: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(result["sample_count"], 4);
+    assert_eq!(result["excluded_count"], 1);
+    // 210 is the outlier; remaining three are 30 minutes each
+    assert_eq!(result["avg_minutes"], 30);
+    assert!(!result["applied"].as_bool().unwrap());
+}
+
+#[tokio::test]
+async fn estimate_habit_updates_per_step_estimates() {
+    let (state, pool) = setup().await;
+    let app = build_router(state);
+
+    sqlx::query(
+        "INSERT INTO habits (id, title, recurrence, start_time, end_time, avg_minutes, sigma_minutes, fixed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("habit-4")
+    .bind("Evening routine")
+    .bind(r#"{"freq":"Daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"exdates":[]}"#)
+    .bind("20:00")
+    .bind("21:00")
+    .bind(60i64)
+    .bind(10i64)
+    .bind(false)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO habit_steps (id, habit_id, position, title, start_time, end_time, avg_minutes, sigma_minutes, depends_on, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("step-1")
+    .bind("habit-4")
+    .bind(0i64)
+    .bind("Stretch")
+    .bind("20:00")
+    .bind("20:10")
+    .bind(10i64)
+    .bind(2i64)
+    .bind("[]")
+    .bind("2026-07-22T00:00:00Z")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, status, habit_id, habit_step_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("task-step-1")
+    .bind("Stretch")
+    .bind("2026-07-22T08:00:00Z")
+    .bind(10i64)
+    .bind(2i64)
+    .bind("completed")
+    .bind("habit-4")
+    .bind("step-1")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO task_work_sessions (id, task_id, started_at, ended_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind("ws-step-1")
+    .bind("task-step-1")
+    .bind("2026-07-22T20:00:00Z")
+    .bind("2026-07-22T20:15:00Z")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = auth_req_body(
+        Method::POST,
+        "/api/habits/habit-4/estimate",
+        json!({ "apply": true }),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let result: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(result["steps"].as_array().unwrap().len(), 1);
+    assert_eq!(result["steps"][0]["avg_minutes"], 15);
+    assert!(result["steps"][0]["applied"].as_bool().unwrap());
+    assert_eq!(result["avg_minutes"], 15);
+    assert_eq!(result["habit"]["avg_minutes"], 15);
+
+    // Verify the habit_steps row was actually updated.
+    let updated: (i64, i64) =
+        sqlx::query_as("SELECT avg_minutes, sigma_minutes FROM habit_steps WHERE id = ?")
+            .bind("step-1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(updated.0, 15);
+}
+
+#[tokio::test]
+async fn estimate_habit_preserves_fixed_step() {
+    let (state, pool) = setup().await;
+    let app = build_router(state);
+
+    sqlx::query(
+        "INSERT INTO habits (id, title, recurrence, start_time, end_time, avg_minutes, sigma_minutes, fixed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("habit-5")
+    .bind("Evening routine")
+    .bind(r#"{"freq":"Daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"exdates":[]}"#)
+    .bind("20:00")
+    .bind("21:00")
+    .bind(60i64)
+    .bind(10i64)
+    .bind(false)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    for (step_id, position, title, fixed) in [
+        ("step-a", 0i64, "Stretch", false),
+        ("step-b", 1i64, "Cooldown", true),
+    ] {
+        sqlx::query(
+            "INSERT INTO habit_steps (id, habit_id, position, title, start_time, end_time, avg_minutes, sigma_minutes, fixed, depends_on, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(step_id)
+        .bind("habit-5")
+        .bind(position)
+        .bind(title)
+        .bind("20:00")
+        .bind("20:10")
+        .bind(10i64)
+        .bind(2i64)
+        .bind(fixed)
+        .bind("[]")
+        .bind("2026-07-22T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, status, habit_id, habit_step_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("task-step-a")
+    .bind("Stretch")
+    .bind("2026-07-22T08:00:00Z")
+    .bind(10i64)
+    .bind(2i64)
+    .bind("completed")
+    .bind("habit-5")
+    .bind("step-a")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO task_work_sessions (id, task_id, started_at, ended_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind("ws-step-a")
+    .bind("task-step-a")
+    .bind("2026-07-22T20:00:00Z")
+    .bind("2026-07-22T20:15:00Z")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = auth_req_body(
+        Method::POST,
+        "/api/habits/habit-5/estimate",
+        json!({ "apply": true }),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let result: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(result["steps"].as_array().unwrap().len(), 2);
+    // The fixed step's avg should still be present and unchanged.
+    let fixed = result["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["step_id"] == "step-b")
+        .unwrap();
+    assert_eq!(fixed["avg_minutes"], 10);
+    assert!(!fixed["applied"].as_bool().unwrap());
+
+    // Verify the fixed row was not deleted.
+    let fixed_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM habit_steps WHERE id = ? AND habit_id = ?")
+            .bind("step-b")
+            .bind("habit-5")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(fixed_count, 1);
+}
+
+#[tokio::test]
+async fn estimate_habit_rejects_fixed_habit() {
+    let (state, pool) = setup().await;
+    let app = build_router(state);
+
+    sqlx::query(
+        "INSERT INTO habits (id, title, recurrence, start_time, end_time, avg_minutes, sigma_minutes, fixed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("habit-3")
+    .bind("Fixed lunch")
+    .bind(r#"{"freq":"Daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"exdates":[]}"#)
+    .bind("12:00")
+    .bind("13:00")
+    .bind(60i64)
+    .bind(0i64)
+    .bind(true)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = auth_req_body(Method::POST, "/api/habits/habit-3/estimate", json!({}));
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}

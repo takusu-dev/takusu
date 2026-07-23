@@ -37,6 +37,7 @@ import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RruleBuilderModal } from '@/src/components/RruleBuilderModal';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
+import { HabitEstimateModal } from '@/src/components/HabitEstimateModal';
 import { HabitStepEditor } from '@/src/components/HabitStepEditor';
 import { RedundantDepWarning } from '@/src/components/RedundantDepWarning';
 import { parseRule, summarizeRule } from '@/src/api/rrule';
@@ -82,6 +83,7 @@ export function HabitDetailView() {
     RedundantDependency[]
   >([]);
   const [simpleInfoExpanded, setSimpleInfoExpanded] = useState(false);
+  const [showEstimateModal, setShowEstimateModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
   const [pickerField, setPickerField] = useState<'start' | 'end' | null>(null);
@@ -1130,14 +1132,42 @@ export function HabitDetailView() {
                   </View>
                 </View>
               ) : (
-                <Text style={[styles.value, { color: colors.black }]}>
-                  avg: {habit.avg_minutes}m, sigma:{' '}
-                  {habit.sigma_minutes > 0 ? (
-                    `${habit.sigma_minutes}m`
-                  ) : (
-                    <Text style={{ color: colors.grayLight }}>0m</Text>
+                <>
+                  <Text style={[styles.value, { color: colors.black }]}>
+                    avg: {habit.avg_minutes}m, sigma:{' '}
+                    {habit.sigma_minutes > 0 ? (
+                      `${habit.sigma_minutes}m`
+                    ) : (
+                      <Text style={{ color: colors.grayLight }}>0m</Text>
+                    )}
+                  </Text>
+                  {!habit.fixed && (
+                    <Pressable
+                      style={[
+                        styles.estimateButton,
+                        { backgroundColor: colors.surfaceTint },
+                      ]}
+                      onPress={() => {
+                        haptic.light();
+                        setShowEstimateModal(true);
+                      }}
+                    >
+                      <Ionicons
+                        name="calculator-outline"
+                        size={16}
+                        color={BRAND_COLOR}
+                      />
+                      <Text
+                        style={[
+                          styles.estimateButtonText,
+                          { color: BRAND_COLOR },
+                        ]}
+                      >
+                        実績から見積もり
+                      </Text>
+                    </Pressable>
                   )}
-                </Text>
+                </>
               )}
             </View>
 
@@ -1427,6 +1457,18 @@ export function HabitDetailView() {
         onCancel={() => setShowRruleBuilder(false)}
       />
 
+      {habit && client && (
+        <HabitEstimateModal
+          visible={showEstimateModal}
+          habitId={habit.id}
+          client={client}
+          onClose={() => setShowEstimateModal(false)}
+          onApplied={async () => {
+            await refresh();
+          }}
+        />
+      )}
+
       <DateTimePickerModal
         visible={pickerField !== null}
         mode="time"
@@ -1614,6 +1656,20 @@ const styles = StyleSheet.create({
   },
   value: {
     fontSize: 16,
+  },
+  estimateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  estimateButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   descriptionInput: {
     minHeight: 80,
