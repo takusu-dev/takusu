@@ -21,7 +21,6 @@ use tokio::sync::RwLock;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::oneshot;
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use uuid::Uuid;
 
 use crate::{
     AgentConfig, AgentError, AgentSession, ApprovalRequest, ApprovalResult, ToolError, TurnEvent,
@@ -484,7 +483,7 @@ async fn create_session(
     }
     let config = state.config.read().await;
     let session = match state.factory.create(&config, state.token.clone()) {
-        Ok(session) => Arc::new(session),
+        Ok(session) => session,
         Err(error) => return agent_error(error),
     };
     if let Some(Json(body)) = body
@@ -492,7 +491,8 @@ async fn create_session(
     {
         session.set_session_permissions(permissions);
     }
-    let id = format!("session-{}", Uuid::now_v7());
+    let id = session.session_id().to_string();
+    let session = Arc::new(session);
     let mut sessions = match state.sessions.lock() {
         Ok(guard) => guard,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -836,6 +836,14 @@ async fn resolve_user_input(
     if state.session(&id).is_none() {
         return StatusCode::NOT_FOUND.into_response();
     }
+    // Tool-call ids for user input are prefixed with the originating session id.
+    // Reject any call_id that does not originate from this session.
+    let Some(rest) = call_id.strip_prefix(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !rest.starts_with('-') {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     if let Err(error) = state
         .user_input_provider
         .resolve(&call_id, body.value.answers)
@@ -915,6 +923,7 @@ mod tests {
     use tokio::sync::RwLock;
 
     use super::*;
+    use crate::ToolRegistry;
 
     struct StubFactory;
 
@@ -1008,6 +1017,105 @@ mod tests {
             )
             .await;
         assert!(matches!(result, Err(ToolError::Cancelled)));
+    }
+
+    struct NullLlm;
+
+    #[async_trait::async_trait]
+    impl crate::llm::LlmClient for NullLlm {
+        async fn chat(
+            &self,
+            _messages: &[crate::llm::Message],
+            _tools: &[serde_json::Value],
+        ) -> Result<crate::llm::LlmResponse, crate::llm::LlmError> {
+            Ok(crate::llm::LlmResponse {
+                content: crate::llm::LlmResponseContent::Text("ok".into()),
+                prompt_tokens: None,
+                finish_reason: Some(crate::llm::FinishReason::Stop),
+            })
+        }
+    }
+
+    fn make_session_state(token: &str) -> (Arc<AgentApiState>, Arc<ApiUserInputProvider>, String) {
+        let session = AgentSession::new(AgentConfig::default(), ToolRegistry::new(), NullLlm);
+        let id = session.session_id().to_string();
+        let provider = Arc::new(ApiUserInputProvider::new());
+        let state_provider: Arc<dyn UserInputProvider> =
+            Arc::<ApiUserInputProvider>::clone(&provider);
+        let state = Arc::new(AgentApiState::new(
+            token,
+            Arc::new(StubFactory),
+            state_provider,
+            AgentConfig::default(),
+        ));
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert(id.clone(), Arc::new(session));
+        (state, provider, id)
+    }
+
+    #[tokio::test]
+    async fn resolve_user_input_accepts_same_session_call_id() {
+        let (state, provider, id) = make_session_state("test-token");
+        let call_id = format!("{}-{}", id, uuid::Uuid::now_v7());
+        let (tx, rx) = oneshot::channel();
+        provider
+            .resolvers
+            .lock()
+            .unwrap()
+            .insert(call_id.clone(), tx);
+
+        let body = Versioned {
+            version: API_VERSION,
+            value: UserInputResolutionRequest {
+                answers: vec![UserInputAnswer {
+                    text: "これ".into(),
+                }],
+            },
+        };
+        let res = resolve_user_input(
+            State(state),
+            Path((id, call_id)),
+            auth_headers("test-token"),
+            Json(body),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let answers = rx.await.expect("resolver received answers");
+        assert_eq!(answers[0].text, "これ");
+    }
+
+    #[tokio::test]
+    async fn resolve_user_input_rejects_other_session_call_id() {
+        let (state, provider, id) = make_session_state("test-token");
+        let other_call_id = "some-other-session-id-tool-call";
+        let (tx, rx) = oneshot::channel();
+        provider
+            .resolvers
+            .lock()
+            .unwrap()
+            .insert(other_call_id.to_string(), tx);
+        drop(rx);
+
+        let body = Versioned {
+            version: API_VERSION,
+            value: UserInputResolutionRequest {
+                answers: vec![UserInputAnswer {
+                    text: "これ".into(),
+                }],
+            },
+        };
+        let res = resolve_user_input(
+            State(state),
+            Path((id, other_call_id.to_string())),
+            auth_headers("test-token"),
+            Json(body),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
