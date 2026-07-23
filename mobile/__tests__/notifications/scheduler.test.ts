@@ -111,4 +111,163 @@ describe('rescheduleNotifications', () => {
       .filter(Boolean);
     expect(taskIds).toEqual(['scheduled-1', 'scheduled-1']);
   });
+
+  it('morning briefing counts incomplete scheduled tasks for the notification date', async () => {
+    // Use a local noon time so the schedule entries fall on the same local day
+    // regardless of the test runner's timezone.
+    const now = new Date(2026, 6, 23, 10, 0, 0);
+    jest.setSystemTime(now.getTime());
+
+    const morningSettings: NotificationSettings = {
+      ...settings,
+      morningBriefing: true,
+      morningBriefingTime: 10 * 60 + 1,
+      preStartReminder: false,
+      startOverdue: false,
+    };
+    const todayNoon = new Date(2026, 6, 23, 12, 0, 0).toISOString();
+    const todayEnd = new Date(2026, 6, 23, 13, 0, 0).toISOString();
+    const tomorrowNoon = new Date(2026, 6, 24, 12, 0, 0).toISOString();
+    const tomorrowEnd = new Date(2026, 6, 24, 13, 0, 0).toISOString();
+
+    const tasks: TaskRow[] = [
+      {
+        ...baseTask,
+        id: 'today-done',
+        title: 'Today done',
+        status: 'completed',
+        start_at: todayNoon,
+        end_at: todayEnd,
+        created_at: '2026-07-22T00:00:00Z',
+        updated_at: '2026-07-22T00:00:00Z',
+      },
+      {
+        ...baseTask,
+        id: 'today-todo',
+        title: 'Today todo',
+        status: 'scheduled',
+        start_at: todayNoon,
+        end_at: todayEnd,
+        created_at: '2026-07-22T00:00:00Z',
+        updated_at: '2026-07-22T00:00:00Z',
+      },
+      {
+        ...baseTask,
+        id: 'tomorrow-todo',
+        title: 'Tomorrow todo',
+        status: 'scheduled',
+        start_at: tomorrowNoon,
+        end_at: tomorrowEnd,
+        created_at: '2026-07-22T00:00:00Z',
+        updated_at: '2026-07-22T00:00:00Z',
+      },
+      {
+        ...baseTask,
+        id: 'pending-today',
+        title: 'Pending today',
+        status: 'pending',
+        start_at: todayNoon,
+        end_at: todayEnd,
+        created_at: '2026-07-22T00:00:00Z',
+        updated_at: '2026-07-22T00:00:00Z',
+      },
+    ];
+
+    // Include a stale schedule entry for the pending task; it should be ignored.
+    const schedule: ScheduleEntry[] = [
+      { task_id: 'today-done', start_at: todayNoon, end_at: todayEnd },
+      { task_id: 'today-todo', start_at: todayNoon, end_at: todayEnd },
+      {
+        task_id: 'tomorrow-todo',
+        start_at: tomorrowNoon,
+        end_at: tomorrowEnd,
+      },
+      { task_id: 'pending-today', start_at: todayNoon, end_at: todayEnd },
+    ];
+
+    const data: ScheduleData = { tasks, schedule, settings: morningSettings };
+    await rescheduleNotifications(data);
+
+    const summary = scheduled.find((r) =>
+      (r.content as { title?: string }).title?.includes('未完了タスク'),
+    );
+    expect(summary).toBeDefined();
+    expect((summary!.content as { title: string }).title).toBe(
+      '今日は1個の未完了タスクがあります',
+    );
+
+    // The briefing is set one minute after the current time, so it should be
+    // scheduled for today.
+    const target = (summary!.trigger as { date: Date }).date;
+    expect(target.getFullYear()).toBe(2026);
+    expect(target.getMonth()).toBe(6);
+    expect(target.getDate()).toBe(23);
+    expect(target.getHours()).toBe(10);
+    expect(target.getMinutes()).toBe(1);
+  });
+
+  it('morning briefing counts tomorrow tasks when the briefing time has passed', async () => {
+    const now = new Date(2026, 6, 23, 10, 0, 0);
+    jest.setSystemTime(now.getTime());
+
+    const morningSettings: NotificationSettings = {
+      ...settings,
+      morningBriefing: true,
+      morningBriefingTime: 8 * 60,
+      preStartReminder: false,
+      startOverdue: false,
+    };
+    const todayNoon = new Date(2026, 6, 23, 12, 0, 0).toISOString();
+    const todayEnd = new Date(2026, 6, 23, 13, 0, 0).toISOString();
+    const tomorrowNoon = new Date(2026, 6, 24, 12, 0, 0).toISOString();
+    const tomorrowEnd = new Date(2026, 6, 24, 13, 0, 0).toISOString();
+
+    const tasks: TaskRow[] = [
+      {
+        ...baseTask,
+        id: 'today-todo',
+        title: 'Today todo',
+        status: 'scheduled',
+        start_at: todayNoon,
+        end_at: todayEnd,
+        created_at: '2026-07-22T00:00:00Z',
+        updated_at: '2026-07-22T00:00:00Z',
+      },
+      {
+        ...baseTask,
+        id: 'tomorrow-todo',
+        title: 'Tomorrow todo',
+        status: 'scheduled',
+        start_at: tomorrowNoon,
+        end_at: tomorrowEnd,
+        created_at: '2026-07-22T00:00:00Z',
+        updated_at: '2026-07-22T00:00:00Z',
+      },
+    ];
+
+    const schedule: ScheduleEntry[] = [
+      { task_id: 'today-todo', start_at: todayNoon, end_at: todayEnd },
+      { task_id: 'tomorrow-todo', start_at: tomorrowNoon, end_at: tomorrowEnd },
+    ];
+
+    const data: ScheduleData = { tasks, schedule, settings: morningSettings };
+    await rescheduleNotifications(data);
+
+    const summary = scheduled.find((r) =>
+      (r.content as { title?: string }).title?.includes('未完了タスク'),
+    );
+    expect(summary).toBeDefined();
+    expect((summary!.content as { title: string }).title).toBe(
+      '今日は1個の未完了タスクがあります',
+    );
+
+    // 08:00 has already passed, so the briefing should be scheduled for
+    // tomorrow and count tomorrow's tasks.
+    const target = (summary!.trigger as { date: Date }).date;
+    expect(target.getFullYear()).toBe(2026);
+    expect(target.getMonth()).toBe(6);
+    expect(target.getDate()).toBe(24);
+    expect(target.getHours()).toBe(8);
+    expect(target.getMinutes()).toBe(0);
+  });
 });
