@@ -176,7 +176,7 @@ impl MobileAudio {
             let stt = SherpaOnnxAsr::from_config(&SherpaOnnxAsrConfig {
                 model: SherpaOnnxModel::SenseVoice,
                 model_dir: self.model_dir.join("sherpa-sense-voice-int8"),
-                sample_rate: 16_000,
+                sample_rate: self.sample_rate as i32,
                 language: Some(self.language.clone()),
                 use_itn: true,
                 ..Default::default()

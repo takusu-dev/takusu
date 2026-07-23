@@ -6,17 +6,23 @@ import android.media.MediaRecorder
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 
-class AudioRecorder {
+class AudioRecorder(
+    private val sampleRate: Int,
+) {
     private val running = AtomicBoolean(false)
     private val samples = Collections.synchronizedList(mutableListOf<Short>())
     private var recorder: AudioRecord? = null
     private var thread: Thread? = null
 
+    init {
+        require(sampleRate > 0) { "sampleRate must be positive" }
+    }
+
     fun start() {
         check(running.compareAndSet(false, true)) { "recording is already running" }
         val minimumBuffer =
             AudioRecord.getMinBufferSize(
-                SAMPLE_RATE,
+                sampleRate,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
             )
@@ -24,7 +30,7 @@ class AudioRecorder {
         val audioRecord =
             AudioRecord(
                 MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                SAMPLE_RATE,
+                sampleRate,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
                 minimumBuffer * 2,
@@ -37,7 +43,7 @@ class AudioRecorder {
                 val buffer = ShortArray(minimumBuffer)
                 try {
                     audioRecord.startRecording()
-                    while (running.get() && samples.size < SAMPLE_RATE * MAX_DURATION_SECONDS) {
+                    while (running.get() && samples.size < sampleRate * MAX_DURATION_SECONDS) {
                         val count = audioRecord.read(buffer, 0, buffer.size)
                         if (count > 0) {
                             synchronized(samples) {
@@ -61,7 +67,6 @@ class AudioRecorder {
     }
 
     companion object {
-        const val SAMPLE_RATE = 16_000
         private const val MAX_DURATION_SECONDS = 60
     }
 }

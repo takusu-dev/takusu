@@ -47,6 +47,7 @@ class TakusuAudioModule : Module() {
     private var player: MediaPlayer? = null
     private var textToSpeech: TextToSpeech? = null
     private var ttsProvider: String = "cartesia"
+    private var recordingSampleRate: Int = 0
 
     override fun definition() =
         ModuleDefinition {
@@ -112,7 +113,14 @@ class TakusuAudioModule : Module() {
             }
 
             Function("startRecording") {
-                val instance = AudioRecorder()
+                if (recordingSampleRate <= 0) {
+                    throw CodedException(
+                        "ERR_AUDIO_CONFIG",
+                        "Audio is not configured with a valid sample rate",
+                        null,
+                    )
+                }
+                val instance = AudioRecorder(recordingSampleRate)
                 instance.start()
                 recorder = instance
                 true
@@ -234,6 +242,7 @@ class TakusuAudioModule : Module() {
             options.modelDir.ifEmpty {
                 File(context.noBackupFilesDir, "takusu/models").absolutePath
             }
+        recordingSampleRate = options.sampleRate
         return try {
             MobileAudio(
                 modelDir,
