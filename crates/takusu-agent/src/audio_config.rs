@@ -1,13 +1,13 @@
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AudioConfig {
     pub stt: SttConfig,
     pub tts: TtsConfig,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct SttConfig {
     #[serde(default = "default_stt_backend")]
@@ -65,7 +65,7 @@ fn default_stt_sample_rate() -> i32 {
     16000
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct TtsConfig {
     #[serde(default = "default_tts_backend")]

@@ -53,6 +53,7 @@ pub use crate::audio_config::{AudioConfig, SttConfig, TtsConfig};
 /// Application-level audio adapter. Owns the agent session and the audio clients.
 pub struct AudioAdapter {
     session: AgentSession,
+    last_audio: AudioConfig,
     stt: Arc<dyn SpeechToText>,
     tts: Box<dyn TextToSpeech>,
     tts_voice_id: String,
@@ -62,16 +63,14 @@ pub struct AudioAdapter {
 impl AudioAdapter {
     /// Create an audio adapter from an existing agent session.
     pub async fn new(session: AgentSession) -> Result<Self, AudioError> {
-        let config = &session.config.audio;
-        let stt = tokio::task::spawn_blocking({
-            let stt_config = config.stt.clone();
-            move || build_stt(&stt_config)
-        })
-        .await
-        .map_err(|e| AudioError::Transcribe(format!("stt build task failed: {e}")))??;
-        let (tts, voice_id, speed) = build_tts(&config.tts)?;
+        let audio = {
+            let config = session.config.read().unwrap();
+            config.audio.clone()
+        };
+        let (stt, tts, voice_id, speed) = Self::build_audio(&audio).await?;
         Ok(Self {
             session,
+            last_audio: audio,
             stt,
             tts,
             tts_voice_id: voice_id,
@@ -80,8 +79,10 @@ impl AudioAdapter {
     }
 
     /// Run the push-to-talk loop until interrupted or an unrecoverable error occurs.
-    pub async fn run(&self, no_tts: bool) -> Result<(), AudioError> {
+    pub async fn run(&mut self, no_tts: bool) -> Result<(), AudioError> {
         loop {
+            self.reconfigure_if_needed().await?;
+
             let samples = record_with_timeout(Duration::from_secs(60)).await?;
             if samples.is_empty() {
                 continue;
@@ -126,6 +127,42 @@ impl AudioAdapter {
                 AudioClip::from_wav_bytes(&audio).map_err(|e| AudioError::Play(e.to_string()))?;
             play_with_timeout(&clip, Duration::from_secs(120)).await?;
         }
+    }
+
+    async fn reconfigure_if_needed(&mut self) -> Result<(), AudioError> {
+        let current = {
+            let config = self.session.config.read().unwrap();
+            config.audio.clone()
+        };
+        if current == self.last_audio {
+            return Ok(());
+        }
+        let (stt, tts, voice_id, speed) = Self::build_audio(&current).await?;
+        self.stt = stt;
+        self.tts = tts;
+        self.tts_voice_id = voice_id;
+        self.tts_speed = speed;
+        self.last_audio = current;
+        Ok(())
+    }
+
+    async fn build_audio(
+        audio: &AudioConfig,
+    ) -> Result<
+        (
+            Arc<dyn SpeechToText>,
+            Box<dyn TextToSpeech>,
+            String,
+            Option<f32>,
+        ),
+        AudioError,
+    > {
+        let stt_config = audio.stt.clone();
+        let stt = tokio::task::spawn_blocking(move || build_stt(&stt_config))
+            .await
+            .map_err(|e| AudioError::Transcribe(format!("stt build task failed: {e}")))??;
+        let (tts, voice_id, speed) = build_tts(&audio.tts)?;
+        Ok((stt, tts, voice_id, speed))
     }
 }
 

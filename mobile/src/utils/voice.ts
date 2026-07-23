@@ -8,6 +8,15 @@ let isRecording = false;
 let onRecordingChange: ((recording: boolean) => void) | null = null;
 let stopPromise: Promise<string> | null = null;
 
+function hashString(input: string): number {
+  let h = 0;
+  for (let i = 0; i < input.length; i++) {
+    h = (h << 5) - h + input.charCodeAt(i);
+    h |= 0;
+  }
+  return h >>> 0;
+}
+
 function notifyRecordingChanged(recording: boolean) {
   onRecordingChange?.(recording);
 }
@@ -32,8 +41,9 @@ async function doConfigure(): Promise<void> {
     throw new Error('TTS provider is not configured');
   }
   const apiKey = await loadAgentApiKey('tts', provider.id);
-  // Intentionally exclude the raw API key from the cache key.
-  const configKey = `${provider.id}:${provider.provider}:${provider.voiceId}:${provider.language}:${provider.sampleRate}:${provider.speed}`;
+  // Use a hash of the API key so key-only changes trigger reconfiguration
+  // without keeping the raw key in the cache key.
+  const configKey = `${provider.id}:${provider.provider}:${provider.voiceId}:${provider.language}:${provider.sampleRate}:${provider.speed}:${hashString(apiKey)}`;
   if (configKey === lastConfigKey) return;
   await TakusuAudioModule.configure({
     provider: provider.provider,

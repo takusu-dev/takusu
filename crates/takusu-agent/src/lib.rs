@@ -179,11 +179,11 @@ pub enum TurnEvent {
 /// Serialized work turn result. Holds the assistant response text, any change receipts produced
 /// by tool calls, and whether the schedule needs recomputation.
 pub struct AgentSession {
-    pub(crate) config: AgentConfig,
+    pub(crate) config: std::sync::RwLock<AgentConfig>,
     registry: ToolRegistry,
     client: takusu_client::Client,
     tz_cache: crate::tools::takusu::TimeZoneCache,
-    llm: Arc<dyn llm::LlmClient + Send + Sync>,
+    llm: std::sync::RwLock<Arc<dyn llm::LlmClient + Send + Sync>>,
     history: Mutex<Vec<llm::Message>>,
     /// Ensures only one turn mutates the session at a time.
     turn_lock: tokio::sync::Mutex<()>,
@@ -239,12 +239,13 @@ impl AgentSession {
         registry: ToolRegistry,
         llm: impl llm::LlmClient + 'static,
     ) -> Self {
+        let llm: Arc<dyn llm::LlmClient + Send + Sync> = Arc::new(llm);
         Self {
-            config,
+            config: std::sync::RwLock::new(config),
             registry,
             client,
             tz_cache,
-            llm: Arc::new(llm),
+            llm: std::sync::RwLock::new(llm),
             history: Mutex::new(Vec::new()),
             turn_lock: tokio::sync::Mutex::new(()),
             last_prompt_tokens: Mutex::new(None),
@@ -268,12 +269,27 @@ impl AgentSession {
         &self.session_id
     }
 
+    pub(crate) async fn apply_config(
+        &self,
+        config: &AgentConfig,
+        llm: Arc<dyn llm::LlmClient + Send + Sync>,
+    ) {
+        let _guard = self.turn_lock.lock().await;
+        *self.llm.write().unwrap() = llm;
+        *self.config.write().unwrap() = config.clone();
+    }
+
     fn is_auto_approved(&self, target: &str, operation: &str) -> bool {
         let session = self.session_permissions.lock().unwrap();
         if let Some(allowed) = session.resolve(target, operation) {
             return allowed;
         }
-        self.config.llm.permissions.is_allowed(target, operation)
+        self.config
+            .read()
+            .unwrap()
+            .llm
+            .permissions
+            .is_allowed(target, operation)
     }
 
     fn all_changes_allowed(&self, changes: &[ProposedChange]) -> bool {
@@ -303,7 +319,7 @@ impl AgentSession {
         let mut tool_call_count = 0;
 
         loop {
-            if tool_call_count >= self.config.llm.max_tool_calls {
+            if tool_call_count >= self.config.read().unwrap().llm.max_tool_calls {
                 self.replace_history(local, None, system_estimate);
                 return Err(AgentError::TooManyToolCalls);
             }
@@ -312,11 +328,8 @@ impl AgentSession {
             messages.extend(local.clone());
             let messages = self.trim_messages(messages);
 
-            let response = self
-                .llm
-                .chat(&messages, &tools)
-                .await
-                .map_err(AgentError::Llm)?;
+            let llm = self.llm.read().unwrap().clone();
+            let response = llm.chat(&messages, &tools).await.map_err(AgentError::Llm)?;
 
             *self.last_prompt_tokens.lock().unwrap() = response.prompt_tokens;
 
@@ -356,7 +369,7 @@ impl AgentSession {
                 }
                 llm::LlmResponseContent::ToolCalls(calls) => {
                     tool_call_count += calls.len();
-                    if tool_call_count > self.config.llm.max_tool_calls {
+                    if tool_call_count > self.config.read().unwrap().llm.max_tool_calls {
                         self.replace_history(local, response.prompt_tokens, system_estimate);
                         return Err(AgentError::TooManyToolCalls);
                     }
@@ -508,7 +521,7 @@ impl AgentSession {
         let mut tool_call_count = 0;
 
         loop {
-            if tool_call_count >= self.config.llm.max_tool_calls {
+            if tool_call_count >= self.config.read().unwrap().llm.max_tool_calls {
                 self.replace_history(local, None, system_estimate);
                 return Err(AgentError::TooManyToolCalls);
             }
@@ -517,8 +530,8 @@ impl AgentSession {
             messages.extend(local.clone());
             let messages = self.trim_messages(messages);
 
-            let mut stream = self
-                .llm
+            let llm = self.llm.read().unwrap().clone();
+            let mut stream = llm
                 .chat_stream(&messages, &tools)
                 .await
                 .map_err(AgentError::Llm)?;
@@ -538,7 +551,7 @@ impl AgentSession {
                     }
                     llm::LlmStreamEvent::ToolCall(call) => {
                         tool_call_count += 1;
-                        if tool_call_count > self.config.llm.max_tool_calls {
+                        if tool_call_count > self.config.read().unwrap().llm.max_tool_calls {
                             self.replace_history(local, None, system_estimate);
                             return Err(AgentError::TooManyToolCalls);
                         }
@@ -1433,8 +1446,8 @@ impl AgentSession {
             .unwrap_or(0);
         let tools_estimate = self.registry.definitions_estimate_tokens();
         let last_estimate = messages.last().map_or(0, |m| m.estimate_tokens());
-        let target = self
-            .config
+        let config = self.config.read().unwrap();
+        let target = config
             .llm
             .max_context_tokens
             .saturating_sub(system_estimate)
@@ -1501,8 +1514,8 @@ impl AgentSession {
     ) {
         let tools_estimate = self.registry.definitions_estimate_tokens();
         let last_estimate = local.last().map_or(0, |m| m.estimate_tokens());
-        let target = self
-            .config
+        let config = self.config.read().unwrap();
+        let target = config
             .llm
             .max_context_tokens
             .saturating_sub(system_estimate)

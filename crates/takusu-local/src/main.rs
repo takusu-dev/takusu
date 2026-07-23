@@ -11,6 +11,7 @@ use takusu_local_lib::storage_sqlite::SqliteStorage;
 use takusu_local_lib::storage_workers::WorkersStorage;
 use takusu_local_lib::token_cache::TokenCache;
 use takusu_storage::Storage;
+use tokio::sync::RwLock;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = takusu_local_lib::sentry::init("takusu_local=info", sentry::release_name!());
@@ -89,7 +90,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let token_cache = Arc::new(TokenCache::with_default_ttl());
         let app = Arc::new(TakusuApp::new(storage, token_cache));
-        let state = AppState::new(app, root_token);
+        let state = AppState::new(
+            app,
+            Arc::new(RwLock::new(Arc::from(root_token.into_boxed_str()))),
+        );
         let bind_addr = cfg.bind_addr().to_string();
         let app_router = router(state);
 

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::Json;
 use axum::extract::{Extension, State};
 use serde::{Deserialize, Serialize};
@@ -57,6 +59,6 @@ pub async fn update_workers_config(
     // Keep the local root-token bypass in sync with the newly saved worker
     // token so that subsequent root-only requests (e.g. further config
     // updates) can still succeed even if the new worker is unreachable.
-    *state.root_token.write().await = body.token.clone();
+    *state.root_token.write().await = Arc::from(body.token.into_boxed_str());
     Ok(Json(serde_json::json!({ "ok": true })))
 }

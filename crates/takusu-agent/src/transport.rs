@@ -22,6 +22,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::oneshot;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
+use crate::llm::{LlmClient, OpenAIClient};
 use crate::{
     AgentConfig, AgentError, AgentSession, ApprovalRequest, ApprovalResult, ToolError, TurnEvent,
     TurnResult, UserInputAnswer, UserInputProvider, UserInputQuestion,
@@ -87,6 +88,10 @@ impl<K: Clone + Eq + std::hash::Hash, V> BoundedMap<K, V> {
             self.order.remove(pos);
         }
         Some(value)
+    }
+
+    fn values(&self) -> impl Iterator<Item = &V> {
+        self.map.values()
     }
 }
 
@@ -424,43 +429,61 @@ async fn update_settings(
     if body.version != API_VERSION {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let mut config = state.config.write().await;
+
+    let config = state.config.read().await;
+    let mut new_config = config.clone();
+    drop(config);
+
     if let Some(llm) = body.value.llm {
         if let Some(base_url) = llm.base_url {
-            config.llm.base_url = base_url;
+            new_config.llm.base_url = base_url;
         }
         if let Some(model) = llm.model {
-            config.llm.model = model;
+            new_config.llm.model = model;
         }
         if let Some(api_key) = llm.api_key {
-            config.llm.api_key = api_key;
+            new_config.llm.api_key = api_key;
         }
         if let Some(permissions) = llm.permissions {
-            config.llm.permissions = permissions;
+            new_config.llm.permissions = permissions;
         }
     }
     if let Some(audio) = body.value.audio
         && let Some(tts) = audio.tts
     {
         if let Some(backend) = tts.backend {
-            config.audio.tts.backend = backend;
+            new_config.audio.tts.backend = backend;
         }
         if let Some(api_key) = tts.api_key {
-            config.audio.tts.api_key = api_key;
+            new_config.audio.tts.api_key = api_key;
         }
         if let Some(voice_id) = tts.voice_id {
-            config.audio.tts.voice_id = voice_id;
+            new_config.audio.tts.voice_id = voice_id;
         }
         if let Some(language) = tts.language {
-            config.audio.tts.language = language;
+            new_config.audio.tts.language = language;
         }
         if let Some(sample_rate) = tts.sample_rate {
-            config.audio.tts.sample_rate = sample_rate;
+            new_config.audio.tts.sample_rate = sample_rate;
         }
         if let Some(speed) = tts.speed {
-            config.audio.tts.speed = Some(speed);
+            new_config.audio.tts.speed = Some(speed);
         }
     }
+
+    let new_llm: Arc<dyn LlmClient + Send + Sync> = match OpenAIClient::new(new_config.llm.clone())
+    {
+        Ok(client) => Arc::new(client),
+        Err(e) => return agent_error(AgentError::Llm(e)),
+    };
+
+    *state.config.write().await = new_config.clone();
+
+    let sessions: Vec<_> = state.sessions.lock().unwrap().values().cloned().collect();
+    for session in sessions {
+        session.apply_config(&new_config, new_llm.clone()).await;
+    }
+
     Json(Versioned {
         version: API_VERSION,
         value: serde_json::json!({ "ok": true }),
@@ -1226,6 +1249,43 @@ mod tests {
 
         let config = state.config.read().await;
         assert_eq!(config.llm.api_key, "new");
+    }
+
+    #[tokio::test]
+    async fn update_settings_propagates_to_existing_session() {
+        let (state, _provider, id) = make_session_state("test-token");
+        {
+            let mut config = state.config.write().await;
+            config.llm.model = "old-model".into();
+        }
+
+        let body = Versioned {
+            version: API_VERSION,
+            value: UpdateAgentSettings {
+                llm: Some(UpdateAgentLlmSettings {
+                    base_url: None,
+                    model: Some("new-model".into()),
+                    api_key: None,
+                    permissions: None,
+                }),
+                ..Default::default()
+            },
+        };
+        let res =
+            update_settings(State(state.clone()), auth_headers("test-token"), Json(body)).await;
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let config = state.config.read().await;
+        assert_eq!(config.llm.model, "new-model");
+
+        let session = state
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&id)
+            .cloned()
+            .expect("session should exist");
+        assert_eq!(session.config.read().unwrap().llm.model, "new-model");
     }
 
     #[tokio::test]

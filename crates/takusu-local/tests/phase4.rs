@@ -32,6 +32,7 @@ use takusu_storage::{
     storage::StorageResult,
 };
 use tokio::net::TcpListener;
+use tokio::sync::RwLock;
 use tower::ServiceExt;
 
 const JWT_SECRET: &str = "test-secret-do-not-use-in-production";
@@ -55,7 +56,7 @@ impl Counters {
 fn make_state(storage: Arc<dyn Storage>) -> AppState {
     let token_cache = Arc::new(TokenCache::with_default_ttl());
     let app = Arc::new(TakusuApp::new(storage, token_cache));
-    AppState::new(app, (*ROOT_TOKEN).clone())
+    AppState::new(app, Arc::new(RwLock::new(Arc::from(ROOT_TOKEN.as_str()))))
 }
 
 fn counting_storage(counters: Arc<Counters>) -> Arc<dyn Storage> {
@@ -424,8 +425,7 @@ async fn root_token_bypasses_storage_when_unreachable() {
 
     let root = state.root_token.read().await;
     assert_eq!(
-        root.as_str(),
-        "new-token",
+        &**root, "new-token",
         "root_token should be updated to the new worker token"
     );
 }

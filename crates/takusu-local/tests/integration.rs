@@ -12,6 +12,7 @@ use takusu_local_lib::config::LocalConfig;
 use takusu_local_lib::storage_sqlite::SqliteStorage;
 use takusu_local_lib::token_cache::TokenCache;
 use takusu_local_lib::{DEFAULT_AUD, generate_root_jwt, jwt};
+use tokio::sync::RwLock;
 use tower::ServiceExt;
 
 const JWT_SECRET: &str = "test-secret-do-not-use-in-production";
@@ -33,7 +34,7 @@ async fn setup() -> (AppState, SqlitePool) {
     let pool = storage.pool().clone();
     let token_cache = Arc::new(TokenCache::with_default_ttl());
     let app = Arc::new(TakusuApp::new(Arc::new(storage), token_cache));
-    let state = AppState::new(app, root_token().to_string());
+    let state = AppState::new(app, Arc::new(RwLock::new(Arc::from(root_token()))));
     (state, pool)
 }
 

@@ -10,14 +10,11 @@ pub struct AppState {
     /// treated as root even if the storage backend cannot verify them, which
     /// lets runtime worker credential updates succeed when the current worker
     /// is unreachable or the token is intended for a new worker.
-    pub root_token: Arc<RwLock<String>>,
+    pub root_token: Arc<RwLock<Arc<str>>>,
 }
 
 impl AppState {
-    pub fn new(app: Arc<TakusuApp>, root_token: String) -> Self {
-        Self {
-            app,
-            root_token: Arc::new(RwLock::new(root_token)),
-        }
+    pub fn new(app: Arc<TakusuApp>, root_token: Arc<RwLock<Arc<str>>>) -> Self {
+        Self { app, root_token }
     }
 }
