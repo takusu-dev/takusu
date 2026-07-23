@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS } from '@/src/theme';
+import { COLORS, useColors } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
 
 interface DeleteConfirmButtonProps {
@@ -13,6 +13,7 @@ interface DeleteConfirmButtonProps {
   size?: number;
   iconSize?: number;
   hitSlop?: number;
+  disabled?: boolean;
 }
 
 export function DeleteConfirmButton({
@@ -20,15 +21,36 @@ export function DeleteConfirmButton({
   size = 40,
   iconSize = 22,
   hitSlop,
+  disabled,
 }: DeleteConfirmButtonProps) {
+  const colors = useColors();
   const [armed, setArmed] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (disabled && armed) {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      setArmed(false);
+    }
+  }, [disabled, armed]);
 
   useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, []);
+
+  const iconName = disabled
+    ? 'trash-outline'
+    : armed
+      ? 'trash'
+      : 'trash-outline';
+  const iconColor = disabled ? colors.gray : armed ? COLORS.white : COLORS.red;
+  const backgroundStyle = disabled
+    ? { opacity: 0.4 }
+    : armed
+      ? { backgroundColor: COLORS.red }
+      : undefined;
 
   return (
     <Pressable
@@ -39,9 +61,10 @@ export function DeleteConfirmButton({
           height: size,
           borderRadius: size / 2,
         },
-        armed && { backgroundColor: COLORS.red },
+        backgroundStyle,
       ]}
       hitSlop={hitSlop}
+      disabled={disabled}
       onPress={() => {
         if (armed) {
           if (timerRef.current) clearTimeout(timerRef.current);
@@ -54,11 +77,7 @@ export function DeleteConfirmButton({
         }
       }}
     >
-      <Ionicons
-        name={armed ? 'trash' : 'trash-outline'}
-        size={iconSize}
-        color={armed ? COLORS.white : COLORS.red}
-      />
+      <Ionicons name={iconName} size={iconSize} color={iconColor} />
     </Pressable>
   );
 }

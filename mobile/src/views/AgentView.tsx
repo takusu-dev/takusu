@@ -86,6 +86,7 @@ import {
 import { getTurnIndex } from '@/src/utils/getTurnIndex';
 import { ApprovalPanel } from '@/src/components/ApprovalPanel';
 import { ComposerRecordButton } from '@/src/components/ComposerRecordButton';
+import { DeleteConfirmButton } from '@/src/components/DeleteConfirmButton';
 import { EditMessageModal } from '@/src/components/EditMessageModal';
 import { MessageContextMenu } from '@/src/components/MessageContextMenu';
 import { SessionPermissionsModal } from '@/src/components/SessionPermissionsModal';
@@ -2021,6 +2022,59 @@ export function AgentView() {
     }
   }
 
+  async function deleteCurrentSession() {
+    if (isSwitchingRef.current || busy || !historyReady) return;
+    const idToDelete = sessionIdRef.current;
+    if (!idToDelete) return;
+
+    isSwitchingRef.current = true;
+    setIsSwitching(true);
+    setError(null);
+
+    try {
+      try {
+        await client.deleteSession(idToDelete);
+      } catch (e: unknown) {
+        if (e instanceof AgentApiError && e.status === 404) {
+          // Already deleted on the server; continue to clean up locally.
+        } else {
+          throw e;
+        }
+      }
+
+      await deleteSessionSnapshot(idToDelete);
+
+      const ids = sessionIdsRef.current.filter((s) => s !== idToDelete);
+      sessionIdsRef.current = ids;
+      setSessionIds(ids);
+
+      // Clear the current view so stale content is not shown if activation fails.
+      setMessages([]);
+      setApproval(null);
+      setSessionPermissions({});
+      sessionPermissionsRef.current = {};
+      sessionIdRef.current = null;
+
+      if (ids.length === 0) {
+        setActiveIndex(0);
+        activeIndexRef.current = 0;
+        const created = await client.createSession({});
+        await activateSessionId(created, true);
+      } else {
+        const nextIndex = Math.min(activeIndexRef.current, ids.length - 1);
+        activeIndexRef.current = nextIndex;
+        setActiveIndex(nextIndex);
+        const nextId = ids[nextIndex];
+        await activateSessionId(nextId, false);
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      isSwitchingRef.current = false;
+      setIsSwitching(false);
+    }
+  }
+
   const switcherGesture = Gesture.Pan()
     .minDistance(20)
     .onUpdate((e) => {
@@ -2081,6 +2135,14 @@ export function AgentView() {
               }
             />
           </Pressable>
+          <View style={styles.deleteSession}>
+            <DeleteConfirmButton
+              onConfirm={deleteCurrentSession}
+              disabled={
+                busy || isSwitching || !historyReady || !sessionIdRef.current
+              }
+            />
+          </View>
           <Pressable
             disabled={busy || isSwitching || !historyReady}
             onPress={startNewSession}
@@ -2398,6 +2460,11 @@ const styles = StyleSheet.create({
   backText: { fontSize: 40, lineHeight: 40 },
   title: { flex: 1, fontSize: 20, fontWeight: '700' },
   permissionsButton: {
+    width: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteSession: {
     width: 44,
     alignItems: 'center',
     justifyContent: 'center',
