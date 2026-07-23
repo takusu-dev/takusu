@@ -290,6 +290,12 @@ impl Storage for WorkersStorage {
         if let Some(u) = &q.ical_uid {
             parts.push(format!("ical_uid={}", url_encode(u)));
         }
+        if let Some(query_str) = &q.q {
+            parts.push(format!("q={}", url_encode(query_str)));
+        }
+        if let Some(limit) = q.limit {
+            parts.push(format!("limit={limit}"));
+        }
         if !parts.is_empty() {
             path.push('?');
             path.push_str(&parts.join("&"));

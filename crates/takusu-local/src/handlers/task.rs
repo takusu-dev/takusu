@@ -6,6 +6,7 @@ use takusu_storage::{
     CreateTask, ProgressResult, RecordProgress, SplitResult, SplitTask, TaskProgress, TaskQuery,
     TaskRow, UpdateTask,
 };
+use takusu_util::search::Completion;
 
 use crate::error::HttpError;
 use crate::state::AppState;
@@ -25,6 +26,8 @@ pub struct TaskQueryParams {
     pub no_overdue: Option<bool>,
     pub habit_id: Option<String>,
     pub ical_uid: Option<String>,
+    pub q: Option<String>,
+    pub limit: Option<i64>,
 }
 
 pub async fn create_task(
@@ -46,9 +49,24 @@ pub async fn list_tasks(
         no_overdue: query.no_overdue,
         habit_id: query.habit_id,
         ical_uid: query.ical_uid,
+        q: query.q,
+        limit: query.limit,
     };
     let tasks = state.app.list_tasks(&q).await?;
     Ok(Json(tasks))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CompleteQuery {
+    pub q: String,
+}
+
+pub async fn complete_task_query(
+    State(state): State<AppState>,
+    Query(query): Query<CompleteQuery>,
+) -> Result<Json<Vec<Completion>>, HttpError> {
+    let completions = state.app.complete_task_query(&query.q).await?;
+    Ok(Json(completions))
 }
 
 pub async fn get_task(

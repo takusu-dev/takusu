@@ -19,6 +19,7 @@ use takusu_storage::{
     TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateMemory,
     UpdateSettings, UpdateSkill, UpdateTask,
 };
+use takusu_util::search::{Completion, complete};
 
 use crate::error::AppError;
 use crate::error::storage_to_app;
@@ -1035,6 +1036,24 @@ impl TakusuApp {
 
     pub async fn list_tasks(&self, query: &TaskQuery) -> Result<Vec<TaskRow>, AppError> {
         self.storage.list_tasks(query).await.map_err(storage_to_app)
+    }
+
+    pub async fn complete_task_query(&self, input: &str) -> Result<Vec<Completion>, AppError> {
+        let settings = self.get_settings_or_default().await?;
+        let tz = parse_settings_timezone(&settings.tz)?;
+        let today = Timestamp::now().to_zoned(tz).date();
+
+        let tasks = self
+            .storage
+            .list_tasks(&TaskQuery {
+                limit: Some(200),
+                ..TaskQuery::default()
+            })
+            .await
+            .map_err(storage_to_app)?;
+        let habits = self.storage.list_habits().await.map_err(storage_to_app)?;
+
+        Ok(complete(input, today, &tasks, &habits))
     }
 
     pub async fn get_task(&self, id: &str) -> Result<TaskRow, AppError> {

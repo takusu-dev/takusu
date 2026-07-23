@@ -160,6 +160,8 @@ pub struct TaskQuery {
     pub no_overdue: Option<bool>,
     pub habit_id: Option<String>,
     pub ical_uid: Option<String>,
+    pub q: Option<String>,
+    pub limit: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -379,6 +381,9 @@ pub struct SaveScheduleRequest {
     #[serde(default)]
     pub mark_scheduled_task_ids: Vec<String>,
 }
+
+takusu_util::impl_search_task!(TaskRow);
+takusu_util::impl_search_habit!(HabitRow);
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct TokenRow {

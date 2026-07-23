@@ -588,3 +588,6 @@ pub struct SplitResult {
     pub original: TaskRow,
     pub remainder: TaskRow,
 }
+
+takusu_util::impl_search_task!(TaskRow);
+takusu_util::impl_search_habit!(HabitRow);

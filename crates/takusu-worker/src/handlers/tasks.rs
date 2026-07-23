@@ -6,8 +6,10 @@ use crate::handlers::auth::db;
 use crate::handlers::d1::safe_all;
 use crate::handlers::settings::get_timezone;
 use crate::handlers::tokens::{json_created, json_ok, parse_json};
-use crate::models::{CreateTask, TaskRow, UpdateTask};
+use crate::models::{CreateTask, HabitRow, ScheduleEntry, ScheduleRow, TaskRow, UpdateTask};
 use crate::validate::{validate_minutes, validate_quantity, validate_task_datetimes};
+use jiff::Timestamp;
+use takusu_util::search::{EvalContext, filter_tasks};
 
 const TASK_COLS: &str = "id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at, tam.actual_minutes";
 const TASK_FROM: &str = "tasks LEFT JOIN task_actual_minutes tam ON tam.task_id = tasks.id";
@@ -34,6 +36,8 @@ pub async fn list(req: Request, env: Env) -> Result<Response, WorkerError> {
     let url = req.url()?;
     let mut sql = format!("{select} WHERE 1=1", select = select_tasks());
     let mut bindings: Vec<JsValue> = Vec::new();
+    let mut q: Option<String> = None;
+    let mut limit: Option<i64> = None;
     for (k, v) in url.query_pairs() {
         match k.as_ref() {
             "status" => {
@@ -71,18 +75,83 @@ pub async fn list(req: Request, env: Env) -> Result<Response, WorkerError> {
                 sql.push_str(" AND ical_uid = ?");
                 bindings.push(JsValue::from_str(&v));
             }
+            "q" => {
+                q = Some(v.into_owned());
+            }
+            "limit" => {
+                if let Ok(n) = v.parse::<i64>() {
+                    limit = Some(n);
+                }
+            }
             _ => continue,
         }
     }
     sql.push_str(" ORDER BY created_at DESC");
+
+    // When no post-fetch filter is needed we can push the limit into SQL.
+    let post_filter_limit = if q.is_some() {
+        limit
+    } else {
+        if let Some(n) = limit {
+            sql.push_str(" LIMIT ?");
+            bindings.push(JsValue::from_f64(n as f64));
+        }
+        None
+    };
 
     let stmt = if bindings.is_empty() {
         database.prepare(&sql)
     } else {
         database.prepare(&sql).bind(&bindings)?
     };
-    let rows: Vec<TaskRow> = safe_all(&stmt).await?;
+    let mut rows: Vec<TaskRow> = safe_all(&stmt).await?;
+
+    if let Some(ref query_str) = q {
+        rows = filter_rows_with_query(&database, rows, query_str).await?;
+    }
+
+    if let Some(n) = post_filter_limit {
+        rows.truncate(n as usize);
+    }
+
     json_ok(&rows)
+}
+
+async fn filter_rows_with_query(
+    database: &worker::D1Database,
+    rows: Vec<TaskRow>,
+    q: &str,
+) -> Result<Vec<TaskRow>, WorkerError> {
+    let tz = get_timezone(database).await?;
+    let now = Timestamp::now();
+
+    let habits_stmt = database.prepare(
+        "SELECT id, display_id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed, window_mode, created_at, updated_at FROM habits",
+    );
+    let habits: Vec<HabitRow> = safe_all(&habits_stmt).await?;
+
+    let schedule_entries: Vec<ScheduleEntry> = {
+        let stmt = database.prepare(
+            "SELECT id, created_at, updated_at, schedule FROM schedules WHERE id = 'active'",
+        );
+        let rows = safe_all::<ScheduleRow>(&stmt).await?;
+        rows.into_iter()
+            .next()
+            .map(|r| {
+                serde_json::from_str(&r.schedule)
+                    .map_err(|e| WorkerError::Internal(format!("schedule json: {e}")))
+            })
+            .transpose()?
+            .unwrap_or_default()
+    };
+
+    let schedule: Vec<(String, (String, String))> = schedule_entries
+        .into_iter()
+        .map(|e| (e.task_id, (e.start_at, e.end_at)))
+        .collect();
+
+    let ctx = EvalContext::new(tz, now, schedule, &habits);
+    filter_tasks(rows, q, &ctx).map_err(WorkerError::BadRequest)
 }
 
 pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError> {

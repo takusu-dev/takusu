@@ -1,16 +1,18 @@
 use async_trait::async_trait;
+use jiff::{Timestamp, tz::TimeZone};
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 use takusu_storage::{
     CreateHabit, CreateHabitScheduledSpan, CreateMemory, CreateSkill, CreateTask,
     GoogleCalEventRow, GoogleCalSettingsRow, HabitRow, HabitScheduledSpanRow,
     HabitStepEstimateInput, HabitStepInput, HabitStepRow, MemoryQuery, MemoryRow, ProgressEventRow,
-    ProgressResult, RecordProgress, SaveScheduleRequest, ScheduleRow, SettingsRow,
+    ProgressResult, RecordProgress, SaveScheduleRequest, ScheduleEntry, ScheduleRow, SettingsRow,
     SimilarTaskQuery, SimilarTaskRow, SkillRow, SplitResult, SplitTask, Storage, StorageError,
     TaskProgress, TaskQuery, TaskRow, TaskWorkSessionRow, TokenCreateResponse, TokenRow,
     UpdateGoogleCalSettings, UpdateHabit, UpdateMemory, UpdateSettings, UpdateSkill, UpdateTask,
     storage::StorageResult,
 };
+use takusu_util::search::{EvalContext, filter_tasks};
 use takusu_util::{DEFAULT_AUD, SCOPE_READ_WRITE};
 
 use crate::config::LocalConfig;
@@ -465,11 +467,34 @@ impl Storage for SqliteStorage {
             bindings.push(v.clone());
         }
         sql.push_str(" ORDER BY created_at DESC");
+
+        // Apply a SQL-level limit only when no post-fetch query filter is needed;
+        // otherwise we must filter all candidates before truncating.
+        let post_filter_limit = if query.q.is_some() {
+            query.limit
+        } else {
+            if let Some(limit) = query.limit {
+                sql.push_str(" LIMIT ?");
+                bindings.push(limit.to_string());
+            }
+            None
+        };
+
         let mut q = sqlx::query_as::<_, TaskRow>(sqlx::AssertSqlSafe(sql.as_str()));
         for b in &bindings {
             q = q.bind(b);
         }
-        q.fetch_all(&self.pool).await.map_err(map_err)
+        let mut rows = q.fetch_all(&self.pool).await.map_err(map_err)?;
+
+        if let Some(ref qstr) = query.q {
+            rows = filter_rows_with_query(self, rows, qstr).await?;
+        }
+
+        if let Some(limit) = post_filter_limit {
+            rows.truncate(limit as usize);
+        }
+
+        Ok(rows)
     }
 
     async fn task_exists_by_ical_uid(&self, uid: &str) -> StorageResult<bool> {
@@ -2447,6 +2472,35 @@ impl Storage for SqliteStorage {
             .map_err(map_err)?;
         Ok(format!("sqlite ok (v{v})"))
     }
+}
+
+async fn filter_rows_with_query(
+    storage: &SqliteStorage,
+    rows: Vec<TaskRow>,
+    q: &str,
+) -> StorageResult<Vec<TaskRow>> {
+    let tz_str = match storage.get_settings().await {
+        Ok(s) => s.tz,
+        Err(StorageError::NotFound(_)) => "UTC".to_string(),
+        Err(e) => return Err(e),
+    };
+    let tz = takusu_util::parse_timezone(&tz_str).unwrap_or(TimeZone::UTC);
+    let now = Timestamp::now();
+
+    let habits = storage.list_habits().await?;
+
+    let schedule_entries: Vec<ScheduleEntry> = match storage.get_schedule().await? {
+        Some(row) => serde_json::from_str(&row.schedule)
+            .map_err(|e| StorageError::Internal(format!("failed to parse schedule json: {e}")))?,
+        None => Vec::new(),
+    };
+    let schedule: Vec<(String, (String, String))> = schedule_entries
+        .into_iter()
+        .map(|e| (e.task_id, (e.start_at, e.end_at)))
+        .collect();
+
+    let ctx = EvalContext::new(tz, now, schedule, &habits);
+    filter_tasks(rows, q, &ctx).map_err(StorageError::BadRequest)
 }
 
 impl SqliteStorage {

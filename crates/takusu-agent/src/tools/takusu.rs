@@ -112,6 +112,19 @@ pub(crate) fn optional_bool(
     }
 }
 
+pub(crate) fn optional_i64(
+    args: &serde_json::Map<String, Value>,
+    name: &str,
+) -> Result<Option<i64>, ToolError> {
+    match args.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_i64()
+            .map(Some)
+            .ok_or_else(|| ToolError::InvalidArgs(format!("{name} must be an integer"))),
+    }
+}
+
 fn summary_string(args: &serde_json::Map<String, Value>, name: &str) -> Option<String> {
     args.get(name)
         .and_then(Value::as_str)
@@ -688,6 +701,8 @@ impl Tool for ListTasks {
                 "until": {"type": "string", "description": "End of range; interpreted in server timezone."},
                 "no_overdue": {"type": "boolean", "description": "If true, exclude tasks whose end_at has passed. Do not use together with status='overdue'."},
                 "habit_id": {"type": "string", "description": "Habit reference such as h1."},
+                "q": {"type": "string", "description": "Free-form search query using qualifiers such as status:pending OR 買い物."},
+                "limit": {"type": "integer", "description": "Maximum number of tasks to return."},
             },
             "additionalProperties": false,
         })
@@ -712,6 +727,8 @@ impl Tool for ListTasks {
             no_overdue: optional_bool(&args, "no_overdue")?,
             habit_id: habit.as_ref().map(|habit| habit.habit.id.clone()),
             ical_uid: None,
+            q: optional_string(&args, "q")?,
+            limit: optional_i64(&args, "limit")?,
         };
 
         let default_query = TaskQuery::default();

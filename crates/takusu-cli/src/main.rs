@@ -339,6 +339,14 @@ enum TaskCommands {
         habit_id: Option<String>,
         #[arg(long)]
         ical_uid: Option<String>,
+        #[arg(long, help = "Maximum number of tasks to return")]
+        limit: Option<i64>,
+        #[arg(
+            help = "Search query (e.g. status:pending OR 買い物)",
+            trailing_var_arg = true,
+            num_args = 0..,
+        )]
+        query: Vec<String>,
     },
 
     /// Show task detail
@@ -1167,7 +1175,14 @@ async fn run_task(
             no_overdue,
             habit_id,
             ical_uid,
+            limit,
+            query,
         } => {
+            let q = if query.is_empty() {
+                None
+            } else {
+                Some(query.join(" "))
+            };
             let query = TaskQuery {
                 status,
                 from: from.map(|s| parse_dt(&s, tz)).transpose()?,
@@ -1175,6 +1190,8 @@ async fn run_task(
                 no_overdue: Some(no_overdue).filter(|x| *x),
                 habit_id,
                 ical_uid,
+                q,
+                limit,
             };
             let tasks = app.list_tasks(&query).await?;
             match mode {

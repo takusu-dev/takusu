@@ -4251,6 +4251,7 @@ dependencies = [
  "sqlx",
  "takusu-local-lib",
  "takusu-storage",
+ "takusu-util",
  "thiserror 2.0.18",
  "tokio",
  "tower",

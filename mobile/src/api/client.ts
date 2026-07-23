@@ -35,6 +35,7 @@ import type {
   ProgressResult,
   SplitTask,
   SplitResult,
+  Completion,
 } from './types';
 
 export class ApiError extends Error {
@@ -104,8 +105,18 @@ export class TakusuClient {
       params.push(`habit_id=${encodeURIComponent(query.habit_id)}`);
     if (query?.ical_uid)
       params.push(`ical_uid=${encodeURIComponent(query.ical_uid)}`);
+    if (query?.q) params.push(`q=${encodeURIComponent(query.q)}`);
+    if (query?.limit !== undefined)
+      params.push(`limit=${encodeURIComponent(query.limit.toString())}`);
     const qs = params.join('&');
     return this.request('GET', `/api/tasks${qs ? `?${qs}` : ''}`);
+  }
+
+  async completeTaskQuery(q: string): Promise<Completion[]> {
+    return this.request(
+      'GET',
+      `/api/tasks/complete?q=${encodeURIComponent(q)}`,
+    );
   }
 
   async getTask(id: string): Promise<TaskRow> {
