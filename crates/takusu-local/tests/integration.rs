@@ -4154,3 +4154,154 @@ async fn estimate_habit_rejects_fixed_habit() {
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn delete_task_nullifies_split_from_task_id() {
+    let (state, _pool) = setup().await;
+    let app = build_router(state);
+
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "split-parent",
+            "end_at": "2026-07-22T18:00:00+09:00",
+            "avg_minutes": 30,
+            "quantity_total": 10,
+            "quantity_done": 3,
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let task: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let id = task["id"].as_str().unwrap().to_string();
+
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/tasks/{id}/split"),
+        json!({"retained_quantity": 4}),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let split: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let remainder_id = split["remainder"]["id"].as_str().unwrap().to_string();
+    assert_eq!(split["remainder"]["split_from_task_id"], id);
+
+    let delete_req = auth_req(Method::DELETE, &format!("/api/tasks/{id}"));
+    let res = app.clone().oneshot(delete_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+    let get_req = auth_req(Method::GET, &format!("/api/tasks/{remainder_id}"));
+    let res = app.oneshot(get_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let remainder: serde_json::Value =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(remainder["split_from_task_id"].is_null());
+}
+
+#[tokio::test]
+async fn delete_task_removes_progress_and_work_session_rows() {
+    let (state, pool) = setup().await;
+    let app = build_router(state);
+
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "with-progress",
+            "end_at": "2026-07-22T18:00:00+09:00",
+            "avg_minutes": 30,
+            "quantity_total": 10,
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let task: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let id = task["id"].as_str().unwrap().to_string();
+
+    let now = jiff::Timestamp::now().to_string();
+    sqlx::query("INSERT INTO task_work_sessions (id, task_id, started_at) VALUES (?, ?, ?)")
+        .bind(uuid::Uuid::now_v7().to_string())
+        .bind(&id)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO progress_events (id, task_id, at, active_minutes) VALUES (?, ?, ?, ?)",
+    )
+    .bind(uuid::Uuid::now_v7().to_string())
+    .bind(&id)
+    .bind(&now)
+    .bind(0i64)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let delete_req = auth_req(Method::DELETE, &format!("/api/tasks/{id}"));
+    let res = app.oneshot(delete_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM task_work_sessions WHERE task_id = ?")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 0);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM progress_events WHERE task_id = ?")
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn delete_habit_breaks_split_reference_from_other_habit_task() {
+    let (state, pool) = setup().await;
+    let app = build_router(state);
+
+    let habit_a = create_daily_habit(&app, "habit-a").await;
+    let habit_b = create_daily_habit(&app, "habit-b").await;
+
+    // task_a belongs to habit_a, task_b belongs to habit_b and references task_a.
+    let task_a_id = "task-a-uuid";
+    let task_b_id = "task-b-uuid";
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, \
+         parallelizable, allows_parallel, abandonability, status, habit_id, quantity_done, quantity_total) \
+         VALUES (?, 'task-a', '2030-01-01T18:00:00Z', 30, 0, '[]', 0, 0, 0.5, 'pending', ?, 0, 0)",
+    )
+    .bind(task_a_id)
+    .bind(&habit_a)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO tasks (id, title, end_at, avg_minutes, sigma_minutes, depends, \
+         parallelizable, allows_parallel, abandonability, status, habit_id, split_from_task_id, quantity_done, quantity_total) \
+         VALUES (?, 'task-b', '2030-01-01T18:00:00Z', 30, 0, '[]', 0, 0, 0.5, 'pending', ?, ?, 0, 0)",
+    )
+    .bind(task_b_id)
+    .bind(&habit_b)
+    .bind(task_a_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let delete_req = auth_req(Method::DELETE, &format!("/api/habits/{habit_a}"));
+    let res = app.clone().oneshot(delete_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+    let get_a = auth_req(Method::GET, &format!("/api/habits/{habit_a}"));
+    let res = app.clone().oneshot(get_a).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    let get_b = auth_req(Method::GET, &format!("/api/tasks/{task_b_id}"));
+    let res = app.oneshot(get_b).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let task_b: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(task_b["id"], task_b_id);
+    assert!(task_b["split_from_task_id"].is_null());
+}

@@ -44,6 +44,7 @@ const MIGRATION_018: &str = include_str!("../migrations/018_progress.sql");
 const MIGRATION_019: &str = include_str!("../migrations/019_jwt.sql");
 const MIGRATION_020: &str = include_str!("../migrations/020_task_actual_minutes_view.sql");
 const MIGRATION_021: &str = include_str!("../migrations/021_solver_default_sa.sql");
+const MIGRATION_022: &str = include_str!("../migrations/022_split_from_task_index.sql");
 // Migration 013 one-time backfill: drops the old global unique index, renumbers
 // existing habit tasks to start from 1 per habit, and seeds the per-habit
 // sequences. Non-idempotent (DROP + UPDATE renumber) — guarded by a check
@@ -152,6 +153,14 @@ impl SqliteStorage {
 
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
+            .after_connect(|conn, _meta| {
+                Box::pin(async move {
+                    sqlx::raw_sql("PRAGMA foreign_keys = ON")
+                        .execute(conn)
+                        .await?;
+                    Ok(())
+                })
+            })
             .connect(&url)
             .await?;
 
@@ -351,6 +360,10 @@ impl SqliteStorage {
         // Migration 021 changes the default solver from 'auto' to 'sa' for
         // existing rows (idempotent).
         sqlx::raw_sql(MIGRATION_021).execute(&pool).await?;
+
+        // Migration 022 creates a partial index on tasks.split_from_task_id
+        // for efficient split-task cleanup (idempotent).
+        sqlx::raw_sql(MIGRATION_022).execute(&pool).await?;
 
         Ok(Self { pool, jwt_secret })
     }
@@ -701,11 +714,37 @@ impl Storage for SqliteStorage {
 
     async fn delete_task(&self, id: &str) -> StorageResult<()> {
         let full = resolve_task_id(&self.pool, id).await?;
-        sqlx::query("DELETE FROM tasks WHERE id = ?")
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        // Break split-task self-references so deleting a parent does not fail
+        // on the tasks.split_from_task_id foreign key.
+        sqlx::query("UPDATE tasks SET split_from_task_id = NULL WHERE split_from_task_id = ?")
             .bind(&full)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(map_err)?;
+        // Delete child rows explicitly so deletion is deterministic even if the
+        // foreign_keys pragma is temporarily disabled.
+        sqlx::query("DELETE FROM google_cal_events WHERE task_id = ?")
+            .bind(&full)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        sqlx::query("DELETE FROM task_work_sessions WHERE task_id = ?")
+            .bind(&full)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        sqlx::query("DELETE FROM progress_events WHERE task_id = ?")
+            .bind(&full)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        sqlx::query("DELETE FROM tasks WHERE id = ?")
+            .bind(&full)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        tx.commit().await.map_err(map_err)?;
         Ok(())
     }
 
@@ -839,19 +878,36 @@ impl Storage for SqliteStorage {
 
     async fn delete_habit(&self, id: &str) -> StorageResult<()> {
         // Delete tasks referencing this habit before deleting the habit,
-        // so the foreign-key constraint (enforced on D1) does not block
-        // deletion of habits that have already generated tasks (#240).
-        // The client confirms with the user before issuing the delete
-        // when there are associated tasks. All statements run in a
-        // single transaction so a partial failure cannot leave the
-        // database with tasks deleted but the habit still present.
-        // google_cal_events mappings for those tasks are also cleaned
-        // up because foreign keys are not enabled at runtime (the
-        // ON DELETE CASCADE in the schema only fires with
-        // PRAGMA foreign_keys = ON, which this codebase does not set).
+        // so the foreign-key constraint (enforced on D1 and now on SQLite)
+        // does not block deletion of habits that have already generated tasks
+        // (#240). The client confirms with the user before issuing the delete
+        // when there are associated tasks. All statements run in a single
+        // transaction so a partial failure cannot leave the database with
+        // tasks deleted but the habit still present.
         let full = resolve_habit_id(&self.pool, id).await?;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
+        // Break split-task self-references that point to any task about to be
+        // deleted, including split-off tasks that live outside this habit.
+        sqlx::query(
+            "UPDATE tasks SET split_from_task_id = NULL WHERE split_from_task_id IN (SELECT id FROM tasks WHERE habit_id = ?)",
+        )
+        .bind(&full)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
+        // Delete child rows explicitly so deletion is deterministic even if the
+        // foreign_keys pragma is temporarily disabled.
         sqlx::query("DELETE FROM google_cal_events WHERE task_id IN (SELECT id FROM tasks WHERE habit_id = ?)")
+            .bind(&full)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        sqlx::query("DELETE FROM task_work_sessions WHERE task_id IN (SELECT id FROM tasks WHERE habit_id = ?)")
+            .bind(&full)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        sqlx::query("DELETE FROM progress_events WHERE task_id IN (SELECT id FROM tasks WHERE habit_id = ?)")
             .bind(&full)
             .execute(&mut *tx)
             .await
@@ -861,22 +917,21 @@ impl Storage for SqliteStorage {
             .execute(&mut *tx)
             .await
             .map_err(map_err)?;
-        // habit_scheduled_spans: same reason as above — FK cascade does not fire
-        // without PRAGMA foreign_keys = ON, so delete explicitly (#303).
+        // habit_scheduled_spans and habit_steps have ON DELETE CASCADE, but keep
+        // the explicit deletes for parity with D1 and in case the pragma is off
+        // (#303 / #95).
         sqlx::query("DELETE FROM habit_scheduled_spans WHERE habit_id = ?")
             .bind(&full)
             .execute(&mut *tx)
             .await
             .map_err(map_err)?;
-        // habit_steps: same reason (#95). Tasks referencing the habit were
-        // already deleted above, so the habit_step_id FK is no longer
-        // referenced.
         sqlx::query("DELETE FROM habit_steps WHERE habit_id = ?")
             .bind(&full)
             .execute(&mut *tx)
             .await
             .map_err(map_err)?;
-        // habit_task_display_id_seq: clean up the per-habit sequence (#380).
+        // habit_task_display_id_seq has no foreign key, so it must be deleted
+        // explicitly (#380).
         sqlx::query("DELETE FROM habit_task_display_id_seq WHERE habit_id = ?")
             .bind(&full)
             .execute(&mut *tx)
@@ -2788,6 +2843,24 @@ fn token_expires_at(ttl_seconds: i64) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn foreign_keys_are_enabled_after_init() {
+        let cfg = LocalConfig {
+            db: "sqlite::memory:".into(),
+            jwt_secret: "test-secret".into(),
+            ..Default::default()
+        };
+        let storage = SqliteStorage::init(&cfg).await.unwrap();
+        let enabled: i32 = sqlx::query_scalar("PRAGMA foreign_keys")
+            .fetch_one(storage.pool())
+            .await
+            .unwrap();
+        assert_eq!(
+            enabled, 1,
+            "foreign keys should be enabled for every connection"
+        );
+    }
 
     #[tokio::test]
     async fn compute_updated_estimate_rejects_non_positive_delta() {

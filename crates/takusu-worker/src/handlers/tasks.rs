@@ -404,11 +404,26 @@ pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, W
 pub async fn delete(_req: Request, env: Env, id: &str) -> Result<Response, WorkerError> {
     let database = db(&env)?;
     let full = resolve_task_id(&database, id).await?;
-    let stmt = database.prepare("DELETE FROM tasks WHERE id = ?1");
-    stmt.bind(&[JsValue::from_str(&full)])?
-        .run()
-        .await
-        .map_err(WorkerError::Worker)?;
+    // Break split-task self-references, then delete child rows before the
+    // parent so D1's foreign-key enforcement stays consistent with SQLite.
+    let stmts = vec![
+        database
+            .prepare("UPDATE tasks SET split_from_task_id = NULL WHERE split_from_task_id = ?1")
+            .bind(&[JsValue::from_str(&full)])?,
+        database
+            .prepare("DELETE FROM google_cal_events WHERE task_id = ?1")
+            .bind(&[JsValue::from_str(&full)])?,
+        database
+            .prepare("DELETE FROM task_work_sessions WHERE task_id = ?1")
+            .bind(&[JsValue::from_str(&full)])?,
+        database
+            .prepare("DELETE FROM progress_events WHERE task_id = ?1")
+            .bind(&[JsValue::from_str(&full)])?,
+        database
+            .prepare("DELETE FROM tasks WHERE id = ?1")
+            .bind(&[JsValue::from_str(&full)])?,
+    ];
+    database.batch(stmts).await.map_err(WorkerError::Worker)?;
     Ok(Response::empty()?)
 }
 
