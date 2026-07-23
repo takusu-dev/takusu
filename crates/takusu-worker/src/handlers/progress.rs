@@ -7,12 +7,14 @@ use crate::auth;
 use crate::error::WorkerError;
 use crate::handlers::auth::db;
 use crate::handlers::d1::safe_all;
+use crate::handlers::settings::get_timezone;
 use crate::handlers::tasks::{allocate_display_id, resolve_task_id, select_one};
 use crate::handlers::tokens::{json_ok, parse_json};
 use crate::models::{
     ProgressEventRow, ProgressResult, RecordProgress, SplitResult, SplitTask, TaskProgress,
     TaskRow, TaskWorkSessionRow,
 };
+use crate::validate::validate_task_datetimes;
 
 #[derive(serde::Deserialize)]
 struct ProgressOpRow {
@@ -588,6 +590,16 @@ pub async fn split_task(mut req: Request, env: Env, id: &str) -> Result<Response
     let full = resolve_task_id(&database, id).await?;
 
     let original = select_one(&database, &full).await?;
+    if body.end_at.is_some() {
+        let tz = get_timezone(&database).await?;
+        validate_task_datetimes(
+            None,
+            body.end_at.as_deref(),
+            &tz,
+            original.start_at.as_deref(),
+            None,
+        )?;
+    }
     if original.status == "completed" || original.status == "skipped" {
         return Err(WorkerError::BadRequest(format!(
             "cannot split a {} task",

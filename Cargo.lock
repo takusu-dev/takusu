@@ -4193,6 +4193,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "takusu-util",
  "tokio",
  "webpki-root-certs",
 ]

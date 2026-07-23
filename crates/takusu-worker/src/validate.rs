@@ -5,6 +5,7 @@
 //! crashing later (e.g. during schedule generation).
 
 use serde::Deserialize;
+use takusu_util::parse_timezone;
 
 use crate::error::WorkerError;
 use crate::models::UpdateSettings;
@@ -234,18 +235,13 @@ pub(crate) fn validate_hhmm(s: &str) -> Result<(), WorkerError> {
     Ok(())
 }
 
-/// Validate a timezone string. Accepts IANA identifiers and fixed-offset
-/// strings supported by `jiff`.
+/// Validate a user-supplied timezone string. Accepts IANA identifiers and
+/// fixed-offset strings supported by `jiff`. Bad input is reported as
+/// `400 Bad Request`.
 pub(crate) fn validate_timezone(tz: &str) -> Result<(), WorkerError> {
-    if jiff::tz::TimeZone::get(tz).is_ok() {
-        return Ok(());
-    }
-    // jiff's named-timezone loader does not accept fixed-offset strings, so
-    // parse them manually (same rules as `takusu-local-lib::app`).
-    if parse_fixed_offset_timezone(tz).is_some() {
-        return Ok(());
-    }
-    Err(WorkerError::BadRequest(format!("invalid timezone: {tz}")))
+    parse_timezone(tz)
+        .map_err(WorkerError::BadRequest)
+        .map(|_| ())
 }
 
 /// Validate the fields of a `PUT /api/settings` request. Only fields that
@@ -264,8 +260,77 @@ pub(crate) fn validate_settings(body: &UpdateSettings) -> Result<(), WorkerError
     Ok(())
 }
 
-fn parse_fixed_offset_timezone(s: &str) -> Option<jiff::tz::TimeZone> {
-    takusu_util::parse_fixed_offset_timezone(s)
+/// Parse a user-supplied task datetime string using the configured timezone (#934).
+fn parse_new_datetime(
+    s: &str,
+    label: &str,
+    tz: &jiff::tz::TimeZone,
+) -> Result<jiff::Timestamp, WorkerError> {
+    takusu_util::parse_datetime_to_timestamp(s, tz)
+        .map_err(|e| WorkerError::BadRequest(format!("invalid {label}: {e}")))
+}
+
+/// Parse an existing task datetime string. Failures are treated as data
+/// corruption rather than user error.
+fn parse_existing_datetime(
+    s: &str,
+    label: &str,
+    tz: &jiff::tz::TimeZone,
+) -> Result<jiff::Timestamp, WorkerError> {
+    takusu_util::parse_datetime_to_timestamp(s, tz)
+        .map_err(|e| WorkerError::Internal(format!("invalid {label}: {e}")))
+}
+
+/// Validate `start_at` / `end_at` datetime strings and that the effective
+/// start is not after the effective end. Missing fields are filled from the
+/// existing row for comparison when one side is being updated (#934). If an
+/// existing value is needed for comparison but cannot be parsed, it is treated
+/// as a data-corruption error rather than silently ignored.
+pub(crate) fn validate_task_datetimes(
+    start_at: Option<&str>,
+    end_at: Option<&str>,
+    tz: &jiff::tz::TimeZone,
+    existing_start: Option<&str>,
+    existing_end: Option<&str>,
+) -> Result<(), WorkerError> {
+    let start = start_at
+        .map(|s| parse_new_datetime(s, "start_at", tz))
+        .transpose()?;
+    let end = end_at
+        .map(|e| parse_new_datetime(e, "end_at", tz))
+        .transpose()?;
+
+    let need_existing_start = start.is_none() && end.is_some();
+    let need_existing_end = start.is_some() && end.is_none();
+
+    let effective_start = if let Some(s) = start {
+        Some(s)
+    } else if need_existing_start {
+        existing_start
+            .map(|s| parse_existing_datetime(s, "existing start_at", tz))
+            .transpose()?
+    } else {
+        None
+    };
+
+    let effective_end = if let Some(e) = end {
+        Some(e)
+    } else if need_existing_end {
+        existing_end
+            .map(|e| parse_existing_datetime(e, "existing end_at", tz))
+            .transpose()?
+    } else {
+        None
+    };
+
+    if let (Some(s), Some(e)) = (effective_start, effective_end)
+        && s > e
+    {
+        return Err(WorkerError::BadRequest(format!(
+            "start_at must be <= end_at ({s} > {e})"
+        )));
+    }
+    Ok(())
 }
 
 /// Validate a bulk-replace step array (#95): per-field sanity + DAG integrity
@@ -589,5 +654,75 @@ mod tests {
             ..Default::default()
         };
         assert!(validate_settings(&body).is_ok());
+    }
+
+    #[test]
+    fn validate_task_datetimes_accepts_valid_range() {
+        let tz = jiff::tz::TimeZone::UTC;
+        assert!(
+            validate_task_datetimes(
+                Some("2026-07-22T10:00:00Z"),
+                Some("2026-07-22T12:00:00Z"),
+                &tz,
+                None,
+                None,
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_task_datetimes_rejects_reversed() {
+        let tz = jiff::tz::TimeZone::UTC;
+        assert!(
+            validate_task_datetimes(
+                Some("2026-07-22T12:00:00Z"),
+                Some("2026-07-22T10:00:00Z"),
+                &tz,
+                None,
+                None,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn validate_task_datetimes_fills_existing_for_partial_update() {
+        let tz = jiff::tz::TimeZone::UTC;
+        assert!(
+            validate_task_datetimes(
+                None,
+                Some("2026-07-22T10:00:00Z"),
+                &tz,
+                Some("2026-07-22T08:00:00Z"),
+                None,
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_task_datetimes(
+                None,
+                Some("2026-07-22T07:00:00Z"),
+                &tz,
+                Some("2026-07-22T08:00:00Z"),
+                None,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn validate_task_datetimes_rejects_invalid_existing() {
+        let tz = jiff::tz::TimeZone::UTC;
+        assert!(
+            validate_task_datetimes(
+                None,
+                Some("2026-07-22T10:00:00Z"),
+                &tz,
+                Some("not-a-datetime"),
+                None,
+            )
+            .is_err()
+        );
     }
 }

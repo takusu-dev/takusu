@@ -8,6 +8,7 @@ use crate::handlers::d1::safe_all;
 use crate::handlers::tokens::{json_ok, parse_json};
 use crate::models::{SettingsRow, UpdateSettings};
 use crate::validate::validate_settings;
+use takusu_util::parse_timezone;
 
 pub async fn get(_req: worker::Request, env: Env) -> Result<Response, WorkerError> {
     let database = db(&env)?;
@@ -60,11 +61,24 @@ pub async fn update(mut req: worker::Request, env: Env) -> Result<Response, Work
     json_ok(&row)
 }
 
-async fn get_inner(database: &worker::D1Database) -> Result<SettingsRow, WorkerError> {
+pub(crate) async fn get_inner(database: &worker::D1Database) -> Result<SettingsRow, WorkerError> {
     let stmt = database
         .prepare("SELECT id, tz, sleep_start, sleep_end, comfortable_minutes, maximum_minutes, solver, time_budget_ms, seed, warm_start, created_at, updated_at FROM settings WHERE id = 'active'");
     let rows: Vec<SettingsRow> = safe_all(&stmt).await?;
     rows.into_iter()
         .next()
         .ok_or_else(|| WorkerError::NotFound("settings not found".into()))
+}
+
+/// Return the configured timezone, falling back to UTC if the settings row
+/// has not been created yet. Mirrors `takusu-local-lib` `get_settings_or_default`.
+pub(crate) async fn get_timezone(
+    database: &worker::D1Database,
+) -> Result<jiff::tz::TimeZone, WorkerError> {
+    match get_inner(database).await {
+        Ok(settings) => parse_timezone(&settings.tz)
+            .map_err(|e| WorkerError::Internal(format!("stored timezone is invalid: {e}"))),
+        Err(WorkerError::NotFound(_)) => Ok(jiff::tz::TimeZone::UTC),
+        Err(e) => Err(e),
+    }
 }

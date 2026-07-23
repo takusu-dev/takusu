@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use takusu_util::url_encode;
 use tokio::sync::RwLock;
 
 #[derive(Debug)]
@@ -149,7 +150,7 @@ impl Client {
     }
 
     pub async fn get_task(&self, id: &str) -> Result<TaskRow, ClientError> {
-        let encoded_id = id.replace('#', "%23");
+        let encoded_id = url_encode(id);
         let resp = self
             .request(reqwest::Method::GET, &format!("/api/tasks/{encoded_id}"))
             .await
@@ -179,8 +180,9 @@ impl Client {
     }
 
     pub async fn update_task(&self, id: &str, body: &UpdateTask) -> Result<TaskRow, ClientError> {
+        let encoded_id = url_encode(id);
         let resp = self
-            .request(reqwest::Method::PATCH, &format!("/api/tasks/{id}"))
+            .request(reqwest::Method::PATCH, &format!("/api/tasks/{encoded_id}"))
             .await
             .json(body)
             .send()
@@ -194,8 +196,9 @@ impl Client {
     }
 
     pub async fn replace_task(&self, id: &str, body: &CreateTask) -> Result<TaskRow, ClientError> {
+        let encoded_id = url_encode(id);
         let resp = self
-            .request(reqwest::Method::PUT, &format!("/api/tasks/{id}"))
+            .request(reqwest::Method::PUT, &format!("/api/tasks/{encoded_id}"))
             .await
             .json(body)
             .send()
@@ -209,8 +212,9 @@ impl Client {
     }
 
     pub async fn delete_task(&self, id: &str) -> Result<(), ClientError> {
+        let encoded_id = url_encode(id);
         let resp = self
-            .request(reqwest::Method::DELETE, &format!("/api/tasks/{id}"))
+            .request(reqwest::Method::DELETE, &format!("/api/tasks/{encoded_id}"))
             .await
             .send()
             .await?;
@@ -227,7 +231,7 @@ impl Client {
         id: &str,
         operation_id: Option<&str>,
     ) -> Result<TaskRow, ClientError> {
-        let encoded_id = id.replace('#', "%23");
+        let encoded_id = url_encode(id);
         let mut req = self
             .request(
                 reqwest::Method::POST,
@@ -252,7 +256,7 @@ impl Client {
         id: &str,
         operation_id: Option<&str>,
     ) -> Result<TaskRow, ClientError> {
-        let encoded_id = id.replace('#', "%23");
+        let encoded_id = url_encode(id);
         let mut req = self
             .request(
                 reqwest::Method::POST,
@@ -278,7 +282,7 @@ impl Client {
         body: &RecordProgress,
         operation_id: Option<&str>,
     ) -> Result<ProgressResult, ClientError> {
-        let encoded_id = id.replace('#', "%23");
+        let encoded_id = url_encode(id);
         let mut req = self
             .request(
                 reqwest::Method::POST,
@@ -303,7 +307,7 @@ impl Client {
         id: &str,
         operation_id: Option<&str>,
     ) -> Result<TaskRow, ClientError> {
-        let encoded_id = id.replace('#', "%23");
+        let encoded_id = url_encode(id);
         let mut req = self
             .request(
                 reqwest::Method::POST,
@@ -324,7 +328,7 @@ impl Client {
     }
 
     pub async fn get_task_progress(&self, id: &str) -> Result<TaskProgress, ClientError> {
-        let encoded_id = id.replace('#', "%23");
+        let encoded_id = url_encode(id);
         let resp = self
             .request(
                 reqwest::Method::GET,
@@ -347,7 +351,7 @@ impl Client {
         body: &SplitTask,
         operation_id: Option<&str>,
     ) -> Result<SplitResult, ClientError> {
-        let encoded_id = id.replace('#', "%23");
+        let encoded_id = url_encode(id);
         let mut req = self
             .request(
                 reqwest::Method::POST,
@@ -401,7 +405,10 @@ impl Client {
 
     pub async fn get_habit(&self, id: &str) -> Result<HabitDetail, ClientError> {
         let resp = self
-            .request(reqwest::Method::GET, &format!("/api/habits/{id}"))
+            .request(
+                reqwest::Method::GET,
+                &format!("/api/habits/{}", url_encode(id)),
+            )
             .await
             .send()
             .await?;
@@ -453,7 +460,10 @@ impl Client {
         body: &UpdateHabit,
     ) -> Result<HabitRow, ClientError> {
         let resp = self
-            .request(reqwest::Method::PATCH, &format!("/api/habits/{id}"))
+            .request(
+                reqwest::Method::PATCH,
+                &format!("/api/habits/{}", url_encode(id)),
+            )
             .await
             .json(body)
             .send()
@@ -472,7 +482,10 @@ impl Client {
         body: &CreateHabit,
     ) -> Result<HabitRow, ClientError> {
         let resp = self
-            .request(reqwest::Method::PUT, &format!("/api/habits/{id}"))
+            .request(
+                reqwest::Method::PUT,
+                &format!("/api/habits/{}", url_encode(id)),
+            )
             .await
             .json(body)
             .send()
@@ -487,7 +500,10 @@ impl Client {
 
     pub async fn delete_habit(&self, id: &str) -> Result<(), ClientError> {
         let resp = self
-            .request(reqwest::Method::DELETE, &format!("/api/habits/{id}"))
+            .request(
+                reqwest::Method::DELETE,
+                &format!("/api/habits/{}", url_encode(id)),
+            )
             .await
             .send()
             .await?;
@@ -508,7 +524,7 @@ impl Client {
         let resp = self
             .request(
                 reqwest::Method::GET,
-                &format!("/api/habits/{id}/scheduled-spans"),
+                &format!("/api/habits/{}/scheduled-spans", url_encode(id)),
             )
             .await
             .send()
@@ -545,7 +561,7 @@ impl Client {
         let resp = self
             .request(
                 reqwest::Method::POST,
-                &format!("/api/habits/{id}/scheduled-spans"),
+                &format!("/api/habits/{}/scheduled-spans", url_encode(id)),
             )
             .await
             .json(body)
@@ -567,7 +583,11 @@ impl Client {
         let resp = self
             .request(
                 reqwest::Method::DELETE,
-                &format!("/api/habits/{id}/scheduled-spans/{span_id}"),
+                &format!(
+                    "/api/habits/{}/scheduled-spans/{}",
+                    url_encode(id),
+                    url_encode(span_id)
+                ),
             )
             .await
             .send()
@@ -584,7 +604,10 @@ impl Client {
 
     pub async fn list_habit_steps(&self, id: &str) -> Result<Vec<HabitStepRow>, ClientError> {
         let resp = self
-            .request(reqwest::Method::GET, &format!("/api/habits/{id}/steps"))
+            .request(
+                reqwest::Method::GET,
+                &format!("/api/habits/{}/steps", url_encode(id)),
+            )
             .await
             .send()
             .await?;
@@ -616,7 +639,10 @@ impl Client {
         steps: &[HabitStepInput],
     ) -> Result<Vec<HabitStepRow>, ClientError> {
         let resp = self
-            .request(reqwest::Method::PUT, &format!("/api/habits/{id}/steps"))
+            .request(
+                reqwest::Method::PUT,
+                &format!("/api/habits/{}/steps", url_encode(id)),
+            )
             .await
             .json(steps)
             .send()
@@ -636,7 +662,10 @@ impl Client {
         let resp = self
             .request(
                 reqwest::Method::GET,
-                &format!("/api/habits/{habit_id}/steps/dependency-analysis"),
+                &format!(
+                    "/api/habits/{}/steps/dependency-analysis",
+                    url_encode(habit_id)
+                ),
             )
             .await
             .send()
@@ -742,7 +771,7 @@ impl Client {
         let resp = self
             .request(
                 reqwest::Method::PATCH,
-                &format!("/api/schedule/entries/{task_id}"),
+                &format!("/api/schedule/entries/{}", url_encode(task_id)),
             )
             .await
             .json(body)
@@ -807,7 +836,10 @@ impl Client {
 
     pub async fn revoke_token(&self, id: i64) -> Result<(), ClientError> {
         let resp = self
-            .request(reqwest::Method::DELETE, &format!("/api/tokens/{id}"))
+            .request(
+                reqwest::Method::DELETE,
+                &format!("/api/tokens/{}", url_encode(&id.to_string())),
+            )
             .await
             .send()
             .await?;
@@ -976,7 +1008,10 @@ impl Client {
 
     pub async fn get_skill(&self, slug: &str) -> Result<SkillRow, ClientError> {
         let resp = self
-            .request(reqwest::Method::GET, &format!("/api/skills/{slug}"))
+            .request(
+                reqwest::Method::GET,
+                &format!("/api/skills/{}", url_encode(slug)),
+            )
             .await
             .send()
             .await?;
@@ -1009,7 +1044,10 @@ impl Client {
         body: &UpdateSkill,
     ) -> Result<SkillRow, ClientError> {
         let resp = self
-            .request(reqwest::Method::PATCH, &format!("/api/skills/{slug}"))
+            .request(
+                reqwest::Method::PATCH,
+                &format!("/api/skills/{}", url_encode(slug)),
+            )
             .await
             .json(body)
             .send()
@@ -1024,7 +1062,10 @@ impl Client {
 
     pub async fn delete_skill(&self, slug: &str) -> Result<(), ClientError> {
         let resp = self
-            .request(reqwest::Method::DELETE, &format!("/api/skills/{slug}"))
+            .request(
+                reqwest::Method::DELETE,
+                &format!("/api/skills/{}", url_encode(slug)),
+            )
             .await
             .send()
             .await?;
@@ -1061,7 +1102,10 @@ impl Client {
 
     pub async fn get_memory(&self, id: &str) -> Result<MemoryRow, ClientError> {
         let resp = self
-            .request(reqwest::Method::GET, &format!("/api/memory/{id}"))
+            .request(
+                reqwest::Method::GET,
+                &format!("/api/memory/{}", url_encode(id)),
+            )
             .await
             .send()
             .await?;
@@ -1080,7 +1124,10 @@ impl Client {
         operation_id: Option<&str>,
     ) -> Result<MemoryRow, ClientError> {
         let mut req = self
-            .request(reqwest::Method::PATCH, &format!("/api/memory/{id}"))
+            .request(
+                reqwest::Method::PATCH,
+                &format!("/api/memory/{}", url_encode(id)),
+            )
             .await
             .json(body);
         if let Some(op_id) = operation_id {
@@ -1101,7 +1148,11 @@ impl Client {
         observed_revision: i64,
         operation_id: Option<&str>,
     ) -> Result<(), ClientError> {
-        let path = format!("/api/memory/{id}?observed_revision={observed_revision}");
+        let path = format!(
+            "/api/memory/{}?observed_revision={}",
+            url_encode(id),
+            observed_revision
+        );
         let mut req = self.request(reqwest::Method::DELETE, &path).await;
         if let Some(op_id) = operation_id {
             req = req.header("Idempotency-Key", op_id);

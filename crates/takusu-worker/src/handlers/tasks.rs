@@ -4,9 +4,10 @@ use worker::{Env, Request, Response};
 use crate::error::WorkerError;
 use crate::handlers::auth::db;
 use crate::handlers::d1::safe_all;
+use crate::handlers::settings::get_timezone;
 use crate::handlers::tokens::{json_created, json_ok, parse_json};
 use crate::models::{CreateTask, TaskRow, UpdateTask};
-use crate::validate::{validate_minutes, validate_quantity};
+use crate::validate::{validate_minutes, validate_quantity, validate_task_datetimes};
 
 const TASK_COLS: &str = "id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at, tam.actual_minutes";
 const TASK_FROM: &str = "tasks LEFT JOIN task_actual_minutes tam ON tam.task_id = tasks.id";
@@ -93,6 +94,14 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
         body.original_quantity_total,
     )?;
     let database = db(&env)?;
+    let tz = get_timezone(&database).await?;
+    validate_task_datetimes(
+        body.start_at.as_deref(),
+        Some(&body.end_at),
+        &tz,
+        None,
+        None,
+    )?;
     let id = uuid::Uuid::now_v7().to_string();
     let resolved_depends = resolve_depends(&database, body.depends.as_deref()).await?;
     let depends_json =
@@ -214,6 +223,16 @@ pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, Wo
     let database = db(&env)?;
     let full = resolve_task_id(&database, id).await?;
     let existing = select_one(&database, &full).await?;
+    if body.start_at.is_some() || body.end_at.is_some() {
+        let tz = get_timezone(&database).await?;
+        validate_task_datetimes(
+            body.start_at.as_deref(),
+            body.end_at.as_deref(),
+            &tz,
+            existing.start_at.as_deref(),
+            Some(&existing.end_at),
+        )?;
+    }
     validate_quantity(
         body.quantity_total.or(existing.quantity_total),
         body.quantity_done.or(Some(existing.quantity_done)),
@@ -339,6 +358,14 @@ pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, W
         body.original_quantity_total,
     )?;
     let database = db(&env)?;
+    let tz = get_timezone(&database).await?;
+    validate_task_datetimes(
+        body.start_at.as_deref(),
+        Some(&body.end_at),
+        &tz,
+        None,
+        None,
+    )?;
     let full = resolve_task_id(&database, id).await?;
     let resolved_depends = resolve_depends(&database, body.depends.as_deref()).await?;
     let depends_json = serde_json::to_string(&resolved_depends).unwrap_or_else(|_| "[]".into());

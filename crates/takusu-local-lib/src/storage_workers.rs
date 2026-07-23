@@ -16,7 +16,7 @@ use takusu_storage::{
     TaskQuery, TaskRow, TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit,
     UpdateMemory, UpdateSettings, UpdateSkill, UpdateTask, storage::StorageResult,
 };
-use takusu_util::TokenClaims;
+use takusu_util::{TokenClaims, url_encode};
 use tokio::sync::RwLock;
 
 const RETRY_STATUSES: &[u16] = &[429, 500, 502, 503, 504];
@@ -961,15 +961,4 @@ impl WorkersStorage {
             ))),
         }
     }
-}
-
-fn url_encode(s: &str) -> String {
-    s.bytes()
-        .flat_map(|b| match b {
-            b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'-' | b'_' | b'.' | b'~' => {
-                vec![b as char]
-            }
-            _ => format!("%{b:02X}").chars().collect(),
-        })
-        .collect()
 }

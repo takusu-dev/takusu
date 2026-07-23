@@ -74,9 +74,17 @@ pub fn parse_fixed_offset_timezone(s: &str) -> Option<jiff::tz::TimeZone> {
     Some(jiff::tz::TimeZone::fixed(offset))
 }
 
+/// Parse an IANA or fixed-offset timezone string. Returns a descriptive error
+/// string on failure.
+pub fn parse_timezone(tz: &str) -> Result<jiff::tz::TimeZone, String> {
+    if let Ok(tz) = jiff::tz::TimeZone::get(tz) {
+        return Ok(tz);
+    }
+    parse_fixed_offset_timezone(tz).ok_or_else(|| format!("invalid timezone: {tz}"))
+}
+
 pub const MIN_ESTIMATE_MINUTES: f64 = 5.0;
 pub const MAX_ESTIMATE_MINUTES: f64 = 24.0 * 60.0;
-
 /// Compute an updated `(avg_minutes, sigma_minutes)` estimate from a new
 /// progress observation and a history of prior observations.
 ///
@@ -543,6 +551,19 @@ pub fn parse_date_expression(
     parse_datetime_to_timestamp(s, tz)
 }
 
+/// Percent-encode a URL path segment. Encodes every byte that is not an
+/// unreserved character per RFC 3986 (`A-Z a-z 0-9 - . _ ~`).
+pub fn url_encode(s: &str) -> String {
+    s.bytes()
+        .flat_map(|b| match b {
+            b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'-' | b'_' | b'.' | b'~' => {
+                vec![b as char]
+            }
+            _ => format!("%{b:02X}").chars().collect(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -933,5 +954,21 @@ mod tests {
         // With outlier included, avg and sigma are much larger.
         assert!(avg2 > avg);
         assert!(sigma2 > sigma);
+    }
+
+    #[test]
+    fn parse_timezone_accepts_iana_and_fixed_offsets() {
+        assert!(parse_timezone("Asia/Tokyo").is_ok());
+        assert!(parse_timezone("UTC").is_ok());
+        assert!(parse_timezone("+09:00").is_ok());
+        assert!(parse_timezone("not/a/tz").is_err());
+    }
+
+    #[test]
+    fn url_encode_preserves_unreserved_and_encodes_specials() {
+        assert_eq!(url_encode("h1#5"), "h1%235");
+        assert_eq!(url_encode("a?b&c"), "a%3Fb%26c");
+        assert_eq!(url_encode("a/b"), "a%2Fb");
+        assert_eq!(url_encode("abc-_.~"), "abc-_.~");
     }
 }

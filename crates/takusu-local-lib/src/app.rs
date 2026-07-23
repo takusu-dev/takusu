@@ -23,6 +23,7 @@ use takusu_storage::{
 use crate::error::AppError;
 use crate::error::storage_to_app;
 use crate::token_cache::TokenCache;
+use takusu_util::parse_timezone;
 
 fn parse_hhmm(s: &str) -> Result<(u8, u8), AppError> {
     let parts: Vec<&str> = s.split(':').collect();
@@ -39,24 +40,6 @@ fn parse_hhmm(s: &str) -> Result<(u8, u8), AppError> {
         return Err(AppError::BadRequest(format!("invalid time: {s}")));
     }
     Ok((h, m))
-}
-
-/// Resolve a timezone string to a `jiff::tz::TimeZone`.
-///
-/// Accepts IANA identifiers (e.g. `Asia/Tokyo`) and fixed-offset strings
-/// (e.g. `+09:00` or `-05:30`).
-fn parse_timezone(tz: &str) -> Result<jiff::tz::TimeZone, AppError> {
-    if let Ok(tz) = jiff::tz::TimeZone::get(tz) {
-        return Ok(tz);
-    }
-    if let Some(tz) = parse_fixed_offset_timezone(tz) {
-        return Ok(tz);
-    }
-    Err(AppError::BadRequest(format!("invalid timezone: {tz}")))
-}
-
-fn parse_fixed_offset_timezone(s: &str) -> Option<jiff::tz::TimeZone> {
-    takusu_util::parse_fixed_offset_timezone(s)
 }
 
 /// Reject negative or unrealistically large `avg_minutes` / `sigma_minutes`,
@@ -258,9 +241,73 @@ fn topo_sort_steps(steps: &[HabitStepRow]) -> Result<Vec<usize>, AppError> {
 }
 
 /// Verify the timezone string resolves to a real `jiff::tz::TimeZone` so that
-/// typos don't silently fall back to UTC (#277).
+/// typos don't silently fall back to UTC (#277). User-supplied timezones are
+/// reported as BadRequest.
 fn validate_timezone(tz: &str) -> Result<(), AppError> {
-    parse_timezone(tz).map(|_| ())
+    parse_timezone(tz).map_err(AppError::BadRequest).map(|_| ())
+}
+
+/// Parse the timezone stored in settings. A corrupt stored timezone is a
+/// server-side data error, so it is reported as Internal.
+fn parse_settings_timezone(tz: &str) -> Result<jiff::tz::TimeZone, AppError> {
+    parse_timezone(tz).map_err(AppError::Internal)
+}
+
+/// Validate `start_at` / `end_at` datetime strings and that the effective
+/// start is not after the effective end. Missing fields are filled from the
+/// existing row for comparison when one side is being updated (#934). If an
+/// existing value is needed for comparison but cannot be parsed, it is treated
+/// as a data-corruption error rather than silently ignored.
+fn validate_task_datetimes(
+    start_at: Option<&str>,
+    end_at: Option<&str>,
+    tz: &jiff::tz::TimeZone,
+    existing_start: Option<&str>,
+    existing_end: Option<&str>,
+) -> Result<(), AppError> {
+    let parse_new = |s: &str, label: &str| {
+        takusu_util::parse_datetime_to_timestamp(s, tz)
+            .map_err(|e| AppError::BadRequest(format!("invalid {label}: {e}")))
+    };
+    let parse_existing = |s: &str, label: &str| {
+        takusu_util::parse_datetime_to_timestamp(s, tz)
+            .map_err(|e| AppError::Internal(format!("invalid {label}: {e}")))
+    };
+
+    let start = start_at.map(|s| parse_new(s, "start_at")).transpose()?;
+    let end = end_at.map(|e| parse_new(e, "end_at")).transpose()?;
+
+    let need_existing_start = start.is_none() && end.is_some();
+    let need_existing_end = start.is_some() && end.is_none();
+
+    let effective_start = if let Some(s) = start {
+        Some(s)
+    } else if need_existing_start {
+        existing_start
+            .map(|s| parse_existing(s, "existing start_at"))
+            .transpose()?
+    } else {
+        None
+    };
+
+    let effective_end = if let Some(e) = end {
+        Some(e)
+    } else if need_existing_end {
+        existing_end
+            .map(|e| parse_existing(e, "existing end_at"))
+            .transpose()?
+    } else {
+        None
+    };
+
+    if let (Some(s), Some(e)) = (effective_start, effective_end)
+        && s > e
+    {
+        return Err(AppError::BadRequest(format!(
+            "start_at must be <= end_at ({s} > {e})"
+        )));
+    }
+    Ok(())
 }
 
 /// Build a `CoreTask` for a single step occurrence (#95). The step's window is
@@ -934,6 +981,15 @@ impl TakusuApp {
 
     pub async fn create_task(&self, body: &CreateTask) -> Result<TaskRow, AppError> {
         validate_minutes(body.avg_minutes, body.sigma_minutes)?;
+        let settings = self.get_settings_or_default().await?;
+        let tz = parse_settings_timezone(&settings.tz)?;
+        validate_task_datetimes(
+            body.start_at.as_deref(),
+            Some(&body.end_at),
+            &tz,
+            None,
+            None,
+        )?;
         if let Some(dep_ids) = &body.depends
             && !dep_ids.is_empty()
         {
@@ -983,6 +1039,32 @@ impl TakusuApp {
             validate_minutes(0, Some(sigma))?;
         }
         let mut body = body.clone();
+
+        // Fetch the existing task once if any downstream logic needs it.
+        let needs_existing = body.start_at.is_some()
+            || body.end_at.is_some()
+            || body.depends.is_some()
+            || body.user_edited.is_none();
+        let existing = if needs_existing {
+            Some(self.storage.get_task(id).await.map_err(storage_to_app)?)
+        } else {
+            None
+        };
+
+        // Validate datetime fields and their logical ordering (#934).
+        if body.start_at.is_some() || body.end_at.is_some() {
+            let existing = existing.as_ref().unwrap();
+            let settings = self.get_settings_or_default().await?;
+            let tz = parse_settings_timezone(&settings.tz)?;
+            validate_task_datetimes(
+                body.start_at.as_deref(),
+                body.end_at.as_deref(),
+                &tz,
+                existing.start_at.as_deref(),
+                Some(&existing.end_at),
+            )?;
+        }
+
         if let Some(dep_ids) = &body.depends {
             let tasks = self
                 .storage
@@ -990,7 +1072,7 @@ impl TakusuApp {
                 .await
                 .map_err(storage_to_app)?;
             let (mut adj, id_to_idx) = build_dep_graph(&tasks)?;
-            let full_id = self.storage.get_task(id).await.map_err(storage_to_app)?.id;
+            let full_id = existing.as_ref().unwrap().id.clone();
             let target_idx = id_to_idx
                 .get(&full_id)
                 .ok_or_else(|| AppError::NotFound(format!("task {id} not found")))?;
@@ -1019,7 +1101,7 @@ impl TakusuApp {
         // habit-managed fields are touched by an HTTP request, unless the
         // caller explicitly set user_edited (e.g. "revert to habit" sets false).
         if body.user_edited.is_none() {
-            let existing = self.storage.get_task(id).await.map_err(storage_to_app)?;
+            let existing = existing.as_ref().unwrap();
             if existing.habit_id.is_some() {
                 let touched = body.title.is_some()
                     || body.description.is_some()
@@ -1045,6 +1127,15 @@ impl TakusuApp {
 
     pub async fn replace_task(&self, id: &str, body: &CreateTask) -> Result<TaskRow, AppError> {
         validate_minutes(body.avg_minutes, body.sigma_minutes)?;
+        let settings = self.get_settings_or_default().await?;
+        let tz = parse_settings_timezone(&settings.tz)?;
+        validate_task_datetimes(
+            body.start_at.as_deref(),
+            Some(&body.end_at),
+            &tz,
+            None,
+            None,
+        )?;
         if let Some(dep_ids) = &body.depends
             && !dep_ids.is_empty()
         {
@@ -1152,6 +1243,18 @@ impl TakusuApp {
         body: &SplitTask,
         operation_id: Option<&str>,
     ) -> Result<SplitResult, AppError> {
+        if body.end_at.is_some() {
+            let settings = self.get_settings_or_default().await?;
+            let tz = parse_settings_timezone(&settings.tz)?;
+            let original = self.storage.get_task(id).await.map_err(storage_to_app)?;
+            validate_task_datetimes(
+                None,
+                body.end_at.as_deref(),
+                &tz,
+                original.start_at.as_deref(),
+                None,
+            )?;
+        }
         self.storage
             .split_task(id, body, operation_id)
             .await
@@ -1631,7 +1734,7 @@ impl TakusuApp {
         input: &GenerateScheduleInput,
     ) -> Result<ScheduleRow, AppError> {
         let settings = self.get_settings_or_default().await?;
-        let tz = parse_timezone(&settings.tz)?;
+        let tz = parse_settings_timezone(&settings.tz)?;
         let sleep = parse_sleep(&input.sleep, &settings, &tz)?;
         let from_point = Point::from_timestamp(Timestamp::now(), 5);
 
@@ -1701,7 +1804,7 @@ impl TakusuApp {
         input: &SchedulePreviewInput,
     ) -> Result<SchedulePreviewOutput, AppError> {
         let settings = self.get_settings_or_default().await?;
-        let tz = parse_timezone(&settings.tz)?;
+        let tz = parse_settings_timezone(&settings.tz)?;
         let sleep = parse_sleep(&input.sleep, &settings, &tz)?;
         let from_point = Point::from_timestamp(Timestamp::now(), 5);
         let habit_rows = self.sync_habit_tasks(&tz).await?;
@@ -1817,7 +1920,7 @@ impl TakusuApp {
 
     pub async fn reschedule(&self, input: &RescheduleInput) -> Result<ScheduleRow, AppError> {
         let settings = self.get_settings_or_default().await?;
-        let tz = parse_timezone(&settings.tz)?;
+        let tz = parse_settings_timezone(&settings.tz)?;
         let sleep = parse_sleep(&input.sleep, &settings, &tz)?;
         let now_point = Point::from_timestamp(Timestamp::now(), 5);
 
@@ -1933,7 +2036,7 @@ impl TakusuApp {
             .map_err(storage_to_app)?;
 
         let settings = self.get_settings_or_default().await?;
-        let tz = parse_timezone(&settings.tz)?;
+        let tz = parse_settings_timezone(&settings.tz)?;
 
         let schedule_row = self
             .storage
@@ -3214,6 +3317,78 @@ mod tests {
         assert!(
             parse_sleep("22:00-06:00", &settings, &tz).is_ok(),
             "valid custom sleep should still be accepted"
+        );
+    }
+
+    // ── validate_task_datetimes (#934) ─────────────────────────────────
+
+    #[test]
+    fn validate_task_datetimes_accepts_valid_range() {
+        let tz = jiff::tz::TimeZone::UTC;
+        assert!(
+            validate_task_datetimes(
+                Some("2026-07-22T10:00:00Z"),
+                Some("2026-07-22T12:00:00Z"),
+                &tz,
+                None,
+                None,
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_task_datetimes_rejects_reversed() {
+        let tz = jiff::tz::TimeZone::UTC;
+        assert!(
+            validate_task_datetimes(
+                Some("2026-07-22T12:00:00Z"),
+                Some("2026-07-22T10:00:00Z"),
+                &tz,
+                None,
+                None,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn validate_task_datetimes_fills_existing_for_partial_update() {
+        let tz = jiff::tz::TimeZone::UTC;
+        assert!(
+            validate_task_datetimes(
+                None,
+                Some("2026-07-22T10:00:00Z"),
+                &tz,
+                Some("2026-07-22T08:00:00Z"),
+                None,
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_task_datetimes(
+                None,
+                Some("2026-07-22T07:00:00Z"),
+                &tz,
+                Some("2026-07-22T08:00:00Z"),
+                None,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn validate_task_datetimes_rejects_invalid_existing() {
+        let tz = jiff::tz::TimeZone::UTC;
+        assert!(
+            validate_task_datetimes(
+                None,
+                Some("2026-07-22T10:00:00Z"),
+                &tz,
+                Some("not-a-datetime"),
+                None,
+            )
+            .is_err()
         );
     }
 }
