@@ -16,8 +16,9 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import java.io.File
-import java.util.concurrent.CompletableFuture
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -39,21 +40,27 @@ class ModelDownloadWorker(
         statusFile.parentFile?.mkdirs()
         setForeground(createForegroundInfo("音声モデルを準備中", "開始中", 0, false))
 
-        val result =
-            CompletableFuture.supplyAsync {
-                downloadModel(modelRoot.absolutePath, modelId, statusFile.absolutePath)
-            }
-        while (!result.isDone) {
-            updateProgress(statusFile)
-            delay(500)
-        }
         return try {
-            withContext(Dispatchers.IO) { result.get() }
+            coroutineScope {
+                val job =
+                    async(Dispatchers.IO) {
+                        downloadModel(modelRoot.absolutePath, modelId, statusFile.absolutePath)
+                    }
+                while (!job.isCompleted) {
+                    updateProgress(statusFile)
+                    delay(500)
+                }
+                job.await()
+            }
             setForeground(createForegroundInfo("音声モデルの準備完了", modelId, 100, true))
             Result.success()
         } catch (error: Exception) {
             setForeground(createForegroundInfo("音声モデルの準備に失敗", error.message ?: "unknown error", 0, true))
-            Result.retry()
+            if (runAttemptCount + 1 >= MAX_ATTEMPTS) {
+                Result.failure()
+            } else {
+                Result.retry()
+            }
         }
     }
 
@@ -107,6 +114,7 @@ class ModelDownloadWorker(
     companion object {
         private const val KEY_MODEL_ID = "modelId"
         private const val WORK_PREFIX = "takusu-agent-model-"
+        private const val MAX_ATTEMPTS = 3
 
         fun enqueue(
             context: Context,
