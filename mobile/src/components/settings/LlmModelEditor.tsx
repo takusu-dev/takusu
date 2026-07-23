@@ -11,16 +11,18 @@ import {
 } from 'react-native';
 import { useColors, BRAND_COLOR, COLORS } from '@/src/theme';
 import {
-  type LlmProviderSettings,
+  type LlmModelSettings,
+  type LlmProvider,
   type PermissionsMap,
 } from '@/src/api/settingsStore';
 import { PermissionsEditor } from '@/src/components/PermissionsEditor';
 
 interface Props {
-  provider: LlmProviderSettings;
+  model: LlmModelSettings;
+  providers: LlmProvider[];
+  provider: LlmProvider;
   apiKey: string;
-  onChangeProvider: (provider: LlmProviderSettings) => void;
-  onChangeApiKey: (apiKey: string) => void;
+  onChangeModel: (model: LlmModelSettings) => void;
   onSave: () => void;
   onCancel: () => void;
   onDelete?: () => void;
@@ -76,11 +78,12 @@ export function formatCost(
     return `${formatMoney(completion * 1000000)} / 1M tokens`;
 }
 
-export function LlmProviderEditor({
+export function LlmModelEditor({
+  model,
+  providers,
   provider,
   apiKey,
-  onChangeProvider,
-  onChangeApiKey,
+  onChangeModel,
   onSave,
   onCancel,
   onDelete,
@@ -92,35 +95,34 @@ export function LlmProviderEditor({
   const [modelFilter, setModelFilter] = useState('');
   const [modelCosts, setModelCosts] = useState<Record<string, string>>({});
   const [modelsExpanded, setModelsExpanded] = useState(true);
+  const [providersExpanded, setProvidersExpanded] = useState(false);
   const [modelListHeight, setModelListHeight] = useState(0);
   const showBottomFold =
     modelsExpanded && modelListHeight > (windowHeight * 3) / 5;
 
   useEffect(() => {
     setModelCosts({});
-  }, [provider.id]);
+  }, [model.id, model.providerId]);
 
   useEffect(() => {
-    const { selectedModel, cost } = provider;
+    const { selectedModel, cost } = model;
     if (selectedModel && cost) {
       setModelCosts((prev) => ({
         ...prev,
         [selectedModel]: cost,
       }));
     }
-  }, [provider.selectedModel, provider.cost]);
+  }, [model.selectedModel, model.cost]);
 
   const filteredModels = useMemo(() => {
     const query = modelFilter.trim().toLowerCase();
-    if (!query) return provider.cachedModels;
-    return provider.cachedModels.filter((model) =>
-      model.toLowerCase().includes(query),
-    );
-  }, [provider.cachedModels, modelFilter]);
+    if (!query) return model.cachedModels;
+    return model.cachedModels.filter((m) => m.toLowerCase().includes(query));
+  }, [model.cachedModels, modelFilter]);
 
   async function fetchModels() {
     if (!provider.baseUrl.trim() || !apiKey.trim()) {
-      Alert.alert('入力不足', 'base URLとAPI keyを入力してください');
+      Alert.alert('入力不足', 'ProviderのBase URLとAPI keyを設定してください');
       return;
     }
     setModelsLoading(true);
@@ -151,9 +153,9 @@ export function LlmProviderEditor({
         }
       }
       setModelCosts(costs);
-      const nextSelected = provider.selectedModel || models[0] || '';
-      onChangeProvider({
-        ...provider,
+      const nextSelected = model.selectedModel || models[0] || '';
+      onChangeModel({
+        ...model,
         cachedModels: models,
         selectedModel: nextSelected,
         modelsFetchedAt: new Date().toISOString(),
@@ -170,7 +172,7 @@ export function LlmProviderEditor({
   }
 
   function handleSave() {
-    if (!provider.selectedModel.trim()) {
+    if (!model.selectedModel.trim()) {
       Alert.alert('入力不足', 'LLMモデルを選択または入力してください');
       return;
     }
@@ -184,31 +186,52 @@ export function LlmProviderEditor({
           styles.input,
           { color: colors.black, borderColor: colors.separator },
         ]}
-        value={provider.name}
-        onChangeText={(name) => onChangeProvider({ ...provider, name })}
+        value={model.name}
+        onChangeText={(name) => onChangeModel({ ...model, name })}
         placeholder="表示名"
       />
-      <TextInput
-        style={[
-          styles.input,
-          { color: colors.black, borderColor: colors.separator },
-        ]}
-        value={provider.baseUrl}
-        onChangeText={(baseUrl) => onChangeProvider({ ...provider, baseUrl })}
-        autoCapitalize="none"
-        placeholder="Base URL"
-      />
-      <TextInput
-        style={[
-          styles.input,
-          { color: colors.black, borderColor: colors.separator },
-        ]}
-        value={apiKey}
-        onChangeText={onChangeApiKey}
-        autoCapitalize="none"
-        secureTextEntry
-        placeholder="API key"
-      />
+      <Pressable
+        onPress={() => setProvidersExpanded((v) => !v)}
+        style={[styles.modelListHeader, { borderColor: colors.separator }]}
+      >
+        <Text style={[styles.modelListHeaderText, { color: colors.black }]}>
+          Provider: {provider.name || '未設定'}
+        </Text>
+        <Text style={{ color: colors.gray }}>
+          {providersExpanded ? '▼' : '▶'}
+        </Text>
+      </Pressable>
+      {providersExpanded && (
+        <View style={styles.modelListContent}>
+          {providers.map((p) => (
+            <Pressable
+              key={p.id}
+              onPress={() => {
+                onChangeModel({
+                  ...model,
+                  providerId: p.id,
+                  cachedModels: [],
+                  modelsFetchedAt: undefined,
+                  cost: undefined,
+                });
+                setProvidersExpanded(false);
+              }}
+              style={[styles.modelRow, { borderColor: colors.separator }]}
+            >
+              <Text style={{ color: colors.black }}>
+                {model.providerId === p.id ? '● ' : '○ '}
+                {p.name || p.baseUrl || '未設定'}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+      <Text style={[styles.readOnly, { color: colors.gray }]} numberOfLines={1}>
+        Base URL: {provider.baseUrl || '未設定'}
+      </Text>
+      <Text style={[styles.readOnly, { color: colors.gray }]}>
+        API key: {apiKey ? '設定済み' : '未設定'}
+      </Text>
       <Pressable
         onPress={fetchModels}
         style={styles.secondary}
@@ -220,7 +243,7 @@ export function LlmProviderEditor({
           <Text style={{ color: colors.black }}>モデルを取得</Text>
         )}
       </Pressable>
-      {provider.cachedModels.length > 0 && (
+      {model.cachedModels.length > 0 && (
         <Pressable
           onPress={() => setModelsExpanded((v) => !v)}
           style={[styles.modelListHeader, { borderColor: colors.separator }]}
@@ -233,7 +256,7 @@ export function LlmProviderEditor({
           </Text>
         </Pressable>
       )}
-      {modelsExpanded && provider.cachedModels.length > 0 && (
+      {modelsExpanded && model.cachedModels.length > 0 && (
         <View
           testID="model-list-expanded"
           style={styles.modelListExpanded}
@@ -250,26 +273,26 @@ export function LlmProviderEditor({
               autoCapitalize="none"
               placeholder="モデルを検索"
             />
-            {filteredModels.map((model) => (
+            {filteredModels.map((m) => (
               <Pressable
-                key={model}
+                key={m}
                 onPress={() =>
-                  onChangeProvider({
-                    ...provider,
-                    selectedModel: model,
-                    cost: modelCosts[model],
+                  onChangeModel({
+                    ...model,
+                    selectedModel: m,
+                    cost: modelCosts[m],
                   })
                 }
                 style={[styles.modelRow, { borderColor: colors.separator }]}
               >
                 <View style={styles.modelRowContent}>
                   <Text style={[styles.modelName, { color: colors.black }]}>
-                    {provider.selectedModel === model ? '● ' : '○ '}
-                    {model}
+                    {model.selectedModel === m ? '● ' : '○ '}
+                    {m}
                   </Text>
-                  {modelCosts[model] && (
+                  {modelCosts[m] && (
                     <Text style={{ color: colors.gray, fontSize: 12 }}>
-                      {modelCosts[model]}
+                      {modelCosts[m]}
                     </Text>
                   )}
                 </View>
@@ -294,10 +317,10 @@ export function LlmProviderEditor({
           styles.input,
           { color: colors.black, borderColor: colors.separator },
         ]}
-        value={provider.selectedModel}
+        value={model.selectedModel}
         onChangeText={(selectedModel) =>
-          onChangeProvider({
-            ...provider,
+          onChangeModel({
+            ...model,
             selectedModel,
             cost: modelCosts[selectedModel],
           })
@@ -309,9 +332,9 @@ export function LlmProviderEditor({
         自動承認する権限
       </Text>
       <PermissionsEditor
-        permissions={provider.permissions}
+        permissions={model.permissions}
         onChange={(permissions: PermissionsMap) =>
-          onChangeProvider({ ...provider, permissions })
+          onChangeModel({ ...model, permissions })
         }
       />
       <View style={styles.actions}>
@@ -348,6 +371,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 12,
+  },
+  readOnly: {
+    fontSize: 13,
+    paddingHorizontal: 4,
   },
   secondary: {
     minHeight: 44,
