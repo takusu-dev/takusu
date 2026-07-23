@@ -498,7 +498,7 @@ export function HomeView() {
         return ta - tb;
       });
 
-    // Past completed/skipped tasks — always compute count, only include in list when showPast
+    // Past completed/skipped tasks — only include in list when showPast
     const now = Date.now();
     // #254: 完了/スキップ済みタスクは end_at に関わらず過去セクションへ。
     // fixed タスクは完了後も schedule の end_at が未来になりうるため、
@@ -528,8 +528,8 @@ export function HomeView() {
         const end = entry?.end_at ?? t.end_at;
         return new Date(end).getTime() >= weekCutoff;
       });
-      const olderCount = past.length - pastVisible.length;
-      if (pastVisible.length > 0 || olderCount > 0) {
+      const hasOlder = pastVisible.length < past.length;
+      if (pastVisible.length > 0 || hasOlder) {
         result.push({ type: 'separator', label: '過去' });
       }
       for (const t of pastVisible) {
@@ -546,10 +546,10 @@ export function HomeView() {
         });
       }
       // "Load more" separator if there are older tasks
-      if (olderCount > 0) {
+      if (hasOlder) {
         result.push({
           type: 'separator',
-          label: `過去をさらに読み込む (${olderCount})`,
+          label: '過去をさらに読み込む',
         });
       }
     }
@@ -623,11 +623,11 @@ export function HomeView() {
     serverTz,
   ]);
 
-  // Count of past tasks (for badge in header, always computed)
+  // Whether there are any past tasks to show the toggle (#920)
   // #254: completed/skipped は end_at に関わらず過去扱い。
-  const pastCount = useMemo(() => {
+  const hasPast = useMemo(() => {
     const now = Date.now();
-    return tasks.filter((t) => {
+    return tasks.some((t) => {
       if (t.status === 'pending') return false;
       if (t.status === 'in_progress') return false;
       if (t.status === 'scheduled') return false;
@@ -635,7 +635,7 @@ export function HomeView() {
       const entry = scheduleMap.get(t.id);
       const end = entry?.end_at ?? t.end_at;
       return new Date(end).getTime() < now;
-    }).length;
+    });
   }, [tasks, scheduleMap]);
 
   // Marked dates for calendar overlay (dates that have scheduled tasks)
@@ -1510,7 +1510,7 @@ export function HomeView() {
 
   const listHeader = useMemo(
     () =>
-      pastCount > 0 ? (
+      hasPast ? (
         <Pressable style={styles.pastToggle} onPress={togglePast}>
           <Reanimated.View style={chevronStyle}>
             <Ionicons name="chevron-down" size={16} color={BRAND_COLOR} />
@@ -1518,12 +1518,9 @@ export function HomeView() {
           <Text style={styles.pastToggleText}>
             {showPast ? '過去を隠す' : '過去を表示'}
           </Text>
-          <View style={[styles.pastBadge, { backgroundColor: BRAND_COLOR }]}>
-            <Text style={styles.pastBadgeText}>{pastCount}</Text>
-          </View>
         </Pressable>
       ) : null,
-    [pastCount, showPast, chevronStyle, togglePast],
+    [hasPast, showPast, chevronStyle, togglePast],
   );
 
   const handleScroll = useCallback(
@@ -1832,19 +1829,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: BRAND_COLOR,
     fontWeight: '500',
-  },
-  pastBadge: {
-    minWidth: 20,
-    height: 20,
-    borderRadius: 10,
-    paddingHorizontal: 6,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pastBadgeText: {
-    fontSize: 11,
-    color: COLORS.white,
-    fontWeight: '600',
   },
   topBar: {
     flexDirection: 'row',
