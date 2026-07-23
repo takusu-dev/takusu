@@ -2,7 +2,7 @@
 // Supports entering either delta (this-time) or cumulative quantity, and
 // allows editing the total. Used from HomeView and TaskDetailView.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
   Pressable,
@@ -15,19 +15,20 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { TaskRow } from '@/src/api/types';
 import { useTheme, BRAND_COLOR } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
+import { type ProgressPayload } from '@/src/utils/progress';
 
-export interface TaskProgressSheetPayload {
-  quantityDone: number;
-  note?: string;
-  quantityTotal?: number;
-}
+// Kept for callers that previously imported this shape from this file.
+export type TaskProgressSheetPayload = ProgressPayload;
 
 interface TaskProgressSheetProps {
   visible: boolean;
   task: TaskRow;
   mode: 'record' | 'pause';
-  onConfirm: (payload: TaskProgressSheetPayload) => void;
+  onConfirm: (payload: ProgressPayload) => void | Promise<void>;
   onCancel: () => void;
+  // Optional record-only action for pause mode so users can record progress
+  // without pausing the work session.
+  onRecord?: (payload: ProgressPayload) => void | Promise<void>;
 }
 
 export function TaskProgressSheet({
@@ -36,6 +37,7 @@ export function TaskProgressSheet({
   mode,
   onConfirm,
   onCancel,
+  onRecord,
 }: TaskProgressSheetProps) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -48,6 +50,15 @@ export function TaskProgressSheet({
     currentTotal !== undefined ? String(currentTotal) : '',
   );
   const [note, setNote] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (visible) {
@@ -78,8 +89,7 @@ export function TaskProgressSheet({
     setCumulative(String(currentDone + d));
   }
 
-  function handleConfirm() {
-    haptic.medium();
+  function buildPayload(): TaskProgressSheetPayload {
     const cumulativeNum = parseInt(cumulative, 10);
     const quantityDone = Number.isNaN(cumulativeNum)
       ? currentDone
@@ -87,11 +97,37 @@ export function TaskProgressSheet({
     const totalNum = parseInt(total, 10);
     const quantityTotal =
       !Number.isNaN(totalNum) && totalNum > 0 ? totalNum : undefined;
-    onConfirm({
+    return {
       quantityDone,
       note: note.trim() || undefined,
       quantityTotal,
-    });
+    };
+  }
+
+  async function handleConfirm() {
+    if (isSubmitting) return;
+    haptic.medium();
+    setIsSubmitting(true);
+    try {
+      await onConfirm(buildPayload());
+    } finally {
+      if (mountedRef.current) {
+        setIsSubmitting(false);
+      }
+    }
+  }
+
+  async function handleRecord() {
+    if (!onRecord || isSubmitting) return;
+    haptic.medium();
+    setIsSubmitting(true);
+    try {
+      await onRecord(buildPayload());
+    } finally {
+      if (mountedRef.current) {
+        setIsSubmitting(false);
+      }
+    }
   }
 
   return (
@@ -194,13 +230,45 @@ export function TaskProgressSheet({
               ]}
               onPress={onCancel}
             >
-              <Text style={{ color: colors.black }}>キャンセル</Text>
+              <Text style={{ color: colors.black }} numberOfLines={1}>
+                キャンセル
+              </Text>
             </Pressable>
+            {mode === 'pause' && onRecord && (
+              <Pressable
+                style={[
+                  styles.button,
+                  styles.secondary,
+                  {
+                    borderColor: colors.separator,
+                    opacity: isSubmitting ? 0.6 : 1,
+                  },
+                ]}
+                onPress={handleRecord}
+                disabled={isSubmitting}
+              >
+                <Text style={{ color: colors.black }} numberOfLines={1}>
+                  記録
+                </Text>
+              </Pressable>
+            )}
             <Pressable
-              style={[styles.button, { backgroundColor: BRAND_COLOR }]}
+              style={[
+                styles.button,
+                {
+                  backgroundColor: BRAND_COLOR,
+                  opacity: isSubmitting ? 0.6 : 1,
+                },
+              ]}
               onPress={handleConfirm}
+              disabled={isSubmitting}
             >
-              <Text style={styles.primaryText}>
+              <Text
+                style={styles.primaryText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.75}
+              >
                 {mode === 'pause' ? '記録して一時停止' : '記録'}
               </Text>
             </Pressable>

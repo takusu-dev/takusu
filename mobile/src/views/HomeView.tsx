@@ -33,10 +33,13 @@ import { NavigationButtons } from '@/src/components/NavigationButtons';
 import { ViewChanger, type ViewType } from '@/src/components/ViewChanger';
 import { ContextMenu } from '@/src/components/ContextMenu';
 import { Ionicons } from '@expo/vector-icons';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
+  withSpring,
+  runOnJS,
 } from 'react-native-reanimated';
 import { useColors, COLORS, BRAND_COLOR } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
@@ -52,6 +55,10 @@ import {
   cancelScheduledTaskNotifications,
   cancelScheduledStartNotifications,
 } from '@/src/notifications';
+import {
+  recordProgressWithTotal,
+  type ProgressPayload,
+} from '@/src/utils/progress';
 import type { HabitRow } from '@/src/api/types';
 
 interface TaskItem {
@@ -186,6 +193,8 @@ export function HomeView() {
   const [pastWeeks, setPastWeeks] = useState(1);
   const [progressSheetVisible, setProgressSheetVisible] = useState(false);
   const [progressTask, setProgressTask] = useState<TaskRow | null>(null);
+  const startDoneButtonY = useSharedValue(0);
+  const startDoneButtonPressed = useSharedValue(0);
   const listRef = useRef<FlatList<ListItem>>(null);
   const scrollOffsetRef = useRef(0);
   // Viewport height of the FlatList (for page-sized scrolls). Captured via
@@ -964,27 +973,12 @@ export function HomeView() {
   }, []);
 
   const pauseInProgress = useCallback(
-    async (payload: {
-      quantityDone: number;
-      note?: string;
-      quantityTotal?: number;
-    }) => {
+    async (payload: ProgressPayload) => {
       const currentClient = clientRef.current;
       const task = inProgressTask;
       if (!currentClient || !task) return;
       try {
-        if (
-          payload.quantityTotal !== undefined &&
-          payload.quantityTotal !== task.quantity_total
-        ) {
-          await currentClient.updateTask(task.id, {
-            quantity_total: payload.quantityTotal,
-          });
-        }
-        await currentClient.recordProgress(task.id, {
-          quantity_done: payload.quantityDone,
-          note: payload.note,
-        });
+        await recordProgressWithTotal(currentClient, task, payload);
         await currentClient.pauseTaskWork(task.id);
         dismissInProgressNotification(task.id).catch((e) =>
           logError('通知の消去', e),
@@ -998,17 +992,38 @@ export function HomeView() {
     [inProgressTask],
   );
 
+  const recordInProgress = useCallback(
+    async (payload: ProgressPayload) => {
+      const currentClient = clientRef.current;
+      const task = inProgressTask;
+      if (!currentClient || !task) return;
+      try {
+        await recordProgressWithTotal(currentClient, task, payload);
+      } catch (e) {
+        showError(e, '進捗の記録に失敗');
+        return;
+      }
+      await refreshRef.current();
+    },
+    [inProgressTask],
+  );
+
   const handleHomeProgressConfirm = useCallback(
-    async (payload: {
-      quantityDone: number;
-      note?: string;
-      quantityTotal?: number;
-    }) => {
+    async (payload: ProgressPayload) => {
       await pauseInProgress(payload);
       setProgressSheetVisible(false);
       setProgressTask(null);
     },
     [pauseInProgress],
+  );
+
+  const handleHomeRecordOnly = useCallback(
+    async (payload: ProgressPayload) => {
+      await recordInProgress(payload);
+      setProgressSheetVisible(false);
+      setProgressTask(null);
+    },
+    [recordInProgress],
   );
 
   const openHomeProgressSheet = useCallback(() => {
@@ -1021,6 +1036,81 @@ export function HomeView() {
     setProgressTask(task);
     setProgressSheetVisible(true);
   }, [inProgressTask, startNextTask]);
+
+  const handleStartDoneTap = useCallback(() => {
+    openHomeProgressSheet();
+  }, [openHomeProgressSheet]);
+
+  const handleStartDoneSlide = useCallback(() => {
+    const task = inProgressTask;
+    if (!task) return;
+    haptic.medium();
+    markDone(task);
+  }, [inProgressTask, markDone]);
+
+  const SLIDE_UP_DONE_THRESHOLD = 60;
+
+  const startDoneButtonStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateY: startDoneButtonY.value },
+      { scale: 1 - 0.08 * startDoneButtonPressed.value },
+    ],
+  }));
+
+  const startDoneHintStyle = useAnimatedStyle(() => {
+    const progress = Math.min(
+      1,
+      Math.max(0, -startDoneButtonY.value / (SLIDE_UP_DONE_THRESHOLD * 0.7)),
+    );
+    return {
+      opacity: progress,
+      transform: [{ scale: 0.8 + progress * 0.2 }],
+    };
+  });
+
+  const startDoneGesture = useMemo(() => {
+    const panGesture = Gesture.Pan()
+      .enabled(inProgressTask !== null)
+      .activeOffsetY([-10, 10])
+      .failOffsetX([-20, 20])
+      .onBegin(() => {
+        startDoneButtonPressed.value = withTiming(1, { duration: 80 });
+      })
+      .onUpdate((e) => {
+        startDoneButtonY.value = Math.min(0, e.translationY);
+      })
+      .onEnd((e) => {
+        startDoneButtonY.value = withSpring(0);
+        if (e.translationY < -SLIDE_UP_DONE_THRESHOLD) {
+          runOnJS(handleStartDoneSlide)();
+        }
+      })
+      .onFinalize((_e, success) => {
+        startDoneButtonPressed.value = withTiming(0, { duration: 120 });
+        if (!success) {
+          startDoneButtonY.value = withSpring(0);
+        }
+      });
+
+    const tapGesture = Gesture.Tap()
+      .onBegin(() => {
+        startDoneButtonPressed.value = withTiming(1, { duration: 80 });
+      })
+      .onEnd(() => {
+        runOnJS(handleStartDoneTap)();
+      })
+      .onFinalize(() => {
+        startDoneButtonPressed.value = withTiming(0, { duration: 120 });
+      });
+
+    return Gesture.Exclusive(panGesture, tapGesture);
+  }, [
+    handleStartDoneSlide,
+    handleStartDoneTap,
+    inProgressTask,
+    startDoneButtonPressed,
+    startDoneButtonY,
+  ]);
 
   const deleteTask = useCallback(async (task: TaskRow) => {
     const currentClient = clientRef.current;
@@ -1704,23 +1794,49 @@ export function HomeView() {
 
       {/* Bottom bar */}
       <View style={[styles.bottomBar, { paddingBottom: 16 + insets.bottom }]}>
-        <Pressable
-          style={[
-            styles.startDoneButton,
-            {
-              bottom: 16 + insets.bottom,
-              backgroundColor: inProgressTask ? COLORS.red : COLORS.green,
-            },
-          ]}
-          onPress={openHomeProgressSheet}
-        >
-          <Ionicons
-            name={inProgressTask ? 'pause' : 'play'}
-            size={24}
-            color={COLORS.white}
-          />
-        </Pressable>
+        <GestureDetector gesture={startDoneGesture}>
+          <Reanimated.View
+            style={[
+              styles.startDoneButton,
+              startDoneButtonStyle,
+              {
+                bottom: 16 + insets.bottom,
+                backgroundColor: inProgressTask ? COLORS.red : COLORS.green,
+              },
+            ]}
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel={
+              inProgressTask
+                ? '進行中のタスクを一時停止または進捗を記録'
+                : '次のタスクを開始'
+            }
+            accessibilityHint={
+              inProgressTask ? '上にスライドしてタスクを完了' : undefined
+            }
+          >
+            <Ionicons
+              name={inProgressTask ? 'pause' : 'play'}
+              size={24}
+              color={COLORS.white}
+            />
+          </Reanimated.View>
+        </GestureDetector>
       </View>
+
+      {/* Slide-up-to-done hint for the start/done button */}
+      {inProgressTask && (
+        <Reanimated.View
+          style={[
+            styles.startDoneHint,
+            { bottom: 72 + insets.bottom, right: 20 },
+            startDoneHintStyle,
+          ]}
+          pointerEvents="none"
+        >
+          <Ionicons name="checkmark" size={24} color={COLORS.green} />
+        </Reanimated.View>
+      )}
 
       {/* Progress sheet for in-progress pause */}
       {progressTask && (
@@ -1729,6 +1845,7 @@ export function HomeView() {
           task={progressTask}
           mode="pause"
           onConfirm={handleHomeProgressConfirm}
+          onRecord={handleHomeRecordOnly}
           onCancel={() => {
             setProgressSheetVisible(false);
             setProgressTask(null);
@@ -1957,5 +2074,19 @@ const styles = StyleSheet.create({
   startDoneText: {
     fontSize: 20,
     color: COLORS.white,
+  },
+  startDoneHint: {
+    position: 'absolute',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
   },
 } as Record<string, ViewStyle>);

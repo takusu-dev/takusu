@@ -43,6 +43,10 @@ import { RedundantDepWarning } from '@/src/components/RedundantDepWarning';
 import { formatDate } from '@/src/formatDate';
 import { parseDuration, formatDuration } from '@/src/utils/duration';
 import {
+  recordProgressWithTotal,
+  type ProgressPayload,
+} from '@/src/utils/progress';
+import {
   DependencyGraph,
   type GraphNode,
   type GraphEdge,
@@ -533,28 +537,13 @@ export function TaskDetailView() {
     });
   }
 
-  async function pauseTask(payload?: {
-    quantityDone: number;
-    note?: string;
-    quantityTotal?: number;
-  }) {
+  async function pauseTask(payload?: ProgressPayload) {
     if (!client || !task) return;
     const prevQuantityDone = task.quantity_done;
     const prevQuantityTotal = task.quantity_total;
     if (payload) {
       try {
-        if (
-          payload.quantityTotal !== undefined &&
-          payload.quantityTotal !== task.quantity_total
-        ) {
-          await client.updateTask(task.id, {
-            quantity_total: payload.quantityTotal,
-          });
-        }
-        await client.recordProgress(task.id, {
-          quantity_done: payload.quantityDone,
-          note: payload.note,
-        });
+        await recordProgressWithTotal(client, task, payload);
       } catch (e) {
         showError(e, '進捗の記録に失敗');
         return;
@@ -649,25 +638,10 @@ export function TaskDetailView() {
     });
   }
 
-  async function recordProgress(payload: {
-    quantityDone: number;
-    note?: string;
-    quantityTotal?: number;
-  }) {
+  async function recordProgress(payload: ProgressPayload) {
     if (!client || !task) return;
     try {
-      if (
-        payload.quantityTotal !== undefined &&
-        payload.quantityTotal !== task.quantity_total
-      ) {
-        await client.updateTask(task.id, {
-          quantity_total: payload.quantityTotal,
-        });
-      }
-      await client.recordProgress(task.id, {
-        quantity_done: payload.quantityDone,
-        note: payload.note,
-      });
+      await recordProgressWithTotal(client, task, payload);
     } catch (e) {
       showError(e, '進捗の記録に失敗');
       return;
@@ -713,16 +687,17 @@ export function TaskDetailView() {
     setSplitModalVisible(true);
   }
 
-  async function handleProgressConfirm(payload: {
-    quantityDone: number;
-    note?: string;
-    quantityTotal?: number;
-  }) {
+  async function handleProgressConfirm(payload: ProgressPayload) {
     if (progressSheetMode === 'pause') {
       await pauseTask(payload);
     } else {
       await recordProgress(payload);
     }
+    setProgressSheetVisible(false);
+  }
+
+  async function handleProgressRecord(payload: ProgressPayload) {
+    await recordProgress(payload);
     setProgressSheetVisible(false);
   }
 
@@ -1675,6 +1650,9 @@ export function TaskDetailView() {
           task={task}
           mode={progressSheetMode}
           onConfirm={handleProgressConfirm}
+          onRecord={
+            progressSheetMode === 'pause' ? handleProgressRecord : undefined
+          }
           onCancel={() => setProgressSheetVisible(false)}
         />
       )}
