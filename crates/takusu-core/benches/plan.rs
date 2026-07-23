@@ -2,7 +2,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use rand::rngs::StdRng;
 use rand::{Rng, RngExt, SeedableRng};
 use std::hint::black_box;
-use takusu_core::{NormalDist, Planner, Point, SleepConfig, Task};
+use takusu_core::{NormalDist, Planner, Point, SleepConfig, Solver, Task};
 
 fn generate_tasks(rng: &mut impl Rng, count: usize) -> Planner {
     generate_tasks_with(rng, count, 0.2, 0.2, false, 2)
@@ -201,6 +201,44 @@ fn bench_plan_many_dependencies(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_alns_25(c: &mut Criterion) {
+    let mut rng = StdRng::seed_from_u64(42);
+    let mut planner = generate_tasks(&mut rng, 25);
+    planner.set_solver(Solver::Priority);
+    planner.set_seed(Some(42));
+
+    let mut group = c.benchmark_group("alns");
+    group.sample_size(10);
+
+    group.bench_function("alns 25 tasks", |b| {
+        b.iter(|| {
+            let plan = planner.plan();
+            black_box(plan);
+        })
+    });
+
+    group.finish();
+}
+
+fn bench_alns_100(c: &mut Criterion) {
+    let mut rng = StdRng::seed_from_u64(44);
+    let mut planner = generate_tasks(&mut rng, 100);
+    planner.set_solver(Solver::Priority);
+    planner.set_seed(Some(44));
+
+    let mut group = c.benchmark_group("alns");
+    group.sample_size(10);
+
+    group.bench_function("alns 100 tasks", |b| {
+        b.iter(|| {
+            let plan = planner.plan();
+            black_box(plan);
+        })
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_plan_25,
@@ -211,5 +249,7 @@ criterion_group!(
     bench_plan_many_dependencies,
     bench_evaluate,
     bench_plan_range_25,
+    bench_alns_25,
+    bench_alns_100,
 );
 criterion_main!(benches);
