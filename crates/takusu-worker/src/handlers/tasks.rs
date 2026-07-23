@@ -88,11 +88,10 @@ pub async fn list(req: Request, env: Env) -> Result<Response, WorkerError> {
 pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError> {
     let body: CreateTask = parse_json(&mut req).await?;
     validate_minutes(body.avg_minutes, body.sigma_minutes)?;
-    validate_quantity(
-        body.quantity_total,
-        body.quantity_done,
-        body.original_quantity_total,
-    )?;
+    // Treat quantity_total / original_quantity_total 0 as unset (same as None) server-side.
+    let quantity_total = body.quantity_total.filter(|t| *t != 0);
+    let original_quantity_total = body.original_quantity_total.filter(|t| *t != 0);
+    validate_quantity(quantity_total, body.quantity_done, original_quantity_total)?;
     let database = db(&env)?;
     let tz = get_timezone(&database).await?;
     validate_task_datetimes(
@@ -184,7 +183,7 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
             .as_deref()
             .map(JsValue::from_str)
             .unwrap_or(JsValue::NULL),
-        body.quantity_total
+        quantity_total
             .map(|n| JsValue::from_f64(n as f64))
             .unwrap_or(JsValue::NULL),
         JsValue::from_f64(quantity_done as f64),
@@ -194,7 +193,7 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
             .unwrap_or(JsValue::NULL),
         JsValue::NULL,
         JsValue::NULL,
-        body.original_quantity_total
+        original_quantity_total
             .map(|n| JsValue::from_f64(n as f64))
             .unwrap_or(JsValue::NULL),
     ])?
@@ -233,10 +232,14 @@ pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, Wo
             Some(&existing.end_at),
         )?;
     }
+    // Treat quantity_total / original_quantity_total 0 as unset (same as None) server-side.
+    let quantity_total = body.quantity_total.filter(|t| *t != 0);
+    let existing_total = existing.quantity_total.filter(|t| *t != 0);
+    let original_quantity_total = body.original_quantity_total.filter(|t| *t != 0);
     validate_quantity(
-        body.quantity_total.or(existing.quantity_total),
+        quantity_total.or(existing_total),
         body.quantity_done.or(Some(existing.quantity_done)),
-        body.original_quantity_total,
+        original_quantity_total,
     )?;
 
     let validated = [
@@ -314,7 +317,7 @@ pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, Wo
             .as_deref()
             .map(JsValue::from_str)
             .unwrap_or(JsValue::NULL),
-        body.quantity_total
+        quantity_total
             .map(|n| JsValue::from_f64(n as f64))
             .unwrap_or(JsValue::NULL),
         body.quantity_done
@@ -324,7 +327,7 @@ pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, Wo
             .as_deref()
             .map(JsValue::from_str)
             .unwrap_or(JsValue::NULL),
-        body.original_quantity_total
+        original_quantity_total
             .map(|n| JsValue::from_f64(n as f64))
             .unwrap_or(JsValue::NULL),
     ])?
@@ -352,11 +355,10 @@ pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, Wo
 pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, WorkerError> {
     let body: CreateTask = parse_json(&mut req).await?;
     validate_minutes(body.avg_minutes, body.sigma_minutes)?;
-    validate_quantity(
-        body.quantity_total,
-        body.quantity_done,
-        body.original_quantity_total,
-    )?;
+    // Treat quantity_total / original_quantity_total 0 as unset (same as None) server-side.
+    let quantity_total = body.quantity_total.filter(|t| *t != 0);
+    let original_quantity_total = body.original_quantity_total.filter(|t| *t != 0);
+    validate_quantity(quantity_total, body.quantity_done, original_quantity_total)?;
     let database = db(&env)?;
     let tz = get_timezone(&database).await?;
     validate_task_datetimes(
@@ -404,7 +406,7 @@ pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, W
             .as_deref()
             .map(JsValue::from_str)
             .unwrap_or(JsValue::NULL),
-        body.quantity_total
+        quantity_total
             .map(|n| JsValue::from_f64(n as f64))
             .unwrap_or(JsValue::NULL),
         body.quantity_done
@@ -416,7 +418,7 @@ pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, W
             .unwrap_or(JsValue::NULL),
         JsValue::NULL,
         JsValue::NULL,
-        body.original_quantity_total
+        original_quantity_total
             .map(|n| JsValue::from_f64(n as f64))
             .unwrap_or(JsValue::NULL),
     ])?
