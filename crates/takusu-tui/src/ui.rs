@@ -67,7 +67,6 @@ fn draw_schedule_tab(frame: &mut Frame, app: &mut App, area: Rect) {
         .split(area);
 
     let list_height = chunks[0].height.saturating_sub(2) as usize;
-    app.schedule_list.ensure_visible(list_height);
 
     let (items, entry_to_item) =
         build_schedule_items(&app.schedule_entries, &app.tz, &app.all_tasks);
@@ -77,11 +76,9 @@ fn draw_schedule_tab(frame: &mut Frame, app: &mut App, area: Rect) {
         .selected()
         .and_then(|i| entry_to_item.get(i).copied());
 
-    // schedule_list.scroll is an entry index; ListState needs an item index.
-    let offset = entry_to_item
-        .get(app.schedule_list.scroll)
-        .copied()
-        .unwrap_or(0);
+    if let Some(si) = selected_item {
+        app.schedule_list.ensure_visible_item(si, list_height);
+    }
 
     let list = List::new(items)
         .block(Block::default().borders(Borders::ALL).title(" Schedule "))
@@ -89,7 +86,7 @@ fn draw_schedule_tab(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let mut state = ratatui::widgets::ListState::default()
         .with_selected(selected_item)
-        .with_offset(offset);
+        .with_offset(app.schedule_list.scroll);
     frame.render_stateful_widget(list, chunks[0], &mut state);
 
     if let Some(entry) = app.selected_entry() {
@@ -411,11 +408,18 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Line::from("  n             New task"),
         Line::from("  s             Cycle status"),
         Line::from("  w             Start/pause work session"),
-        Line::from("  e             Edit in $EDITOR (empty: no change, '-': clear optional)"),
+        Line::from("  e             Edit in $EDITOR"),
         Line::from("  d             Delete (confirm)"),
         Line::from("  f             Cycle filter"),
         Line::from("  g             Generate schedule"),
         Line::from("  r             Reschedule"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Editor:",
+            Style::default().fg(style::HEADER_FG),
+        )),
+        Line::from("  empty fields are not updated"),
+        Line::from("  '-' clears description, start_at, quantity_unit, quantity_total, depends"),
         Line::from(""),
         Line::from(Span::styled(
             "Schedule:",

@@ -660,12 +660,12 @@ impl Storage for SqliteStorage {
                 other => StorageError::Internal(other.to_string()),
             })?;
 
-        // Treat quantity_total / original_quantity_total 0 as unset (same as None) server-side.
-        let quantity_total = body.quantity_total.filter(|t| *t != 0);
+        // Treat original_quantity_total 0 as unset (same as None) server-side.
+        // quantity_total 0 is a clear sentinel handled below.
         let existing_total = existing.quantity_total.filter(|t| *t != 0);
         let original_quantity_total = body.original_quantity_total.filter(|t| *t != 0);
         validate_quantity(
-            quantity_total.or(existing_total),
+            body.quantity_total.or(existing_total),
             body.quantity_done.or(Some(existing.quantity_done)),
             original_quantity_total,
         )?;
@@ -699,12 +699,36 @@ impl Storage for SqliteStorage {
         });
 
         sqlx::query(
-            "UPDATE tasks SET title=COALESCE(?,title), normalized_title=COALESCE(?,normalized_title), description=COALESCE(?,description), start_at=COALESCE(?,start_at), end_at=COALESCE(?,end_at), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), depends=COALESCE(?,depends), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), status=?, habit_id=COALESCE(?,habit_id), user_edited=COALESCE(?,user_edited), fixed=COALESCE(?,fixed), habit_step_id=COALESCE(?,habit_step_id), quantity_total=COALESCE(?,quantity_total), quantity_done=COALESCE(?,quantity_done), quantity_unit=COALESCE(?,quantity_unit), original_quantity_total=COALESCE(?,original_quantity_total), updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?"
+            "UPDATE tasks SET \
+             title=COALESCE(?,title), \
+             normalized_title=COALESCE(?,normalized_title), \
+             description=CASE WHEN ?= '' THEN NULL ELSE COALESCE(?,description) END, \
+             start_at=CASE WHEN ?= '' THEN NULL ELSE COALESCE(?,start_at) END, \
+             end_at=CASE WHEN ?= '' THEN end_at ELSE COALESCE(?,end_at) END, \
+             avg_minutes=COALESCE(?,avg_minutes), \
+             sigma_minutes=COALESCE(?,sigma_minutes), \
+             depends=COALESCE(?,depends), \
+             parallelizable=COALESCE(?,parallelizable), \
+             allows_parallel=COALESCE(?,allows_parallel), \
+             abandonability=COALESCE(?,abandonability), \
+             status=?, \
+             habit_id=COALESCE(?,habit_id), \
+             user_edited=COALESCE(?,user_edited), \
+             fixed=COALESCE(?,fixed), \
+             habit_step_id=COALESCE(?,habit_step_id), \
+             quantity_total=CASE WHEN ?= 0 THEN NULL ELSE COALESCE(?,quantity_total) END, \
+             quantity_done=COALESCE(?,quantity_done), \
+             quantity_unit=CASE WHEN ?= '' THEN NULL ELSE COALESCE(?,quantity_unit) END, \
+             original_quantity_total=COALESCE(?,original_quantity_total), \
+             updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
         )
         .bind(body.title.as_ref())
         .bind(&normalized_title)
         .bind(body.description.as_ref())
+        .bind(body.description.as_ref())
         .bind(body.start_at.as_ref())
+        .bind(body.start_at.as_ref())
+        .bind(body.end_at.as_ref())
         .bind(body.end_at.as_ref())
         .bind(body.avg_minutes)
         .bind(body.sigma_minutes)
@@ -717,8 +741,10 @@ impl Storage for SqliteStorage {
         .bind(body.user_edited)
         .bind(body.fixed)
         .bind(body.habit_step_id.as_ref())
-        .bind(quantity_total)
+        .bind(body.quantity_total)
+        .bind(body.quantity_total)
         .bind(body.quantity_done)
+        .bind(body.quantity_unit.as_ref())
         .bind(body.quantity_unit.as_ref())
         .bind(original_quantity_total)
         .bind(&full)
@@ -2739,10 +2765,10 @@ fn validate_quantity(
     original: Option<i64>,
 ) -> StorageResult<()> {
     if let Some(t) = total
-        && t <= 0
+        && t < 0
     {
         return Err(StorageError::BadRequest(format!(
-            "quantity_total must be > 0 (got {t})"
+            "quantity_total must be >= 0 (got {t})"
         )));
     }
     if let Some(d) = done
@@ -2753,10 +2779,10 @@ fn validate_quantity(
         )));
     }
     if let Some(o) = original
-        && o <= 0
+        && o < 0
     {
         return Err(StorageError::BadRequest(format!(
-            "original_quantity_total must be > 0 (got {o})"
+            "original_quantity_total must be >= 0 (got {o})"
         )));
     }
     if let (Some(t), Some(d)) = (total, done)

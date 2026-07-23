@@ -44,10 +44,21 @@ impl StatefulList {
         if viewport_height == 0 {
             return;
         }
-        if self.index < self.scroll {
-            self.scroll = self.index;
-        } else if self.index >= self.scroll + viewport_height {
-            self.scroll = self.index - viewport_height + 1;
+        if let Some(selected) = self.selected() {
+            self.ensure_visible_item(selected, viewport_height);
+        }
+    }
+
+    /// Same as ensure_visible but for callers that already know the item index
+    /// (e.g. the schedule list, whose item positions include day separators).
+    pub fn ensure_visible_item(&mut self, selected_item: usize, viewport_height: usize) {
+        if viewport_height == 0 {
+            return;
+        }
+        if selected_item < self.scroll {
+            self.scroll = selected_item;
+        } else if selected_item >= self.scroll + viewport_height {
+            self.scroll = selected_item - viewport_height + 1;
         }
     }
 }
