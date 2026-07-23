@@ -26,7 +26,7 @@ pub async fn auth_middleware(
     // token is being changed, and while the worker itself is unreachable.
     let is_root_token = {
         let root = state.root_token.read().await;
-        !root.is_empty() && token == root.as_str()
+        !root.is_empty() && token == &**root
     };
     if is_root_token {
         let jti = takusu_local_lib::auth::hash_token(token);
