@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
@@ -26,7 +26,6 @@ export function FloatingVoiceButton() {
   const { workersToken } = useServer();
   const { setPendingSessionId } = useVoice();
 
-  const [state, setState] = useState<ButtonState>('idle');
   const stateRef = useRef<ButtonState>('idle');
   const isSlideRef = useRef(false);
   const transitionedRef = useRef(false);
@@ -34,10 +33,6 @@ export function FloatingVoiceButton() {
   const buttonY = useSharedValue(0);
 
   const isHome = pathname === '/' || pathname === '' || pathname === '/index';
-
-  useEffect(() => {
-    stateRef.current = state;
-  }, [state]);
 
   useEffect(() => {
     return () => {
@@ -51,7 +46,6 @@ export function FloatingVoiceButton() {
   // AgentView can consume the queued session.
   useEffect(() => {
     if (isHome) return;
-    setState('idle');
     stateRef.current = 'idle';
     isSlideRef.current = false;
     transitionedRef.current = false;
@@ -67,7 +61,6 @@ export function FloatingVoiceButton() {
       clearTimeout(slideResetTimerRef.current);
       slideResetTimerRef.current = null;
     }
-    setState('idle');
     stateRef.current = 'idle';
     isSlideRef.current = false;
     transitionedRef.current = false;
@@ -101,7 +94,6 @@ export function FloatingVoiceButton() {
     if (isSlideRef.current || transitionedRef.current) return;
     isSlideRef.current = true;
     stateRef.current = 'gesture';
-    setState('gesture');
     pushTaskAdd();
     haptic.light();
     slideResetTimerRef.current = setTimeout(reset, 100);
@@ -110,7 +102,6 @@ export function FloatingVoiceButton() {
   const handlePressIn = useCallback(() => {
     if (stateRef.current !== 'idle' || transitionedRef.current) return;
 
-    setState('pending');
     stateRef.current = 'pending';
     isSlideRef.current = false;
     transitionedRef.current = false;
@@ -132,8 +123,6 @@ export function FloatingVoiceButton() {
     }
     reset();
   }, [pushAgent, reset]);
-
-  const isActive = state !== 'idle';
 
   const panGesture = Gesture.Pan()
     .activeOffsetY([-10, 10])
@@ -159,9 +148,8 @@ export function FloatingVoiceButton() {
   const buttonStyle = useAnimatedStyle(
     () => ({
       transform: [{ translateY: buttonY.value }],
-      backgroundColor: isActive ? '#B33A3A' : BRAND_COLOR,
     }),
-    [isActive],
+    [],
   );
 
   const hintStyle = useAnimatedStyle(() => {
@@ -170,12 +158,10 @@ export function FloatingVoiceButton() {
       Math.max(0, -buttonY.value / (TASKADD_SLIDE_THRESHOLD * 0.7)),
     );
     return {
-      opacity: isActive ? progress : 0,
+      opacity: progress,
       transform: [{ scale: 0.8 + progress * 0.2 }],
     };
-  }, [isActive]);
-
-  const iconName = isActive ? 'close' : 'add';
+  });
 
   if (!isHome) {
     return null;
@@ -191,7 +177,7 @@ export function FloatingVoiceButton() {
       </Reanimated.View>
       <GestureDetector gesture={panGesture}>
         <Reanimated.View style={[styles.button, buttonStyle]}>
-          <Ionicons name={iconName} size={28} color={COLORS.white} />
+          <Ionicons name="add" size={28} color={COLORS.white} />
         </Reanimated.View>
       </GestureDetector>
     </View>
