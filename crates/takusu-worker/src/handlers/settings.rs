@@ -34,7 +34,7 @@ pub async fn update(mut req: worker::Request, env: Env) -> Result<Response, Work
     let seed = body.seed.filter(|&v| v >= 0).or(existing.seed);
     let warm_start = body.warm_start.unwrap_or(existing.warm_start);
     let stmt = database.prepare(
-        "UPDATE settings SET tz = ?1, sleep_start = ?2, sleep_end = ?3, comfortable_minutes = ?4, maximum_minutes = ?5, solver = ?6, time_budget_ms = ?7, seed = ?8, warm_start = ?9, updated_at = datetime('now') WHERE id = 'active'",
+        "UPDATE settings SET tz = ?1, sleep_start = ?2, sleep_end = ?3, comfortable_minutes = ?4, maximum_minutes = ?5, solver = ?6, time_budget_ms = ?7, seed = ?8, warm_start = ?9, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = 'active'",
     );
     stmt.bind(&[
         JsValue::from_str(&tz),

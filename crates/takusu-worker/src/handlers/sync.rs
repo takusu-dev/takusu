@@ -54,7 +54,7 @@ pub async fn update_settings(mut req: worker::Request, env: Env) -> Result<Respo
         .or_else(|| existing.refresh_token.clone());
 
     let stmt = database.prepare(
-        "INSERT INTO google_cal_settings (id, enabled, calendar_id, client_id, client_secret, refresh_token) VALUES ('active', ?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled, calendar_id=excluded.calendar_id, client_id=excluded.client_id, client_secret=excluded.client_secret, refresh_token=excluded.refresh_token, updated_at=datetime('now')"
+        "INSERT INTO google_cal_settings (id, enabled, calendar_id, client_id, client_secret, refresh_token, created_at, updated_at) VALUES ('active', ?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled, calendar_id=excluded.calendar_id, client_id=excluded.client_id, client_secret=excluded.client_secret, refresh_token=excluded.refresh_token, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
     );
     stmt.bind(&[
         JsValue::from_bool(enabled),
@@ -86,7 +86,7 @@ pub async fn upsert_mappings(mut req: worker::Request, env: Env) -> Result<Respo
     let database = db(&env)?;
     for m in &body.mappings {
         let stmt = database.prepare(
-            "INSERT INTO google_cal_events (task_id, google_event_id) VALUES (?1, ?2) ON CONFLICT(task_id) DO UPDATE SET google_event_id=excluded.google_event_id, updated_at=datetime('now')"
+            "INSERT INTO google_cal_events (task_id, google_event_id, updated_at) VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) ON CONFLICT(task_id) DO UPDATE SET google_event_id=excluded.google_event_id, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
         );
         stmt.bind(&[
             JsValue::from_str(&m.task_id),

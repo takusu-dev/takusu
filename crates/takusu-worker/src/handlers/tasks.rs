@@ -150,7 +150,7 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
 
     let quantity_done = body.quantity_done.unwrap_or(0);
     let stmt = database.prepare(
-        "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'pending', ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)"
+        "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'pending', ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
     );
     stmt.bind(&[
         JsValue::from_str(&id),
@@ -262,7 +262,7 @@ pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, Wo
     };
 
     let stmt = database.prepare(
-        "UPDATE tasks SET title=COALESCE(?1,title), description=COALESCE(?2,description), start_at=COALESCE(?3,start_at), end_at=COALESCE(?4,end_at), avg_minutes=COALESCE(?5,avg_minutes), sigma_minutes=COALESCE(?6,sigma_minutes), depends=COALESCE(?7,depends), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), status=?11, habit_id=COALESCE(?13,habit_id), user_edited=COALESCE(?14,user_edited), fixed=COALESCE(?15,fixed), habit_step_id=COALESCE(?16,habit_step_id), quantity_total=COALESCE(?17,quantity_total), quantity_done=COALESCE(?18,quantity_done), quantity_unit=COALESCE(?19,quantity_unit), original_quantity_total=COALESCE(?20,original_quantity_total), updated_at=datetime('now') WHERE id = ?12"
+        "UPDATE tasks SET title=COALESCE(?1,title), description=COALESCE(?2,description), start_at=COALESCE(?3,start_at), end_at=COALESCE(?4,end_at), avg_minutes=COALESCE(?5,avg_minutes), sigma_minutes=COALESCE(?6,sigma_minutes), depends=COALESCE(?7,depends), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), status=?11, habit_id=COALESCE(?13,habit_id), user_edited=COALESCE(?14,user_edited), fixed=COALESCE(?15,fixed), habit_step_id=COALESCE(?16,habit_step_id), quantity_total=COALESCE(?17,quantity_total), quantity_done=COALESCE(?18,quantity_done), quantity_unit=COALESCE(?19,quantity_unit), original_quantity_total=COALESCE(?20,original_quantity_total), updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?12"
     );
     stmt.bind(&[
         body.title
@@ -375,7 +375,7 @@ pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, W
     let abandonability = body.abandonability.unwrap_or(0.5);
 
     let stmt = database.prepare(
-        "UPDATE tasks SET title=?1, description=?2, start_at=?3, end_at=?4, avg_minutes=?5, sigma_minutes=?6, depends=?7, parallelizable=?8, allows_parallel=?9, abandonability=?10, habit_id=COALESCE(?12,habit_id), fixed=?13, habit_step_id=?14, quantity_total=COALESCE(?15, quantity_total), quantity_done=COALESCE(?16, quantity_done), quantity_unit=COALESCE(?17, quantity_unit), completed_at=COALESCE(?18, completed_at), split_from_task_id=COALESCE(?19, split_from_task_id), original_quantity_total=COALESCE(?20, original_quantity_total), updated_at=datetime('now') WHERE id = ?11"
+        "UPDATE tasks SET title=?1, description=?2, start_at=?3, end_at=?4, avg_minutes=?5, sigma_minutes=?6, depends=?7, parallelizable=?8, allows_parallel=?9, abandonability=?10, habit_id=COALESCE(?12,habit_id), fixed=?13, habit_step_id=?14, quantity_total=COALESCE(?15, quantity_total), quantity_done=COALESCE(?16, quantity_done), quantity_unit=COALESCE(?17, quantity_unit), completed_at=COALESCE(?18, completed_at), split_from_task_id=COALESCE(?19, split_from_task_id), original_quantity_total=COALESCE(?20, original_quantity_total), updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?11"
     );
     stmt.bind(&[
         JsValue::from_str(&body.title),

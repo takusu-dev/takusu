@@ -45,6 +45,7 @@ const MIGRATION_019: &str = include_str!("../migrations/019_jwt.sql");
 const MIGRATION_020: &str = include_str!("../migrations/020_task_actual_minutes_view.sql");
 const MIGRATION_021: &str = include_str!("../migrations/021_solver_default_sa.sql");
 const MIGRATION_022: &str = include_str!("../migrations/022_split_from_task_index.sql");
+const MIGRATION_023: &str = include_str!("../migrations/023_timestamp_format.sql");
 // Migration 013 one-time backfill: drops the old global unique index, renumbers
 // existing habit tasks to start from 1 per habit, and seeds the per-habit
 // sequences. Non-idempotent (DROP + UPDATE renumber) — guarded by a check
@@ -365,6 +366,9 @@ impl SqliteStorage {
         // for efficient split-task cleanup (idempotent).
         sqlx::raw_sql(MIGRATION_022).execute(&pool).await?;
 
+        // Migration 023 normalizes legacy timestamp strings to whole-second RFC 3339.
+        sqlx::raw_sql(MIGRATION_023).execute(&pool).await?;
+
         Ok(Self { pool, jwt_secret })
     }
 
@@ -535,7 +539,7 @@ impl Storage for SqliteStorage {
         let quantity_unit = body.quantity_unit.as_deref();
         let original_quantity_total = body.original_quantity_total;
         sqlx::query(
-            "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
         )
         .bind(&id)
         .bind(display_id)
@@ -607,7 +611,7 @@ impl Storage for SqliteStorage {
         }
 
         sqlx::query(
-            "UPDATE tasks SET title=COALESCE(?,title), description=COALESCE(?,description), start_at=COALESCE(?,start_at), end_at=COALESCE(?,end_at), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), depends=COALESCE(?,depends), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), status=?, habit_id=COALESCE(?,habit_id), user_edited=COALESCE(?,user_edited), fixed=COALESCE(?,fixed), habit_step_id=COALESCE(?,habit_step_id), quantity_total=COALESCE(?,quantity_total), quantity_done=COALESCE(?,quantity_done), quantity_unit=COALESCE(?,quantity_unit), original_quantity_total=COALESCE(?,original_quantity_total), updated_at=datetime('now') WHERE id = ?"
+            "UPDATE tasks SET title=COALESCE(?,title), description=COALESCE(?,description), start_at=COALESCE(?,start_at), end_at=COALESCE(?,end_at), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), depends=COALESCE(?,depends), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), status=?, habit_id=COALESCE(?,habit_id), user_edited=COALESCE(?,user_edited), fixed=COALESCE(?,fixed), habit_step_id=COALESCE(?,habit_step_id), quantity_total=COALESCE(?,quantity_total), quantity_done=COALESCE(?,quantity_done), quantity_unit=COALESCE(?,quantity_unit), original_quantity_total=COALESCE(?,original_quantity_total), updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?"
         )
         .bind(body.title.as_ref())
         .bind(body.description.as_ref())
@@ -640,7 +644,7 @@ impl Storage for SqliteStorage {
                 existing
                     .completed_at
                     .clone()
-                    .or(Some(jiff::Timestamp::now().to_string()))
+                    .or(Some(takusu_util::now_rfc3339()))
             } else if existing.status == "completed" {
                 None
             } else {
@@ -680,7 +684,7 @@ impl Storage for SqliteStorage {
         let quantity_unit = body.quantity_unit.as_deref();
         let original_quantity_total = body.original_quantity_total;
         sqlx::query(
-            "UPDATE tasks SET title=?, description=?, start_at=?, end_at=?, avg_minutes=?, sigma_minutes=?, depends=?, parallelizable=?, allows_parallel=?, abandonability=?, habit_id=COALESCE(?,habit_id), fixed=?, habit_step_id=?, quantity_total=COALESCE(?, quantity_total), quantity_done=COALESCE(?, quantity_done), quantity_unit=COALESCE(?, quantity_unit), completed_at=COALESCE(?, completed_at), split_from_task_id=COALESCE(?, split_from_task_id), original_quantity_total=COALESCE(?, original_quantity_total), updated_at=datetime('now') WHERE id = ?"
+            "UPDATE tasks SET title=?, description=?, start_at=?, end_at=?, avg_minutes=?, sigma_minutes=?, depends=?, parallelizable=?, allows_parallel=?, abandonability=?, habit_id=COALESCE(?,habit_id), fixed=?, habit_step_id=?, quantity_total=COALESCE(?, quantity_total), quantity_done=COALESCE(?, quantity_done), quantity_unit=COALESCE(?, quantity_unit), completed_at=COALESCE(?, completed_at), split_from_task_id=COALESCE(?, split_from_task_id), original_quantity_total=COALESCE(?, original_quantity_total), updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?"
         )
         .bind(&body.title)
         .bind(&body.description)
@@ -784,7 +788,7 @@ impl Storage for SqliteStorage {
         .await
         .map_err(map_err)?;
         sqlx::query(
-            "INSERT INTO habits (id, display_id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed, window_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)"
+            "INSERT INTO habits (id, display_id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed, window_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
         )
         .bind(&id)
         .bind(display_id)
@@ -813,7 +817,7 @@ impl Storage for SqliteStorage {
     async fn update_habit(&self, id: &str, body: &UpdateHabit) -> StorageResult<HabitRow> {
         let full = resolve_habit_id(&self.pool, id).await?;
         sqlx::query(
-            "UPDATE habits SET title=COALESCE(?,title), description=COALESCE(?,description), recurrence=COALESCE(?,recurrence), start_time=COALESCE(?,start_time), end_time=COALESCE(?,end_time), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), active=COALESCE(?,active), fixed=COALESCE(?,fixed), window_mode=COALESCE(?,window_mode), updated_at=datetime('now') WHERE id = ?"
+            "UPDATE habits SET title=COALESCE(?,title), description=COALESCE(?,description), recurrence=COALESCE(?,recurrence), start_time=COALESCE(?,start_time), end_time=COALESCE(?,end_time), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), active=COALESCE(?,active), fixed=COALESCE(?,fixed), window_mode=COALESCE(?,window_mode), updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?"
         )
         .bind(body.title.as_ref())
         .bind(body.description.as_ref())
@@ -851,7 +855,7 @@ impl Storage for SqliteStorage {
         let fixed = body.fixed.unwrap_or(false);
         let window_mode = body.window_mode.as_deref().unwrap_or("day");
         sqlx::query(
-            "UPDATE habits SET title=?, description=?, recurrence=?, start_time=?, end_time=?, avg_minutes=?, sigma_minutes=?, parallelizable=?, allows_parallel=?, abandonability=?, fixed=?, window_mode=?, updated_at=datetime('now') WHERE id = ?"
+            "UPDATE habits SET title=?, description=?, recurrence=?, start_time=?, end_time=?, avg_minutes=?, sigma_minutes=?, parallelizable=?, allows_parallel=?, abandonability=?, fixed=?, window_mode=?, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?"
         )
         .bind(&body.title)
         .bind(&body.description)
@@ -977,7 +981,7 @@ impl Storage for SqliteStorage {
         validate_scheduled_span_dates(&body.start_date, &body.end_date)?;
         let full = resolve_habit_id(&self.pool, habit_id).await?;
         let id = uuid::Uuid::now_v7().to_string();
-        let now = jiff::Timestamp::now().to_string();
+        let now = takusu_util::now_rfc3339();
         sqlx::query(
             "INSERT INTO habit_scheduled_spans (id, habit_id, start_date, end_date, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
@@ -1060,7 +1064,7 @@ impl Storage for SqliteStorage {
 
         // Track ids present in the input so we can delete the rest.
         let mut input_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let now = jiff::Timestamp::now().to_string();
+        let now = takusu_util::now_rfc3339();
 
         for s in steps {
             let id =
@@ -1203,7 +1207,7 @@ impl Storage for SqliteStorage {
     async fn save_schedule(&self, req: &SaveScheduleRequest) -> StorageResult<ScheduleRow> {
         let schedule_json = serde_json::to_string(&req.entries)
             .map_err(|e| StorageError::Internal(format!("serialize schedule: {e}")))?;
-        let now = jiff::Timestamp::now().to_string();
+        let now = takusu_util::now_rfc3339();
         // Wrap the schedule upsert and the task status updates in a single
         // transaction so a failure mid-way cannot leave the schedule saved
         // but some tasks still marked pending (#289).
@@ -1219,7 +1223,7 @@ impl Storage for SqliteStorage {
         .map_err(map_err)?;
         for id in &req.mark_scheduled_task_ids {
             sqlx::query(
-                "UPDATE tasks SET status = 'scheduled', updated_at = datetime('now') WHERE id = ?",
+                "UPDATE tasks SET status = 'scheduled', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
             )
             .bind(id)
             .execute(&mut *tx)
@@ -1252,7 +1256,7 @@ impl Storage for SqliteStorage {
         .map_err(|e| StorageError::Internal(e.to_string()))?;
         let expires_at = token_expires_at(takusu_util::jwt::DEFAULT_TOKEN_TTL_SECONDS);
         sqlx::query(
-            "INSERT INTO tokens (jti, scope, label, created_by, expires_at) VALUES (?, ?, ?, 'authenticated', ?)",
+            "INSERT INTO tokens (jti, scope, label, created_by, created_at, expires_at) VALUES (?, ?, ?, 'authenticated', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?)",
         )
         .bind(&jti)
         .bind(SCOPE_READ_WRITE)
@@ -1285,7 +1289,7 @@ impl Storage for SqliteStorage {
 
     async fn revoke_token(&self, id: i64) -> StorageResult<()> {
         let result = sqlx::query(
-            "UPDATE tokens SET revoked_at = datetime('now') WHERE id = ? AND revoked_at IS NULL",
+            "UPDATE tokens SET revoked_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? AND revoked_at IS NULL",
         )
         .bind(id)
         .execute(&self.pool)
@@ -1321,7 +1325,7 @@ impl Storage for SqliteStorage {
         let seed = body.seed.or(existing.seed);
         let warm_start = body.warm_start.unwrap_or(existing.warm_start);
         sqlx::query(
-            "UPDATE settings SET tz = ?, sleep_start = ?, sleep_end = ?, comfortable_minutes = ?, maximum_minutes = ?, solver = ?, time_budget_ms = ?, seed = ?, warm_start = ?, updated_at = datetime('now') WHERE id = 'active'",
+            "UPDATE settings SET tz = ?, sleep_start = ?, sleep_end = ?, comfortable_minutes = ?, maximum_minutes = ?, solver = ?, time_budget_ms = ?, seed = ?, warm_start = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = 'active'",
         )
         .bind(&tz)
         .bind(&sleep_start)
@@ -1385,7 +1389,7 @@ impl Storage for SqliteStorage {
             .or_else(|| existing.refresh_token.clone());
 
         sqlx::query(
-            "INSERT INTO google_cal_settings (id, enabled, calendar_id, client_id, client_secret, refresh_token) VALUES ('active', ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled, calendar_id=excluded.calendar_id, client_id=excluded.client_id, client_secret=excluded.client_secret, refresh_token=excluded.refresh_token, updated_at=datetime('now')"
+            "INSERT INTO google_cal_settings (id, enabled, calendar_id, client_id, client_secret, refresh_token, created_at, updated_at) VALUES ('active', ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled, calendar_id=excluded.calendar_id, client_id=excluded.client_id, client_secret=excluded.client_secret, refresh_token=excluded.refresh_token, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
         )
         .bind(enabled)
         .bind(&calendar_id)
@@ -1415,7 +1419,7 @@ impl Storage for SqliteStorage {
     async fn upsert_gcal_mappings(&self, mappings: &[(String, String)]) -> StorageResult<()> {
         for (task_id, event_id) in mappings {
             sqlx::query(
-                "INSERT INTO google_cal_events (task_id, google_event_id) VALUES (?, ?) ON CONFLICT(task_id) DO UPDATE SET google_event_id=excluded.google_event_id, updated_at=datetime('now')"
+                "INSERT INTO google_cal_events (task_id, google_event_id, updated_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) ON CONFLICT(task_id) DO UPDATE SET google_event_id=excluded.google_event_id, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
             )
             .bind(task_id)
             .bind(event_id)
@@ -1466,7 +1470,7 @@ impl Storage for SqliteStorage {
     async fn create_skill(&self, body: &CreateSkill) -> StorageResult<SkillRow> {
         let built_in = body.built_in.unwrap_or(false);
         sqlx::query(
-            "INSERT INTO skills (slug, name, description, body, built_in) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO skills (slug, name, description, body, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
         )
         .bind(&body.slug)
         .bind(&body.name)
@@ -1481,7 +1485,7 @@ impl Storage for SqliteStorage {
 
     async fn update_skill(&self, slug: &str, body: &UpdateSkill) -> StorageResult<SkillRow> {
         sqlx::query(
-            "UPDATE skills SET name=COALESCE(?,name), description=COALESCE(?,description), body=COALESCE(?,body), updated_at=datetime('now') WHERE slug = ?"
+            "UPDATE skills SET name=COALESCE(?,name), description=COALESCE(?,description), body=COALESCE(?,body), updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE slug = ?"
         )
         .bind(body.name.as_ref())
         .bind(body.description.as_ref())
@@ -1552,7 +1556,7 @@ impl Storage for SqliteStorage {
                 let id = existing.id;
                 let new_revision = existing.revision + 1;
                 let result = sqlx::query(
-                    "UPDATE memories SET content = ?, normalized_content = ?, revision = ?, updated_at = datetime('now') WHERE id = ? AND revision = ?",
+                    "UPDATE memories SET content = ?, normalized_content = ?, revision = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? AND revision = ?",
                 )
                 .bind(&body.content)
                 .bind(&normalized_content)
@@ -1588,7 +1592,7 @@ impl Storage for SqliteStorage {
         let id = uuid::Uuid::now_v7().to_string();
         let source = "user_confirmed";
         sqlx::query(
-            "INSERT INTO memories (id, kind, key, normalized_key, content, normalized_content, subject_type, subject_id, source, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+            "INSERT INTO memories (id, kind, key, normalized_key, content, normalized_content, subject_type, subject_id, source, revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
         )
         .bind(&id)
         .bind(&body.kind)
@@ -1657,7 +1661,7 @@ impl Storage for SqliteStorage {
         let new_revision = existing.revision + 1;
 
         let result = sqlx::query(
-            "UPDATE memories SET content = ?, normalized_content = ?, revision = ?, updated_at = datetime('now') WHERE id = ? AND revision = ?",
+            "UPDATE memories SET content = ?, normalized_content = ?, revision = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? AND revision = ?",
         )
         .bind(content)
         .bind(&normalized_content)
@@ -1852,19 +1856,20 @@ impl Storage for SqliteStorage {
         }
 
         let session_id = uuid::Uuid::now_v7().to_string();
-        let now = jiff::Timestamp::now().to_string();
+        let now = takusu_util::now_rfc3339();
         sqlx::query(
-            "INSERT OR IGNORE INTO task_work_sessions (id, task_id, started_at) VALUES (?, ?, ?)",
+            "INSERT OR IGNORE INTO task_work_sessions (id, task_id, started_at, created_at) VALUES (?, ?, ?, ?)",
         )
         .bind(&session_id)
         .bind(&full)
+        .bind(&now)
         .bind(&now)
         .execute(&mut *tx)
         .await
         .map_err(map_err)?;
 
         sqlx::query(
-            "UPDATE tasks SET status = 'in_progress', updated_at = datetime('now') WHERE id = ?",
+            "UPDATE tasks SET status = 'in_progress', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
         )
         .bind(&full)
         .execute(&mut *tx)
@@ -1913,7 +1918,7 @@ impl Storage for SqliteStorage {
             )));
         }
 
-        let now = jiff::Timestamp::now().to_string();
+        let now = takusu_util::now_rfc3339();
         sqlx::query(
             "UPDATE task_work_sessions SET ended_at = ? WHERE task_id = ? AND ended_at IS NULL",
         )
@@ -1924,7 +1929,7 @@ impl Storage for SqliteStorage {
         .map_err(map_err)?;
 
         sqlx::query(
-            "UPDATE tasks SET status = 'scheduled', updated_at = datetime('now') WHERE id = ?",
+            "UPDATE tasks SET status = 'scheduled', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
         )
         .bind(&full)
         .execute(&mut *tx)
@@ -2023,7 +2028,7 @@ impl Storage for SqliteStorage {
             return Ok(result);
         }
 
-        let now = jiff::Timestamp::now().to_string();
+        let now = takusu_util::now_rfc3339();
 
         // Active minutes are measured from the later of the open session start
         // and the most recent progress event, so repeated progress updates in
@@ -2093,7 +2098,7 @@ impl Storage for SqliteStorage {
             .unwrap_or(false);
 
         sqlx::query(
-            "UPDATE tasks SET quantity_done = ?, avg_minutes = ?, sigma_minutes = ?, status = ?, updated_at = datetime('now') WHERE id = ?",
+            "UPDATE tasks SET quantity_done = ?, avg_minutes = ?, sigma_minutes = ?, status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
         )
         .bind(body.quantity_done)
         .bind(new_avg)
@@ -2156,7 +2161,7 @@ impl Storage for SqliteStorage {
             )));
         }
 
-        let now = jiff::Timestamp::now().to_string();
+        let now = takusu_util::now_rfc3339();
         sqlx::query(
             "UPDATE task_work_sessions SET ended_at = ? WHERE task_id = ? AND ended_at IS NULL",
         )
@@ -2204,7 +2209,7 @@ impl Storage for SqliteStorage {
         };
 
         sqlx::query(
-            "UPDATE tasks SET status = 'completed', completed_at = ?, quantity_done = ?, avg_minutes = ?, sigma_minutes = ?, updated_at = datetime('now') WHERE id = ?",
+            "UPDATE tasks SET status = 'completed', completed_at = ?, quantity_done = ?, avg_minutes = ?, sigma_minutes = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
         )
         .bind(&now)
         .bind(quantity_done)
@@ -2367,7 +2372,7 @@ impl Storage for SqliteStorage {
         let depends_json = serde_json::to_string(&depends).unwrap_or_else(|_| "[]".into());
 
         sqlx::query(
-            "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+            "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
         )
         .bind(&remainder_id)
         .bind(display_id)
@@ -2397,7 +2402,7 @@ impl Storage for SqliteStorage {
 
         let new_done = original.quantity_done.min(body.retained_quantity);
         sqlx::query(
-            "UPDATE tasks SET quantity_total = ?, quantity_done = ?, original_quantity_total = ?, updated_at = datetime('now') WHERE id = ?",
+            "UPDATE tasks SET quantity_total = ?, quantity_done = ?, original_quantity_total = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
         )
         .bind(body.retained_quantity)
         .bind(new_done)
@@ -2499,7 +2504,7 @@ impl SqliteStorage {
         E: sqlx::Executor<'a, Database = sqlx::Sqlite>,
     {
         sqlx::query(
-            "INSERT INTO memory_operations (operation_id, request_hash, response_json) VALUES (?, ?, ?)",
+            "INSERT INTO memory_operations (operation_id, request_hash, response_json, created_at) VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
         )
         .bind(operation_id)
         .bind(request_hash)
@@ -2557,7 +2562,7 @@ impl SqliteStorage {
         let response_json = serde_json::to_string(value)
             .map_err(|e| StorageError::Internal(format!("serialize idempotency response: {e}")))?;
         sqlx::query(
-            "INSERT INTO progress_operations (operation_id, request_hash, response_json) VALUES (?, ?, ?)",
+            "INSERT INTO progress_operations (operation_id, request_hash, response_json, created_at) VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
         )
         .bind(operation_id)
         .bind(request_hash)
@@ -2619,9 +2624,7 @@ fn validate_quantity(
 fn session_minutes(session: &TaskWorkSessionRow) -> i64 {
     match session.ended_at.as_deref() {
         Some(end) => takusu_util::minutes_between(&session.started_at, end),
-        None => {
-            takusu_util::minutes_between(&session.started_at, &jiff::Timestamp::now().to_string())
-        }
+        None => takusu_util::minutes_between(&session.started_at, &takusu_util::now_rfc3339()),
     }
 }
 

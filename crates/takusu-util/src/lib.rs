@@ -327,28 +327,49 @@ pub fn parse_datetime(s: &str) -> Result<String, String> {
 /// Return the later of two RFC 3339 timestamp strings.
 /// Falls back to `a` if either timestamp cannot be parsed.
 pub fn later_timestamp<'a>(a: &'a str, b: &'a str) -> &'a str {
-    match (jiff::Timestamp::from_str(a), jiff::Timestamp::from_str(b)) {
-        (Ok(ta), Ok(tb)) => {
+    match (parse_rfc3339_or_legacy(a), parse_rfc3339_or_legacy(b)) {
+        (Some(ta), Some(tb)) => {
             if ta >= tb {
                 a
             } else {
                 b
             }
         }
-        (Ok(_), _) => a,
-        (_, Ok(_)) => b,
+        (Some(_), _) => a,
+        (_, Some(_)) => b,
         _ => a,
     }
 }
 
+/// Return the current UTC timestamp as an RFC 3339 string with whole-second
+/// precision (e.g. `2026-07-23T09:00:00Z`).
+pub fn now_rfc3339() -> String {
+    jiff::Timestamp::now()
+        .strftime("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+}
+
+fn parse_rfc3339_or_legacy(s: &str) -> Option<jiff::Timestamp> {
+    if let Ok(ts) = jiff::Timestamp::from_str(s) {
+        return Some(ts);
+    }
+    // SQLite `datetime('now')` and other naive UTC wall-clock formats.
+    for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"] {
+        if let Ok(dt) = jiff::civil::DateTime::strptime(fmt, s)
+            && let Ok(zdt) = dt.to_zoned(jiff::tz::TimeZone::UTC)
+        {
+            return Some(zdt.timestamp());
+        }
+    }
+    None
+}
+
 /// Minutes between two RFC 3339 timestamps.
+/// Falls back to parsing legacy SQLite `datetime('now')` output.
 /// Returns at least 1 to avoid degenerate speed observations.
 pub fn minutes_between(start: &str, end: &str) -> i64 {
-    match (
-        jiff::Timestamp::from_str(start),
-        jiff::Timestamp::from_str(end),
-    ) {
-        (Ok(s), Ok(e)) => ((e.as_second() - s.as_second()) / 60).max(1),
+    match (parse_rfc3339_or_legacy(start), parse_rfc3339_or_legacy(end)) {
+        (Some(s), Some(e)) => ((e.as_second() - s.as_second()) / 60).max(1),
         _ => 1,
     }
 }
@@ -970,5 +991,45 @@ mod tests {
         assert_eq!(url_encode("a?b&c"), "a%3Fb%26c");
         assert_eq!(url_encode("a/b"), "a%2Fb");
         assert_eq!(url_encode("abc-_.~"), "abc-_.~");
+    }
+
+    #[test]
+    fn now_rfc3339_has_whole_second_precision() {
+        let s = now_rfc3339();
+        assert!(s.ends_with('Z'));
+        assert!(!s.contains('.'));
+        assert!(jiff::Timestamp::from_str(&s).is_ok());
+    }
+
+    #[test]
+    fn minutes_between_parses_rfc3339_and_legacy_space_separated() {
+        assert_eq!(
+            minutes_between("2026-07-23T09:00:00Z", "2026-07-23T09:05:00Z"),
+            5
+        );
+        assert_eq!(
+            minutes_between("2026-07-23 09:00:00", "2026-07-23 09:05:00"),
+            5
+        );
+        assert_eq!(
+            minutes_between("2026-07-23T09:00:00Z", "2026-07-23 09:05:00"),
+            5
+        );
+    }
+
+    #[test]
+    fn later_timestamp_parses_rfc3339_and_legacy_space_separated() {
+        assert_eq!(
+            later_timestamp("2026-07-23T09:00:00Z", "2026-07-23T09:05:00Z"),
+            "2026-07-23T09:05:00Z"
+        );
+        assert_eq!(
+            later_timestamp("2026-07-23 09:05:00", "2026-07-23 09:00:00"),
+            "2026-07-23 09:05:00"
+        );
+        assert_eq!(
+            later_timestamp("2026-07-23 09:00:00", "2026-07-23T09:05:00Z"),
+            "2026-07-23T09:05:00Z"
+        );
     }
 }

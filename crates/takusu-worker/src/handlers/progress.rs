@@ -69,7 +69,7 @@ async fn record_progress_operation<T: serde::Serialize>(
     let response_json = serde_json::to_string(value)
         .map_err(|e| WorkerError::Internal(format!("serialize idempotency response: {e}")))?;
     let stmt = database.prepare(
-        "INSERT INTO progress_operations (operation_id, request_hash, response_json) VALUES (?1, ?2, ?3)",
+        "INSERT INTO progress_operations (operation_id, request_hash, response_json, created_at) VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
     );
     stmt.bind(&[
         JsValue::from_str(operation_id),
@@ -170,7 +170,7 @@ pub async fn start_task_work(req: Request, env: Env, id: &str) -> Result<Respons
 
     let session_id = uuid::Uuid::now_v7().to_string();
     let insert = database.prepare(
-        "INSERT OR IGNORE INTO task_work_sessions (id, task_id, started_at) VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+        "INSERT OR IGNORE INTO task_work_sessions (id, task_id, started_at, created_at) VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
     );
     insert
         .bind(&[JsValue::from_str(&session_id), JsValue::from_str(&full)])?
@@ -179,7 +179,7 @@ pub async fn start_task_work(req: Request, env: Env, id: &str) -> Result<Respons
         .map_err(WorkerError::Worker)?;
 
     let update = database.prepare(
-        "UPDATE tasks SET status = 'in_progress', updated_at = datetime('now') WHERE id = ?1",
+        "UPDATE tasks SET status = 'in_progress', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
     );
     update
         .bind(&[JsValue::from_str(&full)])?
@@ -231,7 +231,7 @@ pub async fn pause_task_work(req: Request, env: Env, id: &str) -> Result<Respons
         .map_err(WorkerError::Worker)?;
 
     let update = database.prepare(
-        "UPDATE tasks SET status = 'scheduled', updated_at = datetime('now') WHERE id = ?1",
+        "UPDATE tasks SET status = 'scheduled', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
     );
     update
         .bind(&[JsValue::from_str(&full)])?
@@ -403,7 +403,7 @@ pub async fn record_progress(
         .unwrap_or(false);
 
     let update = database.prepare(
-        "UPDATE tasks SET quantity_done = ?1, avg_minutes = ?2, sigma_minutes = ?3, status = ?4, updated_at = datetime('now') WHERE id = ?5",
+        "UPDATE tasks SET quantity_done = ?1, avg_minutes = ?2, sigma_minutes = ?3, status = ?4, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?5",
     );
     update
         .bind(&[
@@ -499,7 +499,7 @@ pub async fn complete_task_work(req: Request, env: Env, id: &str) -> Result<Resp
     };
 
     let update = database.prepare(
-        "UPDATE tasks SET status = 'completed', completed_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), quantity_done = ?1, avg_minutes = ?2, sigma_minutes = ?3, updated_at = datetime('now') WHERE id = ?4",
+        "UPDATE tasks SET status = 'completed', completed_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), quantity_done = ?1, avg_minutes = ?2, sigma_minutes = ?3, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?4",
     );
     update
         .bind(&[
@@ -644,7 +644,7 @@ pub async fn split_task(mut req: Request, env: Env, id: &str) -> Result<Response
     let depends_json = serde_json::to_string(&depends).unwrap_or_else(|_| "[]".into());
 
     let insert = database.prepare(
-        "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'pending', ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, datetime('now'), datetime('now'))",
+        "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'pending', ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
     );
     insert
         .bind(&[
@@ -689,7 +689,7 @@ pub async fn split_task(mut req: Request, env: Env, id: &str) -> Result<Response
 
     let new_done = original.quantity_done.min(body.retained_quantity);
     let update = database.prepare(
-        "UPDATE tasks SET quantity_total = ?1, quantity_done = ?2, original_quantity_total = ?3, updated_at = datetime('now') WHERE id = ?4",
+        "UPDATE tasks SET quantity_total = ?1, quantity_done = ?2, original_quantity_total = ?3, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?4",
     );
     update
         .bind(&[
