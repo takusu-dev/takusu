@@ -646,14 +646,21 @@ pub async fn split_task(mut req: Request, env: Env, id: &str) -> Result<Response
     };
     let depends_json = serde_json::to_string(&depends).unwrap_or_else(|_| "[]".into());
 
+    let remainder_title = body.title.as_ref().unwrap_or(&original.title);
+    let normalized_title = takusu_util::memory::normalize_text(
+        remainder_title,
+        Some(takusu_util::memory::MAX_CONTENT_SCALARS),
+    )
+    .ok();
+
     let insert = database.prepare(
-        "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'pending', ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+        "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, normalized_title, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'pending', ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
     );
     insert
         .bind(&[
             JsValue::from_str(&remainder_id),
             JsValue::from_f64(display_id as f64),
-            JsValue::from_str(body.title.as_ref().unwrap_or(&original.title).as_str()),
+            JsValue::from_str(remainder_title.as_str()),
             body.description
                 .as_ref()
                 .or(original.description.as_ref())
@@ -685,6 +692,10 @@ pub async fn split_task(mut req: Request, env: Env, id: &str) -> Result<Response
             JsValue::NULL,
             JsValue::from_str(&full),
             JsValue::from_f64(original_quantity_total as f64),
+            normalized_title
+                .as_deref()
+                .map(JsValue::from_str)
+                .unwrap_or(JsValue::NULL),
         ])?
         .run()
         .await

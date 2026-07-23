@@ -585,9 +585,36 @@ pub async fn similar_tasks(req: Request, env: Env) -> Result<Response, WorkerErr
         .map_err(|e| WorkerError::BadRequest(format!("invalid title: {e}")))?;
 
     let database = db(&env)?;
-    let stmt = database.prepare(
-        "SELECT t.id AS task_id, t.display_id, t.title, t.avg_minutes, t.sigma_minutes, tam.actual_minutes, t.completed_at, t.updated_at, 'title_overlap' AS similarity FROM tasks t LEFT JOIN task_actual_minutes tam ON tam.task_id = t.id WHERE t.status = 'completed' ORDER BY t.updated_at DESC LIMIT 1000",
+
+    // Pre-filter candidates in SQL by requiring the normalized title to contain
+    // at least one query bigram (a strict superset of non-zero Dice matches, so
+    // no true match is dropped — see similar_task_filter_patterns). Rows written
+    // before migration 026 have a NULL normalized_title (D1 cannot run NFKC
+    // during a migration); matching them against the normalized patterns in SQL
+    // would miss case/NFKC variants (D1 LIKE is case-sensitive and not
+    // NFKC-aware), so they are fetched unfiltered and scored in Rust, where both
+    // sides are normalized correctly. The ORDER BY/LIMIT is a worst-case safety
+    // bound on that legacy fetch. Known residual risk: if more than the cap of
+    // NULL legacy rows exist and are the most recent, they can push a non-NULL
+    // bigram match past the LIMIT; this self-heals as legacy rows are updated
+    // (and thus gain a normalized_title), and the cap far exceeds personal-scale
+    // data. All patterns are bound as parameters, never interpolated (#942).
+    let patterns = memory::similar_task_filter_patterns(&normalized_title);
+    if patterns.is_empty() {
+        return json_ok(&Vec::<SimilarTaskRow>::new());
+    }
+    let mut clauses = Vec::with_capacity(patterns.len());
+    let mut bindings: Vec<JsValue> = Vec::with_capacity(patterns.len());
+    for (i, p) in patterns.iter().enumerate() {
+        clauses.push(format!("t.normalized_title LIKE ?{} ESCAPE '\\'", i + 1));
+        bindings.push(JsValue::from_str(p));
+    }
+    let filter = clauses.join(" OR ");
+    let cap = memory::SIMILAR_TASK_CANDIDATE_CAP;
+    let sql = format!(
+        "SELECT t.id AS task_id, t.display_id, t.title, t.avg_minutes, t.sigma_minutes, tam.actual_minutes, t.completed_at, t.updated_at, '' AS similarity FROM tasks t LEFT JOIN task_actual_minutes tam ON tam.task_id = t.id WHERE t.status = 'completed' AND ((t.normalized_title IS NOT NULL AND ({filter})) OR t.normalized_title IS NULL) ORDER BY t.updated_at DESC LIMIT {cap}"
     );
+    let stmt = database.prepare(sql).bind(&bindings)?;
     let rows: Vec<SimilarTaskRow> = safe_all(&stmt).await?;
 
     let mut scored: Vec<(f64, SimilarTaskRow)> = rows
@@ -608,8 +635,8 @@ pub async fn similar_tasks(req: Request, env: Env) -> Result<Response, WorkerErr
 
     let mut out: Vec<SimilarTaskRow> = scored
         .into_iter()
-        .map(|(_, mut row)| {
-            row.similarity = "title_overlap".to_string();
+        .map(|(score, mut row)| {
+            row.similarity = format!("dice:{score:.3}");
             row
         })
         .collect();

@@ -7,7 +7,9 @@ use crate::handlers::d1::safe_all;
 use crate::handlers::settings::get_timezone;
 use crate::handlers::tokens::{json_created, json_ok, parse_json};
 use crate::models::{CreateTask, HabitRow, ScheduleEntry, ScheduleRow, TaskRow, UpdateTask};
-use crate::validate::{validate_minutes, validate_quantity, validate_task_datetimes};
+use crate::validate::{
+    validate_minutes, validate_quantity, validate_task_datetimes, validate_title,
+};
 use jiff::Timestamp;
 use takusu_util::search::{EvalContext, filter_tasks};
 
@@ -157,6 +159,7 @@ async fn filter_rows_with_query(
 pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError> {
     let body: CreateTask = parse_json(&mut req).await?;
     validate_minutes(body.avg_minutes, body.sigma_minutes)?;
+    validate_title(&body.title)?;
     // Treat quantity_total / original_quantity_total 0 as unset (same as None) server-side.
     let quantity_total = body.quantity_total.filter(|t| *t != 0);
     let original_quantity_total = body.original_quantity_total.filter(|t| *t != 0);
@@ -217,8 +220,15 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
     };
 
     let quantity_done = body.quantity_done.unwrap_or(0);
+    // A title that fails NFKC normalization stores NULL, excluding the task from
+    // similar-task search rather than matching on a misleading empty string (#942).
+    let normalized_title = takusu_util::memory::normalize_text(
+        &body.title,
+        Some(takusu_util::memory::MAX_CONTENT_SCALARS),
+    )
+    .ok();
     let stmt = database.prepare(
-        "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'pending', ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+        "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, normalized_title, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'pending', ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
     );
     stmt.bind(&[
         JsValue::from_str(&id),
@@ -265,6 +275,10 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
         original_quantity_total
             .map(|n| JsValue::from_f64(n as f64))
             .unwrap_or(JsValue::NULL),
+        normalized_title
+            .as_deref()
+            .map(JsValue::from_str)
+            .unwrap_or(JsValue::NULL),
     ])?
     .run()
     .await
@@ -287,6 +301,9 @@ pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, Wo
         validate_minutes(avg, body.sigma_minutes)?;
     } else if let Some(sigma) = body.sigma_minutes {
         validate_minutes(0, Some(sigma))?;
+    }
+    if let Some(ref t) = body.title {
+        validate_title(t)?;
     }
     let database = db(&env)?;
     let full = resolve_task_id(&database, id).await?;
@@ -333,8 +350,15 @@ pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, Wo
         None
     };
 
+    // Recompute the normalized title only when the title changes; bind NULL
+    // otherwise (or when normalization fails) so COALESCE keeps the stored value
+    // (#942).
+    let normalized_title = body.title.as_deref().and_then(|t| {
+        takusu_util::memory::normalize_text(t, Some(takusu_util::memory::MAX_CONTENT_SCALARS)).ok()
+    });
+
     let stmt = database.prepare(
-        "UPDATE tasks SET title=COALESCE(?1,title), description=COALESCE(?2,description), start_at=COALESCE(?3,start_at), end_at=COALESCE(?4,end_at), avg_minutes=COALESCE(?5,avg_minutes), sigma_minutes=COALESCE(?6,sigma_minutes), depends=COALESCE(?7,depends), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), status=?11, habit_id=COALESCE(?13,habit_id), user_edited=COALESCE(?14,user_edited), fixed=COALESCE(?15,fixed), habit_step_id=COALESCE(?16,habit_step_id), quantity_total=COALESCE(?17,quantity_total), quantity_done=COALESCE(?18,quantity_done), quantity_unit=COALESCE(?19,quantity_unit), original_quantity_total=COALESCE(?20,original_quantity_total), updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?12"
+        "UPDATE tasks SET title=COALESCE(?1,title), description=COALESCE(?2,description), start_at=COALESCE(?3,start_at), end_at=COALESCE(?4,end_at), avg_minutes=COALESCE(?5,avg_minutes), sigma_minutes=COALESCE(?6,sigma_minutes), depends=COALESCE(?7,depends), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), status=?11, habit_id=COALESCE(?13,habit_id), user_edited=COALESCE(?14,user_edited), fixed=COALESCE(?15,fixed), habit_step_id=COALESCE(?16,habit_step_id), quantity_total=COALESCE(?17,quantity_total), quantity_done=COALESCE(?18,quantity_done), quantity_unit=COALESCE(?19,quantity_unit), original_quantity_total=COALESCE(?20,original_quantity_total), normalized_title=COALESCE(?21,normalized_title), updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?12"
     );
     stmt.bind(&[
         body.title
@@ -399,6 +423,10 @@ pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, Wo
         original_quantity_total
             .map(|n| JsValue::from_f64(n as f64))
             .unwrap_or(JsValue::NULL),
+        normalized_title
+            .as_deref()
+            .map(JsValue::from_str)
+            .unwrap_or(JsValue::NULL),
     ])?
     .run()
     .await
@@ -424,6 +452,7 @@ pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, Wo
 pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, WorkerError> {
     let body: CreateTask = parse_json(&mut req).await?;
     validate_minutes(body.avg_minutes, body.sigma_minutes)?;
+    validate_title(&body.title)?;
     // Treat quantity_total / original_quantity_total 0 as unset (same as None) server-side.
     let quantity_total = body.quantity_total.filter(|t| *t != 0);
     let original_quantity_total = body.original_quantity_total.filter(|t| *t != 0);
@@ -445,8 +474,14 @@ pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, W
     let allows_parallel = body.allows_parallel.unwrap_or(false);
     let abandonability = body.abandonability.unwrap_or(0.5);
 
+    let normalized_title = takusu_util::memory::normalize_text(
+        &body.title,
+        Some(takusu_util::memory::MAX_CONTENT_SCALARS),
+    )
+    .ok();
+
     let stmt = database.prepare(
-        "UPDATE tasks SET title=?1, description=?2, start_at=?3, end_at=?4, avg_minutes=?5, sigma_minutes=?6, depends=?7, parallelizable=?8, allows_parallel=?9, abandonability=?10, habit_id=COALESCE(?12,habit_id), fixed=?13, habit_step_id=?14, quantity_total=COALESCE(?15, quantity_total), quantity_done=COALESCE(?16, quantity_done), quantity_unit=COALESCE(?17, quantity_unit), completed_at=COALESCE(?18, completed_at), split_from_task_id=COALESCE(?19, split_from_task_id), original_quantity_total=COALESCE(?20, original_quantity_total), updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?11"
+        "UPDATE tasks SET title=?1, description=?2, start_at=?3, end_at=?4, avg_minutes=?5, sigma_minutes=?6, depends=?7, parallelizable=?8, allows_parallel=?9, abandonability=?10, habit_id=COALESCE(?12,habit_id), fixed=?13, habit_step_id=?14, quantity_total=COALESCE(?15, quantity_total), quantity_done=COALESCE(?16, quantity_done), quantity_unit=COALESCE(?17, quantity_unit), completed_at=COALESCE(?18, completed_at), split_from_task_id=COALESCE(?19, split_from_task_id), original_quantity_total=COALESCE(?20, original_quantity_total), normalized_title=?21, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?11"
     );
     stmt.bind(&[
         JsValue::from_str(&body.title),
@@ -489,6 +524,10 @@ pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, W
         JsValue::NULL,
         original_quantity_total
             .map(|n| JsValue::from_f64(n as f64))
+            .unwrap_or(JsValue::NULL),
+        normalized_title
+            .as_deref()
+            .map(JsValue::from_str)
             .unwrap_or(JsValue::NULL),
     ])?
     .run()

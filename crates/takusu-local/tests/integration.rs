@@ -3597,7 +3597,209 @@ async fn find_similar_tasks_orders_completed_tasks() {
         serde_json::from_str(&body_str(res.into_body()).await).unwrap();
     assert!(!similar.is_empty());
     assert_eq!(similar[0]["title"], "数学の演習問題");
-    assert!(similar[0]["similarity"].as_str().is_some());
+    // similarity now carries the real Dice score, not a hardcoded label (#942).
+    let sim = similar[0]["similarity"].as_str().unwrap();
+    assert!(sim.starts_with("dice:"), "unexpected similarity: {sim}");
+    assert!(sim["dice:".len()..].parse::<f64>().is_ok());
+}
+
+#[tokio::test]
+async fn find_similar_tasks_recall_bigram_only_match() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    // A reordered title shares bigrams with the query but contains no query
+    // substring; the bigram-OR pre-filter must not drop it (#942).
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "演習数学",
+            "end_at": "2026-06-05T18:00:00+09:00",
+            "avg_minutes": 30,
+            "depends": [],
+            "parallelizable": false,
+            "allows_parallel": false,
+            "abandonability": 0.5
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let id = body["id"].as_str().unwrap().to_owned();
+
+    let patch = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{id}"),
+        json!({ "status": "completed" }),
+    );
+    let res = app.clone().oneshot(patch).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let req = auth_req(Method::GET, "/api/tasks/similar?q=数学演習&limit=5");
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let similar: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(
+        similar.iter().any(|r| r["title"] == "演習数学"),
+        "bigram-only match was dropped by the pre-filter: {similar:?}"
+    );
+}
+
+#[tokio::test]
+async fn find_similar_tasks_returns_old_completed_match() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    // Complete the matching task first, then add many newer completed tasks with
+    // unrelated titles. The old match must still surface (no recency-only cap,
+    // #942).
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "线性代数のレポート",
+            "end_at": "2026-06-05T18:00:00+09:00",
+            "avg_minutes": 30,
+            "depends": [],
+            "parallelizable": false,
+            "allows_parallel": false,
+            "abandonability": 0.5
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let old_id = body["id"].as_str().unwrap().to_owned();
+    let patch = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{old_id}"),
+        json!({ "status": "completed" }),
+    );
+    assert_eq!(
+        app.clone().oneshot(patch).await.unwrap().status(),
+        StatusCode::OK
+    );
+
+    for i in 0..20 {
+        let create = auth_req_body(
+            Method::POST,
+            "/api/tasks",
+            json!({
+                "title": format!("無関係なタスク{i}"),
+                "end_at": "2026-06-05T18:00:00+09:00",
+                "avg_minutes": 10,
+                "depends": [],
+                "parallelizable": false,
+                "allows_parallel": false,
+                "abandonability": 0.5
+            }),
+        );
+        let res = app.clone().oneshot(create).await.unwrap();
+        let body: serde_json::Value =
+            serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+        let tid = body["id"].as_str().unwrap().to_owned();
+        let patch = auth_req_body(
+            Method::PATCH,
+            &format!("/api/tasks/{tid}"),
+            json!({ "status": "completed" }),
+        );
+        assert_eq!(
+            app.clone().oneshot(patch).await.unwrap().status(),
+            StatusCode::OK
+        );
+    }
+
+    let req = auth_req(Method::GET, "/api/tasks/similar?q=线性代数&limit=5");
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let similar: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(
+        similar.iter().any(|r| r["title"] == "线性代数のレポート"),
+        "old completed match was not returned: {similar:?}"
+    );
+}
+
+#[tokio::test]
+async fn create_task_rejects_unnormalizable_title() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    // A control-character-only title cannot be NFKC-normalized for similar-task
+    // search and must be rejected at the boundary (#942).
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "\u{0001}\u{0002}",
+            "end_at": "2026-06-05T18:00:00+09:00",
+            "avg_minutes": 30,
+            "depends": [],
+            "parallelizable": false,
+            "allows_parallel": false,
+            "abandonability": 0.5
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // An empty title is likewise rejected.
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "   ",
+            "end_at": "2026-06-05T18:00:00+09:00",
+            "avg_minutes": 30,
+            "depends": [],
+            "parallelizable": false,
+            "allows_parallel": false,
+            "abandonability": 0.5
+        }),
+    );
+    let res = app.oneshot(create).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn replace_task_rejects_unnormalizable_title() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "有効なタイトル",
+            "end_at": "2026-06-05T18:00:00+09:00",
+            "avg_minutes": 30,
+            "depends": [],
+            "parallelizable": false,
+            "allows_parallel": false,
+            "abandonability": 0.5
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let id = body["id"].as_str().unwrap().to_owned();
+
+    // Replacing with an unnormalizable title is rejected, so the stored
+    // normalized_title is never silently nulled out (#942).
+    let put = auth_req_body(
+        Method::PUT,
+        &format!("/api/tasks/{id}"),
+        json!({
+            "title": "\u{0001}\u{0002}",
+            "end_at": "2026-06-05T18:00:00+09:00",
+            "avg_minutes": 30,
+            "depends": [],
+            "parallelizable": false,
+            "allows_parallel": false,
+            "abandonability": 0.5
+        }),
+    );
+    let res = app.oneshot(put).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

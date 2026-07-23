@@ -185,11 +185,11 @@ GET /api/tasks/similar?q=<title>&limit=<n>
   "sigma_minutes": 15,
   "actual_minutes": null,
   "completed_at": "...",
-  "similarity": "title_overlap"
+  "similarity": "dice:0.667"
 }
 ```
 
-WI-7 時点では `completed_at` と `actual_minutes` の列がないため、API 型は両方を `Option` とし、どちらも null を返す。WI-9 の migration 後は値がある場合だけ設定し、WI-7 適用前後で client JSON を壊さない。タイトルは正規化後の Unicode scalar value 列から distinct bigram set を作って比較する。類似度は Sørensen–Dice（`2 * |A ∩ B| / (|A| + |B|)`）とし、正規化タイトルの連続 substring 一致がある場合は `+0.25`、最終 score は 1.0 に clamp する。score 0 は除外し、1 scalar のタイトルは同一文字の完全一致だけを score 1 として、それ以外は除外する。記号だけの title は正規化後に空なら除外する。最低 similarity は 0 より大きい値とし、同点は `completed_at DESC`（null は後）、`updated_at DESC`、`id ASC` で固定する。
+WI-7 時点では `completed_at` と `actual_minutes` の列がないため、API 型は両方を `Option` とし、どちらも null を返す。WI-9 の migration 後は値がある場合だけ設定し、WI-7 適用前後で client JSON を壊さない。タイトルは正規化後の Unicode scalar value 列から distinct bigram set を作って比較する。類似度は Sørensen–Dice（`2 * |A ∩ B| / (|A| + |B|)`）とし、正規化タイトルの連続 substring 一致がある場合は `+0.25`、最終 score は 1.0 に clamp する。score 0 は除外し、1 scalar のタイトルは同一文字の完全一致だけを score 1 として、それ以外は除外する。記号だけの title は正規化後に空なら除外する。最低 similarity は 0 より大きい値とし、同点は `completed_at DESC`（null は後）、`updated_at DESC`、`id ASC` で固定する。`similarity` 列は実際のスコアを `dice:{score:.3}` 形式の文字列で返す（固定ラベルではない、#942）。候補行は `tasks.normalized_title`（NFKC 正規化済みタイトル、migration 025/026 で追加）に対する bigram の `LIKE` 事前フィルタで SQL 側で絞り込む。このフィルタは非ゼロ Dice マッチの完全な上位集合なので真のマッチを取りこぼさない。SQLite は起動時に既存行をバックフィルし、D1 は正規化できないため旧行（`normalized_title IS NULL`）をフィルタ無しで取得して Rust 側でスコアリングする。
 
 類似度は見積りを自動変更するための確定値ではない。Agent は結果を参考として提示し、ユーザー入力がある場合はそれを優先する。履歴がない場合にモデル知識で補完するときは、その旨を明示する。
 

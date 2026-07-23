@@ -49,6 +49,7 @@ const MIGRATION_021: &str = include_str!("../migrations/021_solver_default_sa.sq
 const MIGRATION_022: &str = include_str!("../migrations/022_split_from_task_index.sql");
 const MIGRATION_023: &str = include_str!("../migrations/023_timestamp_format.sql");
 const MIGRATION_024: &str = include_str!("../migrations/024_zero_quantity_to_null.sql");
+const MIGRATION_025: &str = include_str!("../migrations/025_task_normalized_title.sql");
 // Migration 013 one-time backfill: drops the old global unique index, renumbers
 // existing habit tasks to start from 1 per habit, and seeds the per-habit
 // sequences. Non-idempotent (DROP + UPDATE renumber) — guarded by a check
@@ -375,6 +376,46 @@ impl SqliteStorage {
         // Migration 024 normalizes quantity_total == 0 to NULL (same as unset).
         sqlx::raw_sql(MIGRATION_024).execute(&pool).await?;
 
+        // Migration 025 adds tasks.normalized_title for similar-task pre-filtering
+        // (#942). The ALTER is not idempotent (SQLite has no IF NOT EXISTS for ADD
+        // COLUMN), so guard with a column check.
+        let has_normalized_title: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name = 'normalized_title'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        if !has_normalized_title {
+            sqlx::raw_sql(MIGRATION_025).execute(&pool).await?;
+            // Backfill normalized_title for rows that existed before migration 025.
+            // NFKC normalization cannot run in SQL, so it happens here in Rust,
+            // once, inside a single transaction (atomic, and no per-row commit
+            // overhead on large databases). Titles that fail to normalize (e.g.
+            // control-character only) are left NULL, which excludes them from
+            // similar-task search rather than storing a misleading empty string.
+            // This runs only at migration time, so NULL rows are not re-scanned on
+            // every startup.
+            let stale: Vec<(String, String)> =
+                sqlx::query_as("SELECT id, title FROM tasks WHERE normalized_title IS NULL")
+                    .fetch_all(&pool)
+                    .await?;
+            if !stale.is_empty() {
+                let mut tx = pool.begin().await?;
+                for (id, title) in stale {
+                    if let Ok(nt) = takusu_util::memory::normalize_text(
+                        &title,
+                        Some(takusu_util::memory::MAX_CONTENT_SCALARS),
+                    ) {
+                        sqlx::query("UPDATE tasks SET normalized_title = ? WHERE id = ?")
+                            .bind(&nt)
+                            .bind(&id)
+                            .execute(&mut *tx)
+                            .await?;
+                    }
+                }
+                tx.commit().await?;
+            }
+        }
+
         Ok(Self { pool, jwt_secret })
     }
 
@@ -564,12 +605,21 @@ impl Storage for SqliteStorage {
         };
         let quantity_done = body.quantity_done.unwrap_or(0);
         let quantity_unit = body.quantity_unit.as_deref();
+        // A title that fails NFKC normalization (e.g. control-character only)
+        // stores NULL, excluding the task from similar-task search rather than
+        // matching on a misleading empty string (#942).
+        let normalized_title = takusu_util::memory::normalize_text(
+            &body.title,
+            Some(takusu_util::memory::MAX_CONTENT_SCALARS),
+        )
+        .ok();
         sqlx::query(
-            "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
+            "INSERT INTO tasks (id, display_id, title, normalized_title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
         )
         .bind(&id)
         .bind(display_id)
         .bind(&body.title)
+        .bind(&normalized_title)
         .bind(&body.description)
         .bind(&body.start_at)
         .bind(&body.end_at)
@@ -640,10 +690,19 @@ impl Storage for SqliteStorage {
             )));
         }
 
+        // Recompute the normalized title only when the title actually changes;
+        // bind None otherwise (or when normalization fails) so COALESCE keeps the
+        // stored value (#942).
+        let normalized_title = body.title.as_ref().and_then(|t| {
+            takusu_util::memory::normalize_text(t, Some(takusu_util::memory::MAX_CONTENT_SCALARS))
+                .ok()
+        });
+
         sqlx::query(
-            "UPDATE tasks SET title=COALESCE(?,title), description=COALESCE(?,description), start_at=COALESCE(?,start_at), end_at=COALESCE(?,end_at), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), depends=COALESCE(?,depends), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), status=?, habit_id=COALESCE(?,habit_id), user_edited=COALESCE(?,user_edited), fixed=COALESCE(?,fixed), habit_step_id=COALESCE(?,habit_step_id), quantity_total=COALESCE(?,quantity_total), quantity_done=COALESCE(?,quantity_done), quantity_unit=COALESCE(?,quantity_unit), original_quantity_total=COALESCE(?,original_quantity_total), updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?"
+            "UPDATE tasks SET title=COALESCE(?,title), normalized_title=COALESCE(?,normalized_title), description=COALESCE(?,description), start_at=COALESCE(?,start_at), end_at=COALESCE(?,end_at), avg_minutes=COALESCE(?,avg_minutes), sigma_minutes=COALESCE(?,sigma_minutes), depends=COALESCE(?,depends), parallelizable=COALESCE(?,parallelizable), allows_parallel=COALESCE(?,allows_parallel), abandonability=COALESCE(?,abandonability), status=?, habit_id=COALESCE(?,habit_id), user_edited=COALESCE(?,user_edited), fixed=COALESCE(?,fixed), habit_step_id=COALESCE(?,habit_step_id), quantity_total=COALESCE(?,quantity_total), quantity_done=COALESCE(?,quantity_done), quantity_unit=COALESCE(?,quantity_unit), original_quantity_total=COALESCE(?,original_quantity_total), updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?"
         )
         .bind(body.title.as_ref())
+        .bind(&normalized_title)
         .bind(body.description.as_ref())
         .bind(body.start_at.as_ref())
         .bind(body.end_at.as_ref())
@@ -710,10 +769,16 @@ impl Storage for SqliteStorage {
         let fixed = body.fixed.unwrap_or(false);
         let quantity_done = body.quantity_done;
         let quantity_unit = body.quantity_unit.as_deref();
+        let normalized_title = takusu_util::memory::normalize_text(
+            &body.title,
+            Some(takusu_util::memory::MAX_CONTENT_SCALARS),
+        )
+        .ok();
         sqlx::query(
-            "UPDATE tasks SET title=?, description=?, start_at=?, end_at=?, avg_minutes=?, sigma_minutes=?, depends=?, parallelizable=?, allows_parallel=?, abandonability=?, habit_id=COALESCE(?,habit_id), fixed=?, habit_step_id=?, quantity_total=COALESCE(?, quantity_total), quantity_done=COALESCE(?, quantity_done), quantity_unit=COALESCE(?, quantity_unit), completed_at=COALESCE(?, completed_at), split_from_task_id=COALESCE(?, split_from_task_id), original_quantity_total=COALESCE(?, original_quantity_total), updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?"
+            "UPDATE tasks SET title=?, normalized_title=?, description=?, start_at=?, end_at=?, avg_minutes=?, sigma_minutes=?, depends=?, parallelizable=?, allows_parallel=?, abandonability=?, habit_id=COALESCE(?,habit_id), fixed=?, habit_step_id=?, quantity_total=COALESCE(?, quantity_total), quantity_done=COALESCE(?, quantity_done), quantity_unit=COALESCE(?, quantity_unit), completed_at=COALESCE(?, completed_at), split_from_task_id=COALESCE(?, split_from_task_id), original_quantity_total=COALESCE(?, original_quantity_total), updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?"
         )
         .bind(&body.title)
+        .bind(&normalized_title)
         .bind(&body.description)
         .bind(&body.start_at)
         .bind(&body.end_at)
@@ -1813,12 +1878,30 @@ impl Storage for SqliteStorage {
             Some(takusu_util::memory::MAX_QUERY_SCALARS),
         )
         .map_err(|e| StorageError::BadRequest(format!("invalid title: {e}")))?;
-        let rows: Vec<SimilarTaskRow> = sqlx::query_as::<_, SimilarTaskRow>(
-            "SELECT t.id AS task_id, t.display_id, t.title, t.avg_minutes, t.sigma_minutes, tam.actual_minutes, t.completed_at, t.updated_at, 'title_overlap' AS similarity FROM tasks t LEFT JOIN task_actual_minutes tam ON tam.task_id = t.id WHERE t.status = 'completed' ORDER BY t.updated_at DESC LIMIT 1000",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_err)?;
+
+        // Pre-filter candidates in SQL by requiring the normalized title to
+        // contain at least one query bigram (a strict superset of non-zero Dice
+        // matches, so no true match is dropped — see similar_task_filter_patterns).
+        // All patterns are bound as parameters, never interpolated (#942).
+        let patterns = takusu_util::memory::similar_task_filter_patterns(&normalized_title);
+        if patterns.is_empty() {
+            return Ok(Vec::new());
+        }
+        let filter = vec!["t.normalized_title LIKE ? ESCAPE '\\'"; patterns.len()].join(" OR ");
+        // The bigram pre-filter already narrows candidates sharply; the
+        // ORDER BY/LIMIT is only a worst-case safety bound so a very common
+        // bigram (e.g. a single frequent kanji) cannot transfer an unbounded row
+        // set. The cap is far above any personal-scale completed-task count, so
+        // it never drops a relevant match in practice (#942).
+        let cap = takusu_util::memory::SIMILAR_TASK_CANDIDATE_CAP;
+        let sql = format!(
+            "SELECT t.id AS task_id, t.display_id, t.title, t.avg_minutes, t.sigma_minutes, tam.actual_minutes, t.completed_at, t.updated_at, '' AS similarity FROM tasks t LEFT JOIN task_actual_minutes tam ON tam.task_id = t.id WHERE t.status = 'completed' AND ({filter}) ORDER BY t.updated_at DESC LIMIT {cap}"
+        );
+        let mut q = sqlx::query_as::<_, SimilarTaskRow>(sqlx::AssertSqlSafe(sql.as_str()));
+        for p in &patterns {
+            q = q.bind(p);
+        }
+        let rows: Vec<SimilarTaskRow> = q.fetch_all(&self.pool).await.map_err(map_err)?;
 
         let mut scored: Vec<(f64, SimilarTaskRow)> = rows
             .into_iter()
@@ -1844,8 +1927,8 @@ impl Storage for SqliteStorage {
         let limit = query.limit.map_or(10, |n| n.clamp(1, 50)) as usize;
         let mut out: Vec<SimilarTaskRow> = scored
             .into_iter()
-            .map(|(_, mut row)| {
-                row.similarity = "title_overlap".to_string();
+            .map(|(score, mut row)| {
+                row.similarity = format!("dice:{score:.3}");
                 row
             })
             .collect();
@@ -2401,12 +2484,19 @@ impl Storage for SqliteStorage {
         };
         let depends_json = serde_json::to_string(&depends).unwrap_or_else(|_| "[]".into());
 
+        let remainder_title = body.title.as_ref().unwrap_or(&original.title);
+        let normalized_title = takusu_util::memory::normalize_text(
+            remainder_title,
+            Some(takusu_util::memory::MAX_CONTENT_SCALARS),
+        )
+        .ok();
         sqlx::query(
-            "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+            "INSERT INTO tasks (id, display_id, title, normalized_title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
         )
         .bind(&remainder_id)
         .bind(display_id)
-        .bind(body.title.as_ref().unwrap_or(&original.title))
+        .bind(remainder_title)
+        .bind(&normalized_title)
         .bind(body.description.as_ref().or(original.description.as_ref()))
         .bind(&original.start_at)
         .bind(body.end_at.as_ref().unwrap_or(&original.end_at))
