@@ -400,6 +400,121 @@ fn deadline_from(budget: Option<Duration>) -> Option<Instant> {
     budget.map(|b| Instant::now() + b.min(MAX_TIME_BUDGET))
 }
 
+/// ALNS で得た解を SA で磨く。priority 順列空間では届かない
+/// shift / duration / reorder の微調整を行い、軟制約のスコアを改善する。
+/// 残り time budget の範囲で動作し、改善しなければ元を返す。
+fn sa_polish(
+    planner: &Planner,
+    plan: Plan,
+    pinned_ids: &FxHashSet<usize>,
+    rng: &mut impl Rng,
+    deadline: Option<Instant>,
+) -> Plan {
+    sa_polish_inner(planner, plan, pinned_ids, rng, deadline, 10)
+}
+
+fn sa_polish_inner(
+    planner: &Planner,
+    plan: Plan,
+    pinned_ids: &FxHashSet<usize>,
+    rng: &mut impl Rng,
+    deadline: Option<Instant>,
+    iter_multiplier: usize,
+) -> Plan {
+    let n = planner.tasks.len();
+    if n <= 1 {
+        return plan;
+    }
+
+    let mut sorted = Vec::with_capacity(n);
+    let mut index = Vec::with_capacity(n);
+    let mut habit_entries = Vec::with_capacity(n);
+
+    let total_avg: i64 = planner
+        .tasks
+        .iter()
+        .filter(|t| !pinned_ids.contains(&t.id))
+        .map(|t| t.cost_estimate.avg as i64)
+        .sum();
+    // full SA の T₀ (= total_avg * 0.1) より低い温度から始める。
+    // 既に良い解からの改善なので、大きな跳躍は不要。
+    let t0 = (total_avg as f64 * 0.02).max(1.0);
+    let alpha = 0.90;
+    let t_min = t0 * 1e-3;
+    let has_pinned = !pinned_ids.is_empty();
+    let movable_count = if has_pinned {
+        planner
+            .tasks
+            .iter()
+            .filter(|t| !pinned_ids.contains(&t.id))
+            .count()
+    } else {
+        n
+    };
+    let iter_per_temp = movable_count.max(1) * iter_multiplier;
+
+    let mut current = plan;
+    let mut best = current.clone();
+
+    let mut eval_current = evaluate_with_scratch(
+        planner,
+        &current,
+        0.0,
+        1.0,
+        &mut sorted,
+        &mut index,
+        &mut habit_entries,
+    );
+    let mut eval_best = eval_current;
+
+    let mut temperature = t0;
+
+    while temperature > t_min {
+        if deadline.is_some_and(|d| Instant::now() >= d) {
+            break;
+        }
+
+        for _ in 0..iter_per_temp {
+            if deadline.is_some_and(|d| Instant::now() >= d) {
+                break;
+            }
+
+            let neighbor = if has_pinned {
+                generate_neighbor_partial(planner, &current, rng, pinned_ids)
+            } else {
+                generate_neighbor(planner, &current, rng)
+            };
+            let Some(neighbor) = neighbor else {
+                continue;
+            };
+
+            let eval_neighbor = evaluate_with_scratch(
+                planner,
+                &neighbor,
+                0.0,
+                1.0,
+                &mut sorted,
+                &mut index,
+                &mut habit_entries,
+            );
+
+            let delta = eval_neighbor - eval_current;
+            if delta > 0.0 || rng.random::<f64>() < (delta / temperature).exp() {
+                current = neighbor;
+                eval_current = eval_neighbor;
+                if eval_current > eval_best {
+                    best = current.clone();
+                    eval_best = eval_current;
+                }
+            }
+        }
+
+        temperature *= alpha;
+    }
+
+    best
+}
+
 /// priority decoder + ALNS。`pinned` を固定配置として扱う。
 pub(crate) fn alns_search_pinned(
     planner: &Planner,
@@ -573,7 +688,89 @@ pub(crate) fn alns_search_pinned(
         }
     }
 
+    best_result.plan = sa_polish(planner, best_result.plan, &pinned_ids, rng, deadline);
+    if has_dependency_violation(planner, &best_result.plan, &pinned_ids) {
+        best_result.plan = force_fix_dependencies(planner, best_result.plan, &pinned_ids);
+        best_result.plan =
+            sa_polish_inner(planner, best_result.plan, &pinned_ids, rng, deadline, 3);
+    }
     best_result
+}
+
+fn has_dependency_violation(planner: &Planner, plan: &Plan, pinned_ids: &FxHashSet<usize>) -> bool {
+    let n = planner.tasks.len();
+    let mut pos_index: Vec<Option<(Point, Point)>> = vec![None; n];
+    for (s, e, id) in &plan.schedules {
+        if *id < n {
+            pos_index[*id] = Some((*s, *e));
+        }
+    }
+    for task in &planner.tasks {
+        if pinned_ids.contains(&task.id) || task.fixed {
+            continue;
+        }
+        let Some((start, _)) = pos_index[task.id] else {
+            continue;
+        };
+        for dep_id in &task.depends {
+            if let Some(Some((_, dep_end))) = pos_index.get(*dep_id)
+                && *dep_end > start
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// 依存違反をスコアに関係なく強制修正する。違反タスクを依存先の終了直後へ移動し、
+/// 連鎖的に後続タスクも押し出す。その後の sa_polish で他のcomponentを回復させる。
+fn force_fix_dependencies(planner: &Planner, plan: Plan, pinned_ids: &FxHashSet<usize>) -> Plan {
+    let n = planner.tasks.len();
+    let mut schedules = plan.schedules;
+
+    let mut pos_index: Vec<Option<(Point, Point)>> = vec![None; n];
+    for (s, e, id) in &schedules {
+        if *id < n {
+            pos_index[*id] = Some((*s, *e));
+        }
+    }
+
+    // 依存違反がある限り繰り返す（連鎖修正のため）
+    for _ in 0..n {
+        let mut any_fixed = false;
+        for task in &planner.tasks {
+            if pinned_ids.contains(&task.id) || task.fixed {
+                continue;
+            }
+            let Some((start, _)) = pos_index[task.id] else {
+                continue;
+            };
+            let mut latest_dep_end: Option<Point> = None;
+            for dep_id in &task.depends {
+                if let Some(Some((_, dep_end))) = pos_index.get(*dep_id)
+                    && *dep_end > start
+                {
+                    latest_dep_end = Some(latest_dep_end.map_or(*dep_end, |m| m.max(*dep_end)));
+                }
+            }
+            let Some(dep_end) = latest_dep_end else {
+                continue;
+            };
+
+            if let Some(pos) = schedules.iter().position(|(_, _, id)| *id == task.id) {
+                let dur = schedules[pos].1.0 - schedules[pos].0.0;
+                schedules[pos] = (dep_end, Point(dep_end.0 + dur), task.id);
+                pos_index[task.id] = Some((dep_end, Point(dep_end.0 + dur)));
+                any_fixed = true;
+            }
+        }
+        if !any_fixed {
+            break;
+        }
+    }
+
+    Plan { schedules }
 }
 
 fn select_operator_index(weights: &[f64], rng: &mut impl Rng) -> usize {
