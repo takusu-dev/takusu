@@ -631,7 +631,10 @@ pub async fn split_task(mut req: Request, env: Env, id: &str) -> Result<Response
         ));
     }
     let remainder_quantity = total - body.retained_quantity;
-    let original_quantity_total = original.original_quantity_total.unwrap_or(total);
+    let original_quantity_total = original
+        .original_quantity_total
+        .filter(|t| *t != 0)
+        .unwrap_or(total);
 
     let remainder_id = uuid::Uuid::now_v7().to_string();
     let display_id = allocate_display_id(&database, None).await?;

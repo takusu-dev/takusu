@@ -151,10 +151,10 @@ pub(crate) fn validate_quantity(
     original: Option<i64>,
 ) -> Result<(), WorkerError> {
     if let Some(t) = total
-        && t < 0
+        && t <= 0
     {
         return Err(WorkerError::BadRequest(format!(
-            "quantity_total must be >= 0 (got {t})"
+            "quantity_total must be > 0 (got {t})"
         )));
     }
     if let Some(d) = done
@@ -165,10 +165,10 @@ pub(crate) fn validate_quantity(
         )));
     }
     if let Some(o) = original
-        && o < 0
+        && o <= 0
     {
         return Err(WorkerError::BadRequest(format!(
-            "original_quantity_total must be >= 0 (got {o})"
+            "original_quantity_total must be > 0 (got {o})"
         )));
     }
     if let (Some(t), Some(d)) = (total, done)

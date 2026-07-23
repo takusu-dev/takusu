@@ -3790,6 +3790,119 @@ async fn split_rejects_retained_less_than_done() {
 }
 
 #[tokio::test]
+async fn task_create_normalizes_zero_quantity_total_to_null() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let req = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "zero-total",
+            "end_at": "2026-07-22T18:00:00+09:00",
+            "avg_minutes": 30,
+            "quantity_total": 0
+        }),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(body["quantity_total"].is_null());
+    assert_eq!(body["quantity_done"], 0);
+}
+
+#[tokio::test]
+async fn task_create_normalizes_zero_original_quantity_total_to_null() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let req = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "zero-original",
+            "end_at": "2026-07-22T18:00:00+09:00",
+            "avg_minutes": 30,
+            "quantity_total": 10,
+            "original_quantity_total": 0
+        }),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(body["quantity_total"], 10);
+    assert!(body["original_quantity_total"].is_null());
+}
+
+#[tokio::test]
+async fn split_rejects_zero_quantity_total() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "split-zero",
+            "end_at": "2026-07-22T18:00:00+09:00",
+            "avg_minutes": 30,
+            "quantity_total": 0
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let task: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let id = task["id"].as_str().unwrap();
+    assert!(task["quantity_total"].is_null());
+
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/tasks/{id}/split"),
+        json!({"retained_quantity": 1}),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn split_uses_total_when_original_quantity_total_is_zero() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "split-zero-original",
+            "end_at": "2026-07-22T18:00:00+09:00",
+            "avg_minutes": 30,
+            "quantity_total": 10,
+            "original_quantity_total": 0
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let task: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let id = task["id"].as_str().unwrap();
+    assert!(task["original_quantity_total"].is_null());
+
+    let req = auth_req_body(
+        Method::POST,
+        &format!("/api/tasks/{id}/split"),
+        json!({"retained_quantity": 4}),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let split: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(split["original"]["quantity_total"], 4);
+    assert_eq!(split["original"]["quantity_done"], 0);
+    assert_eq!(split["original"]["original_quantity_total"], 10);
+    assert_eq!(split["remainder"]["quantity_total"], 6);
+    assert_eq!(split["remainder"]["quantity_done"], 0);
+    assert_eq!(split["remainder"]["original_quantity_total"], 10);
+}
+
+#[tokio::test]
 async fn progress_active_minutes_are_incremental() {
     let (state, pool) = setup().await;
     let app = build_router(state);

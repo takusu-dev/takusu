@@ -63,6 +63,8 @@ async fn setup_mock_db() -> SqlitePool {
         include_str!("../../takusu-local-lib/migrations/020_task_actual_minutes_view.sql"),
         include_str!("../../takusu-local-lib/migrations/021_solver_default_sa.sql"),
         include_str!("../../takusu-local-lib/migrations/022_split_from_task_index.sql"),
+        include_str!("../../takusu-local-lib/migrations/023_timestamp_format.sql"),
+        include_str!("../../takusu-local-lib/migrations/024_zero_quantity_to_null.sql"),
     ];
     for s in sqls {
         sqlx::raw_sql(*s).execute(&pool).await.unwrap();
@@ -219,6 +221,9 @@ async fn create_task(
     let fixed = body.fixed.unwrap_or(false);
 
     let quantity_done = body.quantity_done.unwrap_or(0);
+    // Treat quantity_total / original_quantity_total 0 as unset (same as None) server-side.
+    let quantity_total = body.quantity_total.filter(|t| *t != 0);
+    let original_quantity_total = body.original_quantity_total.filter(|t| *t != 0);
     sqlx::query(
         "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total) VALUES (?, (SELECT COALESCE(MAX(display_id), 0) + 1 FROM tasks), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
@@ -236,12 +241,12 @@ async fn create_task(
     .bind(&body.ical_uid)
     .bind(fixed)
     .bind(&body.habit_step_id)
-    .bind(body.quantity_total)
+    .bind(quantity_total)
     .bind(quantity_done)
     .bind(&body.quantity_unit)
     .bind(None::<String>)
     .bind(None::<String>)
-    .bind(body.original_quantity_total)
+    .bind(original_quantity_total)
     .execute(&state.pool)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -299,6 +304,9 @@ async fn update_task(
             .map_err(|_| StatusCode::NOT_FOUND)?;
     let final_status = body.status.clone().unwrap_or(existing.status);
 
+    // Treat quantity_total / original_quantity_total 0 as unset (same as None) server-side.
+    let quantity_total = body.quantity_total.filter(|t| *t != 0);
+    let original_quantity_total = body.original_quantity_total.filter(|t| *t != 0);
     sqlx::query(
         "UPDATE tasks SET title=COALESCE(?1,title), description=COALESCE(?2,description), start_at=COALESCE(?3,start_at), end_at=COALESCE(?4,end_at), avg_minutes=COALESCE(?5,avg_minutes), sigma_minutes=COALESCE(?6,sigma_minutes), depends=COALESCE(?7,depends), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), status=?11, user_edited=COALESCE(?13,user_edited), quantity_total=COALESCE(?14,quantity_total), quantity_done=COALESCE(?15,quantity_done), quantity_unit=COALESCE(?16,quantity_unit), original_quantity_total=COALESCE(?17,original_quantity_total), updated_at=datetime('now') WHERE id = ?12"
     )
@@ -315,10 +323,10 @@ async fn update_task(
     .bind(&final_status)
     .bind(&id)
     .bind(body.user_edited)
-    .bind(body.quantity_total)
+    .bind(quantity_total)
     .bind(body.quantity_done)
     .bind(body.quantity_unit.as_deref())
-    .bind(body.original_quantity_total)
+    .bind(original_quantity_total)
     .execute(&state.pool)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -344,6 +352,9 @@ async fn replace_task(
     let allows_parallel = body.allows_parallel.unwrap_or(false);
     let abandonability = body.abandonability.unwrap_or(0.5);
     let quantity_done = body.quantity_done.unwrap_or(0);
+    // Treat quantity_total / original_quantity_total 0 as unset (same as None) server-side.
+    let quantity_total = body.quantity_total.filter(|t| *t != 0);
+    let original_quantity_total = body.original_quantity_total.filter(|t| *t != 0);
 
     sqlx::query(
         "UPDATE tasks SET title=?, description=?, start_at=?, end_at=?, avg_minutes=?, sigma_minutes=?, depends=?, parallelizable=?, allows_parallel=?, abandonability=?, quantity_total=?, quantity_done=?, quantity_unit=?, completed_at=?, split_from_task_id=?, original_quantity_total=?, updated_at=datetime('now') WHERE id = ?"
@@ -358,12 +369,12 @@ async fn replace_task(
     .bind(parallelizable)
     .bind(allows_parallel)
     .bind(abandonability)
-    .bind(body.quantity_total)
+    .bind(quantity_total)
     .bind(quantity_done)
     .bind(&body.quantity_unit)
     .bind(None::<String>)
     .bind(None::<String>)
-    .bind(body.original_quantity_total)
+    .bind(original_quantity_total)
     .bind(&id)
     .execute(&state.pool)
     .await
@@ -1024,4 +1035,67 @@ async fn workers_storage_list_tasks_no_overdue_filter() {
         .unwrap();
     assert_eq!(tasks.len(), 1);
     assert_eq!(tasks[0].title, "future task");
+}
+
+#[tokio::test]
+async fn workers_storage_e2e_zero_quantity() {
+    let base_url = spawn_mock_worker().await;
+    let storage = WorkersStorage::new_with(base_url, ROOT_TOKEN.to_string());
+
+    let task = storage
+        .create_task(&CreateTask {
+            title: "zero-total".into(),
+            description: None,
+            start_at: None,
+            end_at: "2030-01-01T00:00:00+00:00".into(),
+            avg_minutes: 30,
+            sigma_minutes: None,
+            depends: None,
+            parallelizable: None,
+            allows_parallel: None,
+            abandonability: None,
+            ical_uid: None,
+            habit_id: None,
+            fixed: None,
+            habit_step_id: None,
+            quantity_total: Some(0),
+            quantity_done: None,
+            quantity_unit: None,
+            original_quantity_total: Some(0),
+        })
+        .await
+        .unwrap();
+    assert!(task.quantity_total.is_none());
+    assert!(task.original_quantity_total.is_none());
+    assert_eq!(task.quantity_done, 0);
+
+    let updated = storage
+        .update_task(
+            &task.id,
+            &UpdateTask {
+                title: None,
+                description: None,
+                start_at: None,
+                end_at: None,
+                avg_minutes: None,
+                sigma_minutes: None,
+                depends: None,
+                parallelizable: None,
+                allows_parallel: None,
+                abandonability: None,
+                status: None,
+                habit_id: None,
+                user_edited: None,
+                fixed: None,
+                habit_step_id: None,
+                quantity_total: Some(0),
+                quantity_done: None,
+                quantity_unit: None,
+                original_quantity_total: Some(0),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(updated.quantity_total.is_none());
+    assert!(updated.original_quantity_total.is_none());
 }

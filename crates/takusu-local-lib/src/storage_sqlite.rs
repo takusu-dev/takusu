@@ -46,6 +46,7 @@ const MIGRATION_020: &str = include_str!("../migrations/020_task_actual_minutes_
 const MIGRATION_021: &str = include_str!("../migrations/021_solver_default_sa.sql");
 const MIGRATION_022: &str = include_str!("../migrations/022_split_from_task_index.sql");
 const MIGRATION_023: &str = include_str!("../migrations/023_timestamp_format.sql");
+const MIGRATION_024: &str = include_str!("../migrations/024_zero_quantity_to_null.sql");
 // Migration 013 one-time backfill: drops the old global unique index, renumbers
 // existing habit tasks to start from 1 per habit, and seeds the per-habit
 // sequences. Non-idempotent (DROP + UPDATE renumber) — guarded by a check
@@ -369,6 +370,9 @@ impl SqliteStorage {
         // Migration 023 normalizes legacy timestamp strings to whole-second RFC 3339.
         sqlx::raw_sql(MIGRATION_023).execute(&pool).await?;
 
+        // Migration 024 normalizes quantity_total == 0 to NULL (same as unset).
+        sqlx::raw_sql(MIGRATION_024).execute(&pool).await?;
+
         Ok(Self { pool, jwt_secret })
     }
 
@@ -491,11 +495,10 @@ impl Storage for SqliteStorage {
     }
 
     async fn create_task(&self, body: &CreateTask) -> StorageResult<TaskRow> {
-        validate_quantity(
-            body.quantity_total,
-            body.quantity_done,
-            body.original_quantity_total,
-        )?;
+        // Treat quantity_total / original_quantity_total 0 as unset (same as None) server-side.
+        let quantity_total = body.quantity_total.filter(|t| *t != 0);
+        let original_quantity_total = body.original_quantity_total.filter(|t| *t != 0);
+        validate_quantity(quantity_total, body.quantity_done, original_quantity_total)?;
         let id = uuid::Uuid::now_v7().to_string();
         let resolved_depends = resolve_depends(&self.pool, body.depends.as_deref()).await?;
         let depends_json =
@@ -534,10 +537,8 @@ impl Storage for SqliteStorage {
             .await
             .map_err(map_err)?
         };
-        let quantity_total = body.quantity_total;
         let quantity_done = body.quantity_done.unwrap_or(0);
         let quantity_unit = body.quantity_unit.as_deref();
-        let original_quantity_total = body.original_quantity_total;
         sqlx::query(
             "INSERT INTO tasks (id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, ical_uid, habit_id, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
         )
@@ -584,10 +585,14 @@ impl Storage for SqliteStorage {
                 other => StorageError::Internal(other.to_string()),
             })?;
 
+        // Treat quantity_total / original_quantity_total 0 as unset (same as None) server-side.
+        let quantity_total = body.quantity_total.filter(|t| *t != 0);
+        let existing_total = existing.quantity_total.filter(|t| *t != 0);
+        let original_quantity_total = body.original_quantity_total.filter(|t| *t != 0);
         validate_quantity(
-            body.quantity_total.or(existing.quantity_total),
+            quantity_total.or(existing_total),
             body.quantity_done.or(Some(existing.quantity_done)),
-            body.original_quantity_total,
+            original_quantity_total,
         )?;
 
         let depends_json = if let Some(ref deps) = body.depends {
@@ -628,10 +633,10 @@ impl Storage for SqliteStorage {
         .bind(body.user_edited)
         .bind(body.fixed)
         .bind(body.habit_step_id.as_ref())
-        .bind(body.quantity_total)
+        .bind(quantity_total)
         .bind(body.quantity_done)
         .bind(body.quantity_unit.as_ref())
-        .bind(body.original_quantity_total)
+        .bind(original_quantity_total)
         .bind(&full)
         .execute(&self.pool)
         .await
@@ -666,11 +671,10 @@ impl Storage for SqliteStorage {
     }
 
     async fn replace_task(&self, id: &str, body: &CreateTask) -> StorageResult<TaskRow> {
-        validate_quantity(
-            body.quantity_total,
-            body.quantity_done,
-            body.original_quantity_total,
-        )?;
+        // Treat quantity_total / original_quantity_total 0 as unset (same as None) server-side.
+        let quantity_total = body.quantity_total.filter(|t| *t != 0);
+        let original_quantity_total = body.original_quantity_total.filter(|t| *t != 0);
+        validate_quantity(quantity_total, body.quantity_done, original_quantity_total)?;
         let full = resolve_task_id(&self.pool, id).await?;
         let resolved_depends = resolve_depends(&self.pool, body.depends.as_deref()).await?;
         let depends_json = serde_json::to_string(&resolved_depends).unwrap_or_else(|_| "[]".into());
@@ -679,10 +683,8 @@ impl Storage for SqliteStorage {
         let allows_parallel = body.allows_parallel.unwrap_or(false);
         let abandonability = body.abandonability.unwrap_or(0.5);
         let fixed = body.fixed.unwrap_or(false);
-        let quantity_total = body.quantity_total;
         let quantity_done = body.quantity_done;
         let quantity_unit = body.quantity_unit.as_deref();
-        let original_quantity_total = body.original_quantity_total;
         sqlx::query(
             "UPDATE tasks SET title=?, description=?, start_at=?, end_at=?, avg_minutes=?, sigma_minutes=?, depends=?, parallelizable=?, allows_parallel=?, abandonability=?, habit_id=COALESCE(?,habit_id), fixed=?, habit_step_id=?, quantity_total=COALESCE(?, quantity_total), quantity_done=COALESCE(?, quantity_done), quantity_unit=COALESCE(?, quantity_unit), completed_at=COALESCE(?, completed_at), split_from_task_id=COALESCE(?, split_from_task_id), original_quantity_total=COALESCE(?, original_quantity_total), updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?"
         )
@@ -2353,7 +2355,10 @@ impl Storage for SqliteStorage {
             ));
         }
         let remainder_quantity = total - body.retained_quantity;
-        let original_quantity_total = original.original_quantity_total.unwrap_or(total);
+        let original_quantity_total = original
+            .original_quantity_total
+            .filter(|t| *t != 0)
+            .unwrap_or(total);
 
         // Allocate a display_id for the remainder task.
         let display_id: i64 = sqlx::query_scalar(
@@ -2590,10 +2595,10 @@ fn validate_quantity(
     original: Option<i64>,
 ) -> StorageResult<()> {
     if let Some(t) = total
-        && t < 0
+        && t <= 0
     {
         return Err(StorageError::BadRequest(format!(
-            "quantity_total must be >= 0 (got {t})"
+            "quantity_total must be > 0 (got {t})"
         )));
     }
     if let Some(d) = done
@@ -2604,10 +2609,10 @@ fn validate_quantity(
         )));
     }
     if let Some(o) = original
-        && o < 0
+        && o <= 0
     {
         return Err(StorageError::BadRequest(format!(
-            "original_quantity_total must be >= 0 (got {o})"
+            "original_quantity_total must be > 0 (got {o})"
         )));
     }
     if let (Some(t), Some(d)) = (total, done)
