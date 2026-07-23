@@ -150,7 +150,7 @@ pub struct TurnResult {
 }
 
 fn new_session_id() -> String {
-    uuid::Uuid::now_v7().to_string()
+    format!("session-{}", uuid::Uuid::now_v7())
 }
 
 /// Events emitted while a streaming turn is in progress.
@@ -261,6 +261,11 @@ impl AgentSession {
 
     pub fn set_session_permissions(&self, permissions: Permissions) {
         *self.session_permissions.lock().unwrap() = permissions;
+    }
+
+    /// Returns the session identifier used for routing and approval ids.
+    pub fn session_id(&self) -> &str {
+        &self.session_id
     }
 
     fn is_auto_approved(&self, target: &str, operation: &str) -> bool {
@@ -654,8 +659,10 @@ impl AgentSession {
             // Generate a unique id for this tool-call invocation. This id is
             // exposed to the client via TurnEvent so that user-input providers
             // (e.g. correct_asr) can be resolved without colliding with the
-            // LLM's own (sometimes short/repeated) call ids.
-            let tool_call_id = Uuid::now_v7().to_string();
+            // LLM's own (sometimes short/repeated) call ids. Prefix it with the
+            // session id so that the HTTP transport can scope resolutions to the
+            // originating session.
+            let tool_call_id = format!("{}-{}", self.session_id, Uuid::now_v7());
             emit(TurnEvent::ToolCall {
                 name: call.name.clone(),
                 call_id: tool_call_id.clone(),
