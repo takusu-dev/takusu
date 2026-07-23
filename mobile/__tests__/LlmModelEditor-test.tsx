@@ -2,17 +2,26 @@ import { useState } from 'react';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import { ThemeProvider } from '@/src/theme';
-import { type LlmProviderSettings } from '@/src/api/settingsStore';
 import {
-  LlmProviderEditor,
+  type LlmModelSettings,
+  type LlmProvider,
+} from '@/src/api/settingsStore';
+import {
+  LlmModelEditor,
   formatCost,
   type ModelPricing,
-} from '@/src/components/settings/LlmProviderEditor';
+} from '@/src/components/settings/LlmModelEditor';
 
-const baseProvider: LlmProviderSettings = {
+const baseProvider: LlmProvider = {
   id: 'llm-1',
   name: 'Test Provider',
   baseUrl: 'https://api.example.com/v1',
+};
+
+const baseModel: LlmModelSettings = {
+  id: 'llm-model-1',
+  name: 'Test Model',
+  providerId: baseProvider.id,
   selectedModel: '',
   cachedModels: [],
 };
@@ -25,26 +34,32 @@ beforeEach(() => {
 });
 
 function TestWrapper({
+  initialModel,
   initialProvider,
+  providers,
   apiKey,
-  onChangeProvider,
+  onChangeModel,
 }: {
-  initialProvider: LlmProviderSettings;
+  initialModel: LlmModelSettings;
+  initialProvider: LlmProvider;
+  providers?: LlmProvider[];
   apiKey: string;
-  onChangeProvider?: (provider: LlmProviderSettings) => void;
+  onChangeModel?: (model: LlmModelSettings) => void;
 }) {
-  const [provider, setProvider] = useState(initialProvider);
+  const [model, setModel] = useState(initialModel);
+  const allProviders = providers ?? [initialProvider];
 
   return (
     <ThemeProvider>
-      <LlmProviderEditor
-        provider={provider}
+      <LlmModelEditor
+        model={model}
+        providers={allProviders}
+        provider={initialProvider}
         apiKey={apiKey}
-        onChangeProvider={(next) => {
-          setProvider(next);
-          onChangeProvider?.(next);
+        onChangeModel={(next) => {
+          setModel(next);
+          onChangeModel?.(next);
         }}
-        onChangeApiKey={jest.fn()}
         onSave={jest.fn()}
         onCancel={jest.fn()}
       />
@@ -54,28 +69,36 @@ function TestWrapper({
 
 async function setup(
   overrides: Partial<{
-    provider: Partial<LlmProviderSettings>;
+    model: Partial<LlmModelSettings>;
+    provider: Partial<LlmProvider>;
     apiKey: string;
   }> = {},
 ) {
-  const onChangeProvider = jest.fn();
+  const onChangeModel = jest.fn();
 
-  const provider: LlmProviderSettings = {
+  const provider: LlmProvider = {
     ...baseProvider,
     ...overrides.provider,
   };
 
+  const model: LlmModelSettings = {
+    ...baseModel,
+    providerId: provider.id,
+    ...overrides.model,
+  };
+
   const utils = await render(
     <TestWrapper
+      initialModel={model}
       initialProvider={provider}
       apiKey={overrides.apiKey ?? 'sk-test'}
-      onChangeProvider={onChangeProvider}
+      onChangeModel={onChangeModel}
     />,
   );
 
   return {
     ...utils,
-    onChangeProvider,
+    onChangeModel,
   };
 }
 
@@ -114,11 +137,10 @@ describe('formatCost', () => {
   });
 });
 
-describe('LlmProviderEditor', () => {
+describe('LlmModelEditor', () => {
   it('preserves existing cost when re-selecting the same model before fetching', async () => {
-    const { getByText, onChangeProvider } = await setup({
-      provider: {
-        ...baseProvider,
+    const { getByText, onChangeModel } = await setup({
+      model: {
         cachedModels: ['existing-model'],
         selectedModel: 'existing-model',
         cost: '$5 / 1M tokens',
@@ -128,7 +150,7 @@ describe('LlmProviderEditor', () => {
     fireEvent.press(getByText('● existing-model'));
 
     await waitFor(() =>
-      expect(onChangeProvider).toHaveBeenCalledWith(
+      expect(onChangeModel).toHaveBeenCalledWith(
         expect.objectContaining({
           selectedModel: 'existing-model',
           cost: '$5 / 1M tokens',
@@ -138,9 +160,8 @@ describe('LlmProviderEditor', () => {
   });
 
   it('preserves existing cost when the model id is edited to the same value', async () => {
-    const { getByPlaceholderText, onChangeProvider } = await setup({
-      provider: {
-        ...baseProvider,
+    const { getByPlaceholderText, onChangeModel } = await setup({
+      model: {
         selectedModel: 'existing-model',
         cost: '$5 / 1M tokens',
       },
@@ -152,7 +173,7 @@ describe('LlmProviderEditor', () => {
     );
 
     await waitFor(() =>
-      expect(onChangeProvider).toHaveBeenCalledWith(
+      expect(onChangeModel).toHaveBeenCalledWith(
         expect.objectContaining({
           selectedModel: 'existing-model',
           cost: '$5 / 1M tokens',
@@ -162,9 +183,8 @@ describe('LlmProviderEditor', () => {
   });
 
   it('clears cost when changing to a model without known pricing', async () => {
-    const { getByPlaceholderText, onChangeProvider } = await setup({
-      provider: {
-        ...baseProvider,
+    const { getByPlaceholderText, onChangeModel } = await setup({
+      model: {
         selectedModel: 'existing-model',
         cost: '$5 / 1M tokens',
       },
@@ -176,7 +196,7 @@ describe('LlmProviderEditor', () => {
     );
 
     await waitFor(() =>
-      expect(onChangeProvider).toHaveBeenCalledWith(
+      expect(onChangeModel).toHaveBeenCalledWith(
         expect.objectContaining({
           selectedModel: 'another-model',
           cost: undefined,
@@ -187,8 +207,7 @@ describe('LlmProviderEditor', () => {
 
   it('toggles the model list visibility when the header is pressed', async () => {
     const { getByText, queryByText } = await setup({
-      provider: {
-        ...baseProvider,
+      model: {
         cachedModels: ['existing-model'],
         selectedModel: 'existing-model',
         cost: '$5 / 1M tokens',
@@ -210,8 +229,7 @@ describe('LlmProviderEditor', () => {
 
   it('shows the bottom fold button when the model list exceeds 3/5 of the screen height', async () => {
     const { getByText, getByTestId, queryByText } = await setup({
-      provider: {
-        ...baseProvider,
+      model: {
         cachedModels: ['model-a', 'model-b', 'model-c'],
         selectedModel: 'model-a',
       },
@@ -239,7 +257,7 @@ describe('LlmProviderEditor', () => {
     });
   });
 
-  it('fetches models, displays cost on cards, and updates provider cost', async () => {
+  it('fetches models, displays cost on cards, and updates model cost', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
       json: jest.fn().mockResolvedValueOnce({
@@ -253,8 +271,8 @@ describe('LlmProviderEditor', () => {
       }),
     });
 
-    const { getByText, onChangeProvider } = await setup({
-      provider: { ...baseProvider, baseUrl: 'https://openrouter.ai/api/v1' },
+    const { getByText, onChangeModel } = await setup({
+      provider: { baseUrl: 'https://openrouter.ai/api/v1' },
     });
 
     fireEvent.press(getByText('モデルを取得'));
@@ -270,12 +288,56 @@ describe('LlmProviderEditor', () => {
       }),
     );
 
-    expect(onChangeProvider).toHaveBeenLastCalledWith(
+    expect(onChangeModel).toHaveBeenLastCalledWith(
       expect.objectContaining({
         cachedModels: ['model-1', 'model-2'],
         selectedModel: 'model-1',
         cost: 'in $2.5, out $10 / 1M tokens',
       }),
+    );
+  });
+
+  it('clears cached models, fetch timestamp, and cost when switching provider', async () => {
+    const otherProvider: LlmProvider = {
+      id: 'llm-2',
+      name: 'Other Provider',
+      baseUrl: 'https://other.example.com/v1',
+    };
+    const onChangeModel = jest.fn();
+    const { getByText } = await render(
+      <ThemeProvider>
+        <LlmModelEditor
+          model={{
+            ...baseModel,
+            cachedModels: ['model-a'],
+            modelsFetchedAt: '2026-01-01T00:00:00.000Z',
+            cost: '$5 / 1M tokens',
+          }}
+          providers={[baseProvider, otherProvider]}
+          provider={baseProvider}
+          apiKey="sk-test"
+          onChangeModel={onChangeModel}
+          onSave={jest.fn()}
+          onCancel={jest.fn()}
+        />
+      </ThemeProvider>,
+    );
+
+    fireEvent.press(getByText(`Provider: ${baseProvider.name}`));
+    await waitFor(() => {
+      expect(getByText(`○ ${otherProvider.name}`)).toBeTruthy();
+    });
+    fireEvent.press(getByText(`○ ${otherProvider.name}`));
+
+    await waitFor(() =>
+      expect(onChangeModel).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerId: otherProvider.id,
+          cachedModels: [],
+          modelsFetchedAt: undefined,
+          cost: undefined,
+        }),
+      ),
     );
   });
 });

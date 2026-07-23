@@ -1,6 +1,168 @@
-jest.mock('@react-native-async-storage/async-storage', () => ({}));
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  __esModule: true,
+  default: {
+    getItem: jest.fn(),
+    setItem: jest.fn(),
+    removeItem: jest.fn(),
+  },
+}));
 
-import { parseTtsProviders } from '@/src/api/settingsStore';
+jest.mock('expo-secure-store', () => ({
+  getItemAsync: jest.fn(),
+  setItemAsync: jest.fn(),
+  deleteItemAsync: jest.fn(),
+}));
+
+jest.mock('@/src/notifications/settings', () => ({
+  DEFAULT_NOTIFICATION_SETTINGS: {},
+  loadNotificationSettings: jest.fn(),
+  saveNotificationSettings: jest.fn(),
+}));
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
+import { loadNotificationSettings } from '@/src/notifications/settings';
+import { loadSettings, parseTtsProviders } from '@/src/api/settingsStore';
+
+const asyncStorageGetItem = AsyncStorage.getItem as jest.Mock;
+const secureStoreGetItemAsync = SecureStore.getItemAsync as jest.Mock;
+const loadNotificationSettingsMock = loadNotificationSettings as jest.Mock;
+
+beforeEach(() => {
+  asyncStorageGetItem.mockReset();
+  secureStoreGetItemAsync.mockReset();
+  loadNotificationSettingsMock.mockReset();
+  loadNotificationSettingsMock.mockResolvedValue({});
+});
+
+function mockStorage(values: Record<string, string | null>) {
+  asyncStorageGetItem.mockImplementation((key: string) =>
+    Promise.resolve(values[key] ?? null),
+  );
+  secureStoreGetItemAsync.mockImplementation((key: string) =>
+    Promise.resolve(values[key] ?? null),
+  );
+}
+
+describe('loadSettings migration', () => {
+  it('migrates legacy combined llm providers to split providers and models', async () => {
+    const legacyProviders = [
+      {
+        id: 'legacy-1',
+        name: 'OpenRouter',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        selectedModel: 'openai/gpt-4o-mini',
+        cachedModels: ['openai/gpt-4o-mini', 'openai/gpt-4o'],
+        modelsFetchedAt: '2026-07-20T00:00:00.000Z',
+        cost: 'in $0.15, out $0.6 / 1M tokens',
+        permissions: { todos: true },
+      },
+    ];
+    mockStorage({
+      'takusu.agent.llmProviders': JSON.stringify(legacyProviders),
+      'takusu.agent.activeLlmProvider': 'legacy-1',
+    });
+
+    const settings = await loadSettings();
+
+    expect(settings.llmProviders).toHaveLength(1);
+    expect(settings.llmProviders[0]).toEqual({
+      id: 'legacy-1',
+      name: 'OpenRouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+    });
+    expect(settings.llmModels).toHaveLength(1);
+    expect(settings.llmModels[0]).toMatchObject({
+      name: 'OpenRouter (openai/gpt-4o-mini)',
+      providerId: 'legacy-1',
+      selectedModel: 'openai/gpt-4o-mini',
+      cachedModels: ['openai/gpt-4o-mini', 'openai/gpt-4o'],
+      cost: 'in $0.15, out $0.6 / 1M tokens',
+      permissions: { todos: true },
+    });
+    expect(settings.activeLlmModel).toBe(settings.llmModels[0]?.id);
+  });
+
+  it('maps legacy active provider id to new active model id', async () => {
+    const legacyProviders = [
+      {
+        id: 'legacy-a',
+        name: 'A',
+        baseUrl: 'https://a.example.com/v1',
+        selectedModel: 'model-a',
+        cachedModels: ['model-a'],
+      },
+      {
+        id: 'legacy-b',
+        name: 'B',
+        baseUrl: 'https://b.example.com/v1',
+        selectedModel: 'model-b',
+        cachedModels: ['model-b'],
+      },
+    ];
+    mockStorage({
+      'takusu.agent.llmProviders': JSON.stringify(legacyProviders),
+      'takusu.agent.activeLlmProvider': 'legacy-b',
+    });
+
+    const settings = await loadSettings();
+
+    const activeModel = settings.llmModels.find(
+      (m) => m.id === settings.activeLlmModel,
+    );
+    expect(activeModel?.providerId).toBe('legacy-b');
+  });
+
+  it('uses new split format when llmModels is already stored', async () => {
+    const providers = [
+      { id: 'p1', name: 'Provider', baseUrl: 'https://p1.example.com/v1' },
+    ];
+    const models = [
+      {
+        id: 'm1',
+        name: 'Model',
+        providerId: 'p1',
+        selectedModel: 'model-1',
+        cachedModels: ['model-1'],
+      },
+    ];
+    mockStorage({
+      'takusu.agent.llmProviders': JSON.stringify(providers),
+      'takusu.agent.llmModels': JSON.stringify(models),
+      'takusu.agent.activeLlmModel': 'm1',
+    });
+
+    const settings = await loadSettings();
+
+    expect(settings.llmProviders).toEqual(providers);
+    expect(settings.llmModels).toEqual(models);
+    expect(settings.activeLlmModel).toBe('m1');
+  });
+
+  it('does not misinterpret legacy providers as new providers', async () => {
+    const legacyProviders = [
+      {
+        id: 'legacy-1',
+        name: 'Legacy',
+        baseUrl: 'https://legacy.example.com/v1',
+        selectedModel: 'model',
+        cachedModels: ['model'],
+      },
+    ];
+    mockStorage({
+      'takusu.agent.llmProviders': JSON.stringify(legacyProviders),
+    });
+
+    const settings = await loadSettings();
+
+    expect(settings.llmProviders).toHaveLength(1);
+    expect(settings.llmModels).toHaveLength(1);
+    expect(settings.llmProviders[0]?.baseUrl).toBe(
+      'https://legacy.example.com/v1',
+    );
+    expect(settings.llmModels[0]?.selectedModel).toBe('model');
+  });
+});
 
 describe('parseTtsProviders', () => {
   it('returns an empty array for null', () => {

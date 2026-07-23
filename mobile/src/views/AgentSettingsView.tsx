@@ -19,18 +19,16 @@ import {
   deleteAgentApiKey,
   loadAgentApiKey,
   loadSettings,
+  newId,
   saveAgentApiKey,
   saveAgentProviders,
   saveAgentSessionHistoryCount,
-  type LlmProviderSettings,
+  type LlmModelSettings,
+  type LlmProvider,
   type TtsProviderSettings,
 } from '@/src/api/settingsStore';
-import { LlmProviderEditor } from '@/src/components/settings/LlmProviderEditor';
+import { LlmModelEditor } from '@/src/components/settings/LlmModelEditor';
 import { TtsProviderEditor } from '@/src/components/settings/TtsProviderEditor';
-
-function newId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-}
 
 const MODEL_SIZES: Record<string, string> = {
   hush: '約8 MB',
@@ -54,24 +52,19 @@ function modelButtonLabel(
   return cached ? `${name}は準備済み` : `${name}を準備`;
 }
 
-function normalizeLlmProvider(p: LlmProviderSettings): LlmProviderSettings {
-  return {
-    id: p.id,
-    name: p.name,
-    baseUrl: p.baseUrl,
-    selectedModel: p.selectedModel,
-    cachedModels: p.cachedModels,
-    modelsFetchedAt: p.modelsFetchedAt,
-    cost: p.cost,
-    permissions: p.permissions,
-  };
-}
-
-function newLlmProvider(): LlmProviderSettings {
+function newLlmProvider(): LlmProvider {
   return {
     id: newId('llm'),
     name: 'Custom',
     baseUrl: '',
+  };
+}
+
+function newLlmModel(providerId: string): LlmModelSettings {
+  return {
+    id: newId('llm-model'),
+    name: 'Custom',
+    providerId,
     selectedModel: '',
     cachedModels: [],
     permissions: {},
@@ -93,8 +86,9 @@ export function AgentSettingsView() {
   const colors = useColors();
   const { client, pushAgentConfig } = useServer();
 
-  const [llmProviders, setLlmProviders] = useState<LlmProviderSettings[]>([]);
-  const [activeLlm, setActiveLlm] = useState<string | null>(null);
+  const [llmProviders, setLlmProviders] = useState<LlmProvider[]>([]);
+  const [llmModels, setLlmModels] = useState<LlmModelSettings[]>([]);
+  const [activeLlmModel, setActiveLlmModel] = useState<string | null>(null);
   const [ttsProviders, setTtsProviders] = useState<TtsProviderSettings[]>([]);
   const [activeTts, setActiveTts] = useState<string | null>(null);
 
@@ -102,10 +96,12 @@ export function AgentSettingsView() {
     AGENT_SESSION_HISTORY_DEFAULT,
   );
 
-  const [editingLlm, setEditingLlm] = useState<LlmProviderSettings | null>(
-    null,
-  );
-  const [editingLlmKey, setEditingLlmKey] = useState('');
+  const [editingLlmProvider, setEditingLlmProvider] =
+    useState<LlmProvider | null>(null);
+  const [editingLlmProviderKey, setEditingLlmProviderKey] = useState('');
+  const [editingLlmModel, setEditingLlmModel] =
+    useState<LlmModelSettings | null>(null);
+  const [editingLlmModelKey, setEditingLlmModelKey] = useState('');
   const [editingTts, setEditingTts] = useState<TtsProviderSettings | null>(
     null,
   );
@@ -168,8 +164,9 @@ export function AgentSettingsView() {
     loadSettings()
       .then((settings) => {
         if (cancelled) return;
-        setLlmProviders(settings.llmProviders.map(normalizeLlmProvider));
-        setActiveLlm(settings.activeLlmProvider || null);
+        setLlmProviders(settings.llmProviders);
+        setLlmModels(settings.llmModels);
+        setActiveLlmModel(settings.activeLlmModel || null);
         setTtsProviders(settings.ttsProviders);
         setActiveTts(settings.activeTtsProvider || null);
         setSessionHistoryCount(settings.agentSessionHistoryCount);
@@ -185,20 +182,35 @@ export function AgentSettingsView() {
     };
   }, []);
 
-  const editingLlmId = editingLlm?.id;
+  const editingLlmProviderId = editingLlmProvider?.id;
   useEffect(() => {
     let cancelled = false;
-    if (!editingLlmId) {
-      setEditingLlmKey('');
+    if (!editingLlmProviderId) {
+      setEditingLlmProviderKey('');
       return;
     }
-    loadAgentApiKey('llm', editingLlmId).then((key) => {
-      if (!cancelled) setEditingLlmKey(key);
+    loadAgentApiKey('llm', editingLlmProviderId).then((key) => {
+      if (!cancelled) setEditingLlmProviderKey(key);
     });
     return () => {
       cancelled = true;
     };
-  }, [editingLlmId]);
+  }, [editingLlmProviderId]);
+
+  const editingLlmModelProviderId = editingLlmModel?.providerId;
+  useEffect(() => {
+    let cancelled = false;
+    if (!editingLlmModelProviderId) {
+      setEditingLlmModelKey('');
+      return;
+    }
+    loadAgentApiKey('llm', editingLlmModelProviderId).then((key) => {
+      if (!cancelled) setEditingLlmModelKey(key);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [editingLlmModelProviderId]);
 
   const editingTtsId = editingTts?.id;
   useEffect(() => {
@@ -215,10 +227,16 @@ export function AgentSettingsView() {
     };
   }, [editingTtsId]);
 
-  async function setActiveLlmAndSave(id: string | null) {
+  async function setActiveLlmModelAndSave(id: string | null) {
     try {
-      await saveAgentProviders(llmProviders, id, ttsProviders, activeTts);
-      setActiveLlm(id);
+      await saveAgentProviders(
+        llmProviders,
+        llmModels,
+        id,
+        ttsProviders,
+        activeTts,
+      );
+      setActiveLlmModel(id);
       await pushAgentConfig();
     } catch (e) {
       Alert.alert('保存失敗', e instanceof Error ? e.message : String(e));
@@ -227,7 +245,13 @@ export function AgentSettingsView() {
 
   async function setActiveTtsAndSave(id: string | null) {
     try {
-      await saveAgentProviders(llmProviders, activeLlm, ttsProviders, id);
+      await saveAgentProviders(
+        llmProviders,
+        llmModels,
+        activeLlmModel,
+        ttsProviders,
+        id,
+      );
       setActiveTts(id);
       await pushAgentConfig();
     } catch (e) {
@@ -235,22 +259,60 @@ export function AgentSettingsView() {
     }
   }
 
-  async function saveLlm(provider: LlmProviderSettings, key: string) {
+  async function saveLlmProvider(provider: LlmProvider, key: string) {
     setSaving(true);
     try {
       const existing = llmProviders.find((p) => p.id === provider.id);
-      const updated = existing
+      const updatedProviders = existing
         ? llmProviders.map((p) => (p.id === provider.id ? provider : p))
         : [...llmProviders, provider];
-      const newActive = activeLlm ?? provider.id;
       await saveAgentApiKey('llm', provider.id, key);
-      await saveAgentProviders(updated, newActive, ttsProviders, activeTts);
-      setLlmProviders(updated);
-      setActiveLlm(newActive);
-      setEditingLlm(null);
-      setEditingLlmKey('');
+      await saveAgentProviders(
+        updatedProviders,
+        llmModels,
+        activeLlmModel,
+        ttsProviders,
+        activeTts,
+      );
+      setLlmProviders(updatedProviders);
+      setEditingLlmProvider(null);
+      setEditingLlmProviderKey('');
       await pushAgentConfig();
       Alert.alert('保存しました', 'LLM Providerを保存しました');
+    } catch (e) {
+      Alert.alert('保存失敗', e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveLlmModel(model: LlmModelSettings, key: string) {
+    setSaving(true);
+    try {
+      const provider = llmProviders.find((p) => p.id === model.providerId);
+      if (!provider) {
+        Alert.alert('エラー', '選択されたProviderが見つかりません');
+        return;
+      }
+      const existing = llmModels.find((m) => m.id === model.id);
+      const updatedModels = existing
+        ? llmModels.map((m) => (m.id === model.id ? model : m))
+        : [...llmModels, model];
+      const newActive = activeLlmModel ?? model.id;
+      await saveAgentApiKey('llm', provider.id, key);
+      await saveAgentProviders(
+        llmProviders,
+        updatedModels,
+        newActive,
+        ttsProviders,
+        activeTts,
+      );
+      setLlmModels(updatedModels);
+      setActiveLlmModel(newActive);
+      setEditingLlmModel(null);
+      setEditingLlmModelKey('');
+      await pushAgentConfig();
+      Alert.alert('保存しました', 'LLM Modelを保存しました');
     } catch (e) {
       Alert.alert('保存失敗', e instanceof Error ? e.message : String(e));
     } finally {
@@ -267,7 +329,13 @@ export function AgentSettingsView() {
         : [...ttsProviders, provider];
       const newActive = activeTts ?? provider.id;
       await saveAgentApiKey('tts', provider.id, key);
-      await saveAgentProviders(llmProviders, activeLlm, updated, newActive);
+      await saveAgentProviders(
+        llmProviders,
+        llmModels,
+        activeLlmModel,
+        updated,
+        newActive,
+      );
       setTtsProviders(updated);
       setActiveTts(newActive);
       setEditingTts(null);
@@ -281,7 +349,7 @@ export function AgentSettingsView() {
     }
   }
 
-  function deleteLlm(id: string) {
+  function deleteLlmProvider(id: string) {
     Alert.alert('削除', 'このLLM Providerを削除しますか？', [
       { text: 'キャンセル', style: 'cancel' },
       {
@@ -290,19 +358,62 @@ export function AgentSettingsView() {
         onPress: async () => {
           setSaving(true);
           try {
-            const updated = llmProviders.filter((p) => p.id !== id);
-            const newActive =
-              activeLlm === id ? (updated[0]?.id ?? null) : activeLlm;
+            const modelsUsingProvider = llmModels.filter(
+              (m) => m.providerId === id,
+            );
+            if (modelsUsingProvider.length > 0) {
+              Alert.alert(
+                '使用中',
+                'このProviderを使用しているモデルがあるため削除できません',
+              );
+              return;
+            }
+            const updatedProviders = llmProviders.filter((p) => p.id !== id);
             await deleteAgentApiKey('llm', id);
             await saveAgentProviders(
-              updated,
+              updatedProviders,
+              llmModels,
+              activeLlmModel,
+              ttsProviders,
+              activeTts,
+            );
+            setLlmProviders(updatedProviders);
+            if (editingLlmProvider?.id === id) setEditingLlmProvider(null);
+            await pushAgentConfig();
+          } catch (e) {
+            Alert.alert('削除失敗', e instanceof Error ? e.message : String(e));
+          } finally {
+            setSaving(false);
+          }
+        },
+      },
+    ]);
+  }
+
+  function deleteLlmModel(id: string) {
+    Alert.alert('削除', 'このLLM Modelを削除しますか？', [
+      { text: 'キャンセル', style: 'cancel' },
+      {
+        text: '削除',
+        style: 'destructive',
+        onPress: async () => {
+          setSaving(true);
+          try {
+            const updatedModels = llmModels.filter((m) => m.id !== id);
+            const newActive =
+              activeLlmModel === id
+                ? (updatedModels[0]?.id ?? null)
+                : activeLlmModel;
+            await saveAgentProviders(
+              llmProviders,
+              updatedModels,
               newActive,
               ttsProviders,
               activeTts,
             );
-            setLlmProviders(updated);
-            if (newActive !== activeLlm) setActiveLlm(newActive);
-            if (editingLlm?.id === id) setEditingLlm(null);
+            setLlmModels(updatedModels);
+            if (newActive !== activeLlmModel) setActiveLlmModel(newActive);
+            if (editingLlmModel?.id === id) setEditingLlmModel(null);
             await pushAgentConfig();
           } catch (e) {
             Alert.alert('削除失敗', e instanceof Error ? e.message : String(e));
@@ -329,7 +440,8 @@ export function AgentSettingsView() {
             await deleteAgentApiKey('tts', id);
             await saveAgentProviders(
               llmProviders,
-              activeLlm,
+              llmModels,
+              activeLlmModel,
               updated,
               newActive,
             );
@@ -362,13 +474,16 @@ export function AgentSettingsView() {
             await Promise.all(
               ttsProviders.map((p) => deleteAgentApiKey('tts', p.id)),
             );
-            await saveAgentProviders([], null, [], null);
+            await saveAgentProviders([], [], null, [], null);
             setLlmProviders([]);
-            setActiveLlm(null);
+            setLlmModels([]);
+            setActiveLlmModel(null);
             setTtsProviders([]);
             setActiveTts(null);
-            setEditingLlm(null);
-            setEditingLlmKey('');
+            setEditingLlmProvider(null);
+            setEditingLlmProviderKey('');
+            setEditingLlmModel(null);
+            setEditingLlmModelKey('');
             setEditingTts(null);
             setEditingTtsKey('');
             await pushAgentConfig();
@@ -420,6 +535,10 @@ export function AgentSettingsView() {
     );
   }
 
+  const editingLlmModelProvider = editingLlmModel
+    ? llmProviders.find((p) => p.id === editingLlmModel.providerId)
+    : undefined;
+
   return (
     <ScrollView contentContainerStyle={styles.content}>
       <Text style={[styles.heading, { color: colors.black }]}>
@@ -433,34 +552,16 @@ export function AgentSettingsView() {
           key={provider.id}
           style={[styles.row, { borderColor: colors.separator }]}
         >
-          <Pressable
-            onPress={() => setActiveLlmAndSave(provider.id)}
-            style={styles.radio}
-            disabled={saving}
-          >
-            <Text
-              style={{
-                color: activeLlm === provider.id ? BRAND_COLOR : colors.black,
-              }}
-            >
-              {activeLlm === provider.id ? '●' : '○'}
-            </Text>
-          </Pressable>
           <View style={styles.rowText}>
             <Text style={{ color: colors.black, fontWeight: '600' }}>
               {provider.name}
             </Text>
             <Text style={{ color: colors.gray, fontSize: 12 }}>
-              {provider.selectedModel || '未設定'}
-              {provider.cost ? ` · ${provider.cost}` : ''}
-              {provider.permissions &&
-              Object.values(provider.permissions).some(Boolean)
-                ? ` · ${Object.values(provider.permissions).filter(Boolean).length} 権限`
-                : ''}
+              {provider.baseUrl || '未設定'}
             </Text>
           </View>
           <Pressable
-            onPress={() => setEditingLlm({ ...provider })}
+            onPress={() => setEditingLlmProvider({ ...provider })}
             style={[styles.editButton, { borderColor: colors.separator }]}
           >
             <Text style={{ color: colors.black }}>編集</Text>
@@ -468,22 +569,152 @@ export function AgentSettingsView() {
         </View>
       ))}
       <Pressable
-        onPress={() => setEditingLlm(newLlmProvider())}
+        onPress={() => setEditingLlmProvider(newLlmProvider())}
         style={[styles.addButton, { borderColor: BRAND_COLOR }]}
       >
         <Text style={{ color: BRAND_COLOR }}>+ LLM Providerを追加</Text>
       </Pressable>
-      {editingLlm && (
-        <LlmProviderEditor
-          provider={editingLlm}
-          apiKey={editingLlmKey}
-          onChangeProvider={setEditingLlm}
-          onChangeApiKey={setEditingLlmKey}
-          onSave={() => saveLlm(editingLlm, editingLlmKey)}
-          onCancel={() => setEditingLlm(null)}
+      {editingLlmProvider && (
+        <View style={[styles.editor, { borderColor: colors.separator }]}>
+          <TextInput
+            style={[
+              styles.input,
+              { color: colors.black, borderColor: colors.separator },
+            ]}
+            value={editingLlmProvider.name}
+            onChangeText={(name) =>
+              setEditingLlmProvider({ ...editingLlmProvider, name })
+            }
+            placeholder="表示名"
+          />
+          <TextInput
+            style={[
+              styles.input,
+              { color: colors.black, borderColor: colors.separator },
+            ]}
+            value={editingLlmProvider.baseUrl}
+            onChangeText={(baseUrl) =>
+              setEditingLlmProvider({ ...editingLlmProvider, baseUrl })
+            }
+            autoCapitalize="none"
+            placeholder="Base URL"
+          />
+          <TextInput
+            style={[
+              styles.input,
+              { color: colors.black, borderColor: colors.separator },
+            ]}
+            value={editingLlmProviderKey}
+            onChangeText={setEditingLlmProviderKey}
+            autoCapitalize="none"
+            secureTextEntry
+            placeholder="API key"
+          />
+          <View style={styles.actions}>
+            <Pressable
+              onPress={() =>
+                saveLlmProvider(editingLlmProvider, editingLlmProviderKey)
+              }
+              style={styles.save}
+              disabled={saving}
+            >
+              {saving ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.saveText}>保存</Text>
+              )}
+            </Pressable>
+            <Pressable
+              onPress={() => setEditingLlmProvider(null)}
+              style={styles.cancel}
+            >
+              <Text style={{ color: colors.black }}>キャンセル</Text>
+            </Pressable>
+            {llmProviders.some((p) => p.id === editingLlmProvider.id) && (
+              <Pressable
+                onPress={() => deleteLlmProvider(editingLlmProvider.id)}
+                style={styles.remove}
+              >
+                <Text style={styles.removeText}>削除</Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+      )}
+
+      <Text style={[styles.heading, { color: colors.black }]}>LLM Model</Text>
+      {llmModels.length === 0 && (
+        <Text style={{ color: colors.gray }}>Modelを追加してください</Text>
+      )}
+      {llmModels.map((model) => (
+        <View
+          key={model.id}
+          style={[styles.row, { borderColor: colors.separator }]}
+        >
+          <Pressable
+            onPress={() => setActiveLlmModelAndSave(model.id)}
+            style={styles.radio}
+            disabled={saving}
+          >
+            <Text
+              style={{
+                color: activeLlmModel === model.id ? BRAND_COLOR : colors.black,
+              }}
+            >
+              {activeLlmModel === model.id ? '●' : '○'}
+            </Text>
+          </Pressable>
+          <View style={styles.rowText}>
+            <Text style={{ color: colors.black, fontWeight: '600' }}>
+              {model.name}
+            </Text>
+            <Text style={{ color: colors.gray, fontSize: 12 }}>
+              {llmProviders.find((p) => p.id === model.providerId)?.name ??
+                '未設定'}
+              {' · '}
+              {model.selectedModel || '未設定'}
+              {model.cost ? ` · ${model.cost}` : ''}
+              {model.permissions &&
+              Object.values(model.permissions).some(Boolean)
+                ? ` · ${Object.values(model.permissions).filter(Boolean).length} 権限`
+                : ''}
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => setEditingLlmModel({ ...model })}
+            style={[styles.editButton, { borderColor: colors.separator }]}
+          >
+            <Text style={{ color: colors.black }}>編集</Text>
+          </Pressable>
+        </View>
+      ))}
+      <Pressable
+        onPress={() => {
+          const providerId = llmProviders[0]?.id ?? '';
+          if (!providerId) {
+            Alert.alert('Provider未設定', '先にLLM Providerを追加してください');
+            return;
+          }
+          setEditingLlmModel(newLlmModel(providerId));
+        }}
+        style={[styles.addButton, { borderColor: BRAND_COLOR }]}
+      >
+        <Text style={{ color: BRAND_COLOR }}>+ LLM Modelを追加</Text>
+      </Pressable>
+      {editingLlmModel && editingLlmModelProvider && (
+        <LlmModelEditor
+          model={editingLlmModel}
+          providers={llmProviders}
+          provider={editingLlmModelProvider}
+          apiKey={editingLlmModelKey}
+          onChangeModel={(next) => {
+            setEditingLlmModel(next);
+          }}
+          onSave={() => saveLlmModel(editingLlmModel, editingLlmModelKey)}
+          onCancel={() => setEditingLlmModel(null)}
           onDelete={
-            llmProviders.some((p) => p.id === editingLlm.id)
-              ? () => deleteLlm(editingLlm.id)
+            llmModels.some((m) => m.id === editingLlmModel.id)
+              ? () => deleteLlmModel(editingLlmModel.id)
               : undefined
           }
           saving={saving}
@@ -668,11 +899,43 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  editor: {
+    padding: 12,
+    borderWidth: 1,
+    borderRadius: 12,
+    gap: 10,
+    marginTop: 8,
+  },
+  input: {
+    minHeight: 44,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+  },
   secondary: {
     minHeight: 44,
     borderWidth: 1,
     borderColor: BRAND_COLOR,
     borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actions: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  save: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 8,
+    backgroundColor: BRAND_COLOR,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveText: { color: '#fff', fontWeight: '700' },
+  cancel: {
+    minHeight: 44,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#999',
+    paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },

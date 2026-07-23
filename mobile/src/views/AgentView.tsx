@@ -1862,24 +1862,25 @@ export function AgentView() {
         if (persistToProvider) {
           (async () => {
             const settings = await loadSettings();
-            const active = settings.llmProviders.find(
-              (p) => p.id === settings.activeLlmProvider,
+            const active = settings.llmModels.find(
+              (m) => m.id === settings.activeLlmModel,
             );
             if (!active) return;
-            const updatedProviders = settings.llmProviders.map((p) =>
-              p.id === active.id
+            const updatedModels = settings.llmModels.map((m) =>
+              m.id === active.id
                 ? {
-                    ...p,
+                    ...m,
                     permissions: {
-                      ...(p.permissions ?? {}),
+                      ...(m.permissions ?? {}),
                       ...positiveGranted,
                     },
                   }
-                : p,
+                : m,
             );
             await saveAgentProviders(
-              updatedProviders,
-              settings.activeLlmProvider,
+              settings.llmProviders,
+              updatedModels,
+              settings.activeLlmModel,
               settings.ttsProviders,
               settings.activeTtsProvider,
             );

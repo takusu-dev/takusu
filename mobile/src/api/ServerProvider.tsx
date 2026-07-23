@@ -73,30 +73,35 @@ export const DEFAULT_PORT = DEFAULT_LOCAL_PORT;
 
 async function buildAgentUpdateSettings(): Promise<AgentUpdateSettings> {
   const settings = await loadSettings();
-  const activeLlm = settings.llmProviders.find(
-    (p) => p.id === settings.activeLlmProvider,
+  const activeLlmModel = settings.llmModels.find(
+    (m) => m.id === settings.activeLlmModel,
   );
+  const activeLlmProvider = activeLlmModel
+    ? settings.llmProviders.find((p) => p.id === activeLlmModel.providerId)
+    : undefined;
   const activeTts = settings.ttsProviders.find(
     (p) => p.id === settings.activeTtsProvider,
   );
   const [llmKey, ttsKey] = await Promise.all([
-    activeLlm ? loadAgentApiKey('llm', activeLlm.id) : Promise.resolve(''),
+    activeLlmProvider
+      ? loadAgentApiKey('llm', activeLlmProvider.id)
+      : Promise.resolve(''),
     activeTts ? loadAgentApiKey('tts', activeTts.id) : Promise.resolve(''),
   ]);
   const body: AgentUpdateSettings = {};
-  if (activeLlm) {
+  if (activeLlmModel && activeLlmProvider) {
     body.llm = {
-      base_url: activeLlm.baseUrl,
-      model: activeLlm.selectedModel,
+      base_url: activeLlmProvider.baseUrl,
+      model: activeLlmModel.selectedModel,
     };
     if (llmKey) {
       body.llm.api_key = llmKey;
     }
     if (
-      activeLlm.permissions &&
-      Object.keys(activeLlm.permissions).length > 0
+      activeLlmModel.permissions &&
+      Object.keys(activeLlmModel.permissions).length > 0
     ) {
-      body.llm.permissions = activeLlm.permissions;
+      body.llm.permissions = activeLlmModel.permissions;
     }
   }
   if (activeTts) {

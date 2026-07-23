@@ -24,14 +24,33 @@ const KEYS = {
   undoSteps: 'takusu.undoSteps',
   agentSessionHistoryCount: 'takusu.agent.sessionHistoryCount',
   llmProviders: 'takusu.agent.llmProviders',
-  activeLlmProvider: 'takusu.agent.activeLlmProvider',
+  llmModels: 'takusu.agent.llmModels',
+  activeLlmModel: 'takusu.agent.activeLlmModel',
   ttsProviders: 'takusu.agent.ttsProviders',
   activeTtsProvider: 'takusu.agent.activeTtsProvider',
 } as const;
 
 export type PermissionsMap = Record<string, boolean>;
 
-export interface LlmProviderSettings {
+export interface LlmProvider {
+  id: string;
+  name: string;
+  baseUrl: string;
+}
+
+export interface LlmModelSettings {
+  id: string;
+  name: string;
+  providerId: string;
+  selectedModel: string;
+  cachedModels: string[];
+  modelsFetchedAt?: string;
+  cost?: string;
+  permissions?: PermissionsMap;
+}
+
+// Legacy combined provider+model settings kept for migration.
+interface LegacyLlmProviderSettings {
   id: string;
   name: string;
   baseUrl: string;
@@ -69,8 +88,9 @@ export interface PersistedSettings {
   undoSteps: number;
   agentSessionHistoryCount: number;
   notifications: NotificationSettings;
-  llmProviders: LlmProviderSettings[];
-  activeLlmProvider: string | null;
+  llmProviders: LlmProvider[];
+  llmModels: LlmModelSettings[];
+  activeLlmModel: string | null;
   ttsProviders: TtsProviderSettings[];
   activeTtsProvider: string | null;
 }
@@ -80,6 +100,66 @@ function isValidTheme(value: string | null): value is AppTheme {
 }
 
 const LEGACY_DARK_MODE_KEY = 'takusu.darkMode';
+const LEGACY_ACTIVE_LLM_PROVIDER_KEY = 'takusu.agent.activeLlmProvider';
+
+export function newId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function isLlmProvider(value: unknown): value is LlmProvider {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as Record<string, unknown>).id === 'string' &&
+    typeof (value as Record<string, unknown>).name === 'string' &&
+    typeof (value as Record<string, unknown>).baseUrl === 'string' &&
+    !('selectedModel' in value)
+  );
+}
+
+function isLegacyLlmProvider(
+  value: unknown,
+): value is LegacyLlmProviderSettings {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as Record<string, unknown>).id === 'string' &&
+    typeof (value as Record<string, unknown>).name === 'string' &&
+    typeof (value as Record<string, unknown>).baseUrl === 'string' &&
+    typeof (value as Record<string, unknown>).selectedModel === 'string' &&
+    Array.isArray((value as Record<string, unknown>).cachedModels)
+  );
+}
+
+function migrateLegacyLlmProviders(legacy: LegacyLlmProviderSettings[]): {
+  providers: LlmProvider[];
+  models: LlmModelSettings[];
+  providerToModel: Record<string, string>;
+} {
+  const providers: LlmProvider[] = [];
+  const models: LlmModelSettings[] = [];
+  const providerToModel: Record<string, string> = {};
+  for (const old of legacy) {
+    providers.push({
+      id: old.id,
+      name: old.name,
+      baseUrl: old.baseUrl,
+    });
+    const modelId = newId('llm-model');
+    providerToModel[old.id] = modelId;
+    models.push({
+      id: modelId,
+      name: old.selectedModel ? `${old.name} (${old.selectedModel})` : old.name,
+      providerId: old.id,
+      selectedModel: old.selectedModel,
+      cachedModels: old.cachedModels,
+      modelsFetchedAt: old.modelsFetchedAt,
+      cost: old.cost,
+      permissions: old.permissions,
+    });
+  }
+  return { providers, models, providerToModel };
+}
 
 export async function loadSettings(): Promise<PersistedSettings> {
   const [
@@ -91,9 +171,11 @@ export async function loadSettings(): Promise<PersistedSettings> {
     agentSessionHistoryCountStr,
     notifications,
     llmProvidersStr,
-    activeLlmProvider,
+    llmModelsStr,
+    activeLlmModel,
     ttsProvidersStr,
     activeTtsProvider,
+    legacyActiveLlmProvider,
   ] = await Promise.all([
     SecureStore.getItemAsync(KEYS.workersUrl),
     SecureStore.getItemAsync(KEYS.workersToken),
@@ -103,9 +185,11 @@ export async function loadSettings(): Promise<PersistedSettings> {
     AsyncStorage.getItem(KEYS.agentSessionHistoryCount),
     loadNotificationSettings(),
     AsyncStorage.getItem(KEYS.llmProviders),
-    AsyncStorage.getItem(KEYS.activeLlmProvider),
+    AsyncStorage.getItem(KEYS.llmModels),
+    AsyncStorage.getItem(KEYS.activeLlmModel),
     AsyncStorage.getItem(KEYS.ttsProviders),
     AsyncStorage.getItem(KEYS.activeTtsProvider),
+    AsyncStorage.getItem(LEGACY_ACTIVE_LLM_PROVIDER_KEY),
   ]);
   const parsedUndoSteps = undoStepsStr ? parseInt(undoStepsStr, 10) : NaN;
   const parsedSessionCount = agentSessionHistoryCountStr
@@ -125,6 +209,33 @@ export async function loadSettings(): Promise<PersistedSettings> {
     theme = 'light';
   }
 
+  const parsedLlmModels = parseJsonArray<LlmModelSettings>(llmModelsStr);
+  const rawLlmProviders = parseJsonArray<unknown>(llmProvidersStr);
+
+  let llmProviders: LlmProvider[] = [];
+  let llmModels: LlmModelSettings[] = [];
+  let activeLlmModelId: string | null = activeLlmModel ?? null;
+
+  if (parsedLlmModels.length > 0) {
+    // New split format is already stored.
+    llmModels = parsedLlmModels;
+    llmProviders = rawLlmProviders.filter(isLlmProvider);
+  } else if (
+    rawLlmProviders.length > 0 &&
+    rawLlmProviders.every(isLegacyLlmProvider)
+  ) {
+    // Legacy combined provider+model settings; migrate on first load.
+    const migrated = migrateLegacyLlmProviders(rawLlmProviders);
+    llmProviders = migrated.providers;
+    llmModels = migrated.models;
+    if (legacyActiveLlmProvider) {
+      activeLlmModelId =
+        migrated.providerToModel[legacyActiveLlmProvider] ?? null;
+    }
+  } else if (rawLlmProviders.every(isLlmProvider)) {
+    llmProviders = rawLlmProviders;
+  }
+
   return {
     workersUrl: workersUrl ?? '',
     workersToken: workersToken ?? '',
@@ -140,8 +251,9 @@ export async function loadSettings(): Promise<PersistedSettings> {
         ? parsedSessionCount
         : AGENT_SESSION_HISTORY_DEFAULT,
     notifications,
-    llmProviders: parseJsonArray<LlmProviderSettings>(llmProvidersStr),
-    activeLlmProvider: activeLlmProvider ?? null,
+    llmProviders,
+    llmModels,
+    activeLlmModel: activeLlmModelId,
     ttsProviders: parseTtsProviders(ttsProvidersStr),
     activeTtsProvider: activeTtsProvider ?? null,
   };
@@ -203,14 +315,16 @@ export function parseTtsProviders(value: string | null): TtsProviderSettings[] {
 }
 
 export async function saveAgentProviders(
-  llmProviders: LlmProviderSettings[],
-  activeLlmProvider: string | null,
+  llmProviders: LlmProvider[],
+  llmModels: LlmModelSettings[],
+  activeLlmModel: string | null,
   ttsProviders: TtsProviderSettings[],
   activeTtsProvider: string | null,
 ): Promise<void> {
   await Promise.all([
     AsyncStorage.setItem(KEYS.llmProviders, JSON.stringify(llmProviders)),
-    AsyncStorage.setItem(KEYS.activeLlmProvider, activeLlmProvider ?? ''),
+    AsyncStorage.setItem(KEYS.llmModels, JSON.stringify(llmModels)),
+    AsyncStorage.setItem(KEYS.activeLlmModel, activeLlmModel ?? ''),
     AsyncStorage.setItem(KEYS.ttsProviders, JSON.stringify(ttsProviders)),
     AsyncStorage.setItem(KEYS.activeTtsProvider, activeTtsProvider ?? ''),
   ]);
