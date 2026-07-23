@@ -119,6 +119,7 @@ impl Client {
         let token = self.token().await;
         let mut req = self.http.get(&url).bearer_auth(&*token);
         let mut params: Vec<(&str, &str)> = Vec::new();
+        let limit_string = query.limit.map(|n| n.to_string());
         if let Some(ref s) = query.status {
             params.push(("status", s));
         }
@@ -136,6 +137,12 @@ impl Client {
         }
         if let Some(ref v) = query.ical_uid {
             params.push(("ical_uid", v));
+        }
+        if let Some(ref v) = query.q {
+            params.push(("q", v));
+        }
+        if let Some(ref s) = limit_string {
+            params.push(("limit", s));
         }
         if !params.is_empty() {
             req = req.query(&params);
@@ -1346,6 +1353,8 @@ pub struct TaskQuery {
     pub no_overdue: Option<bool>,
     pub habit_id: Option<String>,
     pub ical_uid: Option<String>,
+    pub q: Option<String>,
+    pub limit: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

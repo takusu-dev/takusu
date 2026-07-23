@@ -13,6 +13,7 @@ pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/tasks", post(handlers::task::create_task))
         .route("/tasks", get(handlers::task::list_tasks))
+        .route("/tasks/complete", get(handlers::task::complete_task_query))
         .route("/tasks/import/ical", post(handlers::task::import_ical))
         .route(
             "/tasks/dependency-analysis",

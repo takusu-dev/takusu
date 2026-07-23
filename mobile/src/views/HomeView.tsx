@@ -32,6 +32,7 @@ import { TaskCard, ParallelGroupCard } from '@/src/components/TaskCard';
 import { NavigationButtons } from '@/src/components/NavigationButtons';
 import { ViewChanger, type ViewType } from '@/src/components/ViewChanger';
 import { ContextMenu } from '@/src/components/ContextMenu';
+import { TaskSearchBar } from '@/src/components/TaskSearchBar';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
@@ -186,8 +187,9 @@ export function HomeView() {
     () => <ViewChanger current={view} onChange={setView} />,
     [view],
   );
-  const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const searchQueryRef = useRef(searchQuery);
+  searchQueryRef.current = searchQuery;
   const [showPast, setShowPast] = useState(false);
   // #206: past tasks load 1 week at a time
   const [pastWeeks, setPastWeeks] = useState(1);
@@ -293,7 +295,7 @@ export function HomeView() {
     setRefreshing(true);
     try {
       const [taskList, sched, habitList, settings] = await Promise.all([
-        client.listTasks(),
+        client.listTasks({ q: searchQueryRef.current }),
         client.getSchedule().catch((e) => {
           logError('スケジュール取得', e);
           return null;
@@ -379,6 +381,29 @@ export function HomeView() {
       setRefreshing(false);
     }
   }, [client, serverTz]);
+
+  // Debounced server-side search. The first run is skipped because the initial
+  // focus effect already fetches the task list. Only mark the search as
+  // started once we have an actual client, otherwise a later client
+  // availability change would trigger a duplicate request.
+  const searchStartedRef = useRef(false);
+  useEffect(() => {
+    if (!client) return;
+    if (!searchStartedRef.current) {
+      searchStartedRef.current = true;
+      return;
+    }
+    const id = setTimeout(() => {
+      client
+        .listTasks({ q: searchQuery })
+        .then(setTasks)
+        .catch((e) => {
+          logError('タスク検索', e);
+        });
+    }, 250);
+    return () => clearTimeout(id);
+  }, [searchQuery, client]);
+
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
 
@@ -485,11 +510,8 @@ export function HomeView() {
   }, [parallelGroups]);
 
   const items: ListItem[] = useMemo(() => {
-    const filtered = searchQuery
-      ? tasks.filter((t) =>
-          t.title.toLowerCase().includes(searchQuery.toLowerCase()),
-        )
-      : tasks;
+    const searching = searchQuery.length > 0;
+    const filtered = tasks;
 
     const pending = filtered.filter((t) => t.status === 'pending');
     const scheduled = filtered
@@ -522,7 +544,8 @@ export function HomeView() {
       return new Date(end).getTime() < now;
     };
     const pastAll = scheduled.filter(isPast);
-    const past = showPast ? pastAll : [];
+    // When searching, show all matching past tasks regardless of the toggle.
+    const past = searching || showPast ? pastAll : [];
 
     // Upcoming = always exclude past tasks, regardless of showPast
     const upcoming = scheduled.filter((t) => !isPast(t));
@@ -532,11 +555,13 @@ export function HomeView() {
     // Past section (when revealed) — no date separators, 1 week at a time (#206)
     if (past.length > 0) {
       const weekCutoff = now - pastWeeks * 7 * 24 * 60 * 60 * 1000;
-      const pastVisible = past.filter((t) => {
-        const entry = scheduleMap.get(t.id);
-        const end = entry?.end_at ?? t.end_at;
-        return new Date(end).getTime() >= weekCutoff;
-      });
+      const pastVisible = searching
+        ? past
+        : past.filter((t) => {
+            const entry = scheduleMap.get(t.id);
+            const end = entry?.end_at ?? t.end_at;
+            return new Date(end).getTime() >= weekCutoff;
+          });
       const hasOlder = pastVisible.length < past.length;
       if (pastVisible.length > 0 || hasOlder) {
         result.push({ type: 'separator', label: '過去' });
@@ -579,7 +604,7 @@ export function HomeView() {
     // When searching, render all matching tasks individually — parallel
     // grouping is based on the full task list, so a search-filtered guest
     // could be invisible if its host doesn't match the query.
-    const skipGrouping = searchQuery.length > 0;
+    const skipGrouping = searching;
     for (const t of upcoming) {
       // Skip guests that are part of a parallel group — they're rendered
       // inside the group item alongside their host.
@@ -1598,9 +1623,10 @@ export function HomeView() {
     [],
   );
 
+  const searching = searchQuery.length > 0;
   const listHeader = useMemo(
     () =>
-      hasPast ? (
+      !searching && hasPast ? (
         <Pressable style={styles.pastToggle} onPress={togglePast}>
           <Reanimated.View style={chevronStyle}>
             <Ionicons name="chevron-down" size={16} color={BRAND_COLOR} />
@@ -1610,7 +1636,7 @@ export function HomeView() {
           </Text>
         </Pressable>
       ) : null,
-    [hasPast, showPast, chevronStyle, togglePast],
+    [hasPast, showPast, chevronStyle, togglePast, searching],
   );
 
   const handleScroll = useCallback(
@@ -1708,34 +1734,11 @@ export function HomeView() {
           onSetStatusSelected={setStatusSelected}
           onClearSelection={() => setSelected(new Set())}
         />
-        <Pressable
-          style={({ pressed }) => [
-            styles.topButton,
-            pressed && styles.topButtonPressed,
-          ]}
-          onPress={() => {
-            haptic.light();
-            setSearchOpen(!searchOpen);
-          }}
-        >
-          <Ionicons name="search-outline" size={22} color={BRAND_COLOR} />
-        </Pressable>
-        {searchOpen && (
-          <TextInput
-            style={[
-              styles.searchInput,
-              { borderColor: colors.separator, color: colors.black },
-            ]}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="検索..."
-            placeholderTextColor={colors.grayLight}
-            autoFocus
-          />
-        )}
-        {/* Flex spacer — keeps the refresh button right-aligned when search
-            is closed. */}
-        <View style={styles.topBarCenter} />
+        <TaskSearchBar
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          client={client}
+        />
         <Pressable
           style={({ pressed }) => [
             styles.topButton,
@@ -1944,9 +1947,6 @@ function HabitWrapper({
   );
 }
 
-// Need to import TextInput
-import { TextInput } from 'react-native';
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -1974,11 +1974,6 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  topBarCenter: {
-    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2012,16 +2007,6 @@ const styles = StyleSheet.create({
   },
   topButtonText: {
     fontSize: 20,
-  },
-  searchInput: {
-    flex: 1,
-    height: 40,
-    borderWidth: 1,
-    borderColor: COLORS.separator,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 0,
-    fontSize: 16,
   },
   listContent: {
     paddingBottom: 100,

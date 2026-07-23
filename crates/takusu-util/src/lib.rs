@@ -2,6 +2,7 @@ pub mod bool_compat;
 pub mod jwt;
 pub mod memory;
 pub mod option_bool_compat;
+pub mod search;
 
 use std::str::FromStr;
 use uuid::Uuid;

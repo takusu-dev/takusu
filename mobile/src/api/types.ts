@@ -88,6 +88,13 @@ export interface TaskQuery {
   no_overdue?: boolean;
   habit_id?: string;
   ical_uid?: string;
+  q?: string;
+  limit?: number;
+}
+
+export interface Completion {
+  value: string;
+  label: string;
 }
 
 export interface HabitRow {
