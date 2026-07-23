@@ -61,7 +61,7 @@ struct Cli {
     mode: DisplayMode,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -141,6 +141,9 @@ enum Commands {
     /// MCP server over stdio
     #[cfg(feature = "mcp")]
     Mcp,
+
+    /// Launch the interactive TUI
+    Tui,
 }
 
 #[derive(Subcommand)]
@@ -893,7 +896,7 @@ fn main() {
         let cli = Cli::parse();
         let mut cfg = config::load();
 
-        if matches!(cli.command, Commands::GenRootToken) {
+        if matches!(cli.command, Some(Commands::GenRootToken)) {
             let secret = std::env::var("TAKUSU_JWT_SECRET")
                 .ok()
                 .filter(|s| !s.is_empty())
@@ -914,9 +917,9 @@ fn main() {
             return;
         }
 
-        if matches!(cli.command, Commands::Completion { .. }) {
+        if matches!(cli.command, Some(Commands::Completion { .. })) {
             let shell = match cli.command {
-                Commands::Completion { shell } => shell,
+                Some(Commands::Completion { shell }) => shell,
                 _ => unreachable!(),
             };
             let mut cmd = Cli::command();
@@ -926,7 +929,7 @@ fn main() {
 
         // Handle config commands before building the app so storage/worker_url
         // changes are reflected immediately.
-        if let Commands::Config { command } = &cli.command {
+        if let Some(Commands::Config { command }) = &cli.command {
             match command {
                 ConfigCommands::Show => {
                     config::show();
@@ -1094,7 +1097,18 @@ fn main() {
             process::exit(1);
         });
 
-        if let Err(e) = run(cli.mode, Arc::clone(&app), tz, cli.command, &cfg).await {
+        let cmd = match cli.command {
+            Some(cmd) => cmd,
+            None => {
+                if let Err(e) = takusu_tui::run(Arc::clone(&app), tz).await {
+                    eprintln!("Error: {e}");
+                    process::exit(1);
+                }
+                return;
+            }
+        };
+
+        if let Err(e) = run(cli.mode, Arc::clone(&app), tz, cmd, &cfg).await {
             eprintln!("Error: {e}");
             process::exit(1);
         }
@@ -1144,6 +1158,11 @@ async fn run(
         Commands::GenRootToken => unreachable!(),
         Commands::Completion { .. } => unreachable!(),
         Commands::Config { command } => run_config(command, app.as_ref(), cfg).await?,
+        Commands::Tui => {
+            takusu_tui::run(app, tz)
+                .await
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+        }
     }
     Ok(())
 }

@@ -1,0 +1,18 @@
+[package]
+name = "takusu-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+crossterm = "0.29"
+ratatui = "0.30"
+tokio = { workspace = true }
+jiff = { workspace = true }
+takusu-local-lib = { workspace = true, features = ["sqlite"] }
+takusu-storage = { workspace = true }
+takusu-habit = { workspace = true }
+serde_json = { workspace = true }
+tempfile = "3.27.0"
+shell-words = "1.1.1"
