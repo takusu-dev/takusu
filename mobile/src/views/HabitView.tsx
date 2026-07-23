@@ -35,9 +35,10 @@ import { todayDateKey } from '@/src/utils/dateKey';
 
 interface HabitViewProps {
   client: TakusuClient | null;
+  refreshKey?: number | null;
 }
 
-export function HabitView({ client }: HabitViewProps) {
+export function HabitView({ client, refreshKey }: HabitViewProps) {
   const router = useRouter();
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -104,7 +105,7 @@ export function HabitView({ client }: HabitViewProps) {
 
   useEffect(() => {
     refresh();
-  }, [refresh]);
+  }, [refresh, refreshKey]);
 
   async function deleteSelected() {
     if (!client) return;

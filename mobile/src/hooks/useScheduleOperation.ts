@@ -29,6 +29,7 @@ export function useScheduleOperation({
 }: UseScheduleOperationOptions) {
   const [scheduleOperation, setScheduleOperation] =
     useState<ScheduleOperation | null>(null);
+  const [lastCompletedAt, setLastCompletedAt] = useState<number | null>(null);
   const processedOperationIdRef = useRef<string | null>(null);
 
   const withStatus = useCallback(
@@ -117,6 +118,7 @@ export function useScheduleOperation({
           await runGCalSync();
         }
         await refresh();
+        setLastCompletedAt(Date.now());
       } else {
         showError(
           status.message || 'スケジュール処理に失敗しました',
@@ -164,5 +166,5 @@ export function useScheduleOperation({
     return () => subscription.remove();
   }, [handleCompleted]);
 
-  return { startScheduleOperation, scheduleOperation };
+  return { startScheduleOperation, scheduleOperation, lastCompletedAt };
 }

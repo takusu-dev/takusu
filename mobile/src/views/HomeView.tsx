@@ -373,7 +373,7 @@ export function HomeView() {
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
 
-  const { startScheduleOperation } = useScheduleOperation({
+  const { startScheduleOperation, lastCompletedAt } = useScheduleOperation({
     client,
     workersUrl,
     workersToken,
@@ -1563,12 +1563,19 @@ export function HomeView() {
         onBack={() => setView('task')}
         onTaskPress={(taskId) => router.push(`/task/${taskId}`)}
         viewChanger={viewChanger}
+        refreshKey={lastCompletedAt}
       />
     );
   }
 
   if (view === 'habit') {
-    return <HabitWrapper client={client} viewChanger={viewChanger} />;
+    return (
+      <HabitWrapper
+        client={client}
+        viewChanger={viewChanger}
+        refreshKey={lastCompletedAt}
+      />
+    );
   }
 
   return (
@@ -1779,17 +1786,24 @@ function GraphWrapper({
   onBack,
   viewChanger,
   onTaskPress,
+  refreshKey,
 }: {
   client: TakusuClient | null;
   onBack: () => void;
   viewChanger: React.ReactNode;
   onTaskPress: (taskId: string) => void;
+  refreshKey?: number | null;
 }) {
   // Lazy load to avoid circular deps
   const { GraphView } = require('@/src/views/GraphView');
   return (
     <View style={{ flex: 1 }}>
-      <GraphView client={client} onBack={onBack} onTaskPress={onTaskPress} />
+      <GraphView
+        client={client}
+        onBack={onBack}
+        onTaskPress={onTaskPress}
+        refreshKey={refreshKey}
+      />
       {viewChanger}
     </View>
   );
@@ -1798,14 +1812,16 @@ function GraphWrapper({
 function HabitWrapper({
   client,
   viewChanger,
+  refreshKey,
 }: {
   client: TakusuClient | null;
   viewChanger: React.ReactNode;
+  refreshKey?: number | null;
 }) {
   const { HabitView } = require('@/src/views/HabitView');
   return (
     <View style={{ flex: 1 }}>
-      <HabitView client={client} />
+      <HabitView client={client} refreshKey={refreshKey} />
       {viewChanger}
     </View>
   );
