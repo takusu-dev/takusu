@@ -50,32 +50,40 @@ function isFuture(date: Date): boolean {
   return date.getTime() > Date.now();
 }
 
-// Count incomplete tasks scheduled for today (excludes completed/skipped)
-function countTodaysIncompleteTasks(
+// Count incomplete tasks scheduled for a specific date.
+// A task counts if it appears in the schedule for that date, is not done
+// (completed/skipped), and is not pending (pending tasks may carry stale
+// schedule entries). in_progress tasks are included because their schedule
+// entry is preserved and they are not yet done.
+function countIncompleteTasksForDate(
   tasks: TaskRow[],
   schedule: ScheduleEntry[],
+  date: Date,
 ): number {
-  const scheduleMap = new Map<string, ScheduleEntry>();
-  for (const e of schedule) scheduleMap.set(e.task_id, e);
+  const taskMap = new Map(tasks.map((t) => [t.id, t]));
 
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const todayEnd = new Date();
-  todayEnd.setHours(23, 59, 59, 999);
+  const dayStart = new Date(date);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(date);
+  dayEnd.setHours(23, 59, 59, 999);
 
-  return tasks.filter((t) => {
-    if (t.status === 'completed' || t.status === 'skipped') {
-      return false;
+  const counted = new Set<string>();
+  for (const e of schedule) {
+    const t = taskMap.get(e.task_id);
+    if (
+      !t ||
+      t.status === 'pending' ||
+      t.status === 'completed' ||
+      t.status === 'skipped'
+    ) {
+      continue;
     }
-    const entry = scheduleMap.get(t.id);
-    const start = entry
-      ? new Date(entry.start_at)
-      : t.start_at
-        ? new Date(t.start_at)
-        : null;
-    if (!start) return false;
-    return start >= todayStart && start <= todayEnd;
-  }).length;
+    const start = new Date(e.start_at);
+    if (start >= dayStart && start <= dayEnd) {
+      counted.add(e.task_id);
+    }
+  }
+  return counted.size;
 }
 
 // Count pending tasks idle for more than threshold hours
@@ -90,6 +98,18 @@ function countIdlePendingTasks(
   }).length;
 }
 
+function nextOccurrenceDate(hour: number, minute: number): Date {
+  const now = new Date();
+  const candidate = new Date(now);
+  candidate.setHours(hour, minute, 0, 0);
+
+  // If the time has already passed today, use tomorrow
+  if (candidate.getTime() <= now.getTime()) {
+    candidate.setDate(candidate.getDate() + 1);
+  }
+  return candidate;
+}
+
 // Schedule a one-time notification for the next occurrence of a daily time.
 // If the time has already passed today, schedule for tomorrow.
 // This avoids stale content from DAILY triggers — the app reschedules with
@@ -102,16 +122,7 @@ async function scheduleNextOccurrence(
   body: string,
   data: Record<string, unknown>,
 ): Promise<void> {
-  const now = new Date();
-  const today = new Date(now);
-  today.setHours(hour, minute, 0, 0);
-
-  // If the time has already passed today, schedule for tomorrow
-  const target =
-    today.getTime() > now.getTime()
-      ? today
-      : new Date(today.getTime() + 24 * 60 * 60 * 1000);
-
+  const target = nextOccurrenceDate(hour, minute);
   await scheduleAt(channelId, target, title, body, data);
 }
 
@@ -158,20 +169,14 @@ export async function rescheduleNotifications(
   // ── 1. Morning briefing (next occurrence only) ──
   if (settings.morningBriefing) {
     const { hour, minute } = minutesToTime(settings.morningBriefingTime);
-    const count = countTodaysIncompleteTasks(tasks, schedule);
+    const target = nextOccurrenceDate(hour, minute);
+    const count = countIncompleteTasksForDate(tasks, schedule, target);
     const title =
       count === 0
         ? 'おはようございます'
         : `今日は${count}個の未完了タスクがあります`;
     const body = count === 0 ? 'タスクを追加しましょう' : 'タップして確認';
-    await scheduleNextOccurrence(
-      CHANNELS.taskSummary,
-      hour,
-      minute,
-      title,
-      body,
-      { url: '/' },
-    );
+    await scheduleAt(CHANNELS.taskSummary, target, title, body, { url: '/' });
   }
 
   // ── 2. Pre-start reminder + 3. Start overdue (per-task, today/tomorrow only) ──
