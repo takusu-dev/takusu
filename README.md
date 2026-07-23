@@ -32,8 +32,11 @@ takusu/
 │   ├── takusu-util/        # 共有ユーティリティ
 │   └── google-cal/         # Google Calendar API クライアント (OAuth2)
 ├── mobile/                 # Expo / React Native アプリ
-├── scripts/                # ビルド・サーバー起動スクリプト
-└── main.typ                # 設計ドキュメント (Typst・日本語)
+├── doc/
+│   ├── plan/               # プランナー・機能設計 (markdown)
+│   ├── mock/               # UI モック (HTML)
+│   └── proposal.typ        # 設計ドキュメント (Typst・日本語)
+└── scripts/                # ビルド・サーバー起動スクリプト
 ```
 
 ## セットアップ
@@ -182,7 +185,7 @@ wrangler deploy
 
 ## 設計ドキュメント
 
-[`main.typ`](main.typ) — プロジェクト全体の設計思想 (Typst・日本語)
+[`doc/proposal.typ`](doc/proposal.typ) — プロジェクト全体の設計思想 (Typst・日本語)
 [`ARCHITECTURE.md`](ARCHITECTURE.md) — クレート構成・データフロー・アルゴリズム詳細
 [`AGENTS.md`](AGENTS.md) — 開発者向けガイド・コマンドリファレンス
 

@@ -76,7 +76,7 @@ fn main() {
 
     // ALNS solver は Stage 1 prototype で full solve のみ対応。
     // partial / range は roadmap で production 採用条件に含まれるが、
-    // 現時点では未実装（design/priority-decoder-production-roadmap.md 参照）。
+    // 現時点では未実装（doc/plan/priority-decoder-production-roadmap.md 参照）。
     let modes: &[&str] = if alns_solver {
         &["full"]
     } else {

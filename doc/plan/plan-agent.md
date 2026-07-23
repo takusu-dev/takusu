@@ -2,7 +2,7 @@
 
 ## Summary
 
-Implement the voice-assistant half of the takusu vision (`main.typ` §音声アシスタント):
+Implement the voice-assistant half of the takusu vision (`../proposal.typ` §音声アシスタント):
 an LLM agent that operates the planner through tool calling, plus the memory, safe change
 management, schedule orchestration, and progress features it depends on.
 
@@ -24,7 +24,7 @@ Audio capture and playback are application I/O, not LLM tools. The CLI or Androi
 records audio, transcribes it, calls the agent for one turn, and speaks the returned text.
 The LLM must never activate the microphone by itself.
 
-## Product invariants from `main.typ`
+## Product invariants from `../proposal.typ`
 
 The implementation must preserve these behaviors across all work items:
 
@@ -62,7 +62,7 @@ takusu-agent (library + CLI binary)
 └── src/bin/agent.rs  # text mode and push-to-talk CLI
 
 takusu server/storage/client extensions
-├── backend-specific memory migration (see design/plan-memory.md)
+├── backend-specific memory migration (see plan-memory.md)
 ├── migrations/015_progress.sql
 ├── /api/schedule/preview
 ├── /api/memory/* and /api/tasks/similar
@@ -468,7 +468,7 @@ size limits, confirmation, backup/rollback, and prompt-index refresh.
 
 ### WI-7: Memory server
 
-**Files**: the dedicated design and implementation described in [`design/plan-memory.md`](plan-memory.md):
+**Files**: the dedicated design and implementation described in [`plan-memory.md`](plan-memory.md):
 backend migrations, storage trait/models and both backends, app/routes, and `takusu-client`.
 
 `plan-memory.md` is the normative contract for the schema, canonical non-null subject keys, unique
@@ -493,7 +493,7 @@ similar completed tasks, limits, and local/Worker parity.
 
 **Files**: `crates/takusu-agent/src/tools/memory.rs`, `AgentSession::execute_proposed_change`,
 `takusu-client`, and system-context rules. The detailed contract is in
-[`design/plan-memory.md`](plan-memory.md).
+[`plan-memory.md`](plan-memory.md).
 
 Implement `memory_save`, `memory_update`, `memory_search`, `memory_delete`, and `similar_tasks`,
 and add the corresponding memory create/update/delete dispatch to the approval executor. Memory

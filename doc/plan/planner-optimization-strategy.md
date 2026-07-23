@@ -195,7 +195,7 @@ decoderはResource-Constrained Project Scheduling Problemで使われるSerial S
 
 feasible-only探索では、現行のconstraint annealingが可能にしている「一時的に依存違反領域を通って別の良解へ移る」経路がなくなる。1 taskずつpriorityを変更するだけでは局所解に閉じやすいため、複数taskをまとめて除去・再挿入するLNS / ALNSと組み合わせる。
 
-入力自体が実行不可能な場合もある。その場合はdecoderが黙って制約を破るのではなく、未配置、短縮、deadline超過、生活制約違反などを構造化して返す必要がある。この部分は `design/core-problems.md` のinfeasibility reporting方針と整合させる。
+入力自体が実行不可能な場合もある。その場合はdecoderが黙って制約を破るのではなく、未配置、短縮、deadline超過、生活制約違反などを構造化して返す必要がある。この部分は `../core-problems.md` のinfeasibility reporting方針と整合させる。
 
 ## 方針3: ALNSとregret insertion
 

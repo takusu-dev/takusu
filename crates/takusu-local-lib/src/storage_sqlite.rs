@@ -2688,7 +2688,7 @@ fn session_minutes(session: &TaskWorkSessionRow) -> i64 {
 }
 
 /// Compute updated avg_minutes / sigma_minutes from a new positive progress
-/// observation. See design/proposal.md WI-9 for the estimate-update formula.
+/// observation. See doc/proposal.typ WI-9 for the estimate-update formula.
 async fn compute_updated_estimate<'a, E>(
     executor: E,
     task_id: &str,

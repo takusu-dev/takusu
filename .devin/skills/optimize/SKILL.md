@@ -13,7 +13,7 @@ Optimize the performance of `takusu-core` (primarily `evaluate.rs` and `anneal.r
    - `cargo run -p takusu-core --example score_check`
    - `cargo run -p takusu-core --example score_check --release`
    - `cargo run -p takusu-core --example profile --release` (and `time ./target/release/examples/profile` for a stable wall-clock baseline)
-   - Record the numbers in `design/optimization-baselines.md` with the fixture, command, and revision so later runs have an authoritative comparison.
+   - Record the numbers in `doc/optimization-baselines.md` with the fixture, command, and revision so later runs have an authoritative comparison.
 2. Profile the hot path.
    - Use the `profile` skill (`/profile`) or run `./scripts/profile.sh --example score_check -p takusu-core`.
    - Read `target/profile/top-self.txt` and `target/profile/flamegraph.svg`.
@@ -53,8 +53,8 @@ Optimize the performance of `takusu-core` (primarily `evaluate.rs` and `anneal.r
 
 ## Recording failed experiments
 
-- Document experiments that regress benchmarks in `design/fail-optimization.md` with the change, baseline, and results before abandoning them (`jj abandon @`).
-- Keep `design/fail-optimization.md` and any skill/workflow updates in a separate `jj` change from the failed optimization code, and be careful not to abandon them.
+- Document experiments that regress benchmarks in `doc/fail-optimization.md` with the change, baseline, and results before abandoning them (`jj abandon @`).
+- Keep `doc/fail-optimization.md` and any skill/workflow updates in a separate `jj` change from the failed optimization code, and be careful not to abandon them.
 
 ## When to ask the user
 

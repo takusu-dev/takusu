@@ -23,7 +23,7 @@ before acting.
 
 ## Project Overview
 
-takusu is a planner that automatically builds user schedules and a voice assistant using LLM as the UI. The design document is `main.typ` (in Japanese).
+takusu is a planner that automatically builds user schedules and a voice assistant using LLM as the UI. The design document is `doc/proposal.typ` (in Japanese).
 
 - **License**: MIT
 - **Repository**: https://github.com/satler-git/takusu
@@ -56,7 +56,10 @@ dunstify "takusu agent" "question: <short question>"
 
 ```
 takusu/
-├── main.typ                  # 設計ドキュメント (Typst)
+├── doc/                      # 設計ドキュメント
+│   ├── plan/                 # プランナー・機能計画 (markdown)
+│   ├── mock/                 # UI モック (HTML)
+│   └── proposal.typ          # 全体設計ドキュメント (Typst)
 ├── Cargo.toml                # Rust workspace root
 ├── crates/
 │   ├── takusu-core/          # Core planner (data types, scheduling algorithm)
@@ -452,7 +455,7 @@ No external HTTP server needed. Run with `cargo nextest run -p takusu-local`.
   - **Reschedule**: queries tasks with `status IN ('pending', 'scheduled')`.
   - **Clear schedule**: does NOT reset task status (tasks stay `scheduled`; must be manually set to `pending`).
 
-## Key Design Decisions (from main.typ)
+## Key Design Decisions (from doc/proposal.typ)
 
 - **Planner**: Uses heuristic algorithms (simulated annealing) with an evaluation
   function, not exact SAT solving. Tasks are discretized into 5-minute slots.
@@ -462,7 +465,7 @@ No external HTTP server needed. Run with `cargo nextest run -p takusu-local`.
 - **Task model**: Includes start time, deadline, cost estimate (normal distribution),
   dependencies, parallelizability, and `abandonability` (deadline flexibility).
 - **Documentation**: `README.md` (overview), `ARCHITECTURE.md` (structure),
-  the design document (`main.typ`), and this file serve as the primary
+  the design document (`doc/proposal.typ`), and this file serve as the primary
   project documentation.
 
 ## takusu-cli

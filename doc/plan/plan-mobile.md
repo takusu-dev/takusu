@@ -2,7 +2,7 @@
 
 ## Summary
 
-takusu-local-lib (Planner + axum) を Android 上で組み込みサーバーとして動かし、タスク依存を DAG として可視化する Expo (React Native) アプリを作る。ストレージは Workers (HTTP) のみ。グラフ可視化は WebView + Cytoscape.js (dagre)。UIは `design/mobile-ui.md` に基づく。
+takusu-local-lib (Planner + axum) を Android 上で組み込みサーバーとして動かし、タスク依存を DAG として可視化する Expo (React Native) アプリを作る。ストレージは Workers (HTTP) のみ。グラフ可視化は WebView + Cytoscape.js (dagre)。UIは `../mobile-ui.md` に基づく。
 
 ## 確認済みの仕様
 
@@ -43,7 +43,7 @@ Android App (Expo / React Native)
 
 ## Phase 0: UIデザイン受け取り (完了)
 
-`design/mobile-ui.md` に記述済み。曖昧点は上記「確認済みの仕様」で解消。
+`../mobile-ui.md` に記述済み。曖昧点は上記「確認済みの仕様」で解消。
 
 ## Phase 1: Rust 側の準備
 
@@ -99,7 +99,7 @@ Android App (Expo / React Native)
 - takusu-client のリクエスト/レスポンス型を TS にポーティング
 - undo/redo スタック (50step) の実装 (タスクCRUD + スケジュール操作 + habit CRUD)
 
-### 8. 画面実装 (`design/mobile-ui.md` に基づく)
+### 8. 画面実装 (`../mobile-ui.md` に基づく)
 
 - `src/views/Home.tsx`: 上段(ハンバーガー/search/sync) + 中段(タスクカード時系列、pending上、日付区切りバー、pull-down-to-reveal過去日) + 下段(add中央/start&done右)
 - `src/views/Graph.tsx`: WebView + Cytoscape.js (推移的依存、完了ノード灰色、編集モード切替でedge切断/node間追加)
@@ -179,7 +179,7 @@ Android App (Expo / React Native)
 - [ ] タスクカードの slide-done / slide-delete / haptics が動く
 - [ ] undo/redo (50step) が タスクCRUD + スケジュール操作 + habit CRUD で動く
 - [ ] 同期ボタンが config に従って同時/2段階で動く
-- [ ] UIが `design/mobile-ui.md` の記述に沿っている
+- [ ] UIが `../mobile-ui.md` の記述に沿っている
 
 ## Risks/Considerations
 
