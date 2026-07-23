@@ -145,7 +145,7 @@ export function GraphView({
     }
   }
 
-  function handleCutEdges(edges: { source: string; target: string }[]) {
+  async function handleCutEdges(edges: { source: string; target: string }[]) {
     if (!client || edges.length === 0) return;
     haptic.medium();
     // Group by target task to batch updates
@@ -165,12 +165,15 @@ export function GraphView({
         updates.push(client.updateTask(target, { depends: deps }));
       }
     }
-    Promise.all(updates)
-      .then(refresh)
-      .catch((e) => showError(e, '依存関係の削除に失敗'));
+    try {
+      await Promise.all(updates);
+      await refresh();
+    } catch (e) {
+      showError(e, '依存関係の削除に失敗');
+    }
   }
 
-  function handleAddEdge(source: string, target: string) {
+  async function handleAddEdge(source: string, target: string) {
     if (!client) return;
     haptic.medium();
     const targetTask = tasks.find((t) => t.id === target);
@@ -178,10 +181,12 @@ export function GraphView({
       const deps = parseDepends(targetTask.depends);
       if (!deps.includes(source)) {
         deps.push(source);
-        client
-          .updateTask(target, { depends: deps })
-          .then(refresh)
-          .catch((e) => showError(e, '依存関係の追加に失敗'));
+        try {
+          await client.updateTask(target, { depends: deps });
+          await refresh();
+        } catch (e) {
+          showError(e, '依存関係の追加に失敗');
+        }
       }
     }
   }
