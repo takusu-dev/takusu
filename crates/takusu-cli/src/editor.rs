@@ -1,10 +1,17 @@
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io;
 use std::process::Command;
 use takusu_storage::{HabitRow, HabitStepInput, HabitStepRow, TaskRow, UpdateHabit, UpdateTask};
 
-pub fn format_task_for_editing(task: &TaskRow, all_tasks: &[TaskRow]) -> String {
+use crate::task_ref::task_reference;
+
+pub fn format_task_for_editing(
+    task: &TaskRow,
+    all_tasks: &[TaskRow],
+    habit_map: &HashMap<String, i64>,
+) -> String {
     let depends_uuids: Vec<String> =
         serde_json::from_str::<Vec<String>>(&task.depends).unwrap_or_default();
     // Show display_ids when the dependency task is known, otherwise fall back to UUID.
@@ -14,7 +21,7 @@ pub fn format_task_for_editing(task: &TaskRow, all_tasks: &[TaskRow]) -> String 
             all_tasks
                 .iter()
                 .find(|t| &t.id == uuid)
-                .map(|t| format!("#{}", t.display_id))
+                .map(|t| task_reference(t, habit_map))
                 .unwrap_or_else(|| uuid.clone())
         })
         .collect::<Vec<_>>()
@@ -22,7 +29,7 @@ pub fn format_task_for_editing(task: &TaskRow, all_tasks: &[TaskRow]) -> String 
     format!(
         r#"# Edit task. Lines starting with '#' are comments.
 # Empty fields will not be updated. Save and quit to apply changes.
-# depends: comma-separated display IDs (e.g. #3, #17, #42) or full UUIDs
+# depends: comma-separated display IDs (e.g. #3, h1#5, #17) or full UUIDs
 title: {title}
 description: {desc}
 start_at: {start}
@@ -469,6 +476,47 @@ pub fn open_editor(content: &str, suffix: &str) -> io::Result<String> {
 mod tests {
     use super::*;
 
+    fn task_row(
+        id: &str,
+        display_id: i64,
+        title: &str,
+        habit_id: Option<&str>,
+        depends: &[&str],
+    ) -> TaskRow {
+        TaskRow {
+            id: id.into(),
+            display_id,
+            title: title.into(),
+            description: None,
+            start_at: None,
+            end_at: "2026-07-23T23:59:00Z".into(),
+            avg_minutes: 30,
+            sigma_minutes: 5,
+            depends: serde_json::to_string(
+                &depends.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            )
+            .unwrap(),
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            status: "pending".into(),
+            habit_id: habit_id.map(|s| s.into()),
+            ical_uid: None,
+            user_edited: false,
+            fixed: false,
+            habit_step_id: None,
+            quantity_total: None,
+            quantity_done: 0,
+            quantity_unit: None,
+            completed_at: None,
+            split_from_task_id: None,
+            original_quantity_total: None,
+            actual_minutes: None,
+            created_at: "2026-07-23T00:00:00Z".into(),
+            updated_at: "2026-07-23T00:00:00Z".into(),
+        }
+    }
+
     #[test]
     fn parse_edited_task_empty_end_at_is_skipped() {
         let input = "title: t\nend_at:\n";
@@ -658,5 +706,170 @@ mod tests {
         };
         let err = format_steps_for_editing(&[row]).unwrap_err();
         assert!(err.contains("depends_on"), "error: {err}");
+    }
+
+    // ── Habit task dependency references (#933) ──────────────────────────
+
+    #[test]
+    fn format_task_for_editing_uses_habit_scoped_reference() {
+        let mut habit_map = HashMap::new();
+        habit_map.insert("habit-1".into(), 7);
+
+        let standalone = task_row("task-a", 3, "standalone", None, &[]);
+        let habit_task = task_row("task-b", 3, "habit task", Some("habit-1"), &[]);
+        let edited = task_row("edited", 1, "edited", None, &["task-a", "task-b"]);
+
+        let formatted = format_task_for_editing(&edited, &[standalone, habit_task], &habit_map);
+        assert!(
+            formatted.contains("depends: #3, h7#3"),
+            "expected '#3, h7#3' in:\n{formatted}"
+        );
+    }
+
+    #[test]
+    fn format_task_for_editing_falls_back_when_habit_map_is_empty() {
+        let habit_task = task_row("task-b", 3, "habit task", Some("habit-1"), &[]);
+        let edited = task_row("edited", 1, "edited", None, &["task-b"]);
+
+        let formatted = format_task_for_editing(&edited, &[habit_task], &HashMap::new());
+        assert!(
+            formatted.contains("depends: #3"),
+            "expected '#3' fallback in:\n{formatted}"
+        );
+    }
+
+    #[test]
+    fn format_task_for_editing_renders_dependency_as_h1_hash_5() {
+        let mut habit_map = HashMap::new();
+        habit_map.insert("habit-1".into(), 1);
+
+        let habit_task = task_row("task-b", 5, "habit task", Some("habit-1"), &[]);
+        let edited = task_row("edited", 1, "edited", None, &["task-b"]);
+
+        let formatted = format_task_for_editing(&edited, &[habit_task], &habit_map);
+        assert!(
+            formatted.contains("depends: h1#5"),
+            "expected 'h1#5' in:\n{formatted}"
+        );
+    }
+
+    #[test]
+    fn parse_edited_task_preserves_habit_dependency_reference() {
+        let input = "depends: h1#5, #3, task-uuid\n";
+        let update = parse_edited_task(input).unwrap();
+        assert_eq!(
+            update.depends,
+            Some(vec![
+                "h1#5".to_string(),
+                "3".to_string(),
+                "task-uuid".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_edited_task_strips_only_leading_hash_from_habit_dependency() {
+        // A leading `#` on a habit-scoped reference is acceptable input and
+        // must be stripped without removing the `#` separator inside `h1#5`.
+        let input = "depends: #h1#5, #3\n";
+        let update = parse_edited_task(input).unwrap();
+        assert_eq!(
+            update.depends,
+            Some(vec!["h1#5".to_string(), "3".to_string()])
+        );
+    }
+
+    #[tokio::test]
+    async fn parse_and_resolve_habit_dependency_reference_round_trip() {
+        use takusu_local_lib::config::LocalConfig;
+        use takusu_local_lib::storage_sqlite::SqliteStorage;
+        use takusu_storage::{CreateHabit, CreateTask, Storage};
+
+        let cfg = LocalConfig {
+            db: "sqlite::memory:".into(),
+            jwt_secret: "test-secret".into(),
+            ..Default::default()
+        };
+        let storage = SqliteStorage::init(&cfg).await.unwrap();
+
+        let habit = storage
+            .create_habit(&CreateHabit {
+                title: "h".into(),
+                description: None,
+                recurrence: "RRULE:FREQ=DAILY".into(),
+                start_time: "09:00".into(),
+                end_time: "09:30".into(),
+                avg_minutes: 10,
+                sigma_minutes: None,
+                parallelizable: None,
+                allows_parallel: None,
+                abandonability: None,
+                fixed: None,
+                window_mode: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(habit.display_id, 1, "first habit should have display_id 1");
+
+        let mut habit_task_id = String::new();
+        for i in 0..5 {
+            let task = storage
+                .create_task(&CreateTask {
+                    title: format!("h{i}"),
+                    description: None,
+                    start_at: None,
+                    end_at: "2026-07-24T23:59:00Z".into(),
+                    avg_minutes: 10,
+                    sigma_minutes: None,
+                    depends: None,
+                    parallelizable: None,
+                    allows_parallel: None,
+                    abandonability: None,
+                    ical_uid: None,
+                    habit_id: Some(habit.id.clone()),
+                    fixed: None,
+                    habit_step_id: None,
+                    quantity_total: None,
+                    quantity_done: None,
+                    quantity_unit: None,
+                    original_quantity_total: None,
+                })
+                .await
+                .unwrap();
+            habit_task_id = task.id;
+        }
+
+        // Parse the editor output for a task that depends on h1#5.
+        let input = "depends: h1#5\n";
+        let update = parse_edited_task(input).unwrap();
+        assert_eq!(update.depends, Some(vec!["h1#5".to_string()]));
+
+        // Create the dependent task and verify that h1#5 resolves to the habit task.
+        let target = storage
+            .create_task(&CreateTask {
+                title: "target".into(),
+                description: None,
+                start_at: None,
+                end_at: "2026-07-25T23:59:00Z".into(),
+                avg_minutes: 10,
+                sigma_minutes: None,
+                depends: update.depends,
+                parallelizable: None,
+                allows_parallel: None,
+                abandonability: None,
+                ical_uid: None,
+                habit_id: None,
+                fixed: None,
+                habit_step_id: None,
+                quantity_total: None,
+                quantity_done: None,
+                quantity_unit: None,
+                original_quantity_total: None,
+            })
+            .await
+            .unwrap();
+
+        let resolved: Vec<String> = serde_json::from_str(&target.depends).unwrap();
+        assert_eq!(resolved, vec![habit_task_id]);
     }
 }

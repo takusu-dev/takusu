@@ -3,18 +3,7 @@ use takusu_storage::{
     HabitRow, HabitScheduledSpanRow, HabitStepRow, ScheduleEntry, SkillRow, TaskRow, TokenRow,
 };
 
-/// Build the display label for a task ID.
-/// Habit-generated tasks show `h{habit_display_id}#{task_display_id}` (#305);
-/// other tasks show `#{task_display_id}`.
-fn task_id_label(task: &TaskRow, habit_map: &std::collections::HashMap<String, i64>) -> String {
-    if let Some(hid) = task.habit_id.as_deref()
-        && let Some(&hdisplay) = habit_map.get(hid)
-    {
-        format!("h{}#{}", hdisplay, task.display_id)
-    } else {
-        format!("#{}", task.display_id)
-    }
-}
+use crate::task_ref::task_reference;
 
 pub fn display_task_detail(
     task: &TaskRow,
@@ -33,7 +22,7 @@ pub fn display_task_detail(
     println!(
         "{} {} {}",
         status_marker,
-        task_id_label(task, habit_map),
+        task_reference(task, habit_map),
         task.title
     );
     println!(
@@ -93,7 +82,7 @@ pub fn display_tasks(
             "skipped" => "[-]",
             _ => "[?]",
         };
-        let short_id = task_id_label(t, habit_map);
+        let short_id = task_reference(t, habit_map);
         println!("{} {} {}", status_marker, short_id, t.title);
         println!(
             "   deadline: {} | est: {}min (+/-{}) | abandon: {:.1} | parallel: {} | host: {}",
@@ -143,7 +132,7 @@ pub fn display_schedule(
         let task = task_map.get(e.task_id.as_str());
         let title = task.map(|t| t.title.as_str()).unwrap_or("(unknown)");
         let id_label = task
-            .map(|t| task_id_label(t, habit_map))
+            .map(|t| task_reference(t, habit_map))
             .unwrap_or_else(|| e.task_id[..8].to_string());
         let start = fmt_simple(&e.start_at, tz);
         let end = fmt_simple(&e.end_at, tz);

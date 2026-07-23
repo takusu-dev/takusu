@@ -5,25 +5,14 @@ use takusu_storage::{
     HabitRow, HabitScheduledSpanRow, HabitStepRow, ScheduleEntry, SkillRow, TaskRow, TokenRow,
 };
 
+use crate::task_ref::task_reference;
+
 /// Parse a recurrence JSON string into a human-readable summary.
 /// Falls back to the raw string if parsing fails.
 fn format_recurrence(raw: &str) -> String {
     serde_json::from_str::<RecurrenceRule>(raw)
         .map(|r| summarize(&r))
         .unwrap_or_else(|_| raw.to_string())
-}
-
-/// Build the display label for a task ID.
-/// Habit-generated tasks show `h{habit_display_id}#{task_display_id}` (#305);
-/// other tasks show `#{task_display_id}`.
-fn task_id_label(task: &TaskRow, habit_map: &std::collections::HashMap<String, i64>) -> String {
-    if let Some(hid) = task.habit_id.as_deref()
-        && let Some(&hdisplay) = habit_map.get(hid)
-    {
-        format!("h{}#{}", hdisplay, task.display_id)
-    } else {
-        format!("#{}", task.display_id)
-    }
 }
 
 pub fn display_task_detail(
@@ -76,7 +65,7 @@ pub fn display_task_detail(
         Cell::new("Completed").fg(Color::Cyan),
     ]);
     table.add_row(vec![
-        Cell::new(task_id_label(task, habit_map)),
+        Cell::new(task_reference(task, habit_map)),
         Cell::new(&task.title),
         Cell::new(&task.status).fg(status_color),
         Cell::new(
@@ -396,7 +385,7 @@ pub fn display_tasks(
             .as_deref()
             .map(|s| format_datetime(s, tz))
             .unwrap_or_else(|| "—".into());
-        let short_id = task_id_label(t, habit_map);
+        let short_id = task_reference(t, habit_map);
         table.add_row(vec![
             Cell::new(short_id),
             Cell::new(&t.title),
@@ -454,7 +443,7 @@ pub fn display_schedule(
         let task = task_map.get(e.task_id.as_str());
         let title = task.map(|t| t.title.as_str()).unwrap_or("(unknown)");
         let id_label = task
-            .map(|t| task_id_label(t, habit_map))
+            .map(|t| task_reference(t, habit_map))
             .unwrap_or_else(|| e.task_id[..8].to_string());
         let start = format_datetime(&e.start_at, tz);
         let end = format_datetime(&e.end_at, tz);
