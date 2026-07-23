@@ -31,3 +31,4 @@ web-time.workspace = true
 async-trait.workspace = true
 reqwest = { workspace = true }
 petgraph.workspace = true
+moka = { version = "0.12.15", features = ["sync"] }
