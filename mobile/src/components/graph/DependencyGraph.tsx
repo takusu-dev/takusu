@@ -71,8 +71,10 @@ export interface DependencyGraphProps {
   nodeRadius?: number;
   onTapNode?: (taskId: string) => void;
   /** Cut multiple edges at once — used by line-cut (#382) */
-  onCutEdges?: (edges: { source: string; target: string }[]) => void;
-  onAddEdge?: (sourceId: string, targetId: string) => void;
+  onCutEdges?: (
+    edges: { source: string; target: string }[],
+  ) => void | Promise<void>;
+  onAddEdge?: (sourceId: string, targetId: string) => void | Promise<void>;
   /** Fixed height for embedded use (TaskDetailView); flex:1 when omitted */
   height?: number;
 }
