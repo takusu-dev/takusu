@@ -1223,26 +1223,66 @@ export function AgentView() {
     const max = sessionHistoryCountRef.current;
     const activeId = sessionIdRef.current;
     const currentIds = sessionIdsRef.current;
-    const {
-      ids: trimmed,
-      index,
-      removed,
-    } = trimSessionIds(currentIds, max, activeId);
+    const { removed } = trimSessionIds(currentIds, max, activeId);
     if (removed.length === 0) return;
-    Promise.all(removed.map((id) => deleteSessionSnapshot(id)))
-      .catch(() => {})
-      .finally(async () => {
-        sessionIdsRef.current = trimmed;
-        setSessionIds(trimmed);
-        if (index !== activeIndexRef.current) {
-          setActiveIndex(index);
-          activeIndexRef.current = index;
+
+    let cancelled = false;
+    async function trimHistory() {
+      const deletedIds: string[] = [];
+      for (const id of removed) {
+        if (cancelled || sessionIdRef.current === id) continue;
+        try {
+          await deleteSessionSnapshot(id);
+          deletedIds.push(id);
+        } catch (e) {
+          console.error(`Failed to delete session snapshot ${id}:`, e);
         }
+      }
+      if (cancelled) return;
+
+      // If the user switched sessions or a newer effect run updated the refs,
+      // do not overwrite the newer state with this stale trim result.
+      if (
+        sessionIdsRef.current !== currentIds ||
+        sessionIdRef.current !== activeId
+      ) {
+        return;
+      }
+
+      if (deletedIds.length === 0) return;
+
+      const keptIds = currentIds.filter((id) => !deletedIds.includes(id));
+      const newIndex =
+        activeId != null
+          ? keptIds.indexOf(activeId)
+          : Math.max(0, keptIds.length - 1);
+      if (activeId != null && newIndex === -1) return;
+
+      sessionIdsRef.current = keptIds;
+      setSessionIds(keptIds);
+      if (newIndex !== activeIndexRef.current) {
+        setActiveIndex(newIndex);
+        activeIndexRef.current = newIndex;
+      }
+      if (cancelled) return;
+
+      try {
         await saveSessionHistory({
-          ids: trimmed,
-          activeIndex: activeIndexRef.current,
-        }).catch(() => {});
-      });
+          ids: keptIds,
+          activeIndex: newIndex,
+        });
+      } catch (e) {
+        if (!cancelled) {
+          console.error('Failed to save session history:', e);
+        }
+      }
+    }
+
+    trimHistory();
+
+    return () => {
+      cancelled = true;
+    };
   }, [sessionHistoryCount, historyReady]);
 
   useFocusEffect(
