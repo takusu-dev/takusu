@@ -104,9 +104,9 @@ struct McpServer {
 
 impl McpServer {
     async fn create_session(&self) -> Result<(String, Arc<AgentSession>), AgentError> {
-        let id = uuid::Uuid::now_v7().to_string();
         let session = takusu_agent::runner::build_session(&self.config, self.client.clone())?;
         let session = Arc::new(session);
+        let id = session.session_id().to_string();
         let mut sessions = self.sessions.lock().await;
         let session = sessions.insert(id.clone(), session);
         Ok((id, session))
