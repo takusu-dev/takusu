@@ -79,6 +79,17 @@ fn validate_minutes(avg: i64, sigma: Option<i64>) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Reject titles that cannot be NFKC-normalized for similar-task search (empty,
+/// control-character only, or exceeding the normalized-title scalar limit).
+/// Validating at the boundary keeps `normalized_title` always populated for
+/// stored tasks, so a task is never silently excluded from similar-task search
+/// (#942).
+fn validate_title(title: &str) -> Result<(), AppError> {
+    takusu_util::memory::normalize_text(title, Some(takusu_util::memory::MAX_CONTENT_SCALARS))
+        .map_err(|e| AppError::BadRequest(format!("invalid title: {e}")))?;
+    Ok(())
+}
+
 /// Verify the recurrence string parses as a `RecurrenceRule` so that bad JSON
 /// is rejected at the API boundary instead of crashing later (#285).
 fn validate_recurrence(recurrence: &str) -> Result<(), AppError> {
@@ -991,6 +1002,7 @@ impl TakusuApp {
 
     pub async fn create_task(&self, body: &CreateTask) -> Result<TaskRow, AppError> {
         validate_minutes(body.avg_minutes, body.sigma_minutes)?;
+        validate_title(&body.title)?;
         let settings = self.get_settings_or_default().await?;
         let tz = parse_settings_timezone(&settings.tz)?;
         validate_task_datetimes(
@@ -1067,6 +1079,9 @@ impl TakusuApp {
             validate_minutes(avg, body.sigma_minutes)?;
         } else if let Some(sigma) = body.sigma_minutes {
             validate_minutes(0, Some(sigma))?;
+        }
+        if let Some(ref t) = body.title {
+            validate_title(t)?;
         }
         let settings = self.get_settings_or_default().await?;
         let tz = parse_settings_timezone(&settings.tz)?;
@@ -1164,6 +1179,7 @@ impl TakusuApp {
 
     pub async fn replace_task(&self, id: &str, body: &CreateTask) -> Result<TaskRow, AppError> {
         validate_minutes(body.avg_minutes, body.sigma_minutes)?;
+        validate_title(&body.title)?;
         let settings = self.get_settings_or_default().await?;
         let tz = parse_settings_timezone(&settings.tz)?;
         validate_task_datetimes(

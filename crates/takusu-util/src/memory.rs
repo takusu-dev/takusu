@@ -5,6 +5,13 @@ pub const MAX_KEY_SCALARS: usize = 256;
 pub const MAX_CONTENT_SCALARS: usize = 4096;
 pub const MAX_QUERY_SCALARS: usize = 256;
 
+/// Worst-case cap on candidate rows fetched from SQL for similar-task search.
+/// The bigram pre-filter already narrows candidates sharply; this only guards
+/// against a very common bigram transferring an unbounded row set. Far above
+/// any personal-scale completed-task count, so it never drops a relevant match
+/// in practice (#942).
+pub const SIMILAR_TASK_CANDIDATE_CAP: usize = 10000;
+
 /// Shared Unicode normalization for memory keys, content, and search queries.
 ///
 /// 1. NFKC
@@ -211,6 +218,44 @@ pub fn escape_like_pattern(s: &str) -> String {
         .collect()
 }
 
+/// Build SQL `LIKE` patterns (wrapped in `%…%`, escaped for the `\` escape
+/// character) that pre-filter candidate titles for similar-task search.
+///
+/// The patterns form a strict superset of the titles that would score non-zero
+/// under [`similar_task_score_pre_normalized`], so using them as an SQL
+/// pre-filter never drops a true match:
+/// - a non-zero Dice score requires at least one shared bigram, i.e. the title
+///   contains that bigram as a substring;
+/// - the substring bonus for a query of length ≥ 2 likewise implies the title
+///   contains a query bigram;
+/// - a single-scalar query has no bigrams, so we fall back to a single-character
+///   containment pattern (the substring bonus is its only scoring path).
+///
+/// Callers join the patterns with `OR` and bind each one as a SQL parameter
+/// (never interpolate them into the SQL text). The result is sorted and
+/// deduplicated for deterministic SQL.
+pub fn similar_task_filter_patterns(normalized_query: &str) -> Vec<String> {
+    let bg = bigrams(normalized_query);
+    let mut out: Vec<String> = if bg.is_empty() {
+        if normalized_query.is_empty() {
+            return Vec::new();
+        }
+        vec![format!("%{}%", escape_like_pattern(normalized_query))]
+    } else {
+        bg.into_iter()
+            .map(|(a, b)| {
+                format!(
+                    "%{}%",
+                    escape_like_pattern(&[a, b].iter().collect::<String>())
+                )
+            })
+            .collect()
+    };
+    out.sort();
+    out.dedup();
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,6 +311,46 @@ mod tests {
     #[test]
     fn similar_task_excludes_empty_title() {
         assert_eq!(similar_task_score("x", "!!!"), None);
+    }
+
+    #[test]
+    fn filter_patterns_are_superset_of_dice_matches() {
+        // A reordered title shares bigrams but no substring with the query; the
+        // patterns must still match it (recall safety).
+        let q = normalize_query("数学演習").unwrap();
+        let title = normalize_text("演習数学", Some(MAX_CONTENT_SCALARS)).unwrap();
+        assert!(similar_task_score_pre_normalized(&q, &title).is_some());
+        let pats = similar_task_filter_patterns(&q);
+        assert!(
+            pats.iter()
+                .any(|p| title.contains(p.trim_start_matches('%').trim_end_matches('%')))
+        );
+    }
+
+    #[test]
+    fn filter_patterns_single_scalar_fallback() {
+        let pats = similar_task_filter_patterns("x");
+        assert_eq!(pats, vec!["%x%".to_string()]);
+    }
+
+    #[test]
+    fn filter_patterns_empty_query() {
+        assert!(similar_task_filter_patterns("").is_empty());
+    }
+
+    #[test]
+    fn filter_patterns_escape_like_metachars() {
+        // A bigram containing '%' must be escaped so it is matched literally.
+        let pats = similar_task_filter_patterns("a%b");
+        assert!(pats.contains(&"%a\\%%".to_string()));
+        assert!(pats.contains(&"%\\%b%".to_string()));
+    }
+
+    #[test]
+    fn filter_patterns_sorted_and_deduped() {
+        let pats = similar_task_filter_patterns("aaaa");
+        // Only one distinct bigram ("aa").
+        assert_eq!(pats, vec!["%aa%".to_string()]);
     }
 
     #[test]

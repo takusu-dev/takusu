@@ -143,6 +143,17 @@ pub(crate) fn validate_minutes(avg: i64, sigma: Option<i64>) -> Result<(), Worke
     Ok(())
 }
 
+/// Reject titles that cannot be NFKC-normalized for similar-task search (empty,
+/// control-character only, or exceeding the normalized-title scalar limit).
+/// Validating at the boundary keeps `normalized_title` always populated for
+/// stored tasks, so a task is never silently excluded from similar-task search
+/// (#942). Mirrors `takusu-local-lib`'s `validate_title`.
+pub(crate) fn validate_title(title: &str) -> Result<(), WorkerError> {
+    takusu_util::memory::normalize_text(title, Some(takusu_util::memory::MAX_CONTENT_SCALARS))
+        .map_err(|e| WorkerError::BadRequest(format!("invalid title: {e}")))?;
+    Ok(())
+}
+
 /// Reject nonsensical quantity values and ensure `done <= total` when both
 /// sides are provided.
 pub(crate) fn validate_quantity(
