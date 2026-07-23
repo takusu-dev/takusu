@@ -30,9 +30,15 @@ interface GraphViewProps {
   client: TakusuClient | null;
   onBack: () => void;
   onTaskPress?: (taskId: string) => void;
+  refreshKey?: number | null;
 }
 
-export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
+export function GraphView({
+  client,
+  onBack,
+  onTaskPress,
+  refreshKey,
+}: GraphViewProps) {
   const { theme, colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [editMode, setEditMode] = useState(false);
@@ -122,12 +128,13 @@ export function GraphView({ client, onBack, onTaskPress }: GraphViewProps) {
 
   // Refresh when focused and the client is ready. This covers both the
   // initial mount and returning from TaskDetailView after editing edges (#386).
+  // refreshKey lets HomeView trigger a reload after a schedule operation finishes.
   const isFocused = useIsFocused();
   useEffect(() => {
     if (client && isFocused) {
       refresh();
     }
-  }, [client, isFocused, refresh]);
+  }, [client, isFocused, refresh, refreshKey]);
 
   function handleTapNode(taskId: string) {
     haptic.light();

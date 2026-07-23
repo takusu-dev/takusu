@@ -138,6 +138,38 @@ describe('useScheduleOperation', () => {
       ),
     );
     expect(mockRefresh).not.toHaveBeenCalled();
+    expect(result.current.lastCompletedAt).toBeNull();
+  });
+
+  it('refreshes and updates lastCompletedAt when reschedule succeeds', async () => {
+    const { result } = await renderUseScheduleOperation();
+
+    await act(() => {
+      result.current.startScheduleOperation(
+        'reschedule',
+        { mode: 'range' },
+        '再スケジュール中',
+      );
+    });
+
+    const [, operationId] =
+      mockedTakusuServerModule.runScheduleOperation.mock.calls[0];
+    mockedTakusuServerModule.getScheduleOperationStatus.mockResolvedValue({
+      id: operationId,
+      status: 'succeeded',
+      operation: 'reschedule',
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(500);
+    });
+
+    await waitFor(() => expect(mockRefresh).toHaveBeenCalledTimes(1));
+    expect(mockClient.triggerSync).not.toHaveBeenCalled();
+    expect(
+      mockedTakusuServerModule.clearScheduleOperationStatus,
+    ).toHaveBeenCalled();
+    expect(result.current.lastCompletedAt).not.toBeNull();
   });
 
   it('does not enqueue when workersUrl or workersToken is missing', async () => {
