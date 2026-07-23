@@ -4230,6 +4230,7 @@ name = "takusu-ical"
 version = "0.20260723.1"
 dependencies = [
  "codspeed-criterion-compat",
+ "jiff",
  "serde",
  "thiserror 2.0.18",
 ]

@@ -7,10 +7,11 @@ const CALENDAR: &str = include_str!("fixtures/calendar.ics");
 fn bench_parse_ical(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_ical");
     group.sample_size(100);
+    let tz = jiff::tz::TimeZone::UTC;
 
     group.bench_function("parse 50-event calendar", |b| {
         b.iter(|| {
-            let tasks = parse_ical(CALENDAR).unwrap();
+            let tasks = parse_ical(CALENDAR, &tz).unwrap();
             black_box(tasks);
         })
     });

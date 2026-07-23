@@ -548,6 +548,15 @@ fn iso_to_point(iso: &str, tz: &jiff::tz::TimeZone) -> Result<Point, AppError> {
     Ok(Point::from_timestamp(ts, 5))
 }
 
+/// ISO 8601 日時文字列を絶対 UTC 表記に正規化する。
+/// 明示的なオフセット/Z が付いていればそのまま UTC に変換し、
+/// naive な文字列は設定タイムゾーンで解釈して絶対時刻にする。
+fn normalize_iso_datetime(iso: &str, tz: &jiff::tz::TimeZone) -> Result<String, AppError> {
+    let ts = takusu_util::parse_datetime_to_timestamp(iso, tz)
+        .map_err(|e| AppError::BadRequest(format!("invalid datetime: {e}")))?;
+    Ok(ts.to_string())
+}
+
 fn point_to_iso(slot: i64) -> Result<String, AppError> {
     let secs = slot
         .checked_mul(5 * 60)
@@ -990,7 +999,12 @@ impl TakusuApp {
             None,
             None,
         )?;
-        if let Some(dep_ids) = &body.depends
+        let mut body = body.clone();
+        if let Some(ref s) = body.start_at {
+            body.start_at = Some(normalize_iso_datetime(s, &tz)?);
+        }
+        body.end_at = normalize_iso_datetime(&body.end_at, &tz)?;
+        if let Some(ref dep_ids) = body.depends
             && !dep_ids.is_empty()
         {
             let tasks = self
@@ -1011,15 +1025,12 @@ impl TakusuApp {
                 }
                 resolved.push(full);
             }
-            let mut body = body.clone();
             body.depends = Some(resolved);
-            return self
-                .storage
-                .create_task(&body)
-                .await
-                .map_err(storage_to_app);
         }
-        self.storage.create_task(body).await.map_err(storage_to_app)
+        self.storage
+            .create_task(&body)
+            .await
+            .map_err(storage_to_app)
     }
 
     pub async fn list_tasks(&self, query: &TaskQuery) -> Result<Vec<TaskRow>, AppError> {
@@ -1038,6 +1049,8 @@ impl TakusuApp {
         } else if let Some(sigma) = body.sigma_minutes {
             validate_minutes(0, Some(sigma))?;
         }
+        let settings = self.get_settings_or_default().await?;
+        let tz = parse_settings_timezone(&settings.tz)?;
         let mut body = body.clone();
 
         // Fetch the existing task once if any downstream logic needs it.
@@ -1054,8 +1067,6 @@ impl TakusuApp {
         // Validate datetime fields and their logical ordering (#934).
         if body.start_at.is_some() || body.end_at.is_some() {
             let existing = existing.as_ref().unwrap();
-            let settings = self.get_settings_or_default().await?;
-            let tz = parse_settings_timezone(&settings.tz)?;
             validate_task_datetimes(
                 body.start_at.as_deref(),
                 body.end_at.as_deref(),
@@ -1063,6 +1074,13 @@ impl TakusuApp {
                 existing.start_at.as_deref(),
                 Some(&existing.end_at),
             )?;
+        }
+
+        if let Some(ref s) = body.start_at {
+            body.start_at = Some(normalize_iso_datetime(s, &tz)?);
+        }
+        if let Some(ref s) = body.end_at {
+            body.end_at = Some(normalize_iso_datetime(s, &tz)?);
         }
 
         if let Some(dep_ids) = &body.depends {
@@ -1136,7 +1154,12 @@ impl TakusuApp {
             None,
             None,
         )?;
-        if let Some(dep_ids) = &body.depends
+        let mut body = body.clone();
+        if let Some(ref s) = body.start_at {
+            body.start_at = Some(normalize_iso_datetime(s, &tz)?);
+        }
+        body.end_at = normalize_iso_datetime(&body.end_at, &tz)?;
+        if let Some(ref dep_ids) = body.depends
             && !dep_ids.is_empty()
         {
             let tasks = self
@@ -1167,7 +1190,6 @@ impl TakusuApp {
                 .collect();
             crate::graph::detect_cycle(&adj)
                 .map_err(|_| AppError::BadRequest("循環依存が検出されました".into()))?;
-            let mut body = body.clone();
             body.depends = Some(resolved);
             return self
                 .storage
@@ -1176,7 +1198,7 @@ impl TakusuApp {
                 .map_err(storage_to_app);
         }
         self.storage
-            .replace_task(id, body)
+            .replace_task(id, &body)
             .await
             .map_err(storage_to_app)
     }
@@ -1262,8 +1284,10 @@ impl TakusuApp {
     }
 
     pub async fn import_ical(&self, ical_body: &str) -> Result<IcalImportResult, AppError> {
-        let events =
-            takusu_ical::parse_ical(ical_body).map_err(|e| AppError::BadRequest(e.to_string()))?;
+        let settings = self.get_settings_or_default().await?;
+        let tz = parse_settings_timezone(&settings.tz)?;
+        let events = takusu_ical::parse_ical(ical_body, &tz)
+            .map_err(|e| AppError::BadRequest(e.to_string()))?;
         let mut imported = 0usize;
         let mut task_ids = Vec::new();
         for event in &events {
@@ -1272,6 +1296,8 @@ impl TakusuApp {
             {
                 continue;
             }
+            let avg_minutes = takusu_util::minutes_between(&event.start_at, &event.end_at).max(1);
+            validate_minutes(avg_minutes, Some(0))?;
             let task = self
                 .storage
                 .create_task(&CreateTask {
@@ -1279,7 +1305,7 @@ impl TakusuApp {
                     description: event.description.clone(),
                     start_at: Some(event.start_at.to_string()),
                     end_at: event.end_at.to_string(),
-                    avg_minutes: 0,
+                    avg_minutes,
                     sigma_minutes: Some(0),
                     depends: Some(vec![]),
                     parallelizable: Some(false),
@@ -1287,7 +1313,7 @@ impl TakusuApp {
                     abandonability: Some(0.5),
                     ical_uid: event.uid.clone(),
                     habit_id: None,
-                    fixed: None,
+                    fixed: Some(true),
                     habit_step_id: None,
                     quantity_total: None,
                     quantity_done: None,

@@ -581,11 +581,31 @@ async fn ical_import() {
         .header("content-type", "text/calendar")
         .body(Body::from(ical.to_string()))
         .unwrap();
-    let res = app.oneshot(req).await.unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
     assert_eq!(body["imported"], 2);
-    assert_eq!(body["task_ids"].as_array().unwrap().len(), 2);
+    let ids = body["task_ids"].as_array().unwrap();
+    assert_eq!(ids.len(), 2);
+
+    for id in ids {
+        let id = id.as_str().unwrap();
+        let get_req = auth_req(Method::GET, &format!("/api/tasks/{id}"));
+        let res = app.clone().oneshot(get_req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let task: serde_json::Value =
+            serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+        assert!(
+            !task["title"].as_str().unwrap().contains('\r'),
+            "title should not contain \\r"
+        );
+        assert!(task["start_at"].as_str().unwrap().contains('Z'));
+        assert!(task["end_at"].as_str().unwrap().contains('Z'));
+        assert_eq!(task["fixed"], true);
+        // 120 min (会議) or 60 min (レビュー)
+        let avg = task["avg_minutes"].as_i64().unwrap();
+        assert!(avg == 120 || avg == 60, "unexpected avg_minutes: {avg}");
+    }
 }
 
 #[tokio::test]
