@@ -1,4 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent};
+use takusu_storage::{HabitRow, TaskRow};
 
 use crate::app::{App, Modal};
 
@@ -93,7 +94,7 @@ async fn edit_task(app: &mut App, terminal: &mut ratatui::DefaultTerminal) {
         None => return,
     };
 
-    let content = format_edit_text(&task);
+    let content = format_edit_text(&task, &app.all_tasks, &app.habits);
 
     ratatui::restore();
     let edited = open_editor(&content);
@@ -125,13 +126,12 @@ async fn edit_task(app: &mut App, terminal: &mut ratatui::DefaultTerminal) {
     }
 }
 
-fn format_edit_text(task: &takusu_storage::TaskRow) -> String {
-    let depends = serde_json::from_str::<Vec<String>>(&task.depends)
-        .unwrap_or_default()
-        .join(", ");
+fn format_edit_text(task: &TaskRow, all_tasks: &[TaskRow], habits: &[HabitRow]) -> String {
+    let depends = format_task_depends(task, all_tasks, habits);
     format!(
         "# Edit task. Lines starting with '#' are comments.
-# Empty fields will not be updated; use '-' to clear optional fields.
+# Empty fields are not updated; '-' clears description, start_at,
+# quantity_unit, quantity_total and depends (use '0' for quantity_done).
 title: {title}
 description: {desc}
 start_at: {start}
@@ -165,6 +165,25 @@ allows_parallel: {allows}",
     )
 }
 
+fn format_task_depends(task: &TaskRow, all_tasks: &[TaskRow], habits: &[HabitRow]) -> String {
+    serde_json::from_str::<Vec<String>>(&task.depends)
+        .unwrap_or_default()
+        .iter()
+        .map(|id| task_ref(id, all_tasks, habits).unwrap_or_else(|| "?".to_string()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn task_ref(id: &str, all_tasks: &[TaskRow], habits: &[HabitRow]) -> Option<String> {
+    let t = all_tasks.iter().find(|t| t.id == id)?;
+    if let Some(habit_id) = t.habit_id.as_ref() {
+        let habit = habits.iter().find(|h| &h.id == habit_id)?;
+        Some(format!("h{}#{}", habit.display_id, t.display_id))
+    } else {
+        Some(format!("#{}", t.display_id))
+    }
+}
+
 fn parse_edit_text(content: &str) -> Result<takusu_storage::UpdateTask, String> {
     let mut update = takusu_storage::UpdateTask::default();
     for line in content.lines() {
@@ -183,18 +202,22 @@ fn parse_edit_text(content: &str) -> Result<takusu_storage::UpdateTask, String> 
         }
         match key {
             "title" => update.title = Some(value.to_string()),
-            "description" => update.description = parse_opt_string(value),
-            "start_at" => update.start_at = parse_opt_string(value),
-            "end_at" => update.end_at = parse_opt_string(value),
+            "description" => update.description = parse_clear_string(value),
+            "start_at" => update.start_at = parse_clear_string(value),
+            "end_at" => {
+                if value != "-" {
+                    update.end_at = Some(value.to_string());
+                }
+            }
             "status" => update.status = Some(value.to_string()),
-            "avg_minutes" => update.avg_minutes = parse_opt_i64(value)?,
-            "sigma_minutes" => update.sigma_minutes = parse_opt_i64(value)?,
-            "abandonability" => update.abandonability = parse_opt_f64(value)?,
+            "avg_minutes" => update.avg_minutes = parse_i64(value)?,
+            "sigma_minutes" => update.sigma_minutes = parse_i64(value)?,
+            "abandonability" => update.abandonability = parse_f64(value)?,
             "fixed" => update.fixed = Some(parse_bool(value)?),
-            "depends" => update.depends = parse_opt_depends(value)?,
-            "quantity_total" => update.quantity_total = parse_opt_i64(value)?,
-            "quantity_done" => update.quantity_done = parse_opt_i64(value)?,
-            "quantity_unit" => update.quantity_unit = parse_opt_string(value),
+            "depends" => update.depends = parse_depends(value)?,
+            "quantity_total" => update.quantity_total = parse_clear_i64(value)?,
+            "quantity_done" => update.quantity_done = parse_i64(value)?,
+            "quantity_unit" => update.quantity_unit = parse_clear_string(value),
             "parallelizable" => update.parallelizable = Some(parse_bool(value)?),
             "allows_parallel" => update.allows_parallel = Some(parse_bool(value)?),
             _ => {}
@@ -203,16 +226,28 @@ fn parse_edit_text(content: &str) -> Result<takusu_storage::UpdateTask, String> 
     Ok(update)
 }
 
-fn parse_opt_string(value: &str) -> Option<String> {
+/// '-' clears the field (Some("")); any other non-empty value is kept as-is.
+fn parse_clear_string(value: &str) -> Option<String> {
+    Some(String::new())
+        .filter(|_| value == "-")
+        .or(Some(value.to_string()))
+}
+
+/// '-' clears the field (Some(0)); any other non-empty value is parsed.
+fn parse_clear_i64(value: &str) -> Result<Option<i64>, String> {
     if value == "-" {
-        None
+        Ok(Some(0))
     } else {
-        Some(value.to_string())
+        value
+            .parse()
+            .map(Some)
+            .map_err(|_| format!("invalid integer: {value}"))
     }
 }
 
-fn parse_opt_i64(value: &str) -> Result<Option<i64>, String> {
+fn parse_i64(value: &str) -> Result<Option<i64>, String> {
     if value == "-" {
+        // '-' is not meaningful for required or non-nullable numeric fields.
         Ok(None)
     } else {
         value
@@ -222,7 +257,7 @@ fn parse_opt_i64(value: &str) -> Result<Option<i64>, String> {
     }
 }
 
-fn parse_opt_f64(value: &str) -> Result<Option<f64>, String> {
+fn parse_f64(value: &str) -> Result<Option<f64>, String> {
     if value == "-" {
         Ok(None)
     } else {
@@ -241,9 +276,10 @@ fn parse_bool(value: &str) -> Result<bool, String> {
     }
 }
 
-fn parse_opt_depends(value: &str) -> Result<Option<Vec<String>>, String> {
+fn parse_depends(value: &str) -> Result<Option<Vec<String>>, String> {
     if value == "-" {
-        return Ok(None);
+        // Clear dependencies: resolve_depends converts an empty list to '[]'.
+        return Ok(Some(Vec::new()));
     }
     if value.starts_with('[') {
         serde_json::from_str(value).map_err(|e| format!("invalid depends JSON: {e}"))
@@ -294,7 +330,6 @@ fn open_editor(content: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use takusu_storage::TaskRow;
 
     fn sample_task() -> TaskRow {
         TaskRow {
@@ -328,19 +363,122 @@ mod tests {
         }
     }
 
+    fn sample_dep_task() -> TaskRow {
+        TaskRow {
+            id: "dep-uuid".to_string(),
+            display_id: 42,
+            title: "Prerequisite".to_string(),
+            description: None,
+            start_at: None,
+            end_at: "2025-06-15T12:00:00Z".to_string(),
+            avg_minutes: 15,
+            sigma_minutes: 3,
+            depends: "[]".to_string(),
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            status: "completed".to_string(),
+            habit_id: None,
+            ical_uid: None,
+            user_edited: false,
+            fixed: false,
+            habit_step_id: None,
+            quantity_total: None,
+            quantity_done: 0,
+            quantity_unit: None,
+            completed_at: None,
+            split_from_task_id: None,
+            original_quantity_total: None,
+            actual_minutes: None,
+            created_at: "2025-06-14T00:00:00Z".to_string(),
+            updated_at: "2025-06-14T00:00:00Z".to_string(),
+        }
+    }
+
+    fn sample_habit_task() -> TaskRow {
+        TaskRow {
+            id: "habit-task-uuid".to_string(),
+            display_id: 7,
+            title: "Habit task".to_string(),
+            description: None,
+            start_at: None,
+            end_at: "2025-06-15T12:00:00Z".to_string(),
+            avg_minutes: 15,
+            sigma_minutes: 3,
+            depends: "[]".to_string(),
+            parallelizable: false,
+            allows_parallel: false,
+            abandonability: 0.5,
+            status: "pending".to_string(),
+            habit_id: Some("habit-uuid".to_string()),
+            ical_uid: None,
+            user_edited: false,
+            fixed: false,
+            habit_step_id: None,
+            quantity_total: None,
+            quantity_done: 0,
+            quantity_unit: None,
+            completed_at: None,
+            split_from_task_id: None,
+            original_quantity_total: None,
+            actual_minutes: None,
+            created_at: "2025-06-14T00:00:00Z".to_string(),
+            updated_at: "2025-06-14T00:00:00Z".to_string(),
+        }
+    }
+
+    fn sample_habit() -> HabitRow {
+        HabitRow {
+            id: "habit-uuid".to_string(),
+            display_id: 3,
+            title: "Daily habit".to_string(),
+            description: None,
+            active: true,
+            start_time: "08:00".to_string(),
+            end_time: "09:00".to_string(),
+            window_mode: "day".to_string(),
+            avg_minutes: 10,
+            sigma_minutes: 2,
+            abandonability: 0.5,
+            parallelizable: false,
+            allows_parallel: false,
+            fixed: false,
+            recurrence: r#"{"freq":"daily"}"#.to_string(),
+            created_at: "2025-06-14T00:00:00Z".to_string(),
+            updated_at: "2025-06-14T00:00:00Z".to_string(),
+        }
+    }
+
     #[test]
     fn format_edit_text_includes_all_fields() {
-        let text = format_edit_text(&sample_task());
+        let text = format_edit_text(&sample_task(), &[sample_dep_task()], &[]);
         assert!(text.contains("title: Read book"));
         assert!(text.contains("description: Important"));
         assert!(text.contains("start_at: 2025-06-15T08:00:00Z"));
         assert!(text.contains("end_at: 2025-06-15T10:00:00Z"));
-        assert!(text.contains("depends: dep-uuid"));
+        assert!(text.contains("depends: #42"));
+        assert!(!text.contains("dep-uuid"));
         assert!(text.contains("quantity_total: 100"));
         assert!(text.contains("quantity_done: 50"));
         assert!(text.contains("quantity_unit: pages"));
         assert!(text.contains("parallelizable: true"));
         assert!(text.contains("allows_parallel: false"));
+    }
+
+    #[test]
+    fn format_edit_text_uses_habit_ref_for_habit_tasks() {
+        let text = format_edit_text(
+            &sample_task_with_dep("habit-task-uuid"),
+            &[sample_habit_task()],
+            &[sample_habit()],
+        );
+        assert!(text.contains("depends: h3#7"));
+    }
+
+    fn sample_task_with_dep(dep_id: &str) -> TaskRow {
+        let mut task = sample_task();
+        task.depends = serde_json::to_string(&[dep_id.to_string()]).unwrap();
+        task
     }
 
     #[test]
@@ -372,19 +510,29 @@ quantity_unit: chapters
     }
 
     #[test]
-    fn parse_edit_text_clears_optional_fields_with_dash() {
+    fn parse_edit_text_dash_clears_supported_fields() {
         let text = r#"description: -
 start_at: -
 quantity_unit: -
 quantity_total: -
+depends: -
 sigma_minutes: -
 "#;
         let update = parse_edit_text(text).unwrap();
-        assert!(update.description.is_none());
-        assert!(update.start_at.is_none());
-        assert!(update.quantity_unit.is_none());
-        assert!(update.quantity_total.is_none());
-        assert!(update.sigma_minutes.is_none());
+        assert_eq!(update.description, Some(String::new()));
+        assert_eq!(update.start_at, Some(String::new()));
+        assert_eq!(update.quantity_unit, Some(String::new()));
+        assert_eq!(update.quantity_total, Some(0));
+        assert_eq!(update.depends, Some(Vec::new()));
+        // sigma_minutes is not nullable; '-' should be a no-op.
+        assert_eq!(update.sigma_minutes, None);
+    }
+
+    #[test]
+    fn parse_edit_text_dash_does_not_clear_required_string() {
+        let text = "end_at: -\n";
+        let update = parse_edit_text(text).unwrap();
+        assert_eq!(update.end_at, None);
     }
 
     #[test]

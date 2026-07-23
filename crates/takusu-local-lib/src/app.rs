@@ -286,8 +286,14 @@ fn validate_task_datetimes(
             .map_err(|e| AppError::Internal(format!("invalid {label}: {e}")))
     };
 
-    let start = start_at.map(|s| parse_new(s, "start_at")).transpose()?;
-    let end = end_at.map(|e| parse_new(e, "end_at")).transpose()?;
+    let start = start_at
+        .filter(|s| !s.is_empty())
+        .map(|s| parse_new(s, "start_at"))
+        .transpose()?;
+    let end = end_at
+        .filter(|s| !s.is_empty())
+        .map(|e| parse_new(e, "end_at"))
+        .transpose()?;
 
     let need_existing_start = start.is_none() && end.is_some();
     let need_existing_end = start.is_some() && end.is_none();
@@ -1111,10 +1117,19 @@ impl TakusuApp {
         }
 
         if let Some(ref s) = body.start_at {
-            body.start_at = Some(normalize_iso_datetime(s, &tz)?);
+            if s.is_empty() {
+                // Sentinel used by the TUI to clear start_at.
+            } else {
+                body.start_at = Some(normalize_iso_datetime(s, &tz)?);
+            }
         }
         if let Some(ref s) = body.end_at {
-            body.end_at = Some(normalize_iso_datetime(s, &tz)?);
+            if s.is_empty() {
+                // end_at is NOT NULL in the DB; an empty string is treated as no change.
+                body.end_at = None;
+            } else {
+                body.end_at = Some(normalize_iso_datetime(s, &tz)?);
+            }
         }
 
         if let Some(dep_ids) = &body.depends {
