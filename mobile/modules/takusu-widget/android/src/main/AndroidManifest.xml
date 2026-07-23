@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
   <application>
     <receiver
       android:name="expo.modules.takusuwidget.TakusuWidgetProvider"
@@ -10,9 +11,17 @@
         android:name="android.appwidget.provider"
         android:resource="@xml/takusu_widget_info" />
     </receiver>
+    <!--
+      RemoteViewsCompatService is declared by core-remoteviews without android:exported.
+      We set exported="true" and use tools:node="replace" so the final app manifest
+      definitely exports it. A manifest merger warning is emitted at the library-module
+      stage because the core-remoteviews declaration only appears during app merge, but
+      the final merged manifest is correct.
+    -->
     <service
       android:name="androidx.core.widget.RemoteViewsCompatService"
       android:permission="android.permission.BIND_REMOTEVIEWS"
-      android:exported="true" />
+      android:exported="true"
+      tools:node="replace" />
   </application>
 </manifest>

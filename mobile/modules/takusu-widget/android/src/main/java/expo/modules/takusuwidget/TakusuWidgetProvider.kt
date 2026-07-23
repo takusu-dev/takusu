@@ -7,11 +7,13 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.widget.RemoteViews
 import androidx.core.widget.RemoteViewsCompat
 import org.json.JSONArray
 import org.json.JSONObject
 
+private const val TAG = "TakusuWidgetProvider"
 private const val WIDE_DP = 250
 private const val TALL_DP = 90
 
@@ -66,7 +68,11 @@ class TakusuWidgetProvider : AppWidgetProvider() {
 
     override fun onEnabled(context: Context) {
         super.onEnabled(context)
-        WidgetUpdateWorker.schedule(context)
+        try {
+            WidgetUpdateWorker.schedule(context)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to schedule widget update worker", e)
+        }
     }
 
     override fun onDisabled(context: Context) {
@@ -200,7 +206,15 @@ class TakusuWidgetProvider : AppWidgetProvider() {
                         zone = zone,
                         scheme = scheme,
                     )
-                RemoteViewsCompat.setRemoteAdapter(context, views, widgetId, R.id.widget_upcoming_list, items)
+                try {
+                    RemoteViewsCompat.setRemoteAdapter(context, views, widgetId, R.id.widget_upcoming_list, items)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to set widget upcoming list adapter", e)
+                    // Hide the list and label. Leave widget_empty hidden because showing
+                    // "今日の予定はまだありません" would be inaccurate when there are upcoming tasks.
+                    views.setViewVisibility(R.id.widget_upcoming_list, android.view.View.GONE)
+                    views.setViewVisibility(R.id.widget_upcoming_label, android.view.View.GONE)
+                }
             }
 
             val unscheduled = snapshot?.unscheduledCount ?: 0
@@ -282,7 +296,12 @@ class TakusuWidgetProvider : AppWidgetProvider() {
                         zone = zone,
                         scheme = scheme,
                     )
-                RemoteViewsCompat.setRemoteAdapter(context, views, widgetId, R.id.widget_mini_list, items)
+                try {
+                    RemoteViewsCompat.setRemoteAdapter(context, views, widgetId, R.id.widget_mini_list, items)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to set widget mini list adapter", e)
+                    views.setViewVisibility(R.id.widget_mini_list, android.view.View.GONE)
+                }
             } else {
                 views.setViewVisibility(R.id.widget_mini_list, android.view.View.GONE)
             }
