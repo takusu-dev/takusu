@@ -1088,21 +1088,6 @@ export function SettingsDetailView({
                 <ActivityIndicator color={BRAND_COLOR} style={styles.loader} />
               ) : (
                 <>
-                  <View
-                    style={[
-                      styles.statusBox,
-                      { backgroundColor: colors.grayLight + '20' },
-                    ]}
-                  >
-                    <Text style={[styles.label, { color: colors.gray }]}>
-                      デフォルト
-                    </Text>
-                    <Text style={[styles.value, { color: colors.black }]}>
-                      快適: {DEFAULT_COMFORTABLE_HOURS}時間 / 最大:{' '}
-                      {DEFAULT_MAXIMUM_HOURS}時間
-                    </Text>
-                  </View>
-
                   <View style={styles.field}>
                     <Text style={[styles.label, { color: colors.gray }]}>
                       快適な1日の作業時間（時間）
