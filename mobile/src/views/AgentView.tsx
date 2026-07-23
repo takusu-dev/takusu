@@ -83,6 +83,7 @@ import {
   saveSessionHistory,
   saveSessionSnapshot,
 } from '@/src/api/agentSessionStore';
+import { formatJson } from '@/src/utils/formatJson';
 import { getTurnIndex } from '@/src/utils/getTurnIndex';
 import { ApprovalPanel } from '@/src/components/ApprovalPanel';
 import { ComposerRecordButton } from '@/src/components/ComposerRecordButton';
@@ -90,24 +91,13 @@ import { DeleteConfirmButton } from '@/src/components/DeleteConfirmButton';
 import { EditMessageModal } from '@/src/components/EditMessageModal';
 import { MessageContextMenu } from '@/src/components/MessageContextMenu';
 import { SessionPermissionsModal } from '@/src/components/SessionPermissionsModal';
+import { ToolCallDetailModal } from '@/src/components/ToolCallDetailModal';
 import { haptic } from '@/src/components/haptics';
 import { BRAND_COLOR, COLORS, useColors, type ColorSet } from '@/src/theme';
 import type { PermissionsMap } from '@/src/api/settingsStore';
 
 function newId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function formatJson(value: unknown): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value === 'string') {
-    try {
-      return JSON.stringify(JSON.parse(value), null, 2);
-    } catch {
-      return value;
-    }
-  }
-  return JSON.stringify(value, null, 2);
 }
 
 function appendSegment(
@@ -260,11 +250,12 @@ function buildAssistantItems(
 interface ToolNameChipProps {
   call: ToolCallItem;
   colors: ColorSet;
+  onPress?: (call: ToolCallItem) => void;
 }
 
-function ToolNameChip({ call, colors }: ToolNameChipProps) {
+function ToolNameChip({ call, colors, onPress }: ToolNameChipProps) {
   return (
-    <View
+    <Pressable
       style={[
         styles.toolChip,
         {
@@ -272,6 +263,10 @@ function ToolNameChip({ call, colors }: ToolNameChipProps) {
           borderColor: colors.separator,
         },
       ]}
+      onPress={(event) => {
+        event.stopPropagation();
+        onPress?.(call);
+      }}
     >
       <View
         style={[
@@ -289,7 +284,7 @@ function ToolNameChip({ call, colors }: ToolNameChipProps) {
       <Text style={[styles.toolChipText, { color: colors.black }]}>
         {call.name}
       </Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -516,6 +511,7 @@ interface ContextGroupProps {
   colors: ColorSet;
   availableHeight: number;
   onToggle: () => void;
+  onToolPress?: (call: ToolCallItem) => void;
 }
 
 function ContextGroup({
@@ -524,6 +520,7 @@ function ContextGroup({
   colors,
   availableHeight,
   onToggle,
+  onToolPress,
 }: ContextGroupProps) {
   const collapsed = getCollapsed(message, context.groupIndex);
   const [isTall, setIsTall] = useState(false);
@@ -551,7 +548,12 @@ function ContextGroup({
     const call = message.toolCalls?.[toolStages[i].callIndex];
     if (call) {
       chips.push(
-        <ToolNameChip key={`tool-${i}`} call={call} colors={colors} />,
+        <ToolNameChip
+          key={`tool-${i}`}
+          call={call}
+          colors={colors}
+          onPress={onToolPress}
+        />,
       );
     }
   }
@@ -651,6 +653,7 @@ interface AssistantMessageProps {
   isLatest: boolean;
   onToggleGroupCollapsed: (messageId: string, groupIndex: number) => void;
   onLongPress: (message: Message, position: { x: number; y: number }) => void;
+  onToolCallPress?: (call: ToolCallItem) => void;
 }
 
 const AssistantMessage = memo(function AssistantMessageImpl({
@@ -663,6 +666,7 @@ const AssistantMessage = memo(function AssistantMessageImpl({
   isLatest,
   onToggleGroupCollapsed,
   onLongPress,
+  onToolCallPress,
 }: AssistantMessageProps) {
   const items = useMemo(
     () => buildAssistantItems(item, isLatest),
@@ -712,6 +716,7 @@ const AssistantMessage = memo(function AssistantMessageImpl({
             colors={colors}
             availableHeight={availableHeight}
             onToggle={() => onToggleGroupCollapsed(item.id, it.groupIndex)}
+            onToolPress={onToolCallPress}
           />
         );
       })}
@@ -861,6 +866,10 @@ export function AgentView() {
     text: string;
   }>({ visible: false, messageId: '', text: '' });
   const [permissionsModal, setPermissionsModal] = useState(false);
+  const [toolDetail, setToolDetail] = useState<{
+    visible: boolean;
+    call: ToolCallItem | null;
+  }>({ visible: false, call: null });
   const [sessionPermissions, setSessionPermissions] = useState<PermissionsMap>(
     {},
   );
@@ -1704,6 +1713,15 @@ export function AgentView() {
     editTurn(turnIndex, editModal.messageId, newText.trim());
   }
 
+  const handleToolPress = useCallback((call: ToolCallItem) => {
+    haptic.light();
+    setToolDetail({ visible: true, call });
+  }, []);
+
+  const closeToolDetail = useCallback(() => {
+    setToolDetail({ visible: false, call: null });
+  }, []);
+
   const handleRevert = useCallback(async () => {
     if (
       !contextMenuMessage ||
@@ -1778,6 +1796,7 @@ export function AgentView() {
           isLatest={isLatest}
           onToggleGroupCollapsed={toggleGroupCollapsed}
           onLongPress={handleMessageLongPress}
+          onToolCallPress={handleToolPress}
         />
       );
     },
@@ -1790,6 +1809,7 @@ export function AgentView() {
       messagesHeight,
       toggleGroupCollapsed,
       handleMessageLongPress,
+      handleToolPress,
     ],
   );
 
@@ -2482,6 +2502,12 @@ export function AgentView() {
             }
           }}
           onClose={() => setPermissionsModal(false)}
+        />
+
+        <ToolCallDetailModal
+          visible={toolDetail.visible}
+          call={toolDetail.call}
+          onClose={closeToolDetail}
         />
       </Reanimated.View>
     </KeyboardAvoidingView>
