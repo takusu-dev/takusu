@@ -54,7 +54,7 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
     let expires_at = token_expires_at(takusu_util::jwt::DEFAULT_TOKEN_TTL_SECONDS);
     let stmt = worker::query!(
         &database,
-        "INSERT INTO tokens (jti, scope, label, created_by, expires_at) VALUES (?1, ?2, ?3, 'authenticated', ?4)",
+        "INSERT INTO tokens (jti, scope, label, created_by, created_at, expires_at) VALUES (?1, ?2, ?3, 'authenticated', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?4)",
         jti,
         takusu_util::SCOPE_READ_WRITE,
         label_opt,
@@ -99,7 +99,7 @@ pub async fn revoke(req: Request, env: Env, id: &str) -> Result<Response, Worker
     let database = db(&env)?;
     let stmt = worker::query!(
         &database,
-        "UPDATE tokens SET revoked_at = datetime('now') WHERE id = ?1 AND revoked_at IS NULL",
+        "UPDATE tokens SET revoked_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1 AND revoked_at IS NULL",
         id_num
     )?;
     let result = stmt.run().await.map_err(WorkerError::Worker)?;

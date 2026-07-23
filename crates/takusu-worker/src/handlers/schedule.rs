@@ -30,7 +30,7 @@ pub async fn save(mut req: worker::Request, env: Env) -> Result<Response, Worker
         Vec::with_capacity(1 + body.mark_scheduled_task_ids.len());
     let upsert = database
         .prepare(
-            "INSERT INTO schedules (id, created_at, updated_at, schedule) VALUES ('active', datetime('now'), datetime('now'), ?1) ON CONFLICT(id) DO UPDATE SET schedule=excluded.schedule, updated_at=excluded.updated_at"
+            "INSERT INTO schedules (id, created_at, updated_at, schedule) VALUES ('active', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?1) ON CONFLICT(id) DO UPDATE SET schedule=excluded.schedule, updated_at=excluded.updated_at"
         )
         .bind(&[JsValue::from_str(&schedule_json)])
         .map_err(WorkerError::Worker)?;
@@ -39,7 +39,7 @@ pub async fn save(mut req: worker::Request, env: Env) -> Result<Response, Worker
     for id in &body.mark_scheduled_task_ids {
         let stmt = database
             .prepare(
-                "UPDATE tasks SET status = 'scheduled', updated_at = datetime('now') WHERE id = ?1",
+                "UPDATE tasks SET status = 'scheduled', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
             )
             .bind(&[JsValue::from_str(id)])
             .map_err(WorkerError::Worker)?;

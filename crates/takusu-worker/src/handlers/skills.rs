@@ -85,7 +85,7 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
     let built_in = body.built_in.unwrap_or(false);
 
     let stmt = database.prepare(
-        "INSERT INTO skills (slug, name, description, body, built_in) VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO skills (slug, name, description, body, built_in, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
     );
     stmt.bind(&[
         JsValue::from_str(&body.slug),
@@ -143,7 +143,7 @@ pub async fn update(mut req: Request, env: Env, slug: &str) -> Result<Response, 
     }
 
     let stmt = database.prepare(
-        "UPDATE skills SET name=COALESCE(?1,name), description=COALESCE(?2,description), body=COALESCE(?3,body), updated_at=datetime('now') WHERE slug = ?4",
+        "UPDATE skills SET name=COALESCE(?1,name), description=COALESCE(?2,description), body=COALESCE(?3,body), updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE slug = ?4",
     );
     stmt.bind(&[
         body.name

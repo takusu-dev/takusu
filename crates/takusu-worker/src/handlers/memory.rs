@@ -155,7 +155,7 @@ async fn record_operation(
     response_json: &str,
 ) -> Result<(), WorkerError> {
     let stmt = database.prepare(
-        "INSERT INTO memory_operations (operation_id, request_hash, response_json) VALUES (?1, ?2, ?3)",
+        "INSERT INTO memory_operations (operation_id, request_hash, response_json, created_at) VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
     );
     stmt.bind(&[
         JsValue::from_str(op_id),
@@ -269,7 +269,7 @@ pub async fn create(mut req: Request, env: Env) -> Result<Response, WorkerError>
 
     let id = uuid::Uuid::now_v7().to_string();
     let insert = database.prepare(
-        "INSERT INTO memories (id, kind, key, normalized_key, content, normalized_content, subject_type, subject_id, source, revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'user_confirmed', 1)"
+        "INSERT INTO memories (id, kind, key, normalized_key, content, normalized_content, subject_type, subject_id, source, revision, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'user_confirmed', 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
     );
     let result = insert
         .bind(&[
@@ -343,7 +343,7 @@ async fn update_existing(
 
     let result = database
         .prepare(
-            "UPDATE memories SET content = ?1, normalized_content = ?2, revision = ?3, updated_at = datetime('now') WHERE id = ?4 AND revision = ?5",
+            "UPDATE memories SET content = ?1, normalized_content = ?2, revision = ?3, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?4 AND revision = ?5",
         )
         .bind(&[
             JsValue::from_str(content),
@@ -406,7 +406,7 @@ pub async fn update(mut req: Request, env: Env, id: &str) -> Result<Response, Wo
 
     let result = database
         .prepare(
-            "UPDATE memories SET content = ?1, normalized_content = ?2, revision = ?3, updated_at = datetime('now') WHERE id = ?4 AND revision = ?5",
+            "UPDATE memories SET content = ?1, normalized_content = ?2, revision = ?3, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?4 AND revision = ?5",
         )
         .bind(&[
             JsValue::from_str(&content),

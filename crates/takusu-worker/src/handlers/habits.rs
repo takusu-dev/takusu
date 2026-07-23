@@ -57,7 +57,7 @@ pub async fn create(mut req: worker::Request, env: Env) -> Result<Response, Work
         .display_id;
 
     let stmt = database.prepare(
-        "INSERT INTO habits (id, display_id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed, window_mode) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, ?13, ?14)"
+        "INSERT INTO habits (id, display_id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed, window_mode, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, ?13, ?14, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"
     );
     stmt.bind(&[
         JsValue::from_str(&id),
@@ -111,7 +111,7 @@ pub async fn update(mut req: worker::Request, env: Env, id: &str) -> Result<Resp
     let database = db(&env)?;
     let full = resolve_habit_id(&database, id).await?;
     let stmt = database.prepare(
-        "UPDATE habits SET title=COALESCE(?1,title), description=COALESCE(?2,description), recurrence=COALESCE(?3,recurrence), start_time=COALESCE(?4,start_time), end_time=COALESCE(?5,end_time), avg_minutes=COALESCE(?6,avg_minutes), sigma_minutes=COALESCE(?7,sigma_minutes), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), active=COALESCE(?11,active), fixed=COALESCE(?12,fixed), window_mode=COALESCE(?13,window_mode), updated_at=datetime('now') WHERE id = ?14"
+        "UPDATE habits SET title=COALESCE(?1,title), description=COALESCE(?2,description), recurrence=COALESCE(?3,recurrence), start_time=COALESCE(?4,start_time), end_time=COALESCE(?5,end_time), avg_minutes=COALESCE(?6,avg_minutes), sigma_minutes=COALESCE(?7,sigma_minutes), parallelizable=COALESCE(?8,parallelizable), allows_parallel=COALESCE(?9,allows_parallel), abandonability=COALESCE(?10,abandonability), active=COALESCE(?11,active), fixed=COALESCE(?12,fixed), window_mode=COALESCE(?13,window_mode), updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?14"
     );
     stmt.bind(&[
         body.title
@@ -184,7 +184,7 @@ pub async fn replace(
     let fixed = body.fixed.unwrap_or(false);
 
     let stmt = database.prepare(
-        "UPDATE habits SET title=?1, description=?2, recurrence=?3, start_time=?4, end_time=?5, avg_minutes=?6, sigma_minutes=?7, parallelizable=?8, allows_parallel=?9, abandonability=?10, fixed=?11, window_mode=?12, updated_at=datetime('now') WHERE id = ?13"
+        "UPDATE habits SET title=?1, description=?2, recurrence=?3, start_time=?4, end_time=?5, avg_minutes=?6, sigma_minutes=?7, parallelizable=?8, allows_parallel=?9, abandonability=?10, fixed=?11, window_mode=?12, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?13"
     );
     stmt.bind(&[
         JsValue::from_str(&body.title),
@@ -356,7 +356,7 @@ pub async fn create_scheduled_span(
     let full = resolve_habit_id(&database, id).await?;
     let span_id = uuid::Uuid::now_v7().to_string();
     let stmt = database.prepare(
-        "INSERT INTO habit_scheduled_spans (id, habit_id, start_date, end_date, reason, created_at) VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
+        "INSERT INTO habit_scheduled_spans (id, habit_id, start_date, end_date, reason, created_at) VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
     );
     stmt.bind(&[
         JsValue::from_str(&span_id),
@@ -515,7 +515,7 @@ pub async fn replace_steps(
             );
         } else {
             let stmt = database.prepare(
-                "INSERT INTO habit_steps (id, habit_id, position, title, description, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, fixed, depends_on, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, datetime('now'))",
+                "INSERT INTO habit_steps (id, habit_id, position, title, description, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, fixed, depends_on, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
             );
             stmts.push(
                 stmt.bind(&[

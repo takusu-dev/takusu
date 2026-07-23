@@ -1173,7 +1173,7 @@ async fn move_entry_with_force_overrides_warnings() {
     .unwrap();
 
     sqlx::query(
-        "INSERT INTO schedules (id, schedule, created_at, updated_at) VALUES ('active', '[{\"task_id\":\"t1\",\"start_at\":\"2026-06-10T10:00:00Z\",\"end_at\":\"2026-06-10T11:00:00Z\"}]', datetime('now'), datetime('now'))",
+        "INSERT INTO schedules (id, schedule, created_at, updated_at) VALUES ('active', '[{\"task_id\":\"t1\",\"start_at\":\"2026-06-10T10:00:00Z\",\"end_at\":\"2026-06-10T11:00:00Z\"}]', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
     )
     .execute(&pool)
     .await
@@ -1213,7 +1213,7 @@ async fn move_entry_without_force_rejects_violations() {
     .unwrap();
 
     sqlx::query(
-        "INSERT INTO schedules (id, schedule, created_at, updated_at) VALUES ('active', '[{\"task_id\":\"t1\",\"start_at\":\"2026-06-10T10:00:00Z\",\"end_at\":\"2026-06-10T11:00:00Z\"}]', datetime('now'), datetime('now'))",
+        "INSERT INTO schedules (id, schedule, created_at, updated_at) VALUES ('active', '[{\"task_id\":\"t1\",\"start_at\":\"2026-06-10T10:00:00Z\",\"end_at\":\"2026-06-10T11:00:00Z\"}]', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
     )
     .execute(&pool)
     .await
@@ -1245,7 +1245,7 @@ async fn move_entry_no_violation_succeeds() {
     .unwrap();
 
     sqlx::query(
-        "INSERT INTO schedules (id, schedule, created_at, updated_at) VALUES ('active', '[{\"task_id\":\"t1\",\"start_at\":\"2026-06-10T10:00:00Z\",\"end_at\":\"2026-06-10T11:00:00Z\"}]', datetime('now'), datetime('now'))",
+        "INSERT INTO schedules (id, schedule, created_at, updated_at) VALUES ('active', '[{\"task_id\":\"t1\",\"start_at\":\"2026-06-10T10:00:00Z\",\"end_at\":\"2026-06-10T11:00:00Z\"}]', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
     )
     .execute(&pool)
     .await
@@ -1279,7 +1279,7 @@ async fn move_entry_task_not_in_schedule_errors() {
     .unwrap();
 
     sqlx::query(
-        "INSERT INTO schedules (id, schedule, created_at, updated_at) VALUES ('active', '[]', datetime('now'), datetime('now'))",
+        "INSERT INTO schedules (id, schedule, created_at, updated_at) VALUES ('active', '[]', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
     )
     .execute(&pool)
     .await
@@ -1318,7 +1318,7 @@ async fn reschedule_range_mode() {
     .unwrap();
 
     sqlx::query(
-        "INSERT INTO schedules (id, schedule, created_at, updated_at) VALUES ('active', '[{\"task_id\":\"t1\",\"start_at\":\"2026-06-10T10:00:00Z\",\"end_at\":\"2026-06-10T11:00:00Z\"}]', datetime('now'), datetime('now'))",
+        "INSERT INTO schedules (id, schedule, created_at, updated_at) VALUES ('active', '[{\"task_id\":\"t1\",\"start_at\":\"2026-06-10T10:00:00Z\",\"end_at\":\"2026-06-10T11:00:00Z\"}]', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
     )
     .execute(&pool)
     .await
@@ -1352,7 +1352,7 @@ async fn preview_range_mode() {
     .unwrap();
 
     sqlx::query(
-        "INSERT INTO schedules (id, schedule, created_at, updated_at) VALUES ('active', '[{\"task_id\":\"t1\",\"start_at\":\"2026-06-10T10:00:00Z\",\"end_at\":\"2026-06-10T11:00:00Z\"}]', datetime('now'), datetime('now'))",
+        "INSERT INTO schedules (id, schedule, created_at, updated_at) VALUES ('active', '[{\"task_id\":\"t1\",\"start_at\":\"2026-06-10T10:00:00Z\",\"end_at\":\"2026-06-10T11:00:00Z\"}]', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
     )
     .execute(&pool)
     .await
@@ -4324,14 +4324,19 @@ async fn delete_task_removes_progress_and_work_session_rows() {
     let task: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
     let id = task["id"].as_str().unwrap().to_string();
 
-    let now = jiff::Timestamp::now().to_string();
-    sqlx::query("INSERT INTO task_work_sessions (id, task_id, started_at) VALUES (?, ?, ?)")
-        .bind(uuid::Uuid::now_v7().to_string())
-        .bind(&id)
-        .bind(&now)
-        .execute(&pool)
-        .await
-        .unwrap();
+    let now = jiff::Timestamp::now()
+        .strftime("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    sqlx::query(
+        "INSERT INTO task_work_sessions (id, task_id, started_at, created_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(uuid::Uuid::now_v7().to_string())
+    .bind(&id)
+    .bind(&now)
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query(
         "INSERT INTO progress_events (id, task_id, at, active_minutes) VALUES (?, ?, ?, ?)",
     )

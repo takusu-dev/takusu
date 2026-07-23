@@ -491,7 +491,7 @@ impl Tool for TaskProgress {
                         } else {
                             &session.started_at
                         };
-                        takusu_util::minutes_between(base, &jiff::Timestamp::now().to_string())
+                        takusu_util::minutes_between(base, &takusu_util::now_rfc3339())
                     } else {
                         0
                     };
