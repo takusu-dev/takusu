@@ -836,12 +836,10 @@ async fn resolve_user_input(
     if state.session(&id).is_none() {
         return StatusCode::NOT_FOUND.into_response();
     }
-    // Tool-call ids for user input are prefixed with the originating session id.
-    // Reject any call_id that does not originate from this session.
-    let Some(rest) = call_id.strip_prefix(&id) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    if !rest.starts_with('-') {
+    // Tool-call ids for user input are `{session_id}-{uuid}`. Reject any
+    // call_id that does not begin with the requested session id followed by
+    // the separator, which prevents resolving user input from another session.
+    if !call_id.starts_with(&format!("{id}-")) {
         return StatusCode::NOT_FOUND.into_response();
     }
     if let Err(error) = state
@@ -1111,6 +1109,50 @@ mod tests {
         let res = resolve_user_input(
             State(state),
             Path((id, other_call_id.to_string())),
+            auth_headers("test-token"),
+            Json(body),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn resolve_user_input_rejects_call_id_equal_to_session_id() {
+        let (state, _provider, id) = make_session_state("test-token");
+
+        let body = Versioned {
+            version: API_VERSION,
+            value: UserInputResolutionRequest {
+                answers: vec![UserInputAnswer {
+                    text: "これ".into(),
+                }],
+            },
+        };
+        let res = resolve_user_input(
+            State(state),
+            Path((id.clone(), id)),
+            auth_headers("test-token"),
+            Json(body),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn resolve_user_input_rejects_call_id_without_separator() {
+        let (state, _provider, id) = make_session_state("test-token");
+
+        let body = Versioned {
+            version: API_VERSION,
+            value: UserInputResolutionRequest {
+                answers: vec![UserInputAnswer {
+                    text: "これ".into(),
+                }],
+            },
+        };
+        let res = resolve_user_input(
+            State(state),
+            Path((id.clone(), format!("{id}suffix"))),
             auth_headers("test-token"),
             Json(body),
         )
