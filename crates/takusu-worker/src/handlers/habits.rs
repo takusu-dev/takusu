@@ -223,13 +223,21 @@ pub async fn delete(_req: worker::Request, env: Env, id: &str) -> Result<Respons
     // so D1 executes them atomically (matching the sqlite transaction
     // in storage_sqlite.rs) — a partial failure cannot leave the
     // database with tasks deleted but the habit still present.
-    // google_cal_events mappings are cleaned up explicitly; D1
-    // enforces FKs so the ON DELETE CASCADE would handle it, but the
-    // explicit delete is harmless and keeps parity with the sqlite
-    // path (which does not enable PRAGMA foreign_keys).
-    // habit_scheduled_spans follows the same rationale (#303).
+    // Break split-task self-references first, including split-off tasks
+    // that live outside this habit, then delete child rows and habit rows.
     let stmts = vec![
-        database.prepare("DELETE FROM google_cal_events WHERE task_id IN (SELECT id FROM tasks WHERE habit_id = ?1)").bind(&[JsValue::from_str(&full)])?,
+        database
+            .prepare("UPDATE tasks SET split_from_task_id = NULL WHERE split_from_task_id IN (SELECT id FROM tasks WHERE habit_id = ?1)")
+            .bind(&[JsValue::from_str(&full)])?,
+        database
+            .prepare("DELETE FROM google_cal_events WHERE task_id IN (SELECT id FROM tasks WHERE habit_id = ?1)")
+            .bind(&[JsValue::from_str(&full)])?,
+        database
+            .prepare("DELETE FROM task_work_sessions WHERE task_id IN (SELECT id FROM tasks WHERE habit_id = ?1)")
+            .bind(&[JsValue::from_str(&full)])?,
+        database
+            .prepare("DELETE FROM progress_events WHERE task_id IN (SELECT id FROM tasks WHERE habit_id = ?1)")
+            .bind(&[JsValue::from_str(&full)])?,
         database
             .prepare("DELETE FROM tasks WHERE habit_id = ?1")
             .bind(&[JsValue::from_str(&full)])?,
