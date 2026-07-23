@@ -9,6 +9,9 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -37,7 +40,7 @@ class WidgetUpdateWorker(
             return Result.success()
         }
 
-        var snapshot = WidgetFetcher.fetch(token)
+        var snapshot = withContext(Dispatchers.IO) { WidgetFetcher.fetch(token) }
 
         if (snapshot == null) {
             snapshot = startServerAndFetch(workersUrl, token)
@@ -49,31 +52,33 @@ class WidgetUpdateWorker(
             return Result.success()
         }
 
-        return Result.retry()
+        return if (runAttemptCount + 1 >= MAX_ATTEMPTS) Result.failure() else Result.retry()
     }
 
-    private fun startServerAndFetch(
+    private suspend fun startServerAndFetch(
         workersUrl: String,
         token: String,
     ): WidgetSnapshot? =
-        try {
-            val server = uniffi.takusu_android.TakusuServer()
+        withContext(Dispatchers.IO) {
             try {
-                server.start(3838.toUShort(), workersUrl, token)
-                Thread.sleep(500)
-                WidgetFetcher.fetch(token)
-            } finally {
+                val server = uniffi.takusu_android.TakusuServer()
                 try {
-                    server.stop()
-                } catch (_: Exception) {
+                    server.start(3838.toUShort(), workersUrl, token)
+                    delay(500)
+                    WidgetFetcher.fetch(token)
+                } finally {
+                    try {
+                        server.stop()
+                    } catch (_: Exception) {
+                    }
+                    try {
+                        server.destroy()
+                    } catch (_: Exception) {
+                    }
                 }
-                try {
-                    server.destroy()
-                } catch (_: Exception) {
-                }
+            } catch (e: Exception) {
+                null
             }
-        } catch (e: Exception) {
-            null
         }
 
     companion object {
@@ -85,6 +90,7 @@ class WidgetUpdateWorker(
         const val KEY_SCHEME = "scheme"
         const val KEY_UPDATED_AT = "updated_at"
         const val WORK_NAME = "takusu_widget_update"
+        private const val MAX_ATTEMPTS = 3
 
         fun persistSnapshot(
             prefs: android.content.SharedPreferences,

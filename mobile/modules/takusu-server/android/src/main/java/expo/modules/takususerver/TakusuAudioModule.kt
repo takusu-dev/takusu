@@ -15,10 +15,7 @@ import expo.modules.kotlin.records.Record
 import java.io.File
 import java.util.Locale
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicReference
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
-import kotlin.coroutines.suspendCoroutine
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import uniffi.takusu_android.MobileAudio
@@ -194,34 +191,21 @@ class TakusuAudioModule : Module() {
 
     private suspend fun initTextToSpeech(context: Context): TextToSpeech =
         withContext(Dispatchers.Main) {
-            suspendCoroutine { continuation ->
-                val ttsRef = AtomicReference<TextToSpeech>()
-                val tts =
-                    TextToSpeech(context.applicationContext) { status ->
-                        if (status == TextToSpeech.SUCCESS) {
-                            val instance = ttsRef.get()
-                            if (instance != null) {
-                                continuation.resume(instance)
-                            } else {
-                                continuation.resumeWithException(
-                                    CodedException(
-                                        "ERR_TTS_INIT",
-                                        "Android TTS initialized before reference was set",
-                                        null,
-                                    ),
-                                )
-                            }
-                        } else {
-                            continuation.resumeWithException(
-                                CodedException(
-                                    "ERR_TTS_INIT",
-                                    "Android TTS initialization failed with status $status",
-                                    null,
-                                ),
-                            )
-                        }
-                    }
-                ttsRef.set(tts)
+            val initStatus = CompletableDeferred<Int>()
+            val tts = TextToSpeech(context.applicationContext) { status -> initStatus.complete(status) }
+            val status = initStatus.await()
+            if (status == TextToSpeech.SUCCESS) {
+                tts
+            } else {
+                try {
+                    tts.shutdown()
+                } catch (_: Exception) {
+                }
+                throw CodedException(
+                    "ERR_TTS_INIT",
+                    "Android TTS initialization failed with status $status",
+                    null,
+                )
             }
         }
 
