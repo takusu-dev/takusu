@@ -1117,16 +1117,41 @@ export function AgentView() {
     return null;
   }
 
+  async function activateNewSession(id: string) {
+    const previousActiveId = sessionIdRef.current;
+    let ids = sessionIdsRef.current;
+    const existingIndex = ids.indexOf(id);
+    if (existingIndex !== -1) {
+      ids = ids.filter((s) => s !== id);
+    }
+    ids = [...ids, id];
+    const max = sessionHistoryCountRef.current;
+    const { ids: trimmed, removed } = trimSessionIds(
+      ids,
+      max,
+      previousActiveId,
+    );
+    ids = trimmed;
+    await Promise.all(removed.map((r) => deleteSessionSnapshot(r))).catch(
+      () => {},
+    );
+    const index = ids.indexOf(id);
+    sessionIdRef.current = id;
+    setSessionIds(ids);
+    sessionIdsRef.current = ids;
+    setActiveIndex(index);
+    activeIndexRef.current = index;
+    await saveSessionHistory({ ids, activeIndex: index });
+  }
+
   async function ensureSession(): Promise<string> {
     if (sessionIdRef.current) return sessionIdRef.current;
     if (messages.length === 0 && approval === null) {
       const emptyId = await findEmptySession(sessionIdsRef.current);
       if (emptyId) {
+        await activateNewSession(emptyId);
         const permissions = sessionPermissionsRef.current;
-        await activateSessionId(emptyId, false);
         if (Object.keys(permissions).length > 0) {
-          sessionPermissionsRef.current = permissions;
-          setSessionPermissions(permissions);
           client
             .updateSessionSettings(emptyId, permissions)
             .catch((e: unknown) => {
@@ -1137,7 +1162,7 @@ export function AgentView() {
       }
     }
     const created = await client.createSession(sessionPermissionsRef.current);
-    await activateSessionId(created, true);
+    await activateNewSession(created);
     return created;
   }
 
@@ -1459,6 +1484,8 @@ export function AgentView() {
     try {
       const session = await ensureSession();
       const assistantId = newId('assistant');
+      const initialTurnId = newId('turn');
+      const retryTurnId = newId('turn');
       setMessages((current) => [
         ...current,
         {
@@ -1472,8 +1499,17 @@ export function AgentView() {
           collapsedGroups: [],
         },
       ]);
-      await runAssistantStream(assistantId, (onEvent, signal) =>
-        client.runTurnStream(session, trimmed, newId('turn'), onEvent, signal),
+      await runAssistantStream(
+        assistantId,
+        (sessionId, onEvent, signal, attempt) =>
+          client.runTurnStream(
+            sessionId,
+            trimmed,
+            attempt === 0 ? initialTurnId : retryTurnId,
+            onEvent,
+            signal,
+          ),
+        session,
       );
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -1495,6 +1531,8 @@ export function AgentView() {
     try {
       const session = await ensureSession();
       const assistantId = newId('assistant');
+      const initialTurnId = newId('turn');
+      const retryTurnId = newId('turn');
       let userIndex = -1;
       setMessages((current) => {
         const index = current.findIndex((m) => m.id === userId);
@@ -1519,15 +1557,28 @@ export function AgentView() {
         setBusy(false);
         return;
       }
-      await runAssistantStream(assistantId, (onEvent, signal) =>
-        client.editTurnStream(
-          session,
-          turnIndex,
-          trimmed,
-          newId('turn'),
-          onEvent,
-          signal,
-        ),
+      await runAssistantStream(
+        assistantId,
+        (sessionId, onEvent, signal, attempt) => {
+          if (attempt === 0) {
+            return client.editTurnStream(
+              sessionId,
+              turnIndex,
+              trimmed,
+              initialTurnId,
+              onEvent,
+              signal,
+            );
+          }
+          return client.runTurnStream(
+            sessionId,
+            trimmed,
+            retryTurnId,
+            onEvent,
+            signal,
+          );
+        },
+        session,
       );
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -1539,107 +1590,111 @@ export function AgentView() {
   async function runAssistantStream(
     assistantId: string,
     apiCall: (
+      sessionId: string,
       onEvent: (event: TurnEvent) => void,
       signal: AbortSignal,
+      attempt: number,
     ) => Promise<AgentTurnResult>,
+    initialSessionId: string,
   ) {
     setBusy(true);
-    const abortController = new AbortController();
-    streamAbortRef.current = abortController;
-    try {
-      const result = await apiCall((event: TurnEvent) => {
-        setMessages((current) => {
-          const index = current.findIndex((m) => m.id === assistantId);
-          if (index === -1) return current;
-          const msg = current[index];
-          const next = { ...msg };
-          switch (event.type) {
-            case 'Thinking':
-              next.thinking = (next.thinking ?? '') + event.data;
-              next.segments = appendSegment(next.segments ?? [], {
-                type: 'thinking',
-                text: event.data,
-              });
-              next.state = 'thinking';
-              break;
-            case 'ToolCall': {
-              if (event.data.name === 'correct_asr' && sessionIdRef.current) {
-                const args = event.data.arguments as
-                  | { questions: UserInputQuestion[] }
-                  | undefined;
-                const questions = args?.questions ?? [];
-                if (questions.length > 0) {
-                  setUserInput({
-                    sessionId: sessionIdRef.current,
-                    callId: event.data.call_id,
-                    questions,
-                    values: questions.map((q) => q.text),
-                  });
-                }
-              }
-              const callIndex = (next.toolCalls ?? []).length;
-              next.toolCalls = [
-                ...(next.toolCalls ?? []),
-                {
-                  name: event.data.name,
+    let currentSessionId = initialSessionId;
+
+    const finish = () => {
+      streamAbortRef.current = null;
+      setUserInput(null);
+      setBusy(false);
+      setIsSpeaking(false);
+    };
+
+    const handleEvent = (event: TurnEvent) => {
+      setMessages((current) => {
+        const index = current.findIndex((m) => m.id === assistantId);
+        if (index === -1) return current;
+        const msg = current[index];
+        const next = { ...msg };
+        switch (event.type) {
+          case 'Thinking':
+            next.thinking = (next.thinking ?? '') + event.data;
+            next.segments = appendSegment(next.segments ?? [], {
+              type: 'thinking',
+              text: event.data,
+            });
+            next.state = 'thinking';
+            break;
+          case 'ToolCall': {
+            if (event.data.name === 'correct_asr' && sessionIdRef.current) {
+              const args = event.data.arguments as
+                | { questions: UserInputQuestion[] }
+                | undefined;
+              const questions = args?.questions ?? [];
+              if (questions.length > 0) {
+                setUserInput({
+                  sessionId: sessionIdRef.current,
                   callId: event.data.call_id,
-                  arguments: event.data.arguments,
-                },
-              ];
-              next.segments = appendSegment(next.segments ?? [], {
-                type: 'toolCall',
-                callIndex,
-              });
-              next.state = 'tool_call';
-              break;
-            }
-            case 'ToolResult': {
-              const calls = [...(next.toolCalls ?? [])];
-              const match = calls.find((c) => c.callId === event.data.call_id);
-              if (match) {
-                if (event.data.name === 'correct_asr') {
-                  match.result = '訂正を反映しました';
-                  match.isError = false;
-                } else {
-                  match.result = event.data.content;
-                  match.isError = event.data.is_error;
-                }
+                  questions,
+                  values: questions.map((q) => q.text),
+                });
               }
-              next.toolCalls = calls;
-              break;
             }
-            case 'Text':
-              next.text = (next.text ?? '') + event.data;
-              next.segments = appendTextSegment(
-                next.segments ?? [],
-                event.data,
-              );
-              next.state = 'answering';
-              break;
-            case 'Error':
-              next.text = event.data;
-              next.segments = finalizeTextSegment(
-                next.segments ?? [],
-                event.data,
-              );
-              next.state = 'done';
-              break;
-            case 'Done':
-              next.text = event.data.text;
-              next.segments = finalizeTextSegment(
-                next.segments ?? [],
-                event.data.text,
-              );
-              next.state = 'done';
-              break;
+            const callIndex = (next.toolCalls ?? []).length;
+            next.toolCalls = [
+              ...(next.toolCalls ?? []),
+              {
+                name: event.data.name,
+                callId: event.data.call_id,
+                arguments: event.data.arguments,
+              },
+            ];
+            next.segments = appendSegment(next.segments ?? [], {
+              type: 'toolCall',
+              callIndex,
+            });
+            next.state = 'tool_call';
+            break;
           }
-          return [
-            ...current.slice(0, index),
-            next,
-            ...current.slice(index + 1),
-          ];
-        });
-      }, abortController.signal);
+          case 'ToolResult': {
+            const calls = [...(next.toolCalls ?? [])];
+            const match = calls.find((c) => c.callId === event.data.call_id);
+            if (match) {
+              if (event.data.name === 'correct_asr') {
+                match.result = '訂正を反映しました';
+                match.isError = false;
+              } else {
+                match.result = event.data.content;
+                match.isError = event.data.is_error;
+              }
+            }
+            next.toolCalls = calls;
+            break;
+          }
+          case 'Text':
+            next.text = (next.text ?? '') + event.data;
+            next.segments = appendTextSegment(next.segments ?? [], event.data);
+            next.state = 'answering';
+            break;
+          case 'Error':
+            next.text = event.data;
+            next.segments = finalizeTextSegment(
+              next.segments ?? [],
+              event.data,
+            );
+            next.state = 'done';
+            break;
+          case 'Done':
+            next.text = event.data.text;
+            next.segments = finalizeTextSegment(
+              next.segments ?? [],
+              event.data.text,
+            );
+            next.state = 'done';
+            break;
+        }
+        return [...current.slice(0, index), next, ...current.slice(index + 1)];
+      });
+    };
+
+    const handleResult = async (result: AgentTurnResult) => {
       setApproval(result.approval_request);
       const ttsText = markdownToSpeech(result.text);
       if (audioReady && ttsText.trim() && !isMutedRef.current) {
@@ -1653,42 +1708,63 @@ export function AgentView() {
           void showError(ttsMessage, '音声読み上げに失敗');
         }
       }
-    } catch (e: unknown) {
-      const isAbort = backgroundAbortedRef.current || e instanceof AbortError;
-      if (isAbort) {
-        backgroundAbortedRef.current = false;
-        setMessages((current) =>
-          current.map((m) => {
-            const fallback = m.text || '応答が中断されました';
-            return m.id === assistantId
-              ? {
-                  ...m,
-                  text: fallback,
-                  state: 'done',
-                  toolCalls: [],
-                  segments: undefined,
-                }
-              : m;
-          }),
-        );
+    };
+
+    const handleError = (e: unknown) => {
+      const message = e instanceof Error ? e.message : String(e);
+      setMessages((current) =>
+        current.map((m) =>
+          m.id === assistantId
+            ? { ...m, text: message, state: 'done', toolCalls: [] }
+            : m,
+        ),
+      );
+      if (e instanceof AgentApiError && e.status === 404) {
+        setError('Agentセッションが終了しました。もう一度送信してください');
       } else {
-        const message = e instanceof Error ? e.message : String(e);
-        setMessages((current) =>
-          current.map((m) =>
-            m.id === assistantId
-              ? {
-                  ...m,
-                  text: message,
-                  state: 'done',
-                  toolCalls: [],
-                }
-              : m,
-          ),
+        void showError(message, 'エラー');
+      }
+    };
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const abortController = new AbortController();
+      streamAbortRef.current = abortController;
+      setUserInput(null);
+      try {
+        const result = await apiCall(
+          currentSessionId,
+          handleEvent,
+          abortController.signal,
+          attempt,
         );
-        if (e instanceof AgentApiError && e.status === 404) {
-          const lostId = sessionIdRef.current;
+        await handleResult(result);
+        finish();
+        return;
+      } catch (e: unknown) {
+        const isAbort = backgroundAbortedRef.current || e instanceof AbortError;
+        if (isAbort) {
+          backgroundAbortedRef.current = false;
+          setMessages((current) =>
+            current.map((m) => {
+              const fallback = m.text || '応答が中断されました';
+              return m.id === assistantId
+                ? {
+                    ...m,
+                    text: fallback,
+                    state: 'done',
+                    toolCalls: [],
+                    segments: undefined,
+                  }
+                : m;
+            }),
+          );
+          finish();
+          return;
+        }
+        if (e instanceof AgentApiError && e.status === 404 && attempt === 0) {
+          const lostId = currentSessionId;
           if (lostId) {
-            await deleteSessionSnapshot(lostId);
+            await deleteSessionSnapshot(lostId).catch(() => {});
           }
           const remaining = sessionIdsRef.current.filter((s) => s !== lostId);
           sessionIdsRef.current = remaining;
@@ -1696,24 +1772,32 @@ export function AgentView() {
           try {
             const emptyId = await findEmptySession(remaining);
             if (emptyId) {
-              await activateSessionId(emptyId, true);
+              await activateNewSession(emptyId);
+              if (Object.keys(sessionPermissionsRef.current).length > 0) {
+                client
+                  .updateSessionSettings(emptyId, sessionPermissionsRef.current)
+                  .catch(() => {});
+              }
+              currentSessionId = emptyId;
             } else {
-              const created = await client.createSession();
-              await activateSessionId(created, true);
+              const created = await client.createSession(
+                sessionPermissionsRef.current,
+              );
+              await activateNewSession(created);
+              currentSessionId = created;
             }
           } catch {
             sessionIdRef.current = null;
+            handleError(e);
+            finish();
+            return;
           }
-          setError('Agentセッションが終了しました。もう一度送信してください');
         } else {
-          void showError(message, 'エラー');
+          handleError(e);
+          finish();
+          return;
         }
       }
-    } finally {
-      streamAbortRef.current = null;
-      setUserInput(null);
-      setBusy(false);
-      setIsSpeaking(false);
     }
   }
   sendTextRef.current = sendText;
