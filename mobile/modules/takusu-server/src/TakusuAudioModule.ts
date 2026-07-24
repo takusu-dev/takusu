@@ -11,6 +11,15 @@ export interface AudioOptions {
   mute?: boolean;
 }
 
+export interface TtsVoiceInfo {
+  name: string;
+  locale: string;
+  quality: number;
+  latency: number;
+  requiresNetworkConnection: boolean;
+  features: string[];
+}
+
 interface TakusuAudioModuleType extends NativeModule {
   configure(options: AudioOptions): Promise<boolean>;
   setMuted(muted: boolean): Promise<boolean>;
@@ -18,6 +27,7 @@ interface TakusuAudioModuleType extends NativeModule {
   stopAndTranscribe(): Promise<string>;
   synthesizeAndPlay(text: string): Promise<boolean>;
   stopPlayback(): boolean;
+  getAvailableVoices(): Promise<TtsVoiceInfo[]>;
 }
 
 const TakusuAudioModule =

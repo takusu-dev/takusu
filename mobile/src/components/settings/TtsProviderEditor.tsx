@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -15,6 +16,9 @@ import {
   type TtsProviderSettings,
 } from '@/src/api/settingsStore';
 import { showError } from '@/src/api/errors';
+import TakusuAudioModule, {
+  type TtsVoiceInfo,
+} from '@/modules/takusu-server/src/TakusuAudioModule';
 
 const TTS_PROVIDER_TYPES: TtsProvider[] = ['cartesia', 'android'];
 
@@ -45,8 +49,33 @@ export function TtsProviderEditor({
   const [speed, setSpeed] = useState(
     provider.speed !== undefined ? String(provider.speed) : '',
   );
+  const [voices, setVoices] = useState<TtsVoiceInfo[]>([]);
+  const [voicesLoading, setVoicesLoading] = useState(false);
+  const [voicesExpanded, setVoicesExpanded] = useState(false);
 
   const isAndroid = provider.provider === 'android';
+
+  useEffect(() => {
+    if (!isAndroid || Platform.OS !== 'android') {
+      setVoices([]);
+      return;
+    }
+    let cancelled = false;
+    setVoicesLoading(true);
+    TakusuAudioModule.getAvailableVoices()
+      .then((result) => {
+        if (!cancelled) setVoices(result);
+      })
+      .catch((error: unknown) => {
+        console.error('Failed to load TTS voices:', error);
+      })
+      .finally(() => {
+        if (!cancelled) setVoicesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAndroid]);
 
   function updateSampleRate(text: string) {
     setSampleRate(text);
@@ -77,6 +106,11 @@ export function TtsProviderEditor({
       name: TTS_PROVIDER_LABELS[type],
       voiceId: '',
     });
+  }
+
+  function selectVoice(voiceId: string) {
+    setVoicesExpanded(false);
+    onChangeProvider({ ...provider, voiceId });
   }
 
   function handleSave() {
@@ -185,16 +219,106 @@ export function TtsProviderEditor({
         )}
       </View>
 
-      <TextInput
-        style={[
-          styles.input,
-          { color: colors.black, borderColor: colors.separator },
-        ]}
-        value={provider.voiceId}
-        onChangeText={(voiceId) => onChangeProvider({ ...provider, voiceId })}
-        autoCapitalize="none"
-        placeholder={isAndroid ? 'Voice（任意、空欄で既定の声）' : 'Voice ID'}
-      />
+      {isAndroid ? (
+        <View>
+          <Pressable
+            onPress={() => setVoicesExpanded((prev) => !prev)}
+            style={[styles.dropdown, { borderColor: colors.separator }]}
+            disabled={voicesLoading}
+          >
+            {voicesLoading ? (
+              <ActivityIndicator size="small" color={colors.gray} />
+            ) : (
+              <Text style={{ color: colors.black }}>
+                {provider.voiceId.trim() === ''
+                  ? '自動（最初の声）'
+                  : provider.voiceId}
+              </Text>
+            )}
+            <Ionicons
+              name={voicesExpanded ? 'chevron-up' : 'chevron-down'}
+              size={16}
+              color={colors.gray}
+            />
+          </Pressable>
+
+          {voicesExpanded && (
+            <View
+              style={[
+                styles.dropdownList,
+                {
+                  backgroundColor: colors.surface,
+                  borderColor: colors.separator,
+                },
+              ]}
+            >
+              <Pressable
+                onPress={() => selectVoice('')}
+                style={[
+                  styles.dropdownItem,
+                  provider.voiceId.trim() === '' && {
+                    backgroundColor: colors.surfaceTint,
+                  },
+                ]}
+              >
+                <Ionicons
+                  name={
+                    provider.voiceId.trim() === ''
+                      ? 'checkmark-circle'
+                      : 'ellipse-outline'
+                  }
+                  size={20}
+                  color={
+                    provider.voiceId.trim() === '' ? BRAND_COLOR : colors.black
+                  }
+                />
+                <Text style={{ color: colors.black }}>自動（最初の声）</Text>
+              </Pressable>
+              {voices.map((voice) => (
+                <Pressable
+                  key={`${voice.name}-${voice.locale}`}
+                  onPress={() => selectVoice(voice.name)}
+                  style={[
+                    styles.dropdownItem,
+                    provider.voiceId === voice.name && {
+                      backgroundColor: colors.surfaceTint,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name={
+                      provider.voiceId === voice.name
+                        ? 'checkmark-circle'
+                        : 'ellipse-outline'
+                    }
+                    size={20}
+                    color={
+                      provider.voiceId === voice.name
+                        ? BRAND_COLOR
+                        : colors.black
+                    }
+                  />
+                  <Text style={{ color: colors.black }}>
+                    {voice.name}
+                    {voice.locale ? ` (${voice.locale})` : ''}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+        </View>
+      ) : (
+        <TextInput
+          style={[
+            styles.input,
+            { color: colors.black, borderColor: colors.separator },
+          ]}
+          value={provider.voiceId}
+          onChangeText={(voiceId) => onChangeProvider({ ...provider, voiceId })}
+          autoCapitalize="none"
+          placeholder="Voice ID"
+        />
+      )}
 
       {!isAndroid && (
         <TextInput

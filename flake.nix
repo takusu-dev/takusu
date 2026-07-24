@@ -563,7 +563,7 @@
               };
               unitTestFinalStep = {
                 label = "Gradle unit tests";
-                command = "./gradlew :takusu-widget:testDebugUnitTest --stacktrace";
+                command = "./gradlew :takusu-widget:testDebugUnitTest :takusu-server:testDebugUnitTest --stacktrace";
                 success = "✅ Unit tests passed";
               };
               makeAndroidApkBuildText = makeAndroidBuildText apkFinalStep;
@@ -623,7 +623,7 @@
               #   nix run .#test-android-unit
               #
               # Prebuilds Expo, generates UniFFI bindings, and runs
-              # :takusu-widget:testDebugUnitTest.
+              # :takusu-widget:testDebugUnitTest and :takusu-server:testDebugUnitTest.
               test-android-unit = pkgs.writeShellApplication {
                 name = "test-android-unit";
                 runtimeInputs = androidApkRuntimeInputs;
