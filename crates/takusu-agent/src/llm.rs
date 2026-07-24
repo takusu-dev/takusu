@@ -12,6 +12,8 @@ use thiserror::Error;
 
 use crate::Permissions;
 
+pub use crate::compact::CompactionSettings;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LlmProviderKind {
@@ -53,6 +55,8 @@ pub struct LlmConfig {
     pub max_tool_calls: usize,
     #[serde(default = "default_request_timeout_seconds")]
     pub request_timeout_seconds: u64,
+    #[serde(default)]
+    pub compaction: CompactionSettings,
 }
 
 impl Default for LlmConfig {
@@ -67,6 +71,7 @@ impl Default for LlmConfig {
             max_context_tokens: default_max_context_tokens(),
             max_tool_calls: default_max_tool_calls(),
             request_timeout_seconds: default_request_timeout_seconds(),
+            compaction: CompactionSettings::default(),
         }
     }
 }
