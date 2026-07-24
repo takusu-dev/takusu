@@ -1,6 +1,7 @@
 use async_trait::async_trait;
+use futures_util::future::try_join_all;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::str::FromStr;
 use std::sync::Arc;
 use takusu_client::{
@@ -133,6 +134,46 @@ fn summary_string(args: &serde_json::Map<String, Value>, name: &str) -> Option<S
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+/// Parse `key` as either a single string or an array of display references.
+/// Strips leading `#` characters and deduplicates while preserving order.
+fn refs_from_args(
+    args: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Vec<String>, ToolError> {
+    fn non_empty_ref(key: &str, raw: &str) -> Result<String, ToolError> {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return Err(ToolError::InvalidArgs(format!("{key} must not be empty")));
+        }
+        let r = strip_leading_hash(raw);
+        if r.is_empty() {
+            return Err(ToolError::InvalidArgs(format!(
+                "{key} must not be just '#'"
+            )));
+        }
+        Ok(r.to_string())
+    }
+
+    match args.get(key) {
+        Some(Value::String(s)) => Ok(vec![non_empty_ref(key, s)?]),
+        Some(Value::Array(arr)) => {
+            let mut refs = Vec::with_capacity(arr.len());
+            for value in arr {
+                let s = value.as_str().ok_or_else(|| {
+                    ToolError::InvalidArgs(format!("{key} must contain only strings"))
+                })?;
+                refs.push(non_empty_ref(key, s)?);
+            }
+            let mut seen = HashSet::new();
+            refs.retain(|r| seen.insert(r.clone()));
+            Ok(refs)
+        }
+        _ => Err(ToolError::InvalidArgs(format!(
+            "{key} must be a string or an array of strings"
+        ))),
+    }
 }
 
 pub(crate) fn client_error(error: takusu_client::ClientError) -> ToolError {
@@ -485,8 +526,7 @@ impl TaskContext {
     }
 
     pub(crate) fn depends(&self, task: &TaskRow) -> Vec<String> {
-        serde_json::from_str::<Vec<String>>(&task.depends)
-            .unwrap_or_default()
+        task_dependency_ids(task)
             .into_iter()
             .filter_map(|id| self.task_refs.get(&id).map(|r| r.reference.clone()))
             .collect()
@@ -541,6 +581,54 @@ pub(crate) fn task_json(
         map.remove("actual_minutes");
     }
     value
+}
+
+fn task_dependency_ids(task: &TaskRow) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(&task.depends).unwrap_or_default()
+}
+
+/// Collect all transitive dependency tasks for `requested` from the full `all_tasks` list.
+/// Returns dependency rows excluding the requested tasks themselves, sorted by display_id,
+/// plus a list of any dependency IDs that were not found in `all_tasks`.
+fn transitive_dependencies<'a>(
+    requested: &'a [TaskRow],
+    all_tasks: &'a [TaskRow],
+) -> (Vec<&'a TaskRow>, Vec<String>) {
+    let by_id: HashMap<String, &TaskRow> = all_tasks.iter().map(|t| (t.id.clone(), t)).collect();
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut missing: HashSet<String> = HashSet::new();
+    let mut queue: VecDeque<String> = VecDeque::new();
+
+    for task in requested {
+        visited.insert(task.id.clone());
+        for dep in task_dependency_ids(task) {
+            queue.push_back(dep);
+        }
+    }
+
+    while let Some(dep_id) = queue.pop_front() {
+        if !visited.insert(dep_id.clone()) {
+            continue;
+        }
+        if let Some(dep) = by_id.get(&dep_id) {
+            for d in task_dependency_ids(dep) {
+                queue.push_back(d);
+            }
+        } else {
+            missing.insert(dep_id);
+        }
+    }
+
+    let requested_ids: HashSet<String> = requested.iter().map(|t| t.id.clone()).collect();
+    let mut deps: Vec<&TaskRow> = visited
+        .into_iter()
+        .filter(|id| !requested_ids.contains(id))
+        .filter_map(|id| by_id.get(&id).copied())
+        .collect();
+    deps.sort_by_key(|t| t.display_id);
+    let mut missing: Vec<String> = missing.into_iter().collect();
+    missing.sort();
+    (deps, missing)
 }
 
 fn habit_summary_json(habit: &HabitRow) -> Value {
@@ -767,36 +855,62 @@ impl Tool for GetTask {
         "get_task"
     }
     fn description(&self) -> &'static str {
-        "Get one task by global #display_id or habit-scoped h<habit_display_id>#<task_display_id>."
+        "Get one or more tasks by display reference. task_ref may be a single #id or h<habit>#<task>, or an array of such references. Returns an object with `tasks` (requested), `dependencies` (all transitive dependencies), and `missing_dependencies` (dependency IDs not found in the task list)."
     }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "task_ref": {"type": "string", "description": "#42 or h1#5"},
+                "task_ref": {
+                    "anyOf": [
+                        {"type": "string", "description": "#42 or h1#5"},
+                        {"type": "array", "items": {"type": "string"}, "description": "Array of task references such as [\"#1\", \"h1#5\"]"}
+                    ]
+                },
             },
             "required": ["task_ref"],
             "additionalProperties": false,
         })
     }
     async fn call(&self, args: Value) -> Result<ToolOutput, ToolError> {
-        let task_ref = required_string(&object(args)?, "task_ref")?;
-        let task_ref = strip_leading_hash(&task_ref).to_string();
+        let args = object(args)?;
+        let task_refs = refs_from_args(&args, "task_ref")?;
 
         let tz = server_timezone(&self.tz_cache).await;
         let default_query = TaskQuery::default();
         let c1 = self.client.clone();
         let c2 = self.client.clone();
         let c3 = self.client.clone();
-        let (task, all_tasks, habits) = tokio::try_join!(
-            async { c1.get_task(&task_ref).await },
+
+        let fetch_tasks = try_join_all(task_refs.iter().cloned().map(|r| {
+            let client = c1.clone();
+            async move { client.get_task(&r).await }
+        }));
+
+        let (tasks, all_tasks, habits) = tokio::try_join!(
+            fetch_tasks,
             async { c2.list_tasks(&default_query).await },
             async { c3.list_habits().await },
         )
         .map_err(client_error)?;
 
         let ctx = TaskContext::new(&all_tasks, &habits);
-        let result = task_json(&task, &ctx, Some(&tz));
+        let (deps, missing) = transitive_dependencies(&tasks, &all_tasks);
+
+        let tasks_json: Vec<Value> = tasks
+            .iter()
+            .map(|task| task_json(task, &ctx, Some(&tz)))
+            .collect();
+        let deps_json: Vec<Value> = deps
+            .into_iter()
+            .map(|task| task_json(task, &ctx, Some(&tz)))
+            .collect();
+
+        let result = json!({
+            "tasks": tasks_json,
+            "dependencies": deps_json,
+            "missing_dependencies": missing,
+        });
         Ok(ToolOutput {
             content: serde_json::to_string(&result).unwrap(),
             ..Default::default()
@@ -844,27 +958,37 @@ impl Tool for GetHabit {
         "get_habit"
     }
     fn description(&self) -> &'static str {
-        "Get one habit by h<display_id>."
+        "Get one or more habits by display reference. habit_ref may be a single h<id> or an array of such references. Returns an object with `habits`."
     }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "habit_ref": {"type": "string", "description": "Habit reference such as h1"},
+                "habit_ref": {
+                    "anyOf": [
+                        {"type": "string", "description": "Habit reference such as h1"},
+                        {"type": "array", "items": {"type": "string"}, "description": "Array of habit references such as [\"h1\", \"h2\"]"}
+                    ]
+                },
             },
             "required": ["habit_ref"],
             "additionalProperties": false,
         })
     }
     async fn call(&self, args: Value) -> Result<ToolOutput, ToolError> {
-        let habit_ref = required_string(&object(args)?, "habit_ref")?;
-        let habit = self
-            .client
-            .get_habit(&habit_ref)
-            .await
-            .map_err(client_error)?;
+        let args = object(args)?;
+        let habit_refs = refs_from_args(&args, "habit_ref")?;
+
+        let habits = try_join_all(habit_refs.iter().cloned().map(|r| {
+            let client = self.client.clone();
+            async move { client.get_habit(&r).await }
+        }))
+        .await
+        .map_err(client_error)?;
+
+        let content = habits.iter().map(habit_json).collect::<Vec<_>>();
         Ok(ToolOutput {
-            content: serde_json::to_string(&habit_json(&habit)).unwrap(),
+            content: serde_json::to_string(&json!({"habits": content})).unwrap(),
             ..Default::default()
         })
     }
@@ -1865,7 +1989,7 @@ mod tests {
     }
 
     #[test]
-    fn task_reference_schema_requires_scoped_reference() {
+    fn task_reference_schema_accepts_single_or_array() {
         let client = Client::new("http://localhost", "");
         let tool = GetTask {
             client: client.clone(),
@@ -1873,7 +1997,12 @@ mod tests {
         };
         let schema = tool.parameters_schema();
         assert_eq!(schema["required"], json!(["task_ref"]));
-        assert_eq!(schema["properties"]["task_ref"]["type"], "string");
+        let alternatives = schema["properties"]["task_ref"]["anyOf"]
+            .as_array()
+            .expect("anyOf alternatives");
+        assert_eq!(alternatives.len(), 2);
+        assert!(alternatives.iter().any(|alt| alt["type"] == "string"));
+        assert!(alternatives.iter().any(|alt| alt["type"] == "array"));
     }
 
     #[test]
@@ -1887,6 +2016,99 @@ mod tests {
 
         let habit_task = task_row("task-2", 3, "habit task", Some(habit_id), &[]);
         assert_eq!(task_reference(&habit_task, &habit_map), "h7#3");
+    }
+
+    #[test]
+    fn refs_from_args_parses_single_and_array_and_strips_hashes() {
+        let mut single = serde_json::Map::new();
+        single.insert("task_ref".into(), Value::String("#42".into()));
+        assert_eq!(refs_from_args(&single, "task_ref").unwrap(), vec!["42"]);
+
+        let mut array = serde_json::Map::new();
+        array.insert(
+            "task_ref".into(),
+            Value::Array(vec!["#1".into(), " h2#3 ".into(), "#1".into()]),
+        );
+        assert_eq!(
+            refs_from_args(&array, "task_ref").unwrap(),
+            vec!["1", "h2#3"]
+        );
+    }
+
+    #[test]
+    fn refs_from_args_parses_habit_refs() {
+        let mut single = serde_json::Map::new();
+        single.insert("habit_ref".into(), Value::String("h1".into()));
+        assert_eq!(refs_from_args(&single, "habit_ref").unwrap(), vec!["h1"]);
+
+        let mut array = serde_json::Map::new();
+        array.insert(
+            "habit_ref".into(),
+            Value::Array(vec!["h1".into(), " h2 ".into(), "h1".into()]),
+        );
+        assert_eq!(
+            refs_from_args(&array, "habit_ref").unwrap(),
+            vec!["h1", "h2"]
+        );
+    }
+
+    #[test]
+    fn refs_from_args_rejects_empty_or_hash_only_refs() {
+        for bad in ["", " ", "#", " # "] {
+            let mut single = serde_json::Map::new();
+            single.insert("task_ref".into(), Value::String(bad.into()));
+            assert!(refs_from_args(&single, "task_ref").is_err());
+        }
+
+        let mut array = serde_json::Map::new();
+        array.insert(
+            "task_ref".into(),
+            Value::Array(vec!["#42".into(), "#".into()]),
+        );
+        assert!(refs_from_args(&array, "task_ref").is_err());
+    }
+
+    #[test]
+    fn get_habit_schema_accepts_single_or_array() {
+        let client = Client::new("http://localhost", "");
+        let tool = GetHabit { client };
+        let schema = tool.parameters_schema();
+        assert_eq!(schema["required"], json!(["habit_ref"]));
+        let alternatives = schema["properties"]["habit_ref"]["anyOf"]
+            .as_array()
+            .expect("anyOf alternatives");
+        assert_eq!(alternatives.len(), 2);
+        assert!(alternatives.iter().any(|alt| alt["type"] == "string"));
+        assert!(alternatives.iter().any(|alt| alt["type"] == "array"));
+    }
+
+    #[test]
+    fn transitive_dependencies_collects_recursive_dependencies_excluding_requested() {
+        let a = task_row("a", 1, "a", None, &["b", "c"]);
+        let b = task_row("b", 2, "b", None, &["d"]);
+        let c = task_row("c", 3, "c", None, &[]);
+        let d = task_row("d", 4, "d", None, &[]);
+
+        let all = vec![a.clone(), b.clone(), c.clone(), d.clone()];
+        let requested = vec![a];
+        let (deps, missing) = transitive_dependencies(&requested, &all);
+
+        assert!(missing.is_empty());
+        assert_eq!(deps.len(), 3);
+        let ids: Vec<&str> = deps.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, vec!["b", "c", "d"]);
+    }
+
+    #[test]
+    fn transitive_dependencies_reports_missing_dependency_ids() {
+        let a = task_row("a", 1, "a", None, &["missing"]);
+
+        let all = vec![a.clone()];
+        let requested = vec![a];
+        let (deps, missing) = transitive_dependencies(&requested, &all);
+
+        assert!(deps.is_empty());
+        assert_eq!(missing, vec!["missing"]);
     }
 
     #[test]
