@@ -9,6 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useColors, BRAND_COLOR } from '@/src/theme';
 import { useServer } from '@/src/api/ServerProvider';
 import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
@@ -550,7 +551,7 @@ export function AgentSettingsView() {
       {llmProviders.map((provider) => (
         <View
           key={provider.id}
-          style={[styles.row, { borderColor: colors.separator }]}
+          style={[styles.row, { borderColor: colors.separator, padding: 10 }]}
         >
           <View style={styles.rowText}>
             <Text style={{ color: colors.black, fontWeight: '600' }}>
@@ -653,33 +654,38 @@ export function AgentSettingsView() {
         >
           <Pressable
             onPress={() => setActiveLlmModelAndSave(model.id)}
-            style={styles.radio}
             disabled={saving}
+            style={({ pressed }) => [
+              styles.rowMain,
+              pressed && styles.rowMainPressed,
+            ]}
           >
-            <Text
-              style={{
-                color: activeLlmModel === model.id ? BRAND_COLOR : colors.black,
-              }}
-            >
-              {activeLlmModel === model.id ? '●' : '○'}
-            </Text>
+            <Ionicons
+              name={
+                activeLlmModel === model.id
+                  ? 'checkmark-circle'
+                  : 'ellipse-outline'
+              }
+              size={22}
+              color={activeLlmModel === model.id ? BRAND_COLOR : colors.black}
+            />
+            <View style={styles.rowText}>
+              <Text style={{ color: colors.black, fontWeight: '600' }}>
+                {model.name}
+              </Text>
+              <Text style={{ color: colors.gray, fontSize: 12 }}>
+                {llmProviders.find((p) => p.id === model.providerId)?.name ??
+                  '未設定'}
+                {' · '}
+                {model.selectedModel || '未設定'}
+                {model.cost ? ` · ${model.cost}` : ''}
+                {model.permissions &&
+                Object.values(model.permissions).some(Boolean)
+                  ? ` · ${Object.values(model.permissions).filter(Boolean).length} 権限`
+                  : ''}
+              </Text>
+            </View>
           </Pressable>
-          <View style={styles.rowText}>
-            <Text style={{ color: colors.black, fontWeight: '600' }}>
-              {model.name}
-            </Text>
-            <Text style={{ color: colors.gray, fontSize: 12 }}>
-              {llmProviders.find((p) => p.id === model.providerId)?.name ??
-                '未設定'}
-              {' · '}
-              {model.selectedModel || '未設定'}
-              {model.cost ? ` · ${model.cost}` : ''}
-              {model.permissions &&
-              Object.values(model.permissions).some(Boolean)
-                ? ` · ${Object.values(model.permissions).filter(Boolean).length} 権限`
-                : ''}
-            </Text>
-          </View>
           <Pressable
             onPress={() => setEditingLlmModel({ ...model })}
             style={[styles.editButton, { borderColor: colors.separator }]}
@@ -765,25 +771,30 @@ export function AgentSettingsView() {
         >
           <Pressable
             onPress={() => setActiveTtsAndSave(provider.id)}
-            style={styles.radio}
             disabled={saving}
+            style={({ pressed }) => [
+              styles.rowMain,
+              pressed && styles.rowMainPressed,
+            ]}
           >
-            <Text
-              style={{
-                color: activeTts === provider.id ? BRAND_COLOR : colors.black,
-              }}
-            >
-              {activeTts === provider.id ? '●' : '○'}
-            </Text>
+            <Ionicons
+              name={
+                activeTts === provider.id
+                  ? 'checkmark-circle'
+                  : 'ellipse-outline'
+              }
+              size={22}
+              color={activeTts === provider.id ? BRAND_COLOR : colors.black}
+            />
+            <View style={styles.rowText}>
+              <Text style={{ color: colors.black, fontWeight: '600' }}>
+                {provider.name}
+              </Text>
+              <Text style={{ color: colors.gray, fontSize: 12 }}>
+                {provider.provider} · {provider.voiceId || '未設定'}
+              </Text>
+            </View>
           </Pressable>
-          <View style={styles.rowText}>
-            <Text style={{ color: colors.black, fontWeight: '600' }}>
-              {provider.name}
-            </Text>
-            <Text style={{ color: colors.gray, fontSize: 12 }}>
-              {provider.provider} · {provider.voiceId || '未設定'}
-            </Text>
-          </View>
           <Pressable
             onPress={() => setEditingTts({ ...provider })}
             style={[styles.editButton, { borderColor: colors.separator }]}
@@ -819,7 +830,9 @@ export function AgentSettingsView() {
       <Text style={[styles.heading, { color: colors.black }]}>
         セッション履歴
       </Text>
-      <View style={[styles.row, { borderColor: colors.separator }]}>
+      <View
+        style={[styles.row, { borderColor: colors.separator, padding: 10 }]}
+      >
         <Text style={{ flex: 1, color: colors.black }}>
           保持するセッション数（{AGENT_SESSION_HISTORY_MIN}-
           {AGENT_SESSION_HISTORY_MAX}）
@@ -879,16 +892,23 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 10,
     borderWidth: 1,
     borderRadius: 8,
     gap: 8,
   },
-  radio: { width: 28, alignItems: 'center', justifyContent: 'center' },
+  rowMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    gap: 8,
+  },
+  rowMainPressed: { backgroundColor: 'rgba(0,0,0,0.05)' },
   rowText: { flex: 1 },
   editButton: {
     paddingVertical: 6,
     paddingHorizontal: 12,
+    marginRight: 10,
     borderWidth: 1,
     borderRadius: 8,
   },
