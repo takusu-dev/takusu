@@ -69,6 +69,67 @@ AWK
   echo "  Patched Sentry ndkVersion"
 fi
 
+# 2.6. Patch React Native libraries that list mavenCentral() before google()
+#     in their buildscript repositories. AGP artifacts (com.android.tools.*)
+#     are only published to Google Maven, so resolving them from Maven
+#     Central first causes flaky network timeouts in CI.
+ANDROID_DIR_FOR_PATCH="$ANDROID_DIR" node - <<'NODE'
+const fs = require('fs');
+const path = require('path');
+
+function findBlockEnd(s, i) {
+  let d = 1, j = i + 1;
+  while (j < s.length && d > 0) {
+    if (s[j] === '{') d++;
+    else if (s[j] === '}') d--;
+    j++;
+  }
+  return j;
+}
+
+function patchBuildscriptRepositories(text) {
+  const bsIdx = text.indexOf('buildscript');
+  if (bsIdx === -1) return text;
+  const bsOpen = text.indexOf('{', bsIdx);
+  if (bsOpen === -1) return text;
+  const bsClose = findBlockEnd(text, bsOpen);
+  const buildscript = text.slice(bsOpen, bsClose);
+  const reposIdx = buildscript.indexOf('repositories');
+  if (reposIdx === -1) return text;
+  const reposOpen = buildscript.indexOf('{', reposIdx);
+  const reposClose = findBlockEnd(buildscript, reposOpen);
+  const reposBlock = buildscript.slice(reposOpen, reposClose);
+  const lines = reposBlock.slice(1, -1).split('\n');
+  const mavenIdx = lines.findIndex(l => l.trim() === 'mavenCentral()');
+  const googleIdx = lines.findIndex(l => l.trim() === 'google()');
+  if (mavenIdx === -1 || googleIdx === -1 || mavenIdx >= googleIdx) return text;
+  [lines[mavenIdx], lines[googleIdx]] = [lines[googleIdx], lines[mavenIdx]];
+  const newReposBlock = '{' + lines.join('\n') + '}';
+  const newBuildscript = buildscript.slice(0, reposOpen) + newReposBlock + buildscript.slice(reposClose);
+  return text.slice(0, bsOpen) + newBuildscript + text.slice(bsClose);
+}
+
+const androidDir = process.env.ANDROID_DIR_FOR_PATCH || 'android';
+const targets = [
+  path.resolve(androidDir, '../node_modules/react-native-gesture-handler/android/build.gradle'),
+  path.resolve(androidDir, '../node_modules/react-native-safe-area-context/android/build.gradle'),
+  path.resolve(androidDir, '../node_modules/@react-native-async-storage/async-storage/android/build.gradle'),
+];
+
+let patched = 0;
+for (const file of targets) {
+  if (!fs.existsSync(file)) continue;
+  const original = fs.readFileSync(file, 'utf8');
+  const updated = patchBuildscriptRepositories(original);
+  if (updated !== original) {
+    fs.writeFileSync(file, updated);
+    console.log(`  Patched buildscript repository order in ${path.relative(process.cwd(), file)}`);
+    patched++;
+  }
+}
+if (patched === 0) console.log('  No repository order patches needed');
+NODE
+
 # 3. Suppress compileSdk 37 warning
 GRADLE_PROPERTIES="$ANDROID_DIR/gradle.properties"
 if ! grep -q 'android.suppressUnsupportedCompileSdk' "$GRADLE_PROPERTIES"; then
