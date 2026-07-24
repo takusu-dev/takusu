@@ -1,6 +1,9 @@
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{
+    Mutex, MutexGuard,
+    atomic::{AtomicBool, Ordering},
+};
 
 use takusu_audio::{
     CartesiaOutputFormat, CartesiaSonic, CartesiaSonicConfig, Hush, SherpaOnnxAsr,
@@ -64,6 +67,7 @@ pub struct MobileAudio {
     voice_id: String,
     sample_rate: u32,
     speed: Option<f32>,
+    mute: AtomicBool,
 }
 
 impl MobileAudio {
@@ -106,6 +110,7 @@ impl MobileAudio {
         language: String,
         sample_rate: u32,
         speed: Option<f32>,
+        mute: bool,
     ) -> Result<Self, TakusuError> {
         let root = Path::new(&model_dir).to_path_buf();
         let tts = if api_key.trim().is_empty() {
@@ -115,6 +120,7 @@ impl MobileAudio {
             tts_config.voice_id = voice_id.clone();
             tts_config.language = Some(language.clone());
             tts_config.output_format = CartesiaOutputFormat::mp3(sample_rate, 128_000);
+            tts_config.mute = mute;
             Some(CartesiaSonic::new(tts_config))
         };
         Ok(Self {
@@ -127,6 +133,7 @@ impl MobileAudio {
             voice_id,
             sample_rate,
             speed,
+            mute: AtomicBool::new(mute),
         })
     }
 
@@ -201,6 +208,12 @@ impl MobileAudio {
                 detail: "TTS text was empty".to_string(),
             });
         }
+        if self.mute.load(Ordering::Relaxed) {
+            // Return an empty buffer when muted. Callers are expected to
+            // check the mute flag before playing; the empty buffer is not a
+            // valid audio file on its own.
+            return Ok(Vec::new());
+        }
         let tts = self.tts.as_ref().ok_or(TakusuError::Audio {
             detail: "TTS backend is not configured".to_string(),
         })?;
@@ -219,6 +232,14 @@ impl MobileAudio {
             .map_err(|error| TakusuError::Audio {
                 detail: format!("TTS failed at {} Hz: {error}", self.sample_rate),
             })
+    }
+
+    pub fn set_muted(&self, muted: bool) {
+        self.mute.store(muted, Ordering::Relaxed);
+    }
+
+    pub fn is_muted(&self) -> bool {
+        self.mute.load(Ordering::Relaxed)
     }
 }
 
@@ -239,6 +260,7 @@ mod tests {
             "ja".to_string(),
             44100,
             Some(1.0),
+            false,
         );
         assert!(
             audio.is_ok(),

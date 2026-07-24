@@ -41,4 +41,5 @@ num-complex = { version = "0.4", optional = true }
 ndarray = { version = "0.17", optional = true }
 sherpa-onnx = { version = "1.13.4", default-features = false, features = ["shared"], optional = true }
 
-
+[dev-dependencies]
+tokio = { workspace = true }

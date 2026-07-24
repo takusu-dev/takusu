@@ -58,7 +58,9 @@ import TakusuAudioModule from '../../modules/takusu-server/src/TakusuAudioModule
 import {
   AGENT_SESSION_HISTORY_DEFAULT,
   loadSettings,
+  loadTtsMuted,
   saveAgentProviders,
+  saveTtsMuted,
 } from '@/src/api/settingsStore';
 import {
   AgentClient,
@@ -85,6 +87,7 @@ import {
 } from '@/src/api/agentSessionStore';
 import { formatJson } from '@/src/utils/formatJson';
 import { getTurnIndex } from '@/src/utils/getTurnIndex';
+import { showError } from '@/src/api/errors';
 import { ApprovalPanel } from '@/src/components/ApprovalPanel';
 import { ComposerRecordButton } from '@/src/components/ComposerRecordButton';
 import { DeleteConfirmButton } from '@/src/components/DeleteConfirmButton';
@@ -877,6 +880,7 @@ export function AgentView() {
   const [busy, setBusy] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [audioReady, setAudioReady] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(Keyboard.isVisible());
   const [inputHeight, setInputHeight] = useState(44);
@@ -924,6 +928,7 @@ export function AgentView() {
   const skipSnapshotSaveRef = useRef(false);
   const lastPendingSessionIdRef = useRef<string | null>(null);
   const sessionPermissionsRef = useRef<PermissionsMap>({});
+  const isMutedRef = useRef(false);
   const viewOffset = useSharedValue(0);
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: viewOffset.value }],
@@ -944,6 +949,9 @@ export function AgentView() {
   useEffect(() => {
     sessionPermissionsRef.current = sessionPermissions;
   }, [sessionPermissions]);
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next) => {
@@ -1372,6 +1380,17 @@ export function AgentView() {
 
   useFocusEffect(
     useCallback(() => {
+      loadTtsMuted()
+        .then((muted) => {
+          setIsMuted(muted);
+          isMutedRef.current = muted;
+        })
+        .catch(() => {});
+    }, []),
+  );
+
+  useFocusEffect(
+    useCallback(() => {
       if (!ready || !workersToken) return;
       let cancelled = false;
       ensureAudioConfigured().then(
@@ -1624,7 +1643,7 @@ export function AgentView() {
       }, abortController.signal);
       setApproval(result.approval_request);
       const ttsText = markdownToSpeech(result.text);
-      if (audioReady && ttsText.trim()) {
+      if (audioReady && ttsText.trim() && !isMutedRef.current) {
         setIsSpeaking(true);
         try {
           await TakusuAudioModule.synthesizeAndPlay(ttsText);
@@ -2077,6 +2096,20 @@ export function AgentView() {
     }
   }
 
+  async function toggleMuted() {
+    const next = !isMuted;
+    setIsMuted(next);
+    isMutedRef.current = next;
+    try {
+      await saveTtsMuted(next);
+      await TakusuAudioModule.setMuted(next);
+    } catch (e: unknown) {
+      setIsMuted(!next);
+      isMutedRef.current = !next;
+      await showError(e, 'ミュート状態の更新に失敗');
+    }
+  }
+
   async function startNewSession() {
     if (isSwitchingRef.current || busy || !historyReady) return;
     setError(null);
@@ -2250,6 +2283,23 @@ export function AgentView() {
             <Text style={[styles.backText, { color: BRAND_COLOR }]}>‹</Text>
           </Pressable>
           <Text style={[styles.title, { color: colors.black }]}>Agent</Text>
+          <Pressable
+            disabled={busy || isSwitching || !historyReady}
+            onPress={toggleMuted}
+            style={styles.muteButton}
+          >
+            <Ionicons
+              name={isMuted ? 'volume-mute' : 'volume-high'}
+              size={24}
+              color={
+                busy || isSwitching || !historyReady
+                  ? colors.gray
+                  : isMuted
+                    ? colors.gray
+                    : BRAND_COLOR
+              }
+            />
+          </Pressable>
           <Pressable
             disabled={busy || isSwitching || !historyReady}
             onPress={() => setPermissionsModal(true)}
@@ -2601,6 +2651,11 @@ const styles = StyleSheet.create({
   back: { width: 56, alignItems: 'center' },
   backText: { fontSize: 40, lineHeight: 40 },
   title: { flex: 1, fontSize: 20, fontWeight: '700' },
+  muteButton: {
+    width: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   permissionsButton: {
     width: 44,
     alignItems: 'center',

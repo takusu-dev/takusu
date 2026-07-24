@@ -110,7 +110,7 @@ impl AudioAdapter {
                 eprintln!("schedule dirty: true");
             }
 
-            if no_tts || result.text.trim().is_empty() {
+            if no_tts || self.last_audio.tts.mute || result.text.trim().is_empty() {
                 continue;
             }
 
@@ -220,13 +220,14 @@ fn build_tts(config: &TtsConfig) -> TtsBuildResult {
             } else {
                 config.api_key.clone()
             };
-            if api_key.is_empty() {
+            if api_key.is_empty() && !config.mute {
                 return Err(AudioError::Tts("missing Cartesia API key".to_string()));
             }
             let mut tts_config = CartesiaSonicConfig::new(api_key);
             tts_config.voice_id = config.voice_id.clone();
             tts_config.language = Some(config.language.clone());
             tts_config.output_format.sample_rate = config.sample_rate;
+            tts_config.mute = config.mute;
             let voice_id = config.voice_id.clone();
             let speed = config.speed;
             Ok((Box::new(CartesiaSonic::new(tts_config)), voice_id, speed))
@@ -332,6 +333,7 @@ mod tests {
         assert_eq!(config.backend, "cartesia");
         assert_eq!(config.api_key_env, "CARTESIA_API_KEY");
         assert_eq!(config.sample_rate, 44100);
+        assert!(!config.mute);
     }
 
     #[test]
@@ -373,5 +375,26 @@ mod tests {
             Err(e) => assert!(e.to_string().contains("android")),
             Ok(_) => panic!("expected android backend to be rejected"),
         }
+    }
+
+    #[test]
+    fn build_tts_allows_missing_api_key_when_muted() {
+        let config = TtsConfig {
+            api_key: String::new(),
+            api_key_env: "NONEXISTENT_API_KEY".to_string(),
+            mute: true,
+            ..TtsConfig::default()
+        };
+        assert!(build_tts(&config).is_ok());
+    }
+
+    #[test]
+    fn build_tts_rejects_missing_api_key_when_not_muted() {
+        let config = TtsConfig {
+            api_key: String::new(),
+            api_key_env: "NONEXISTENT_API_KEY".to_string(),
+            ..TtsConfig::default()
+        };
+        assert!(build_tts(&config).is_err());
     }
 }
