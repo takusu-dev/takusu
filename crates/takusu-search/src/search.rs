@@ -722,8 +722,10 @@ pub fn complete<T: Task, H: Habit>(
     today: Date,
     tasks: &[T],
     habits: &[H],
+    limit: Option<usize>,
 ) -> Vec<Completion> {
     let mut out = Vec::new();
+    let max = limit.unwrap_or(usize::MAX);
     let tokens = tokenize(input);
     let (base, token) = last_token_bounds(input, &tokens);
 
@@ -734,44 +736,50 @@ pub fn complete<T: Task, H: Habit>(
         match key {
             "status" => {
                 for v in STATUS_VALUES {
-                    if v.starts_with(val) {
-                        push_completion(&mut out, &base, key, v, v);
+                    if v.starts_with(val) && !push_completion(&mut out, max, &base, key, v, v) {
+                        break;
                     }
                 }
             }
             "is" => {
                 for v in IS_VALUES {
-                    if v.starts_with(val) {
-                        push_completion(&mut out, &base, key, v, v);
+                    if v.starts_with(val) && !push_completion(&mut out, max, &base, key, v, v) {
+                        break;
                     }
                 }
             }
             "has" => {
                 for v in HAS_VALUES {
-                    if v.starts_with(val) {
-                        push_completion(&mut out, &base, key, v, v);
+                    if v.starts_with(val) && !push_completion(&mut out, max, &base, key, v, v) {
+                        break;
                     }
                 }
             }
             "habit" => {
                 for h in habits {
                     let ref_ = format!("h{}", h.display_id());
-                    if ref_.starts_with(val) {
-                        push_completion(&mut out, &base, key, &ref_, &ref_);
+                    if ref_.starts_with(val)
+                        && !push_completion(&mut out, max, &base, key, &ref_, &ref_)
+                    {
+                        break;
                     }
                 }
             }
             "depends" | "dependents" => {
                 for t in tasks {
                     let ref_ = format!("#{}", t.display_id());
-                    if ref_.starts_with(val) {
-                        push_completion(&mut out, &base, key, &ref_, &ref_);
+                    if ref_.starts_with(val)
+                        && !push_completion(&mut out, max, &base, key, &ref_, &ref_)
+                    {
+                        break;
                     }
                 }
             }
             "start" | "end" | "scheduled-start" | "scheduled-end" | "from" | "until" => {
                 for c in complete_date(val, today) {
-                    push_completion(&mut out, &base, key, &c, &c);
+                    if !push_completion(&mut out, max, &base, key, &c, &c) {
+                        break;
+                    }
                 }
             }
             _ => {}
@@ -785,7 +793,9 @@ pub fn complete<T: Task, H: Habit>(
     // Always show all qualifier names.
     for (q, _desc) in QUALIFIERS {
         let replacement = format!("{q}:");
-        push_value(&mut out, &base, &replacement, &replacement);
+        if !push_value(&mut out, max, &base, &replacement, &replacement) {
+            break;
+        }
     }
 
     // Title matches for free word.
@@ -798,7 +808,9 @@ pub fn complete<T: Task, H: Habit>(
                 } else {
                     t.title().to_string()
                 };
-                push_value(&mut out, &base, &replacement, t.title());
+                if !push_value(&mut out, max, &base, &replacement, t.title()) {
+                    break;
+                }
             }
         }
     }
@@ -824,12 +836,31 @@ fn last_token_bounds<'a>(input: &'a str, tokens: &[Token]) -> (String, &'a str) 
     (input.to_string(), "")
 }
 
-fn push_completion(out: &mut Vec<Completion>, base: &str, key: &str, value: &str, label: &str) {
+fn push_completion(
+    out: &mut Vec<Completion>,
+    max: usize,
+    base: &str,
+    key: &str,
+    value: &str,
+    label: &str,
+) -> bool {
+    if out.len() >= max {
+        return false;
+    }
     let replacement = format!("{key}:{value}");
-    push_value(out, base, &replacement, label);
+    push_value(out, max, base, &replacement, label)
 }
 
-fn push_value(out: &mut Vec<Completion>, base: &str, replacement: &str, label: &str) {
+fn push_value(
+    out: &mut Vec<Completion>,
+    max: usize,
+    base: &str,
+    replacement: &str,
+    label: &str,
+) -> bool {
+    if out.len() >= max {
+        return false;
+    }
     let sep = if base.is_empty() {
         ""
     } else {
@@ -844,6 +875,7 @@ fn push_value(out: &mut Vec<Completion>, base: &str, replacement: &str, label: &
         value: format!("{base}{sep}{replacement}"),
         label: label.to_string(),
     });
+    true
 }
 
 fn complete_date(partial: &str, today: Date) -> Vec<String> {
@@ -1088,7 +1120,7 @@ mod tests {
             display_id: 1,
         }];
         let today = Date::new(2026, 7, 25).unwrap();
-        let comps = complete("s", today, &tasks, &habits);
+        let comps = complete("s", today, &tasks, &habits, None);
         assert!(
             comps
                 .iter()
@@ -1101,9 +1133,9 @@ mod tests {
         let tasks = mk_tasks();
         let habits: Vec<TestHabit> = vec![];
         let today = Date::new(2026, 7, 25).unwrap();
-        let comps = complete("start:25", today, &tasks, &habits);
+        let comps = complete("start:25", today, &tasks, &habits, None);
         assert!(comps.iter().any(|c| c.value.contains("2026-07-25")));
-        let comps2 = complete("start:08-09", today, &tasks, &habits);
+        let comps2 = complete("start:08-09", today, &tasks, &habits, None);
         assert!(comps2.iter().any(|c| c.value.contains("2026-08-09")));
     }
 
@@ -1112,7 +1144,7 @@ mod tests {
         let tasks = mk_tasks();
         let habits: Vec<TestHabit> = vec![];
         let today = Date::new(2026, 7, 25).unwrap();
-        let comps = complete("o", today, &tasks, &habits);
+        let comps = complete("o", today, &tasks, &habits, None);
         assert!(
             !comps
                 .iter()
@@ -1126,7 +1158,7 @@ mod tests {
         let tasks = mk_tasks();
         let habits: Vec<TestHabit> = vec![];
         let today = Date::new(2026, 7, 25).unwrap();
-        let comps = complete("status:p", today, &tasks, &habits);
+        let comps = complete("status:p", today, &tasks, &habits, None);
         assert!(comps.iter().any(|c| c.value == "status:pending"));
         assert!(
             !comps.iter().any(|c| c.value.ends_with(' ')),
@@ -1139,7 +1171,7 @@ mod tests {
         let tasks = mk_tasks();
         let habits: Vec<TestHabit> = vec![];
         let today = Date::new(2026, 7, 25).unwrap();
-        let comps = complete("foo", today, &tasks, &habits);
+        let comps = complete("foo", today, &tasks, &habits, None);
         for (q, _desc) in QUALIFIERS {
             assert!(
                 comps.iter().any(|c| c.value == format!("{q}:")),
@@ -1199,5 +1231,24 @@ mod tests {
         let tasks = mk_tasks();
         let got = filter_tasks(tasks, "has:depends", &ctx).unwrap();
         assert_eq!(got.len(), 2);
+    }
+
+    #[test]
+    fn completion_limit_truncates_results() {
+        let tasks = mk_tasks();
+        let habits: Vec<TestHabit> = vec![];
+        let today = Date::new(2026, 7, 25).unwrap();
+        let comps = complete("foo", today, &tasks, &habits, Some(3));
+        assert_eq!(comps.len(), 3);
+    }
+
+    #[test]
+    fn completion_limit_truncates_qualifier_results() {
+        let tasks = mk_tasks();
+        let habits: Vec<TestHabit> = vec![];
+        let today = Date::new(2026, 7, 25).unwrap();
+        // "status:" matches all six status values, so a limit of 2 should truncate.
+        let comps = complete("status:", today, &tasks, &habits, Some(2));
+        assert_eq!(comps.len(), 2);
     }
 }
