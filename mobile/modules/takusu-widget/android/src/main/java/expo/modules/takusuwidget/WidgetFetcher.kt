@@ -6,7 +6,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Fetches the widget snapshot from the local Rust server (127.0.0.1:3838).
+ * Fetches the widget snapshot from the local Rust server.
  *
  * The local server is started by [WidgetUpdateWorker] before calling this.
  * Returns null on any failure so the caller can fall back to the cached
@@ -28,14 +28,19 @@ data class WidgetSnapshot(
 )
 
 object WidgetFetcher {
-    private const val BASE = "http://127.0.0.1:3838"
     private const val CONNECT_TIMEOUT_MS = 3_000
     private const val READ_TIMEOUT_MS = 5_000
 
-    fun fetch(token: String): WidgetSnapshot? {
+    private fun baseUrl(port: Int): String = "http://127.0.0.1:$port"
+
+    fun fetch(
+        token: String,
+        port: Int,
+    ): WidgetSnapshot? {
+        val base = baseUrl(port)
         return try {
-            val tasks = fetchJsonArray("$BASE/api/tasks", token) ?: return null
-            val schedule = fetchJsonObject("$BASE/api/schedule", token)
+            val tasks = fetchJsonArray("$base/api/tasks", token) ?: return null
+            val schedule = fetchJsonObject("$base/api/schedule", token)
             val scheduleMap = parseScheduleMap(schedule)
 
             var doing: UpcomingTask? = null

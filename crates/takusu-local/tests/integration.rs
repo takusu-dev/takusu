@@ -57,6 +57,22 @@ fn auth_req_body(method: Method, uri: &str, body: serde_json::Value) -> Request<
         .unwrap()
 }
 
+fn auth_req_body_idempotency(
+    method: Method,
+    uri: &str,
+    body: serde_json::Value,
+    operation_id: &str,
+) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("authorization", format!("Bearer {}", root_token()))
+        .header("content-type", "application/json")
+        .header("idempotency-key", operation_id)
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
 async fn body_str(body: Body) -> String {
     let bytes = body.collect().await.unwrap().to_bytes();
     String::from_utf8(bytes.to_vec()).unwrap()
@@ -367,6 +383,52 @@ async fn task_replace() {
     assert_eq!(replaced["title"], "replaced");
     assert_eq!(replaced["avg_minutes"], 45);
     assert_eq!(replaced["parallelizable"], true);
+}
+
+#[tokio::test]
+async fn replace_task_resets_lifecycle_fields() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "original",
+            "end_at": "2026-06-05T18:00:00+09:00",
+            "avg_minutes": 30,
+            "quantity_total": 10,
+            "quantity_unit": "問"
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let task_id = body["id"].as_str().unwrap();
+
+    let complete = auth_req_body(
+        Method::PATCH,
+        &format!("/api/tasks/{task_id}"),
+        json!({"status": "completed", "quantity_done": 10}),
+    );
+    let res = app.clone().oneshot(complete).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let replace = auth_req_body(
+        Method::PUT,
+        &format!("/api/tasks/{task_id}"),
+        json!({
+            "title": "replaced",
+            "end_at": "2026-06-06T18:00:00+09:00",
+            "avg_minutes": 30,
+        }),
+    );
+    let res = app.clone().oneshot(replace).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let replaced: serde_json::Value =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(replaced["status"], "pending");
+    assert!(replaced["completed_at"].is_null());
+    assert_eq!(replaced["quantity_done"], 0);
 }
 
 #[tokio::test]
@@ -3980,6 +4042,64 @@ async fn progress_lifecycle() {
         serde_json::from_str(&body_str(res.into_body()).await).unwrap();
     assert_eq!(completed["status"], "completed");
     assert_eq!(completed["quantity_done"], 10);
+}
+
+#[tokio::test]
+async fn progress_and_pause_cannot_share_operation_id() {
+    let (state, _pool) = setup().await;
+    let app = build_router(state);
+
+    let create = auth_req_body(
+        Method::POST,
+        "/api/tasks",
+        json!({
+            "title": "study",
+            "end_at": "2026-07-22T18:00:00+09:00",
+            "avg_minutes": 30,
+            "quantity_total": 10,
+            "quantity_unit": "pages"
+        }),
+    );
+    let res = app.clone().oneshot(create).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let task: serde_json::Value =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let id = task["id"].as_str().unwrap();
+
+    let req = auth_req(Method::POST, &format!("/api/tasks/{id}/work/start"));
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // Reusing the same operationId for a different progress endpoint must fail
+    // with CONFLICT, because the idempotency key is bound to the request hash.
+    let operation_id = "shared-op-1";
+    let req = auth_req_body_idempotency(
+        Method::POST,
+        &format!("/api/tasks/{id}/progress"),
+        json!({"quantity_done": 4}),
+        operation_id,
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let req = auth_req_body_idempotency(
+        Method::POST,
+        &format!("/api/tasks/{id}/work/pause"),
+        json!({}),
+        operation_id,
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+
+    // Using a fresh operationId for pause succeeds.
+    let req = auth_req_body_idempotency(
+        Method::POST,
+        &format!("/api/tasks/{id}/work/pause"),
+        json!({}),
+        "pause-op-1",
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
 }
 
 #[tokio::test]

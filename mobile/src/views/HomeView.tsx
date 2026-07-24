@@ -57,6 +57,7 @@ import {
   cancelScheduledStartNotifications,
 } from '@/src/notifications';
 import {
+  makeProgressOperationId,
   recordProgressWithTotal,
   type ProgressPayload,
 } from '@/src/utils/progress';
@@ -806,13 +807,14 @@ export function HomeView() {
       actionLabel = 'start';
       errorLabel = 'タスクの開始に失敗';
     }
+    const operationId = makeProgressOperationId();
     try {
       if (isInProgress || isPending) {
-        await currentClient.completeTaskWork(task.id);
+        await currentClient.completeTaskWork(task.id, operationId);
       } else if (isDone) {
         await currentClient.updateTask(task.id, { status: newStatus });
       } else {
-        await currentClient.startTaskWork(task.id);
+        await currentClient.startTaskWork(task.id, operationId);
       }
     } catch (e) {
       showError(e, errorLabel);
@@ -853,7 +855,7 @@ export function HomeView() {
         const undoNotifications = notificationsRef.current;
         if (newStatus === 'in_progress' && prevStatus === 'scheduled') {
           // undo start: close the work session and return to scheduled.
-          await undoClient.pauseTaskWork(task.id);
+          await undoClient.pauseTaskWork(task.id, makeProgressOperationId());
           if (undoNotifications.inProgress) {
             dismissInProgressNotification(task.id).catch((e) =>
               logError('通知の消去', e),
@@ -901,7 +903,7 @@ export function HomeView() {
         if (!redoClient) return;
         const redoNotifications = notificationsRef.current;
         if (newStatus === 'in_progress' && prevStatus === 'scheduled') {
-          await redoClient.startTaskWork(task.id);
+          await redoClient.startTaskWork(task.id, makeProgressOperationId());
           if (redoNotifications.inProgress) {
             postInProgressNotification(task).catch((e) =>
               logError('通知の投稿', e),
@@ -978,8 +980,9 @@ export function HomeView() {
       }
     }
     haptic.medium();
+    const operationId = makeProgressOperationId();
     try {
-      await currentClient.startTaskWork(next.id);
+      await currentClient.startTaskWork(next.id, operationId);
       cancelScheduledStartNotifications(next.id).catch((e) =>
         logError('通知のキャンセル', e),
       );
@@ -1002,9 +1005,13 @@ export function HomeView() {
       const currentClient = clientRef.current;
       const task = inProgressTask;
       if (!currentClient || !task) return;
+      const recordOperationId = makeProgressOperationId();
+      const pauseOperationId = makeProgressOperationId();
       try {
-        await recordProgressWithTotal(currentClient, task, payload);
-        await currentClient.pauseTaskWork(task.id);
+        await recordProgressWithTotal(currentClient, task, payload, {
+          operationId: recordOperationId,
+        });
+        await currentClient.pauseTaskWork(task.id, pauseOperationId);
         dismissInProgressNotification(task.id).catch((e) =>
           logError('通知の消去', e),
         );

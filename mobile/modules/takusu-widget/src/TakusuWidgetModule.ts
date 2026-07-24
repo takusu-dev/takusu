@@ -4,6 +4,7 @@ export interface WidgetConfig {
   workersUrl: string;
   token: string;
   scheme?: string;
+  port?: number;
 }
 
 export interface WidgetTaskData {

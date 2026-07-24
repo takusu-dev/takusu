@@ -1131,8 +1131,9 @@ impl AgentSession {
                         .await
                         .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?;
                 }
-                let after = Some(move_result);
-                (target_id.clone(), change.before.clone(), after, None)
+                let after = serde_json::to_value(&move_result)
+                    .map_err(|e| AgentError::Tool(ToolError::Other(Box::new(e))))?;
+                (target_id.clone(), change.before.clone(), Some(after), None)
             }
             (Some("task"), "start") => {
                 let task = self

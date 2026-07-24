@@ -5,6 +5,7 @@ import TakusuServerModule from '@/modules/takusu-server/src/TakusuServerModule';
 import { useScheduleOperation } from '@/src/hooks/useScheduleOperation';
 
 jest.mock('@/modules/takusu-server/src/TakusuServerModule', () => ({
+  status: jest.fn(),
   runScheduleOperation: jest.fn(),
   getScheduleOperationStatus: jest.fn(),
   clearScheduleOperationStatus: jest.fn(),
@@ -19,10 +20,13 @@ describe('useScheduleOperation', () => {
   let appStateHandlers: Array<(state: string) => void> = [];
 
   const mockedTakusuServerModule = TakusuServerModule as unknown as {
+    status: jest.Mock;
     runScheduleOperation: jest.Mock;
     getScheduleOperationStatus: jest.Mock;
     clearScheduleOperationStatus: jest.Mock;
   };
+
+  const port = 4242;
 
   async function renderUseScheduleOperation() {
     return renderHook(() =>
@@ -52,6 +56,10 @@ describe('useScheduleOperation', () => {
     mockedTakusuServerModule.getScheduleOperationStatus.mockResolvedValue({
       status: 'running',
     });
+    mockedTakusuServerModule.status.mockReturnValue({
+      running: true,
+      port,
+    });
   });
 
   afterEach(() => {
@@ -80,6 +88,7 @@ describe('useScheduleOperation', () => {
       '{}',
       'https://example.com',
       'token',
+      port,
     );
     expect(result.current.scheduleOperation).toEqual({
       operation: 'generate',

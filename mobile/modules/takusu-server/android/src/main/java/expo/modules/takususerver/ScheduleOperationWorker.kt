@@ -43,6 +43,8 @@ class ScheduleOperationWorker(
     private val paramsJson = inputData.getString(KEY_PARAMS_JSON) ?: "{}"
     private val workersUrl = inputData.getString(KEY_WORKERS_URL) ?: ""
     private val token = inputData.getString(KEY_TOKEN) ?: ""
+    private val port = inputData.getInt(KEY_PORT, DEFAULT_PORT)
+    private val base = "http://127.0.0.1:$port"
 
     override suspend fun doWork(): Result {
         if (operation.isEmpty() || operationId.isEmpty() || workersUrl.isEmpty() || token.isEmpty()) {
@@ -97,7 +99,7 @@ class ScheduleOperationWorker(
                 } catch (e: ConnectException) {
                     try {
                         server = uniffi.takusu_android.TakusuServer()
-                        server.start(PORT.toUShort(), workersUrl, token)
+                        server.start(port.toUShort(), workersUrl, token)
                     } catch (startError: Exception) {
                         throw Exception("一時サーバーの起動に失敗しました: ${startError.message}")
                     }
@@ -120,7 +122,7 @@ class ScheduleOperationWorker(
 
     private fun postJson(path: String): Pair<Int, String> {
         val conn =
-            (URL("$BASE$path").openConnection() as HttpURLConnection).apply {
+            (URL("$base$path").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = CONNECT_TIMEOUT_MS
                 readTimeout = READ_TIMEOUT_MS
@@ -245,8 +247,7 @@ class ScheduleOperationWorker(
         }
 
     companion object {
-        private const val PORT = 3838
-        private const val BASE = "http://127.0.0.1:$PORT"
+        private const val DEFAULT_PORT = 3838
         private const val CONNECT_TIMEOUT_MS = 3_000
         private const val READ_TIMEOUT_MS = 9 * 60 * 1000 // 9 minutes; core scheduling can be slow
         private const val CHANNEL_ID = "background-schedule"
@@ -259,6 +260,7 @@ class ScheduleOperationWorker(
         private const val KEY_PARAMS_JSON = "paramsJson"
         private const val KEY_WORKERS_URL = "workersUrl"
         private const val KEY_TOKEN = "token"
+        private const val KEY_PORT = "port"
 
         fun statusFile(context: Context): File = File(context.filesDir, "takusu/schedule-operation-status.json")
 
@@ -276,6 +278,7 @@ class ScheduleOperationWorker(
             paramsJson: String,
             workersUrl: String,
             token: String,
+            port: Int,
         ) {
             val data =
                 Data
@@ -285,6 +288,7 @@ class ScheduleOperationWorker(
                     .putString(KEY_PARAMS_JSON, paramsJson)
                     .putString(KEY_WORKERS_URL, workersUrl)
                     .putString(KEY_TOKEN, token)
+                    .putInt(KEY_PORT, port)
                     .build()
             val request =
                 OneTimeWorkRequestBuilder<ScheduleOperationWorker>()

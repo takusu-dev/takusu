@@ -129,6 +129,7 @@ class TakusuServerModule : Module() {
                 paramsJson: String,
                 workersUrl: String,
                 token: String,
+                port: Int,
                 ->
                 val context =
                     appContext.reactContext
@@ -143,6 +144,7 @@ class TakusuServerModule : Module() {
                     paramsJson,
                     workersUrl,
                     token,
+                    port,
                 )
                 true
             }

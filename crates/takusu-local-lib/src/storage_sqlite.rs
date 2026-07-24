@@ -784,7 +784,8 @@ impl Storage for SqliteStorage {
         // Treat quantity_total / original_quantity_total 0 as unset (same as None) server-side.
         let quantity_total = body.quantity_total.filter(|t| *t != 0);
         let original_quantity_total = body.original_quantity_total.filter(|t| *t != 0);
-        validate_quantity(quantity_total, body.quantity_done, original_quantity_total)?;
+        // Full replacement resets quantity_done to 0, so validate against that.
+        validate_quantity(quantity_total, Some(0), original_quantity_total)?;
         let full = resolve_task_id(&self.pool, id).await?;
         let resolved_depends = resolve_depends(&self.pool, body.depends.as_deref()).await?;
         let depends_json = serde_json::to_string(&resolved_depends).unwrap_or_else(|_| "[]".into());
@@ -793,7 +794,6 @@ impl Storage for SqliteStorage {
         let allows_parallel = body.allows_parallel.unwrap_or(false);
         let abandonability = body.abandonability.unwrap_or(0.5);
         let fixed = body.fixed.unwrap_or(false);
-        let quantity_done = body.quantity_done;
         let quantity_unit = body.quantity_unit.as_deref();
         let normalized_title = takusu_util::memory::normalize_text(
             &body.title,
@@ -801,7 +801,7 @@ impl Storage for SqliteStorage {
         )
         .ok();
         sqlx::query(
-            "UPDATE tasks SET title=?, normalized_title=?, description=?, start_at=?, end_at=?, avg_minutes=?, sigma_minutes=?, depends=?, parallelizable=?, allows_parallel=?, abandonability=?, habit_id=COALESCE(?,habit_id), fixed=?, habit_step_id=?, quantity_total=COALESCE(?, quantity_total), quantity_done=COALESCE(?, quantity_done), quantity_unit=COALESCE(?, quantity_unit), completed_at=COALESCE(?, completed_at), split_from_task_id=COALESCE(?, split_from_task_id), original_quantity_total=COALESCE(?, original_quantity_total), updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?"
+            "UPDATE tasks SET title=?, normalized_title=?, description=?, start_at=?, end_at=?, avg_minutes=?, sigma_minutes=?, depends=?, parallelizable=?, allows_parallel=?, abandonability=?, habit_id=COALESCE(?,habit_id), fixed=?, habit_step_id=?, quantity_total=COALESCE(?, quantity_total), quantity_done=0, quantity_unit=COALESCE(?, quantity_unit), completed_at=NULL, split_from_task_id=COALESCE(?, split_from_task_id), original_quantity_total=COALESCE(?, original_quantity_total), status='pending', user_edited = CASE WHEN habit_id IS NOT NULL THEN true ELSE user_edited END, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?"
         )
         .bind(&body.title)
         .bind(&normalized_title)
@@ -818,9 +818,7 @@ impl Storage for SqliteStorage {
         .bind(fixed)
         .bind(&body.habit_step_id)
         .bind(quantity_total)
-        .bind(quantity_done)
         .bind(quantity_unit)
-        .bind(None::<String>)
         .bind(None::<String>)
         .bind(original_quantity_total)
         .bind(&full)

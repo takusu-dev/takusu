@@ -774,7 +774,7 @@ impl Client {
         &self,
         task_id: &str,
         body: &MoveEntry,
-    ) -> Result<serde_json::Value, ClientError> {
+    ) -> Result<MoveEntryResponse, ClientError> {
         let resp = self
             .request(
                 reqwest::Method::PATCH,
@@ -789,7 +789,7 @@ impl Client {
             let body = resp.text().await.unwrap_or_default();
             return Err(ClientError::Api { status, body });
         }
-        Ok(resp.json().await?)
+        resp.json().await.map_err(ClientError::Http)
     }
 
     pub async fn clear_schedule(&self) -> Result<(), ClientError> {
@@ -1236,15 +1236,17 @@ pub struct TaskRow {
     pub avg_minutes: i64,
     pub sigma_minutes: i64,
     pub depends: String,
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub parallelizable: bool,
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub allows_parallel: bool,
     pub abandonability: f64,
     pub status: String,
     pub habit_id: Option<String>,
     pub ical_uid: Option<String>,
-    #[serde(default)]
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub user_edited: bool,
-    #[serde(default)]
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub fixed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub habit_step_id: Option<String>,
@@ -1369,11 +1371,14 @@ pub struct HabitRow {
     pub end_time: String,
     pub avg_minutes: i64,
     pub sigma_minutes: i64,
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub parallelizable: bool,
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub allows_parallel: bool,
     pub abandonability: f64,
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub active: bool,
-    #[serde(default)]
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub fixed: bool,
     #[serde(default)]
     pub window_mode: String,
@@ -1469,9 +1474,12 @@ pub struct HabitStepRow {
     pub end_time: String,
     pub avg_minutes: i64,
     pub sigma_minutes: i64,
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub parallelizable: bool,
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub allows_parallel: bool,
     pub abandonability: f64,
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub fixed: bool,
     pub depends_on: String,
     pub created_at: String,
@@ -1652,6 +1660,15 @@ pub struct MoveEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MoveEntryResponse {
+    pub task_id: String,
+    pub start_at: String,
+    pub end_at: String,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenRow {
     pub id: i64,
     pub jti: String,
@@ -1677,10 +1694,13 @@ pub struct TokenCreateResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncSettingsResponse {
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub enabled: bool,
     pub calendar_id: String,
     pub client_id: String,
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub has_client_secret: bool,
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub has_refresh_token: bool,
 }
 
@@ -1718,7 +1738,7 @@ pub struct SkillRow {
     pub name: String,
     pub description: String,
     pub body: String,
-    #[serde(default)]
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub built_in: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -1902,7 +1922,7 @@ pub struct SettingsResponse {
     #[serde(default)]
     pub seed: Option<i64>,
     /// 前回スケジュールから priority/ALNS の初期解を warm start する。
-    #[serde(default)]
+    #[serde(with = "takusu_util::bool_compat", default)]
     pub warm_start: bool,
 }
 

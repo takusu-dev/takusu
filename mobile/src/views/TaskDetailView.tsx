@@ -43,6 +43,7 @@ import { RedundantDepWarning } from '@/src/components/RedundantDepWarning';
 import { formatDate } from '@/src/formatDate';
 import { parseDuration, formatDuration } from '@/src/utils/duration';
 import {
+  makeProgressOperationId,
   recordProgressWithTotal,
   type ProgressPayload,
 } from '@/src/utils/progress';
@@ -490,8 +491,9 @@ export function TaskDetailView() {
   async function startTask() {
     if (!client || !task) return;
     const prevStatus = task.status;
+    const operationId = makeProgressOperationId();
     try {
-      await client.startTaskWork(task.id);
+      await client.startTaskWork(task.id, operationId);
     } catch (e) {
       showError(e, 'タスクの開始に失敗');
       return;
@@ -511,7 +513,7 @@ export function TaskDetailView() {
       description: `start: ${task.title}`,
       undo: async () => {
         try {
-          await client.pauseTaskWork(task.id);
+          await client.pauseTaskWork(task.id, makeProgressOperationId());
         } catch (e) {
           showError(e, 'タスクの巻き戻しに失敗');
           return;
@@ -527,7 +529,7 @@ export function TaskDetailView() {
       },
       redo: async () => {
         try {
-          await client.startTaskWork(task.id);
+          await client.startTaskWork(task.id, makeProgressOperationId());
         } catch (e) {
           showError(e, 'タスクの再開に失敗');
           return;
@@ -541,16 +543,20 @@ export function TaskDetailView() {
     if (!client || !task) return;
     const prevQuantityDone = task.quantity_done;
     const prevQuantityTotal = task.quantity_total;
-    if (payload) {
+    const recordOperationId = payload ? makeProgressOperationId() : undefined;
+    const pauseOperationId = makeProgressOperationId();
+    if (payload && recordOperationId) {
       try {
-        await recordProgressWithTotal(client, task, payload);
+        await recordProgressWithTotal(client, task, payload, {
+          operationId: recordOperationId,
+        });
       } catch (e) {
         showError(e, '進捗の記録に失敗');
         return;
       }
     }
     try {
-      await client.pauseTaskWork(task.id);
+      await client.pauseTaskWork(task.id, pauseOperationId);
     } catch (e) {
       showError(e, 'タスクの一時停止に失敗');
       return;
@@ -564,7 +570,7 @@ export function TaskDetailView() {
       description: `pause: ${task.title}`,
       undo: async () => {
         try {
-          await client.startTaskWork(task.id);
+          await client.startTaskWork(task.id, makeProgressOperationId());
         } catch (e) {
           showError(e, 'タスクの巻き戻しに失敗');
           return;
@@ -583,7 +589,7 @@ export function TaskDetailView() {
       },
       redo: async () => {
         try {
-          await client.pauseTaskWork(task.id);
+          await client.pauseTaskWork(task.id, makeProgressOperationId());
         } catch (e) {
           showError(e, 'タスクの再停止に失敗');
           return;
@@ -597,8 +603,9 @@ export function TaskDetailView() {
     if (!client || !task) return;
     const prevQuantityDone = task.quantity_done;
     const total = task.quantity_total;
+    const operationId = makeProgressOperationId();
     try {
-      await client.completeTaskWork(task.id);
+      await client.completeTaskWork(task.id, operationId);
     } catch (e) {
       showError(e, 'タスクの完了に失敗');
       return;
@@ -663,14 +670,19 @@ export function TaskDetailView() {
     endAt?: string;
   }) {
     if (!client || !task) return;
+    const operationId = makeProgressOperationId();
     try {
-      await client.splitTask(task.id, {
-        retained_quantity: payload.retainedQuantity,
-        set_dependency: payload.setDependency,
-        title: payload.title,
-        description: payload.description,
-        end_at: payload.endAt,
-      });
+      await client.splitTask(
+        task.id,
+        {
+          retained_quantity: payload.retainedQuantity,
+          set_dependency: payload.setDependency,
+          title: payload.title,
+          description: payload.description,
+          end_at: payload.endAt,
+        },
+        operationId,
+      );
     } catch (e) {
       showError(e, 'タスクの分割に失敗');
       return;

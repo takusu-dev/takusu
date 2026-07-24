@@ -24,6 +24,20 @@ function isAlreadyRunningError(err: unknown): boolean {
   );
 }
 
+// Return the port the local server is currently running on, falling back
+// to the default port if the module reports that it is not running.
+export function getLocalServerPort(): number {
+  try {
+    const status = TakusuServerModule.status();
+    if (status.running && status.port > 0) {
+      return status.port;
+    }
+  } catch {
+    // module may not be available in tests
+  }
+  return DEFAULT_LOCAL_PORT;
+}
+
 // Return a client for the local server, starting it if necessary.
 // Throws if the server cannot be started.
 export function ensureLocalServer(

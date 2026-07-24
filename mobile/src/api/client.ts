@@ -17,6 +17,7 @@ import type {
   GenerateSchedule,
   RescheduleRequest,
   MoveEntryRequest,
+  MoveEntryResponse,
   SettingsRow,
   UpdateSettings,
   TokenRow,
@@ -61,6 +62,7 @@ export class TakusuClient {
     method: string,
     path: string,
     body?: unknown,
+    operationId?: string,
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
@@ -68,6 +70,9 @@ export class TakusuClient {
     };
     if (body !== undefined) {
       headers['Content-Type'] = 'application/json';
+    }
+    if (operationId !== undefined && operationId !== '') {
+      headers['Idempotency-Key'] = operationId;
     }
     const resp = await fetch(url, {
       method,
@@ -144,43 +149,56 @@ export class TakusuClient {
   }
 
   // ── Task progress (#757) ──
-  async startTaskWork(id: string): Promise<TaskRow> {
+  async startTaskWork(id: string, operationId?: string): Promise<TaskRow> {
     return this.request(
       'POST',
       `/api/tasks/${encodeURIComponent(id)}/work/start`,
+      undefined,
+      operationId,
     );
   }
 
-  async pauseTaskWork(id: string): Promise<TaskRow> {
+  async pauseTaskWork(id: string, operationId?: string): Promise<TaskRow> {
     return this.request(
       'POST',
       `/api/tasks/${encodeURIComponent(id)}/work/pause`,
+      undefined,
+      operationId,
     );
   }
 
   async recordProgress(
     id: string,
     body: RecordProgress,
+    operationId?: string,
   ): Promise<ProgressResult> {
     return this.request(
       'POST',
       `/api/tasks/${encodeURIComponent(id)}/progress`,
       body,
+      operationId,
     );
   }
 
-  async completeTaskWork(id: string): Promise<TaskRow> {
+  async completeTaskWork(id: string, operationId?: string): Promise<TaskRow> {
     return this.request(
       'POST',
       `/api/tasks/${encodeURIComponent(id)}/work/complete`,
+      undefined,
+      operationId,
     );
   }
 
-  async splitTask(id: string, body: SplitTask): Promise<SplitResult> {
+  async splitTask(
+    id: string,
+    body: SplitTask,
+    operationId?: string,
+  ): Promise<SplitResult> {
     return this.request(
       'POST',
       `/api/tasks/${encodeURIComponent(id)}/split`,
       body,
+      operationId,
     );
   }
 
@@ -320,12 +338,21 @@ export class TakusuClient {
   async moveEntry(
     taskId: string,
     body: MoveEntryRequest,
-  ): Promise<ScheduleRow> {
-    return this.request(
+  ): Promise<MoveEntryResponse> {
+    const raw = await this.request<MoveEntryResponse>(
       'PATCH',
       `/api/schedule/entries/${encodeURIComponent(taskId)}`,
       body,
     );
+    if (!raw.task_id || !raw.start_at || !raw.end_at) {
+      throw new ApiError(0, 'invalid move entry response from server');
+    }
+    return {
+      task_id: raw.task_id,
+      start_at: raw.start_at,
+      end_at: raw.end_at,
+      warnings: raw.warnings ?? [],
+    };
   }
 
   async clearSchedule(): Promise<void> {
@@ -350,7 +377,10 @@ export class TakusuClient {
     return this.request('POST', '/api/tokens', { label });
   }
 
-  async revokeToken(id: number | string): Promise<void> {
+  async revokeToken(id: number): Promise<void> {
+    if (!Number.isFinite(id) || !Number.isInteger(id) || id <= 0) {
+      throw new ApiError(400, 'token id must be a positive integer');
+    }
     return this.request('DELETE', `/api/tokens/${encodeURIComponent(id)}`);
   }
 

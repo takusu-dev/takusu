@@ -281,6 +281,13 @@ export interface MoveEntryRequest {
   force?: boolean;
 }
 
+export interface MoveEntryResponse {
+  task_id: string;
+  start_at: string;
+  end_at: string;
+  warnings: string[];
+}
+
 export interface SettingsRow {
   tz: string;
   sleep_start: string;

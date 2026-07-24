@@ -11,7 +11,11 @@ import { Appearance, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { TakusuClient } from './client';
 import { AgentClient, type AgentUpdateSettings } from './agentClient';
-import { DEFAULT_LOCAL_PORT, ensureLocalServer } from './server';
+import {
+  DEFAULT_LOCAL_PORT,
+  ensureLocalServer,
+  getLocalServerPort,
+} from './server';
 import TakusuServerModule from '@/modules/takusu-server/src/TakusuServerModule';
 import TakusuAppIconModule from '@/modules/takusu-app-icon/src/TakusuAppIconModule';
 import TakusuWidgetModule from '../../modules/takusu-widget/src/TakusuWidgetModule';
@@ -167,10 +171,12 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       // WorkManager worker can start the local server independently.
       try {
         const scheme = Constants.expoConfig?.scheme;
+        const port = getLocalServerPort();
         TakusuWidgetModule.saveConfig({
           workersUrl: finalUrl,
           token: finalToken,
           scheme: Array.isArray(scheme) ? scheme[0] : scheme,
+          port,
         });
       } catch {
         // widget module not available (e.g. non-Android) — ignore
@@ -337,15 +343,20 @@ export function ServerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const pushAgentConfig = useCallback(async () => {
-    if (Platform.OS !== 'android' || !state.ready || !state.workersToken) {
+    if (
+      Platform.OS !== 'android' ||
+      !state.ready ||
+      !state.workersToken ||
+      !state.client
+    ) {
       return;
     }
     const agentClient = new AgentClient(
-      `http://127.0.0.1:${DEFAULT_PORT}`,
+      state.client.baseUrl,
       state.workersToken,
     );
     await agentClient.updateSettings(await buildAgentUpdateSettings());
-  }, [state.ready, state.workersToken]);
+  }, [state.ready, state.workersToken, state.client]);
 
   const contextValue = useMemo<ServerContextValue>(
     () => ({

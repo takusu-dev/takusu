@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 
 import { logError } from '@/src/api/errors';
+import { getLocalServerPort } from '@/src/api/server';
 import type { ToastOptions } from '@/src/components/TopToast';
 import TakusuServerModule from '@/modules/takusu-server/src/TakusuServerModule';
 
@@ -94,6 +95,7 @@ export function useScheduleOperation({
         return;
       }
       const id = generateOperationId(operation);
+      const port = getLocalServerPort();
       try {
         TakusuServerModule.runScheduleOperation(
           operation,
@@ -101,6 +103,7 @@ export function useScheduleOperation({
           JSON.stringify(params),
           workersUrl,
           workersToken,
+          port,
         );
         const toastId = showTopToast(label, {
           type: 'loading',
