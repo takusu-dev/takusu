@@ -201,6 +201,39 @@ class TakusuAudioModule : Module() {
                 }
                 true
             }
+
+            AsyncFunction("getAvailableVoices") Coroutine { _: Any? ->
+                val context =
+                    appContext.reactContext
+                        ?: throw CodedException("ERR_AUDIO_CONFIG", "React context is not available", null)
+
+                val existingTts = textToSpeech
+                val temporary = existingTts == null
+                val tts =
+                    existingTts
+                        ?: try {
+                            initTextToSpeech(context)
+                        } catch (error: Exception) {
+                            throw CodedException(
+                                "ERR_TTS_INIT",
+                                "Failed to initialize Android TTS to list voices: ${error.message}",
+                                error,
+                            )
+                        }
+
+                val voices =
+                    try {
+                        voicesFromTts(tts)
+                    } finally {
+                        if (temporary) {
+                            try {
+                                tts.shutdown()
+                            } catch (_: Exception) {
+                            }
+                        }
+                    }
+                voices
+            }
         }
 
     private suspend fun initTextToSpeech(context: Context): TextToSpeech =
@@ -255,24 +288,53 @@ class TakusuAudioModule : Module() {
         tts: TextToSpeech,
         options: AudioOptions,
     ) {
-        val locale = Locale.forLanguageTag(options.language)
-        val languageResult = tts.setLanguage(locale)
-        if (languageResult == TextToSpeech.LANG_MISSING_DATA ||
-            languageResult == TextToSpeech.LANG_NOT_SUPPORTED
-        ) {
-            Log.w(TAG, "TTS language '${options.language}' is not supported, falling back to default locale")
-            tts.setLanguage(Locale.getDefault())
-        }
-
-        if (options.voiceId.isNotEmpty()) {
-            val voice: Voice? = tts.voices?.find { it.name == options.voiceId }
-            if (voice != null) {
-                tts.voice = voice
-            } else {
-                Log.w(TAG, "TTS voice '${options.voiceId}' not found, using default")
-            }
-        }
-
-        tts.setSpeechRate(options.speed.toFloat())
+        applyTtsOptions(tts, options.voiceId, options.language, options.speed.toFloat())
     }
 }
+
+internal fun applyTtsOptions(
+    tts: TextToSpeech,
+    voiceId: String,
+    language: String,
+    speed: Float,
+) {
+    val locale = Locale.forLanguageTag(language)
+    val languageResult = tts.setLanguage(locale)
+    if (languageResult == TextToSpeech.LANG_MISSING_DATA ||
+        languageResult == TextToSpeech.LANG_NOT_SUPPORTED
+    ) {
+        Log.w(TAG, "TTS language '$language' is not supported, falling back to default locale")
+        tts.setLanguage(Locale.getDefault())
+    }
+
+    val voice: Voice? =
+        if (voiceId.isNotEmpty()) {
+            tts.voices?.sortedBy { it.name }?.find { it.name == voiceId }
+        } else {
+            tts.voices?.sortedBy { it.name }?.firstOrNull()
+        }
+    if (voice != null) {
+        val voiceResult = tts.setVoice(voice)
+        if (voiceResult == TextToSpeech.ERROR) {
+            Log.w(TAG, "Failed to set TTS voice '${voice.name}', continuing with engine default")
+        }
+    } else if (voiceId.isNotEmpty()) {
+        Log.w(TAG, "TTS voice '$voiceId' not found, continuing with engine default")
+    }
+
+    tts.setSpeechRate(speed)
+}
+
+internal fun voicesFromTts(tts: TextToSpeech): List<Map<String, Any>> =
+    tts.voices
+        ?.sortedBy { it.name }
+        ?.map { voice ->
+            mapOf(
+                "name" to voice.name,
+                "locale" to (voice.locale?.toLanguageTag() ?: ""),
+                "quality" to voice.quality,
+                "latency" to voice.latency,
+                "requiresNetworkConnection" to voice.isNetworkConnectionRequired,
+                "features" to (voice.features?.toList() ?: emptyList<String>()),
+            )
+        } ?: emptyList()
