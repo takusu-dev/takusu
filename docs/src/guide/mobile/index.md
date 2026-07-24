@@ -1,0 +1,23 @@
+# モバイルアプリ
+
+`takusu` のモバイルアプリは **Expo / React Native** で構築されています。Android 実機またはエミュレータで動作します。
+
+## 主な画面
+
+- [セットアップ](setup.md)
+- [ホーム画面](home.md)
+- [タスク詳細](task-detail.md)
+- [タスク追加](task-add.md)
+- [習慣ビュー](habit-view.md)
+- [習慣詳細](habit-detail.md)
+- [グラフビュー](graph-view.md)
+- [設定](settings.md)
+- [音声アシスタント](voice-assistant.md)
+
+## 共通 UI
+
+- 画面上部: ハンバーガーメニュー、検索ボタン、同期ボタン
+- 画面中央: 各ビュー固有のコンテンツ
+- 画面下部: タスク追加ボタン、タスク実行開始/Done ボタン
+- 画面右側中央: ナビゲーションボタン（上/下スクロール、カレンダー）
+- 画面左側下: ビュー切り替えボタン（task / habit / graph）
