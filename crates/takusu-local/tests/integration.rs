@@ -398,6 +398,65 @@ async fn task_list_filter_by_status() {
 }
 
 #[tokio::test]
+async fn task_list_filter_by_q_status() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    let mut ids = Vec::new();
+    for title in ["alpha", "beta", "gamma"] {
+        let req = auth_req_body(
+            Method::POST,
+            "/api/tasks",
+            json!({
+                "title": title,
+                "end_at": "2026-06-05T18:00:00+09:00",
+                "avg_minutes": 30,
+                "depends": [],
+                "parallelizable": false,
+                "allows_parallel": false,
+                "abandonability": 0.5,
+            }),
+        );
+        let res = app.clone().oneshot(req).await.unwrap();
+        let body: serde_json::Value =
+            serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+        ids.push(body["id"].as_str().unwrap().to_string());
+    }
+
+    for (id, status) in ids.iter().zip(["scheduled", "completed"].iter()) {
+        let update_req = auth_req_body(
+            Method::PATCH,
+            &format!("/api/tasks/{id}"),
+            json!({ "status": status }),
+        );
+        let res = app.clone().oneshot(update_req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    let req = auth_req(Method::GET, "/api/tasks?q=status%3Ascheduled");
+    let res = app.clone().oneshot(req).await.unwrap();
+    let list: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let titles: Vec<&str> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, vec!["alpha"]);
+
+    let req = auth_req(Method::GET, "/api/tasks?q=status%3Acompleted");
+    let res = app.clone().oneshot(req).await.unwrap();
+    let list: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let titles: Vec<&str> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, vec!["beta"]);
+}
+
+#[tokio::test]
 async fn habit_crud() {
     let (state, _) = setup().await;
     let app = build_router(state);

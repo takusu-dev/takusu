@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use jiff::{Timestamp, tz::TimeZone};
+use jiff::tz::TimeZone;
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 use takusu_storage::{
@@ -2601,7 +2601,8 @@ async fn filter_rows_with_query(
         Err(e) => return Err(e),
     };
     let tz = takusu_util::parse_timezone(&tz_str).unwrap_or(TimeZone::UTC);
-    let now = Timestamp::now();
+    let now = takusu_util::now_timestamp()
+        .map_err(|e| StorageError::Internal(format!("current time unavailable: {e}")))?;
 
     let habits = storage.list_habits().await?;
 
