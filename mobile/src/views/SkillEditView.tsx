@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -14,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { useServer } from '@/src/api/ServerProvider';
+import { showError } from '@/src/api/errors';
 import { useColors, BRAND_COLOR } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -48,7 +48,7 @@ export function SkillEditView() {
     try {
       const skill = await client.getSkill(slugParam);
       if (skill.built_in) {
-        Alert.alert('エラー', '組み込みスキルは編集できません');
+        void showError('組み込みスキルは編集できません');
         router.back();
         return;
       }
@@ -57,10 +57,7 @@ export function SkillEditView() {
       setDescription(skill.description);
       setBody(skill.body);
     } catch (e) {
-      Alert.alert(
-        'エラー',
-        `読み込みに失敗: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      void showError(e, '読み込みに失敗');
       router.back();
     } finally {
       setLoading(false);
@@ -129,12 +126,12 @@ export function SkillEditView() {
       const asset = result.assets[0];
       if (!asset) return;
       if (asset.size != null && asset.size > 64 * 1024) {
-        Alert.alert('エラー', 'ファイルは64KB以下にしてください');
+        void showError('ファイルは64KB以下にしてください');
         return;
       }
       const text = await new FileSystem.File(asset.uri).text();
       if (utf8ByteLength(text) > 64 * 1024) {
-        Alert.alert('エラー', 'ファイルは64KB以下にしてください');
+        void showError('ファイルは64KB以下にしてください');
         return;
       }
       setBody(text);
@@ -144,8 +141,7 @@ export function SkillEditView() {
       }
       haptic.success();
     } catch {
-      Alert.alert(
-        'エラー',
+      void showError(
         'テキストとして読み込めませんでした。テキストファイルを選択してください。',
       );
     }
@@ -155,7 +151,7 @@ export function SkillEditView() {
     if (!client) return;
     const error = validate();
     if (error) {
-      Alert.alert('入力エラー', error);
+      void showError(error, '入力エラー');
       return;
     }
     setSaving(true);
@@ -177,10 +173,7 @@ export function SkillEditView() {
       haptic.success();
       router.back();
     } catch (e) {
-      Alert.alert(
-        'エラー',
-        `保存に失敗: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      void showError(e, '保存に失敗');
     } finally {
       setSaving(false);
     }

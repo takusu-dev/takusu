@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 
 import { logError } from '@/src/api/errors';
+import type { ToastOptions } from '@/src/components/TopToast';
 import TakusuServerModule from '@/modules/takusu-server/src/TakusuServerModule';
 
 export interface ScheduleOperation {
@@ -15,8 +16,8 @@ interface UseScheduleOperationOptions {
   workersUrl?: string;
   workersToken?: string;
   refresh: () => Promise<void>;
-  setStatusLabel: (label: string | null) => void;
-  showError: (error: unknown, context: string) => void;
+  showTopToast: (message: string, options?: number | ToastOptions) => string;
+  hideTopToast: (id: string) => void;
 }
 
 export function useScheduleOperation({
@@ -24,32 +25,45 @@ export function useScheduleOperation({
   workersUrl,
   workersToken,
   refresh,
-  setStatusLabel,
-  showError,
+  showTopToast,
+  hideTopToast,
 }: UseScheduleOperationOptions) {
   const [scheduleOperation, setScheduleOperation] =
     useState<ScheduleOperation | null>(null);
   const [lastCompletedAt, setLastCompletedAt] = useState<number | null>(null);
   const processedOperationIdRef = useRef<string | null>(null);
+  const toastIdsRef = useRef(new Map<string, string>());
 
-  const withStatus = useCallback(
-    async <T>(label: string, fn: () => Promise<T>): Promise<T> => {
-      setStatusLabel(label);
-      try {
-        return await fn();
-      } finally {
-        setStatusLabel(null);
+  const hideToastForOperation = useCallback(
+    (operationId: string) => {
+      const toastId = toastIdsRef.current.get(operationId);
+      if (toastId) {
+        hideTopToast(toastId);
+        toastIdsRef.current.delete(operationId);
       }
     },
-    [setStatusLabel],
+    [hideTopToast],
   );
 
   const runGCalSync = useCallback(async () => {
     if (!client) return;
-    await withStatus('GCal同期中', () =>
-      client.triggerSync().catch((e) => logError('Google Calendar同期', e)),
-    );
-  }, [client, withStatus]);
+    const toastId = showTopToast('Google Calendar同期中', {
+      type: 'loading',
+      duration: Infinity,
+    });
+    try {
+      await client.triggerSync();
+      hideTopToast(toastId);
+      showTopToast('Google Calendarへ同期しました', { type: 'success' });
+    } catch (e) {
+      hideTopToast(toastId);
+      showTopToast(e instanceof Error ? e.message : String(e), {
+        type: 'error',
+        duration: 5000,
+      });
+      logError('Google Calendar同期', e);
+    }
+  }, [client, showTopToast, hideTopToast]);
 
   function generateOperationId(operation: string): string {
     try {
@@ -71,8 +85,12 @@ export function useScheduleOperation({
       params: Record<string, unknown>,
       label: string,
     ) => {
+      if (scheduleOperation) return;
       if (!workersUrl || !workersToken) {
-        showError('Workers URL またはトークンが設定されていません', label);
+        showTopToast('Workers URL またはトークンが設定されていません', {
+          type: 'error',
+          duration: 5000,
+        });
         return;
       }
       const id = generateOperationId(operation);
@@ -84,12 +102,20 @@ export function useScheduleOperation({
           workersUrl,
           workersToken,
         );
+        const toastId = showTopToast(label, {
+          type: 'loading',
+          duration: Infinity,
+        });
+        toastIdsRef.current.set(id, toastId);
         setScheduleOperation({ operation, id, label });
       } catch (e) {
-        showError(e, label);
+        showTopToast(e instanceof Error ? e.message : String(e), {
+          type: 'error',
+          duration: 5000,
+        });
       }
     },
-    [workersUrl, workersToken, showError],
+    [workersUrl, workersToken, showTopToast, scheduleOperation],
   );
 
   const handleCompleted = useCallback(
@@ -107,35 +133,36 @@ export function useScheduleOperation({
       }
       processedOperationIdRef.current = status.id;
       setScheduleOperation(null);
-      setStatusLabel(null);
+      hideToastForOperation(status.id);
+
       try {
         TakusuServerModule.clearScheduleOperationStatus();
       } catch {
         // ignore cleanup failure
       }
+
       if (status.status === 'succeeded') {
         if (status.operation === 'generate') {
           await runGCalSync();
         }
         await refresh();
+        showTopToast('スケジュールを更新しました', { type: 'success' });
         setLastCompletedAt(Date.now());
       } else {
-        showError(
-          status.message || 'スケジュール処理に失敗しました',
-          'スケジュール処理',
-        );
+        showTopToast(status.message || 'スケジュール処理に失敗しました', {
+          type: 'error',
+          duration: 5000,
+        });
       }
     },
-    [refresh, setStatusLabel, showError, runGCalSync],
+    [refresh, showTopToast, runGCalSync, hideToastForOperation],
   );
 
   // Poll the status of an active background schedule operation.
   useEffect(() => {
     if (!scheduleOperation) {
-      setStatusLabel(null);
       return;
     }
-    setStatusLabel(scheduleOperation.label);
     const interval = setInterval(async () => {
       try {
         const status = await TakusuServerModule.getScheduleOperationStatus();
@@ -151,11 +178,14 @@ export function useScheduleOperation({
         // Retry on the next tick.
       }
     }, 500);
-    return () => clearInterval(interval);
-  }, [scheduleOperation, setStatusLabel, handleCompleted]);
+    return () => {
+      clearInterval(interval);
+      hideToastForOperation(scheduleOperation.id);
+    };
+  }, [scheduleOperation, handleCompleted, hideToastForOperation]);
 
   // When the app returns to the foreground, check whether a background
-  // schedule operation finished while away.
+  // operation finished while away.
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState !== 'active') return;

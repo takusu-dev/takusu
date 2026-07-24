@@ -13,8 +13,8 @@ jest.mock('@/modules/takusu-server/src/TakusuServerModule', () => ({
 describe('useScheduleOperation', () => {
   const mockClient = { triggerSync: jest.fn().mockResolvedValue(undefined) };
   const mockRefresh = jest.fn().mockResolvedValue(undefined);
-  const mockSetStatusLabel = jest.fn();
-  const mockShowError = jest.fn();
+  const mockShowTopToast = jest.fn().mockReturnValue('toast-1');
+  const mockHideTopToast = jest.fn();
   const mockAppStateRemove = jest.fn();
   let appStateHandlers: Array<(state: string) => void> = [];
 
@@ -31,8 +31,8 @@ describe('useScheduleOperation', () => {
         workersUrl: 'https://example.com',
         workersToken: 'token',
         refresh: mockRefresh,
-        setStatusLabel: mockSetStatusLabel,
-        showError: mockShowError,
+        showTopToast: mockShowTopToast,
+        hideTopToast: mockHideTopToast,
       }),
     );
   }
@@ -40,6 +40,7 @@ describe('useScheduleOperation', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.clearAllMocks();
+    mockShowTopToast.mockReturnValue('toast-1');
     appStateHandlers = [];
 
     (AppState as any).addEventListener = jest.fn(
@@ -85,7 +86,10 @@ describe('useScheduleOperation', () => {
       id: operationId,
       label: 'タスクをスケジュール中',
     });
-    expect(mockSetStatusLabel).toHaveBeenCalledWith('タスクをスケジュール中');
+    expect(mockShowTopToast).toHaveBeenCalledWith('タスクをスケジュール中', {
+      type: 'loading',
+      duration: Infinity,
+    });
 
     mockedTakusuServerModule.getScheduleOperationStatus.mockResolvedValue({
       id: operationId,
@@ -104,7 +108,14 @@ describe('useScheduleOperation', () => {
     expect(
       mockedTakusuServerModule.clearScheduleOperationStatus,
     ).toHaveBeenCalled();
-    expect(mockSetStatusLabel).toHaveBeenLastCalledWith(null);
+    expect(mockShowTopToast).toHaveBeenCalledWith(
+      'Google Calendarへ同期しました',
+      { type: 'success' },
+    );
+    expect(mockShowTopToast).toHaveBeenCalledWith(
+      'スケジュールを更新しました',
+      { type: 'success' },
+    );
   });
 
   it('shows an error when reschedule fails', async () => {
@@ -132,10 +143,10 @@ describe('useScheduleOperation', () => {
     });
 
     await waitFor(() =>
-      expect(mockShowError).toHaveBeenCalledWith(
-        'timed out',
-        'スケジュール処理',
-      ),
+      expect(mockShowTopToast).toHaveBeenCalledWith('timed out', {
+        type: 'error',
+        duration: 5000,
+      }),
     );
     expect(mockRefresh).not.toHaveBeenCalled();
     expect(result.current.lastCompletedAt).toBeNull();
@@ -169,6 +180,10 @@ describe('useScheduleOperation', () => {
     expect(
       mockedTakusuServerModule.clearScheduleOperationStatus,
     ).toHaveBeenCalled();
+    expect(mockShowTopToast).toHaveBeenCalledWith(
+      'スケジュールを更新しました',
+      { type: 'success' },
+    );
     expect(result.current.lastCompletedAt).not.toBeNull();
   });
 
@@ -179,8 +194,8 @@ describe('useScheduleOperation', () => {
         workersUrl: undefined,
         workersToken: undefined,
         refresh: mockRefresh,
-        setStatusLabel: mockSetStatusLabel,
-        showError: mockShowError,
+        showTopToast: mockShowTopToast,
+        hideTopToast: mockHideTopToast,
       }),
     );
 
@@ -191,9 +206,9 @@ describe('useScheduleOperation', () => {
     expect(
       mockedTakusuServerModule.runScheduleOperation,
     ).not.toHaveBeenCalled();
-    expect(mockShowError).toHaveBeenCalledWith(
+    expect(mockShowTopToast).toHaveBeenCalledWith(
       'Workers URL またはトークンが設定されていません',
-      'label',
+      { type: 'error', duration: 5000 },
     );
   });
 
@@ -244,7 +259,10 @@ describe('useScheduleOperation', () => {
     });
 
     expect(mockRefresh).not.toHaveBeenCalled();
-    expect(mockShowError).not.toHaveBeenCalled();
+    expect(mockShowTopToast).not.toHaveBeenCalledWith(
+      'スケジュールを更新しました',
+      { type: 'success' },
+    );
     expect(result.current.scheduleOperation).not.toBeNull();
   });
 });

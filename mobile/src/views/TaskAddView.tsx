@@ -4,7 +4,6 @@
 
 import { useState } from 'react';
 import {
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -24,6 +23,7 @@ import { COLORS, BRAND_COLOR, useColors } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { haptic } from '@/src/components/haptics';
+import { useTopToast } from '@/src/components/TopToast';
 import { formatDate } from '@/src/formatDate';
 import { parseDuration } from '@/src/utils/duration';
 
@@ -48,6 +48,7 @@ export function TaskAddView({
   const router = useRouter();
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { showTopToast } = useTopToast();
   const { deps } = useLocalSearchParams<{ deps?: string }>();
 
   const initialDeps: string[] = propDeps ?? (deps ? JSON.parse(deps) : []);
@@ -140,7 +141,7 @@ export function TaskAddView({
       });
       close();
     } catch (e) {
-      showError(e, 'タスクの追加に失敗');
+      void showError(e, 'タスクの追加に失敗');
     } finally {
       setSaving(false);
     }
@@ -152,15 +153,12 @@ export function TaskAddView({
     setImporting(true);
     try {
       const result = await client.importIcal(icalText);
-      Alert.alert(
-        'インポート完了',
-        `${result.imported}件のタスクをインポートしました`,
-      );
+      showTopToast(`${result.imported}件のタスクをインポートしました`);
       setIcalText('');
       setShowIcal(false);
       close();
     } catch (e) {
-      showError(e, 'iCalインポートに失敗');
+      void showError(e, 'iCalインポートに失敗');
     } finally {
       setImporting(false);
     }

@@ -41,6 +41,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DateTimePickerModal } from '@/src/components/DateTimePickerModal';
 import { haptic } from '@/src/components/haptics';
+import { useTopToast } from '@/src/components/TopToast';
+import { showError } from '@/src/api/errors';
 import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
 import { AgentSettingsView } from '@/src/views/AgentSettingsView';
 import { SkillsSettingsView } from '@/src/views/SkillsSettingsView';
@@ -140,7 +142,7 @@ export function SettingsCategoryView() {
 
   useEffect(() => {
     if (restartError && previousRestartErrorRef.current !== restartError) {
-      Alert.alert('サーバー再起動失敗', restartError);
+      void showError(restartError, 'サーバー再起動失敗');
     }
     previousRestartErrorRef.current = restartError;
   }, [restartError]);
@@ -250,6 +252,7 @@ export function SettingsDetailView({
   } = useServer();
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { showTopToast } = useTopToast();
   const [notifPickerField, setNotifPickerField] = useState<
     'morningBriefing' | null
   >(null);
@@ -472,10 +475,7 @@ export function SettingsDetailView({
       await setWorkersUrl(url);
       await setWorkersToken(token);
     } catch (e) {
-      Alert.alert(
-        'エラー',
-        `保存に失敗: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      void showError(e, 'エラー');
       return;
     }
     if (client) {
@@ -483,19 +483,19 @@ export function SettingsDetailView({
         await client.updateWorkersConfig({ url, token });
         setWorkerDirty(false);
         haptic.success();
-        Alert.alert('保存しました', 'Worker設定を保存しました');
+        showTopToast('Worker設定を保存しました');
       } catch (e) {
-        Alert.alert(
-          '保存しました',
+        void showError(
           `Worker設定は保存されましたが、サーバーへの反映に失敗しました。再起動してください。 (${
             e instanceof Error ? e.message : String(e)
           })`,
+          '保存しました',
         );
       }
     } else {
       setWorkerDirty(false);
       haptic.success();
-      Alert.alert('保存しました', 'Worker設定を保存しました');
+      showTopToast('Worker設定を保存しました');
     }
   }
 
@@ -504,9 +504,9 @@ export function SettingsDetailView({
     // Guard against overwriting server values with defaults when the initial
     // load failed (sleepSettings stays null and the form shows defaults).
     if (!sleepSettings) {
-      Alert.alert(
-        'エラー',
+      void showError(
         '設定の読み込みに失敗しています。タブを開き直してください',
+        'エラー',
       );
       return;
     }
@@ -520,12 +520,9 @@ export function SettingsDetailView({
       setSleepStart(s.sleep_start);
       setSleepEnd(s.sleep_end);
       haptic.success();
-      Alert.alert('保存しました', '睡眠設定を保存しました');
+      showTopToast('睡眠設定を保存しました');
     } catch (e) {
-      Alert.alert(
-        'エラー',
-        `保存に失敗: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      void showError(e, 'エラー');
     } finally {
       setSleepSaving(false);
     }
@@ -534,9 +531,9 @@ export function SettingsDetailView({
   async function saveTimezoneSettings() {
     if (!client) return;
     if (!sleepSettings) {
-      Alert.alert(
-        'エラー',
+      void showError(
         '設定の読み込みに失敗しています。タブを開き直してください',
+        'エラー',
       );
       return;
     }
@@ -548,12 +545,9 @@ export function SettingsDetailView({
       setSleepSettings(s);
       setSleepTz(s.tz);
       haptic.success();
-      Alert.alert('保存しました', 'タイムゾーンを保存しました');
+      showTopToast('タイムゾーンを保存しました');
     } catch (e) {
-      Alert.alert(
-        'エラー',
-        `保存に失敗: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      void showError(e, 'エラー');
     } finally {
       setSleepSaving(false);
     }
@@ -562,16 +556,16 @@ export function SettingsDetailView({
   async function saveWorkloadSettings() {
     if (!client) return;
     if (!workloadSettings) {
-      Alert.alert(
-        'エラー',
+      void showError(
         '設定の読み込みに失敗しています。タブを開き直してください',
+        'エラー',
       );
       return;
     }
     const comfortable = parseHoursToMinutes(workloadComfortable);
     const maximum = parseHoursToMinutes(workloadMaximum);
     if (comfortable === null || maximum === null) {
-      Alert.alert('エラー', '作業時間は0以上の数値を入力してください');
+      void showError('作業時間は0以上の数値を入力してください');
       return;
     }
     setWorkloadSaving(true);
@@ -584,12 +578,9 @@ export function SettingsDetailView({
       setWorkloadComfortable(formatMinutesToHours(s.comfortable_minutes));
       setWorkloadMaximum(formatMinutesToHours(s.maximum_minutes));
       haptic.success();
-      Alert.alert('保存しました', '作業負荷設定を保存しました');
+      showTopToast('作業負荷設定を保存しました');
     } catch (e) {
-      Alert.alert(
-        'エラー',
-        `保存に失敗: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      void showError(e, 'エラー');
     } finally {
       setWorkloadSaving(false);
     }
@@ -606,12 +597,9 @@ export function SettingsDetailView({
       });
       setGcalSettings(s);
       setGcalClientSecret('');
-      Alert.alert('保存しました', 'Google Calendar設定を保存しました');
+      showTopToast('Google Calendar設定を保存しました');
     } catch (e) {
-      Alert.alert(
-        'エラー',
-        `保存に失敗: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      void showError(e, 'エラー');
     }
   }
 
@@ -632,7 +620,7 @@ export function SettingsDetailView({
   async function saveRefreshToken() {
     if (!client) return;
     if (!gcalRefreshToken.trim()) {
-      Alert.alert('エラー', 'Refresh Tokenを入力してください');
+      void showError('Refresh Tokenを入力してください');
       return;
     }
     try {
@@ -641,12 +629,9 @@ export function SettingsDetailView({
       });
       setGcalSettings(s);
       setGcalRefreshToken('');
-      Alert.alert('保存しました', 'Refresh Tokenを保存しました');
+      showTopToast('Refresh Tokenを保存しました');
     } catch (e) {
-      Alert.alert(
-        'エラー',
-        `保存に失敗: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      void showError(e, 'エラー');
     }
   }
 
@@ -655,12 +640,9 @@ export function SettingsDetailView({
     setSyncLoading(true);
     try {
       await client.triggerSync();
-      Alert.alert('同期完了', 'Google Calendarへ同期しました');
+      showTopToast('Google Calendarへ同期しました');
     } catch (e) {
-      Alert.alert(
-        'エラー',
-        `同期に失敗: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      void showError(e, 'エラー');
     } finally {
       setSyncLoading(false);
     }
@@ -681,17 +663,16 @@ export function SettingsDetailView({
             try {
               const res = await client.deleteAllGcalEvents();
               const failed = res.failed.length;
-              Alert.alert(
-                failed > 0 ? '削除完了（一部失敗）' : '削除完了',
-                `${res.deleted}件のイベントを削除しました${
-                  failed > 0 ? `\n${failed}件の削除に失敗しました` : ''
-                }`,
-              );
+              if (failed > 0) {
+                void showError(
+                  `${res.deleted}件のイベントを削除しました\n${failed}件の削除に失敗しました`,
+                  '削除完了（一部失敗）',
+                );
+              } else {
+                showTopToast(`${res.deleted}件のイベントを削除しました`);
+              }
             } catch (e) {
-              Alert.alert(
-                'エラー',
-                `削除に失敗: ${e instanceof Error ? e.message : String(e)}`,
-              );
+              void showError(e, 'エラー');
             } finally {
               setDeleteAllLoading(false);
             }
@@ -738,7 +719,7 @@ export function SettingsDetailView({
     try {
       const lines = await TakusuServerModule.getLogs();
       if (lines.length === 0) {
-        Alert.alert('ログなし', 'エクスポートするログがありません');
+        showTopToast('エクスポートするログがありません');
         return;
       }
       const content = lines.join('\n') + '\n';
@@ -755,13 +736,10 @@ export function SettingsDetailView({
           dialogTitle: 'ログをエクスポート',
         });
       } else {
-        Alert.alert('エクスポート完了', `ログを保存しました:\n${file.uri}`);
+        showTopToast('ログを保存しました');
       }
     } catch (e) {
-      Alert.alert(
-        'エラー',
-        `ログエクスポートに失敗: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      void showError(e, 'エラー');
     } finally {
       setLogExportLoading(false);
     }
@@ -770,12 +748,9 @@ export function SettingsDetailView({
   async function clearLogs() {
     try {
       await TakusuServerModule.clearLogs();
-      Alert.alert('消去しました', 'ログバッファをクリアしました');
+      showTopToast('ログバッファをクリアしました');
     } catch (e) {
-      Alert.alert(
-        'エラー',
-        `ログクリアに失敗: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      void showError(e, 'エラー');
     }
   }
 
@@ -784,21 +759,15 @@ export function SettingsDetailView({
     try {
       const lines = await TakusuServerModule.getLogs();
       if (lines.length === 0) {
-        Alert.alert('ログなし', 'コピーするログがありません');
+        showTopToast('コピーするログがありません');
         return;
       }
       const content = lines.join('\n');
       await Clipboard.setStringAsync(content);
       haptic.success();
-      Alert.alert(
-        'コピーしました',
-        `${lines.length} 行のログをクリップボードにコピーしました`,
-      );
+      showTopToast(`${lines.length} 行のログをクリップボードにコピーしました`);
     } catch (e) {
-      Alert.alert(
-        'エラー',
-        `ログコピーに失敗: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      void showError(e, 'エラー');
     } finally {
       setLogCopyLoading(false);
     }

@@ -1,9 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Alert } from 'react-native';
 
 import { TakusuClient } from '@/src/api/client';
 import { SettingsRow } from '@/src/api/types';
 import { haptic } from '@/src/components/haptics';
+import { useTopToast } from '@/src/components/TopToast';
+import { showError } from '@/src/api/errors';
 import {
   parseOptionalNonNegativeInt,
   SolverOption,
@@ -32,6 +33,7 @@ export interface UseSolverSettingsResult {
 export function useSolverSettings(
   client: TakusuClient | null,
 ): UseSolverSettingsResult {
+  const { showTopToast } = useTopToast();
   const [solverSettings, setSolverSettings] = useState<SettingsRow | null>(
     null,
   );
@@ -68,16 +70,16 @@ export function useSolverSettings(
   const saveSolverSettings = useCallback(async () => {
     if (!client) return;
     if (!solverSettings) {
-      Alert.alert(
-        'エラー',
+      void showError(
         '設定の読み込みに失敗しています。タブを開き直してください',
+        'エラー',
       );
       return;
     }
     const timeBudget = parseOptionalNonNegativeInt(timeBudgetInput);
     const seed = parseOptionalNonNegativeInt(seedInput);
     if (timeBudget === null || seed === null) {
-      Alert.alert('エラー', '数値は0以上の整数を入力してください');
+      void showError('数値は0以上の整数を入力してください');
       return;
     }
     setSaving(true);
@@ -99,12 +101,9 @@ export function useSolverSettings(
       setSeedInput(s.seed != null ? String(s.seed) : '');
       setWarmStartValue(s.warm_start);
       haptic.success();
-      Alert.alert('保存しました', 'Solver 設定を保存しました');
+      showTopToast('Solver 設定を保存しました');
     } catch (e) {
-      Alert.alert(
-        'エラー',
-        `保存に失敗: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      void showError(e, 'エラー');
     } finally {
       setSaving(false);
     }
@@ -115,6 +114,7 @@ export function useSolverSettings(
     timeBudgetInput,
     seedInput,
     warmStartValue,
+    showTopToast,
   ]);
 
   const dirty = useMemo(() => {

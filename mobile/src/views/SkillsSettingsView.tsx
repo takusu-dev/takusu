@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useServer } from '@/src/api/ServerProvider';
+import { showError } from '@/src/api/errors';
 import type { SkillRow } from '@/src/api/types';
 import { useColors, BRAND_COLOR } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
@@ -28,10 +29,7 @@ export function SkillsSettingsView() {
       const list = await client.listSkills();
       setSkills(list);
     } catch (e) {
-      Alert.alert(
-        'エラー',
-        `読み込みに失敗: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      void showError(e, '読み込みに失敗');
     } finally {
       setLoading(false);
     }
@@ -62,7 +60,7 @@ export function SkillsSettingsView() {
   async function remove(skill: SkillRow) {
     if (!client) return;
     if (skill.built_in) {
-      Alert.alert('エラー', '組み込みスキルは削除できません');
+      void showError('組み込みスキルは削除できません');
       return;
     }
     Alert.alert('削除', `${skill.name} を削除しますか？`, [
@@ -76,10 +74,7 @@ export function SkillsSettingsView() {
             haptic.success();
             await load();
           } catch (e) {
-            Alert.alert(
-              'エラー',
-              `削除に失敗: ${e instanceof Error ? e.message : String(e)}`,
-            );
+            void showError(e, '削除に失敗');
           }
         },
       },

@@ -12,6 +12,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useColors, BRAND_COLOR } from '@/src/theme';
 import { useServer } from '@/src/api/ServerProvider';
+import { useTopToast } from '@/src/components/TopToast';
+import { showError } from '@/src/api/errors';
 import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
 import {
   AGENT_SESSION_HISTORY_DEFAULT,
@@ -86,6 +88,7 @@ function newTtsProvider(): TtsProviderSettings {
 export function AgentSettingsView() {
   const colors = useColors();
   const { client, pushAgentConfig } = useServer();
+  const { showTopToast } = useTopToast();
 
   const [llmProviders, setLlmProviders] = useState<LlmProvider[]>([]);
   const [llmModels, setLlmModels] = useState<LlmModelSettings[]>([]);
@@ -173,7 +176,7 @@ export function AgentSettingsView() {
         setSessionHistoryCount(settings.agentSessionHistoryCount);
       })
       .catch((e) => {
-        Alert.alert('読み込み失敗', e instanceof Error ? e.message : String(e));
+        void showError(e, '読み込み失敗');
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -240,7 +243,7 @@ export function AgentSettingsView() {
       setActiveLlmModel(id);
       await pushAgentConfig();
     } catch (e) {
-      Alert.alert('保存失敗', e instanceof Error ? e.message : String(e));
+      void showError(e, '保存失敗');
     }
   }
 
@@ -256,7 +259,7 @@ export function AgentSettingsView() {
       setActiveTts(id);
       await pushAgentConfig();
     } catch (e) {
-      Alert.alert('保存失敗', e instanceof Error ? e.message : String(e));
+      void showError(e, '保存失敗');
     }
   }
 
@@ -279,9 +282,9 @@ export function AgentSettingsView() {
       setEditingLlmProvider(null);
       setEditingLlmProviderKey('');
       await pushAgentConfig();
-      Alert.alert('保存しました', 'LLM Providerを保存しました');
+      showTopToast('LLM Providerを保存しました');
     } catch (e) {
-      Alert.alert('保存失敗', e instanceof Error ? e.message : String(e));
+      void showError(e, '保存失敗');
     } finally {
       setSaving(false);
     }
@@ -292,7 +295,7 @@ export function AgentSettingsView() {
     try {
       const provider = llmProviders.find((p) => p.id === model.providerId);
       if (!provider) {
-        Alert.alert('エラー', '選択されたProviderが見つかりません');
+        void showError('選択されたProviderが見つかりません');
         return;
       }
       const existing = llmModels.find((m) => m.id === model.id);
@@ -313,9 +316,9 @@ export function AgentSettingsView() {
       setEditingLlmModel(null);
       setEditingLlmModelKey('');
       await pushAgentConfig();
-      Alert.alert('保存しました', 'LLM Modelを保存しました');
+      showTopToast('LLM Modelを保存しました');
     } catch (e) {
-      Alert.alert('保存失敗', e instanceof Error ? e.message : String(e));
+      void showError(e, '保存失敗');
     } finally {
       setSaving(false);
     }
@@ -342,9 +345,9 @@ export function AgentSettingsView() {
       setEditingTts(null);
       setEditingTtsKey('');
       await pushAgentConfig();
-      Alert.alert('保存しました', 'TTS Providerを保存しました');
+      showTopToast('TTS Providerを保存しました');
     } catch (e) {
-      Alert.alert('保存失敗', e instanceof Error ? e.message : String(e));
+      void showError(e, '保存失敗');
     } finally {
       setSaving(false);
     }
@@ -363,8 +366,7 @@ export function AgentSettingsView() {
               (m) => m.providerId === id,
             );
             if (modelsUsingProvider.length > 0) {
-              Alert.alert(
-                '使用中',
+              showTopToast(
                 'このProviderを使用しているモデルがあるため削除できません',
               );
               return;
@@ -382,7 +384,7 @@ export function AgentSettingsView() {
             if (editingLlmProvider?.id === id) setEditingLlmProvider(null);
             await pushAgentConfig();
           } catch (e) {
-            Alert.alert('削除失敗', e instanceof Error ? e.message : String(e));
+            void showError(e, '削除失敗');
           } finally {
             setSaving(false);
           }
@@ -417,7 +419,7 @@ export function AgentSettingsView() {
             if (editingLlmModel?.id === id) setEditingLlmModel(null);
             await pushAgentConfig();
           } catch (e) {
-            Alert.alert('削除失敗', e instanceof Error ? e.message : String(e));
+            void showError(e, '削除失敗');
           } finally {
             setSaving(false);
           }
@@ -451,7 +453,7 @@ export function AgentSettingsView() {
             if (editingTts?.id === id) setEditingTts(null);
             await pushAgentConfig();
           } catch (e) {
-            Alert.alert('削除失敗', e instanceof Error ? e.message : String(e));
+            void showError(e, '削除失敗');
           } finally {
             setSaving(false);
           }
@@ -488,9 +490,9 @@ export function AgentSettingsView() {
             setEditingTts(null);
             setEditingTtsKey('');
             await pushAgentConfig();
-            Alert.alert('削除しました', 'Provider設定を削除しました');
+            showTopToast('Provider設定を削除しました');
           } catch (e) {
-            Alert.alert('削除失敗', e instanceof Error ? e.message : String(e));
+            void showError(e, '削除失敗');
           } finally {
             setSaving(false);
           }
@@ -504,18 +506,17 @@ export function AgentSettingsView() {
       TakusuServerModule.startModelDownload(modelId);
       setDownloadingModels((prev) => ({ ...prev, [modelId]: true }));
       setCachedModels((prev) => ({ ...prev, [modelId]: false }));
-      Alert.alert(
-        'ダウンロード開始',
+      showTopToast(
         'バックグラウンドで音声モデルを準備します。通知で進捗を確認できます',
       );
     } catch (e) {
-      Alert.alert('開始失敗', e instanceof Error ? e.message : String(e));
+      void showError(e, '開始失敗');
     }
   }
 
   function promptModelDownload(modelId: string) {
     if (cachedModels[modelId]) {
-      Alert.alert('準備済み', 'このモデルはすでに準備されています');
+      showTopToast('このモデルはすでに準備されています');
       return;
     }
     const size = MODEL_SIZES[modelId];
@@ -698,7 +699,7 @@ export function AgentSettingsView() {
         onPress={() => {
           const providerId = llmProviders[0]?.id ?? '';
           if (!providerId) {
-            Alert.alert('Provider未設定', '先にLLM Providerを追加してください');
+            showTopToast('先にLLM Providerを追加してください');
             return;
           }
           setEditingLlmModel(newLlmModel(providerId));
@@ -862,10 +863,7 @@ export function AgentSettingsView() {
             try {
               await saveAgentSessionHistoryCount(sessionHistoryCount);
             } catch (e) {
-              Alert.alert(
-                '保存失敗',
-                e instanceof Error ? e.message : String(e),
-              );
+              void showError(e, '保存失敗');
             }
           }}
           keyboardType="number-pad"
