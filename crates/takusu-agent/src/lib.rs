@@ -1489,6 +1489,15 @@ impl AgentSession {
         };
 
         while current > adjusted_target && !messages.is_empty() {
+            // Never remove the last user message or the assistant/tool-result
+            // messages that belong to the current turn.
+            let last_user_start = messages
+                .iter()
+                .enumerate()
+                .rfind(|(_, m)| matches!(m, llm::Message::User(_)))
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+
             let drain_end = if messages.len() > 1 {
                 let start = messages
                     .iter()
@@ -1496,7 +1505,7 @@ impl AgentSession {
                     .find(|(_, m)| matches!(m, llm::Message::User(_)))
                     .map(|(i, _)| i)
                     .unwrap_or(0);
-                if start == 0 {
+                let next = if start == 0 {
                     messages
                         .iter()
                         .enumerate()
@@ -1506,9 +1515,10 @@ impl AgentSession {
                         .unwrap_or(messages.len())
                 } else {
                     start
-                }
+                };
+                next.min(last_user_start)
             } else {
-                1
+                1.min(last_user_start)
             };
 
             if messages.drain(0..drain_end).count() == 0 {
@@ -1563,13 +1573,22 @@ impl AgentSession {
 
         let mut estimate = current;
         while estimate > adjusted_target && !local.is_empty() {
+            // Never remove the last user message or the assistant/tool-result
+            // messages that belong to the current turn.
+            let last_user_start = local
+                .iter()
+                .enumerate()
+                .rfind(|(_, m)| matches!(m, llm::Message::User(_)))
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+
             let start = local
                 .iter()
                 .enumerate()
                 .find(|(_, m)| matches!(m, llm::Message::User(_)))
                 .map(|(i, _)| i)
                 .unwrap_or(0);
-            let drain_end = if start == 0 {
+            let next = if start == 0 {
                 local
                     .iter()
                     .enumerate()
@@ -1580,6 +1599,8 @@ impl AgentSession {
             } else {
                 start
             };
+            let drain_end = next.min(last_user_start);
+
             if local.drain(0..drain_end).count() == 0 {
                 break;
             }

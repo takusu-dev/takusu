@@ -308,13 +308,22 @@ fn matches_constraints(date: Date, months: &[i8], days: &[i8], by_day: &[NWeekda
     if !months.contains(&date.month()) {
         return false;
     }
-    if !days.is_empty() && !days.contains(&date.day()) {
+    if !days.is_empty() && !days.iter().any(|&d| matches_month_day(date, d)) {
         return false;
     }
     if by_day.is_empty() {
         return true;
     }
     by_day.iter().any(|nw| is_nth_weekday(date, nw))
+}
+
+fn matches_month_day(date: Date, day: i8) -> bool {
+    if day > 0 {
+        date.day() == day
+    } else {
+        let dim = days_in_month(date) as i16;
+        (dim + day as i16 + 1) == date.day() as i16
+    }
 }
 
 fn is_nth_weekday(date: Date, nw: &NWeekday) -> bool {
@@ -526,5 +535,20 @@ mod tests {
         )
         .unwrap();
         assert_eq!(expand_dates(&parsed, 100).unwrap().len(), 100);
+    }
+
+    #[test]
+    fn expand_monthly_negative_month_day_count_10() {
+        // BYMONTHDAY=-1 means the last day of each month.
+        let parsed = parse_rrule(
+            "DTSTART:20260731T230000Z\nRRULE:FREQ=MONTHLY;BYMONTHDAY=-1;COUNT=10",
+            &date(2026, 7, 31).at(23, 0, 0, 0).in_tz("UTC").unwrap(),
+        )
+        .unwrap();
+        let dates = expand_dates(&parsed, 10).unwrap();
+        assert_eq!(dates.len(), 10);
+        assert!(dates[0].starts_with("2026-07-31T23:00:00"));
+        assert!(dates[1].starts_with("2026-08-31T23:00:00"));
+        assert!(dates[2].starts_with("2026-09-30T23:00:00"));
     }
 }
