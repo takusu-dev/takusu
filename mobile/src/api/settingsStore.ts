@@ -28,6 +28,7 @@ const KEYS = {
   activeLlmModel: 'takusu.agent.activeLlmModel',
   ttsProviders: 'takusu.agent.ttsProviders',
   activeTtsProvider: 'takusu.agent.activeTtsProvider',
+  ttsMuted: 'takusu.agent.ttsMuted',
 } as const;
 
 export type PermissionsMap = Record<string, boolean>;
@@ -392,6 +393,15 @@ export async function saveAgentSessionHistoryCount(
     Math.min(AGENT_SESSION_HISTORY_MAX, count),
   );
   await AsyncStorage.setItem(KEYS.agentSessionHistoryCount, String(clamped));
+}
+
+export async function loadTtsMuted(): Promise<boolean> {
+  const value = await AsyncStorage.getItem(KEYS.ttsMuted);
+  return value === 'true';
+}
+
+export async function saveTtsMuted(muted: boolean): Promise<void> {
+  await AsyncStorage.setItem(KEYS.ttsMuted, muted ? 'true' : 'false');
 }
 
 export { saveNotificationSettings, DEFAULT_NOTIFICATION_SETTINGS };

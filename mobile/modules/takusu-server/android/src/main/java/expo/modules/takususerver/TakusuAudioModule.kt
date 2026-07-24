@@ -34,6 +34,8 @@ class AudioOptions : Record {
     @Field val sampleRate: Int = 44100
 
     @Field val speed: Double = 1.0
+
+    @Field val mute: Boolean = false
 }
 
 private const val TAG = "TakusuAudioModule"
@@ -44,6 +46,7 @@ class TakusuAudioModule : Module() {
     private var player: MediaPlayer? = null
     private var textToSpeech: TextToSpeech? = null
     private var ttsProvider: String = "cartesia"
+    private var muted: Boolean = false
 
     override fun definition() =
         ModuleDefinition {
@@ -71,6 +74,7 @@ class TakusuAudioModule : Module() {
                 // Reset the provider choice; it will be restored only after the
                 // new backend initializes successfully.
                 ttsProvider = ""
+                muted = options.mute
 
                 when (options.provider) {
                     "android" -> {
@@ -108,6 +112,12 @@ class TakusuAudioModule : Module() {
                 true
             }
 
+            AsyncFunction("setMuted") { muted: Boolean ->
+                this@TakusuAudioModule.muted = muted
+                audio?.setMuted(muted)
+                true
+            }
+
             Function("startRecording") {
                 val instance = AudioRecorder()
                 instance.start()
@@ -137,6 +147,10 @@ class TakusuAudioModule : Module() {
                         "TTS provider is not configured",
                         null,
                     )
+                }
+
+                if (this@TakusuAudioModule.muted) {
+                    return@AsyncFunction true
                 }
 
                 if (ttsProvider == "android") {
@@ -226,6 +240,7 @@ class TakusuAudioModule : Module() {
                 options.language,
                 options.sampleRate.toUInt(),
                 options.speed.toFloat(),
+                options.mute,
             )
         } catch (error: Exception) {
             throw CodedException(

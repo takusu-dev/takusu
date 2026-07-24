@@ -90,6 +90,7 @@ pub struct CartesiaSonicConfig {
     pub language: Option<String>,
     pub output_format: CartesiaOutputFormat,
     pub generation_config: Option<CartesiaGenerationConfig>,
+    pub mute: bool,
 }
 
 impl Default for CartesiaSonicConfig {
@@ -103,6 +104,7 @@ impl Default for CartesiaSonicConfig {
             language: None,
             output_format: CartesiaOutputFormat::default(),
             generation_config: None,
+            mute: false,
         }
     }
 }
@@ -171,6 +173,9 @@ impl CartesiaSonic {
 #[async_trait::async_trait]
 impl TextToSpeech for CartesiaSonic {
     async fn synthesize_stream(&self, request: &TtsRequest) -> Result<TtsStream, TtsError> {
+        if self.config.mute {
+            return Ok(Box::pin(futures_util::stream::empty()));
+        }
         if self.config.api_key.is_empty() {
             return Err(TtsError::Api {
                 status: 401,
@@ -295,7 +300,7 @@ fn output_format_for_request(
 mod tests {
     use std::str::FromStr;
 
-    use crate::tts::{TtsBackend, TtsOptions, TtsRequest};
+    use crate::tts::{TextToSpeech, TtsBackend, TtsOptions, TtsRequest};
 
     use super::*;
 
@@ -347,5 +352,20 @@ mod tests {
         let f32le = output_format_for_request(&config, &request("pcm_f32le"));
         assert_eq!(f32le.container, "raw");
         assert_eq!(f32le.encoding, "pcm_f32le");
+    }
+
+    #[tokio::test]
+    async fn muted_sonic_returns_empty_audio() {
+        let config = CartesiaSonicConfig {
+            mute: true,
+            ..Default::default()
+        };
+        let tts = CartesiaSonic::new(config);
+        let request = TtsRequest {
+            text: "hello".to_string(),
+            ..Default::default()
+        };
+        let audio = tts.synthesize(&request).await.unwrap();
+        assert!(audio.is_empty());
     }
 }

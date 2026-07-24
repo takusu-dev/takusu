@@ -8,10 +8,12 @@ export interface AudioOptions {
   language: string;
   sampleRate: number;
   speed: number;
+  mute?: boolean;
 }
 
 interface TakusuAudioModuleType extends NativeModule {
   configure(options: AudioOptions): Promise<boolean>;
+  setMuted(muted: boolean): Promise<boolean>;
   startRecording(): boolean;
   stopAndTranscribe(): Promise<string>;
   synthesizeAndPlay(text: string): Promise<boolean>;

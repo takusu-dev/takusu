@@ -1,5 +1,9 @@
 import { Platform, PermissionsAndroid } from 'react-native';
-import { loadSettings, loadAgentApiKey } from '@/src/api/settingsStore';
+import {
+  loadSettings,
+  loadAgentApiKey,
+  loadTtsMuted,
+} from '@/src/api/settingsStore';
 import TakusuAudioModule from '../../modules/takusu-server/src/TakusuAudioModule';
 
 let configurePromise: Promise<void> | null = null;
@@ -40,10 +44,13 @@ async function doConfigure(): Promise<void> {
   if (!provider) {
     throw new Error('TTS provider is not configured');
   }
-  const apiKey = await loadAgentApiKey('tts', provider.id);
+  const [apiKey, muted] = await Promise.all([
+    loadAgentApiKey('tts', provider.id),
+    loadTtsMuted(),
+  ]);
   // Use a hash of the API key so key-only changes trigger reconfiguration
   // without keeping the raw key in the cache key.
-  const configKey = `${provider.id}:${provider.provider}:${provider.voiceId}:${provider.language}:${provider.sampleRate}:${provider.speed}:${hashString(apiKey)}`;
+  const configKey = `${provider.id}:${provider.provider}:${provider.voiceId}:${provider.language}:${provider.sampleRate}:${provider.speed}:${hashString(apiKey)}:${muted ? '1' : '0'}`;
   if (configKey === lastConfigKey) return;
   await TakusuAudioModule.configure({
     provider: provider.provider,
@@ -53,6 +60,7 @@ async function doConfigure(): Promise<void> {
     language: provider.language,
     sampleRate: provider.sampleRate,
     speed: provider.speed == null ? 1 : provider.speed,
+    mute: muted,
   });
   lastConfigKey = configKey;
 }

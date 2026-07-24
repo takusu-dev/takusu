@@ -4732,6 +4732,7 @@ dependencies = [
  "sherpa-onnx",
  "tar",
  "thiserror 2.0.18",
+ "tokio",
  "webpki-root-certs",
 ]
 
