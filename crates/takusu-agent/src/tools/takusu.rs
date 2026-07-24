@@ -1237,7 +1237,7 @@ impl MutationKind {
                     "parallelizable": {"type": "boolean"},
                     "allows_parallel": {"type": "boolean"},
                     "abandonability": {"type": "number"},
-                    "inferred_fields": {"type": "array", "description": "List of fields that were inferred from ambiguous user input and should be highlighted. Do not include obvious conversions (e.g. '1 hour' -> 60 minutes) or values filled from the current date/time."},
+                    "inferred_fields": crate::inferred_fields_schema("List of fields that were inferred from ambiguous user input and should be highlighted. Do not include obvious conversions (e.g. '1 hour' -> 60 minutes) or values filled from the current date/time."),
                 }),
             ),
             Self::UpdateTask => (
@@ -1259,7 +1259,7 @@ impl MutationKind {
                         "enum": ["pending", "scheduled", "in_progress", "completed", "skipped"],
                         "description": "New task status. 'completed' means done."
                     },
-                    "inferred_fields": {"type": "array", "description": "List of fields that were inferred from ambiguous user input and should be highlighted. Do not include obvious conversions (e.g. '1 hour' -> 60 minutes) or values filled from the current date/time."},
+                    "inferred_fields": crate::inferred_fields_schema("List of fields that were inferred from ambiguous user input and should be highlighted. Do not include obvious conversions (e.g. '1 hour' -> 60 minutes) or values filled from the current date/time."),
                 }),
             ),
             Self::DeleteTask => (
@@ -1287,7 +1287,7 @@ impl MutationKind {
                     "parallelizable": {"type": "boolean"},
                     "allows_parallel": {"type": "boolean"},
                     "abandonability": {"type": "number"},
-                    "inferred_fields": {"type": "array", "description": "List of fields that were inferred from ambiguous user input and should be highlighted. Do not include obvious conversions (e.g. '1 hour' -> 60 minutes) or values filled from the current date/time."},
+                    "inferred_fields": crate::inferred_fields_schema("List of fields that were inferred from ambiguous user input and should be highlighted. Do not include obvious conversions (e.g. '1 hour' -> 60 minutes) or values filled from the current date/time."),
                 }),
             ),
             Self::UpdateHabit => (
@@ -1305,7 +1305,7 @@ impl MutationKind {
                     "allows_parallel": {"type": "boolean"},
                     "abandonability": {"type": "number"},
                     "active": {"type": "boolean"},
-                    "inferred_fields": {"type": "array", "description": "List of fields that were inferred from ambiguous user input and should be highlighted. Do not include obvious conversions (e.g. '1 hour' -> 60 minutes) or values filled from the current date/time."},
+                    "inferred_fields": crate::inferred_fields_schema("List of fields that were inferred from ambiguous user input and should be highlighted. Do not include obvious conversions (e.g. '1 hour' -> 60 minutes) or values filled from the current date/time."),
                 }),
             ),
             Self::DeleteHabit => (
@@ -1522,7 +1522,7 @@ impl Tool for MoveTaskTool {
                 "fixed": {"type": "boolean", "description": "Mark the task as fixed after moving; defaults to true."},
                 "why": {"type": "string", "description": "Short user-facing reason for the proposed change."},
                 "warnings": {"type": "array", "items": {"type": "string"}},
-                "inferred_fields": {"type": "array", "description": "List of fields that were inferred from ambiguous user input and should be highlighted. Do not include obvious conversions (e.g. '1 hour' -> 60 minutes) or values filled from the current date/time."},
+                "inferred_fields": crate::inferred_fields_schema("List of fields that were inferred from ambiguous user input and should be highlighted. Do not include obvious conversions (e.g. '1 hour' -> 60 minutes) or values filled from the current date/time."),
             },
             "required": ["task_ref", "start_at"],
             "additionalProperties": false,

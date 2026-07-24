@@ -14,6 +14,7 @@ pub use permissions::Permissions;
 
 pub use tool::{
     ChangeReceipt, InferredField, ProposedChange, Tool, ToolError, ToolOutput, ToolRegistry,
+    inferred_field_schema, inferred_fields_schema,
 };
 pub use user_input::{
     StubUserInputProvider, UserInputAnswer, UserInputProvider, UserInputQuestion,
