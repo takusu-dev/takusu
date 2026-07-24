@@ -8,6 +8,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useColors, BRAND_COLOR, COLORS } from '@/src/theme';
 import {
   TTS_PROVIDER_LABELS,
@@ -133,7 +134,11 @@ export function TtsProviderEditor({
           <Text style={{ color: colors.black }}>
             {TTS_PROVIDER_LABELS[provider.provider]}
           </Text>
-          <Text style={{ color: colors.gray }}>{isExpanded ? '▲' : '▼'}</Text>
+          <Ionicons
+            name={isExpanded ? 'chevron-up' : 'chevron-down'}
+            size={16}
+            color={colors.gray}
+          />
         </Pressable>
 
         {isExpanded && (
@@ -157,8 +162,18 @@ export function TtsProviderEditor({
                   },
                 ]}
               >
+                <Ionicons
+                  name={
+                    provider.provider === type
+                      ? 'checkmark-circle'
+                      : 'ellipse-outline'
+                  }
+                  size={20}
+                  color={
+                    provider.provider === type ? BRAND_COLOR : colors.black
+                  }
+                />
                 <Text style={{ color: colors.black }}>
-                  {provider.provider === type ? '● ' : '○ '}
                   {TTS_PROVIDER_LABELS[type]}
                 </Text>
               </Pressable>
@@ -303,7 +318,9 @@ const styles = StyleSheet.create({
   },
   dropdownItem: {
     minHeight: 44,
-    justifyContent: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     paddingHorizontal: 12,
   },
   row: { flexDirection: 'row', gap: 8 },

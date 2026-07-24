@@ -565,6 +565,13 @@ export function HomeView() {
       const hasOlder = pastVisible.length < past.length;
       if (pastVisible.length > 0 || hasOlder) {
         result.push({ type: 'separator', label: '過去' });
+        // Put "load more past" right below the '過去' separator header.
+        if (hasOlder) {
+          result.push({
+            type: 'separator',
+            label: '過去をさらに読み込む',
+          });
+        }
       }
       for (const t of pastVisible) {
         if (groupedGuestIds.has(t.id)) continue;
@@ -577,13 +584,6 @@ export function HomeView() {
           scheduleEnd: entry?.end_at,
           isDone: t.status === 'completed' || t.status === 'skipped',
           dateKey: key,
-        });
-      }
-      // "Load more" separator if there are older tasks
-      if (hasOlder) {
-        result.push({
-          type: 'separator',
-          label: '過去をさらに読み込む',
         });
       }
     }

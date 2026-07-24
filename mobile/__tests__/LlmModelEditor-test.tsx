@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { ThemeProvider } from '@/src/theme';
 import {
@@ -33,6 +34,11 @@ beforeEach(() => {
   (globalThis as any).fetch = fetchMock;
 });
 
+const safeAreaMetrics = {
+  insets: { top: 0, left: 0, right: 0, bottom: 0 },
+  frame: { x: 0, y: 0, width: 0, height: 0 },
+};
+
 function TestWrapper({
   initialModel,
   initialProvider,
@@ -50,20 +56,22 @@ function TestWrapper({
   const allProviders = providers ?? [initialProvider];
 
   return (
-    <ThemeProvider>
-      <LlmModelEditor
-        model={model}
-        providers={allProviders}
-        provider={initialProvider}
-        apiKey={apiKey}
-        onChangeModel={(next) => {
-          setModel(next);
-          onChangeModel?.(next);
-        }}
-        onSave={jest.fn()}
-        onCancel={jest.fn()}
-      />
-    </ThemeProvider>
+    <SafeAreaProvider initialMetrics={safeAreaMetrics}>
+      <ThemeProvider>
+        <LlmModelEditor
+          model={model}
+          providers={allProviders}
+          provider={initialProvider}
+          apiKey={apiKey}
+          onChangeModel={(next) => {
+            setModel(next);
+            onChangeModel?.(next);
+          }}
+          onSave={jest.fn()}
+          onCancel={jest.fn()}
+        />
+      </ThemeProvider>
+    </SafeAreaProvider>
   );
 }
 
@@ -147,7 +155,7 @@ describe('LlmModelEditor', () => {
       },
     });
 
-    fireEvent.press(getByText('● existing-model'));
+    fireEvent.press(getByText('existing-model'));
 
     await waitFor(() =>
       expect(onChangeModel).toHaveBeenCalledWith(
@@ -206,7 +214,7 @@ describe('LlmModelEditor', () => {
   });
 
   it('toggles the model list visibility when the header is pressed', async () => {
-    const { getByText, queryByText } = await setup({
+    const { getByText, getByTestId, queryByTestId } = await setup({
       model: {
         cachedModels: ['existing-model'],
         selectedModel: 'existing-model',
@@ -214,16 +222,16 @@ describe('LlmModelEditor', () => {
       },
     });
 
-    expect(getByText('● existing-model')).toBeTruthy();
+    expect(getByTestId('model-list-expanded')).toBeTruthy();
 
     fireEvent.press(getByText('モデル一覧'));
     await waitFor(() => {
-      expect(queryByText('● existing-model')).toBeNull();
+      expect(queryByTestId('model-list-expanded')).toBeNull();
     });
 
     fireEvent.press(getByText('モデル一覧'));
     await waitFor(() => {
-      expect(getByText('● existing-model')).toBeTruthy();
+      expect(getByTestId('model-list-expanded')).toBeTruthy();
     });
   });
 
@@ -243,7 +251,7 @@ describe('LlmModelEditor', () => {
     });
 
     await waitFor(() => {
-      expect(getByText('▲ 畳む')).toBeTruthy();
+      expect(getByText('畳む')).toBeTruthy();
     });
 
     await act(async () => {
@@ -253,7 +261,7 @@ describe('LlmModelEditor', () => {
     });
 
     await waitFor(() => {
-      expect(queryByText('▲ 畳む')).toBeNull();
+      expect(queryByText('畳む')).toBeNull();
     });
   });
 
@@ -305,29 +313,31 @@ describe('LlmModelEditor', () => {
     };
     const onChangeModel = jest.fn();
     const { getByText } = await render(
-      <ThemeProvider>
-        <LlmModelEditor
-          model={{
-            ...baseModel,
-            cachedModels: ['model-a'],
-            modelsFetchedAt: '2026-01-01T00:00:00.000Z',
-            cost: '$5 / 1M tokens',
-          }}
-          providers={[baseProvider, otherProvider]}
-          provider={baseProvider}
-          apiKey="sk-test"
-          onChangeModel={onChangeModel}
-          onSave={jest.fn()}
-          onCancel={jest.fn()}
-        />
-      </ThemeProvider>,
+      <SafeAreaProvider initialMetrics={safeAreaMetrics}>
+        <ThemeProvider>
+          <LlmModelEditor
+            model={{
+              ...baseModel,
+              cachedModels: ['model-a'],
+              modelsFetchedAt: '2026-01-01T00:00:00.000Z',
+              cost: '$5 / 1M tokens',
+            }}
+            providers={[baseProvider, otherProvider]}
+            provider={baseProvider}
+            apiKey="sk-test"
+            onChangeModel={onChangeModel}
+            onSave={jest.fn()}
+            onCancel={jest.fn()}
+          />
+        </ThemeProvider>
+      </SafeAreaProvider>,
     );
 
     fireEvent.press(getByText(`Provider: ${baseProvider.name}`));
     await waitFor(() => {
-      expect(getByText(`○ ${otherProvider.name}`)).toBeTruthy();
+      expect(getByText(otherProvider.name)).toBeTruthy();
     });
-    fireEvent.press(getByText(`○ ${otherProvider.name}`));
+    fireEvent.press(getByText(otherProvider.name));
 
     await waitFor(() =>
       expect(onChangeModel).toHaveBeenCalledWith(

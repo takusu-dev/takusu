@@ -9,6 +9,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useColors, BRAND_COLOR, COLORS } from '@/src/theme';
 import {
   type LlmModelSettings,
@@ -95,7 +96,7 @@ export function LlmModelEditor({
   const [modelFilter, setModelFilter] = useState('');
   const [modelCosts, setModelCosts] = useState<Record<string, string>>({});
   const [modelsExpanded, setModelsExpanded] = useState(true);
-  const [providersExpanded, setProvidersExpanded] = useState(false);
+  const [providerDropdownOpen, setProviderDropdownOpen] = useState(false);
   const [modelListHeight, setModelListHeight] = useState(0);
   const showBottomFold =
     modelsExpanded && modelListHeight > (windowHeight * 3) / 5;
@@ -190,42 +191,60 @@ export function LlmModelEditor({
         onChangeText={(name) => onChangeModel({ ...model, name })}
         placeholder="表示名"
       />
-      <Pressable
-        onPress={() => setProvidersExpanded((v) => !v)}
-        style={[styles.modelListHeader, { borderColor: colors.separator }]}
-      >
-        <Text style={[styles.modelListHeaderText, { color: colors.black }]}>
-          Provider: {provider.name || '未設定'}
-        </Text>
-        <Text style={{ color: colors.gray }}>
-          {providersExpanded ? '▼' : '▶'}
-        </Text>
-      </Pressable>
-      {providersExpanded && (
-        <View style={styles.modelListContent}>
-          {providers.map((p) => (
-            <Pressable
-              key={p.id}
-              onPress={() => {
-                onChangeModel({
-                  ...model,
-                  providerId: p.id,
-                  cachedModels: [],
-                  modelsFetchedAt: undefined,
-                  cost: undefined,
-                });
-                setProvidersExpanded(false);
-              }}
-              style={[styles.modelRow, { borderColor: colors.separator }]}
-            >
-              <Text style={{ color: colors.black }}>
-                {model.providerId === p.id ? '● ' : '○ '}
-                {p.name || p.baseUrl || '未設定'}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      )}
+      <View>
+        <Pressable
+          onPress={() => setProviderDropdownOpen((v) => !v)}
+          style={[styles.modelListHeader, { borderColor: colors.separator }]}
+        >
+          <Text style={[styles.modelListHeaderText, { color: colors.black }]}>
+            Provider: {provider.name || '未設定'}
+          </Text>
+          <Ionicons
+            name={providerDropdownOpen ? 'chevron-up' : 'chevron-down'}
+            size={16}
+            color={colors.gray}
+          />
+        </Pressable>
+        {providerDropdownOpen && (
+          <View style={styles.modelListContent}>
+            {providers.map((p) => (
+              <Pressable
+                key={p.id}
+                onPress={() => {
+                  setProviderDropdownOpen(false);
+                  if (p.id !== model.providerId) {
+                    onChangeModel({
+                      ...model,
+                      providerId: p.id,
+                      cachedModels: [],
+                      modelsFetchedAt: undefined,
+                      cost: undefined,
+                    });
+                  }
+                }}
+                style={[styles.modelRow, { borderColor: colors.separator }]}
+              >
+                <View style={styles.modelRowContent}>
+                  <Ionicons
+                    name={
+                      model.providerId === p.id
+                        ? 'checkmark-circle'
+                        : 'ellipse-outline'
+                    }
+                    size={20}
+                    color={
+                      model.providerId === p.id ? BRAND_COLOR : colors.black
+                    }
+                  />
+                  <Text style={{ color: colors.black }}>
+                    {p.name || p.baseUrl || '未設定'}
+                  </Text>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+        )}
+      </View>
       <Text style={[styles.readOnly, { color: colors.gray }]} numberOfLines={1}>
         Base URL: {provider.baseUrl || '未設定'}
       </Text>
@@ -251,9 +270,11 @@ export function LlmModelEditor({
           <Text style={[styles.modelListHeaderText, { color: colors.black }]}>
             モデル一覧
           </Text>
-          <Text style={{ color: colors.gray }}>
-            {modelsExpanded ? '▼' : '▶'}
-          </Text>
+          <Ionicons
+            name={modelsExpanded ? 'chevron-down' : 'chevron-forward'}
+            size={16}
+            color={colors.gray}
+          />
         </Pressable>
       )}
       {modelsExpanded && model.cachedModels.length > 0 && (
@@ -286,8 +307,21 @@ export function LlmModelEditor({
                 style={[styles.modelRow, { borderColor: colors.separator }]}
               >
                 <View style={styles.modelRowContent}>
-                  <Text style={[styles.modelName, { color: colors.black }]}>
-                    {model.selectedModel === m ? '● ' : '○ '}
+                  <Ionicons
+                    name={
+                      model.selectedModel === m
+                        ? 'checkmark-circle'
+                        : 'ellipse-outline'
+                    }
+                    size={20}
+                    color={
+                      model.selectedModel === m ? BRAND_COLOR : colors.black
+                    }
+                  />
+                  <Text
+                    style={[styles.modelName, { color: colors.black }]}
+                    numberOfLines={1}
+                  >
                     {m}
                   </Text>
                   {modelCosts[m] && (
@@ -307,7 +341,8 @@ export function LlmModelEditor({
                 { borderColor: colors.separator },
               ]}
             >
-              <Text style={{ color: colors.black }}>▲ 畳む</Text>
+              <Ionicons name="chevron-up" size={16} color={colors.black} />
+              <Text style={{ color: colors.black }}>畳む</Text>
             </Pressable>
           )}
         </View>
@@ -397,10 +432,12 @@ const styles = StyleSheet.create({
   modelListContent: { gap: 10 },
   modelListFooter: {
     minHeight: 44,
+    flexDirection: 'row',
     borderWidth: 1,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 4,
   },
   modelRow: { padding: 10, borderWidth: 1, borderRadius: 8 },
   modelRowContent: {
