@@ -517,7 +517,7 @@ takusu-worker (WASM / cdylib)
 
 ### 既知の脆いコード
 
-AGENTS.md の "Hacks / Brittle Code" セクションを参照。
+.devin/docs/code-style.md の "Hacks / Brittle Code" セクションを参照。
 特に注意すべきもの:
 - `point_to_iso` のハードコードされた 5分スロット (全クレートに分散)
 - `LIKE ? || '%'` による前方一致ID解決 (フルテーブルスキャン)

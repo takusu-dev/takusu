@@ -553,7 +553,7 @@ fn apply_planner_settings(planner: &mut Planner, settings: &SettingsRow) {
 
 /// ISO文字列 → Point スロット値。`now` は現在時刻。
 /// ハードコードされた 5 (分/スロット) は Planner の per と揃っている必要がある。
-/// AGENTS.md の「point_to_iso hardcoded 5-minute slots」参照。
+/// `.devin/docs/code-style.md` の「point_to_iso hardcoded 5-minute slots」参照。
 /// 変更時は takusu-core, takusu-local-lib, google-cal など全 crate の
 /// 5分前提コードを同時に更新すること。
 ///

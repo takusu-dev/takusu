@@ -16,7 +16,7 @@ Create a regression integration branch rooted on `main` and open a draft PR agai
 ## Prerequisites
 - The repo is managed with `jj`.
 - `jj st` / `jj git fetch` / `gh` / `dunstify` are available.
-- Follow the commit message conventions from `AGENTS.md`.
+- Follow the commit message conventions from `.devin/rules/pr-workflow.md`.
 
 ## Steps
 1. Check the working copy for uncommitted changes.

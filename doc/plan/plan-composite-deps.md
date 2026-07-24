@@ -224,6 +224,6 @@ cd mobile && npx tsc --noEmit && npm run lint && npm run fmt:check
    本文で `#355` を参照するが `Closes` は付けない(mobile が残るため)。
 2. **PR 2**(mobile): Part 4 + typecheck/lint。本文に `Closes #355`。
 
-各 PR は AGENTS.md の Jujutsu ワークフローに従う:
+各 PR は `.devin/rules/pr-workflow.md` の Jujutsu ワークフローに従う:
 `jj describe` → `jj git push --change` → `gh pr create`。
 コミットメッセージは現在形・小文字始まり・末尾ピリオドなし。

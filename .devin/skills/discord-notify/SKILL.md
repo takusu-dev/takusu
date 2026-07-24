@@ -35,7 +35,7 @@ Pass `--quiet` to suppress the `discord: sent` confirmation line.
   "ping me on Discord when X happens".
 - After a task completes, if the user has set up Discord notifications.
 - **Do not** use this for the in-repo `dunstify` desktop notifications —
-  those are for local terminal alerts (see AGENTS.md "Agent Notifications").
+  those are for local terminal alerts (see `.devin/rules/agent-helpers.md` "Agent Notifications").
 
 ## Examples
 

@@ -187,7 +187,7 @@ wrangler deploy
 
 [`doc/proposal.typ`](doc/proposal.typ) — プロジェクト全体の設計思想 (Typst・日本語)
 [`ARCHITECTURE.md`](ARCHITECTURE.md) — クレート構成・データフロー・アルゴリズム詳細
-[`AGENTS.md`](AGENTS.md) — 開発者向けガイド・コマンドリファレンス
+[`AGENTS.md`](AGENTS.md) — エージェント向け必須ルール（詳細は `.devin/docs/`）
 
 ## References
 

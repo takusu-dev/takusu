@@ -30,7 +30,7 @@
 - Added comment on `verify_token`: the `hash == hash(root_token)` condition looks redundant (SHA-256 collision resistance) but is kept as safety net for cases where root_token is passed as hex hash.
 
 ### `crates/takusu-local-lib/src/app.rs`
-- `iso_to_point`/`point_to_iso`: Added warning about the hardcoded 5-minute slot; references AGENTS.md known issue.
+- `iso_to_point`/`point_to_iso`: Added warning about the hardcoded 5-minute slot; references `.devin/docs/code-style.md` known issue.
 - `load_task_rows`: Documented that NotFound is silently ignored when specific task_ids are provided; designed for tolerance but could warn at API level.
 - `build_planner`: Documented the id_to_idx dual-use pattern (first initialized with slice index, then overwritten with planner index; consistent as long as no partial failure).
 - `generate_schedule`: Documented the double status filter (load_task_rows filters once, caller filters again for habit row safety) and why "scheduled" is included.
