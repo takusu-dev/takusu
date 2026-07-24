@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   StyleSheet,
   Text,
@@ -16,6 +15,7 @@ import {
   type LlmProvider,
   type PermissionsMap,
 } from '@/src/api/settingsStore';
+import { showError } from '@/src/api/errors';
 import { PermissionsEditor } from '@/src/components/PermissionsEditor';
 
 interface Props {
@@ -123,7 +123,10 @@ export function LlmModelEditor({
 
   async function fetchModels() {
     if (!provider.baseUrl.trim() || !apiKey.trim()) {
-      Alert.alert('入力不足', 'ProviderのBase URLとAPI keyを設定してください');
+      void showError(
+        'ProviderのBase URLとAPI keyを設定してください',
+        '入力不足',
+      );
       return;
     }
     setModelsLoading(true);
@@ -163,10 +166,10 @@ export function LlmModelEditor({
         cost: costs[nextSelected],
       });
       if (models.length === 0) {
-        Alert.alert('モデルなし', 'モデルIDを手入力してください');
+        void showError('モデルIDを手入力してください', 'モデルなし');
       }
     } catch (e) {
-      Alert.alert('取得失敗', e instanceof Error ? e.message : String(e));
+      void showError(e, '取得失敗');
     } finally {
       setModelsLoading(false);
     }
@@ -174,7 +177,7 @@ export function LlmModelEditor({
 
   function handleSave() {
     if (!model.selectedModel.trim()) {
-      Alert.alert('入力不足', 'LLMモデルを選択または入力してください');
+      void showError('LLMモデルを選択または入力してください', '入力不足');
       return;
     }
     onSave();

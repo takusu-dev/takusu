@@ -27,6 +27,7 @@ interface ContextMenuProps {
   onRescheduleOthers?: () => void;
   onCreateDependent?: () => void;
   onSetStatusSelected?: (status: TaskStatus) => void;
+  operationBusy?: boolean;
 }
 
 type MenuItem = {
@@ -50,6 +51,7 @@ export function ContextMenu({
   onRescheduleOthers,
   onCreateDependent,
   onSetStatusSelected,
+  operationBusy,
 }: ContextMenuProps) {
   const colors = useColors();
   const [open, setOpen] = useState(false);
@@ -102,6 +104,7 @@ export function ContextMenu({
                 label: '選択以外をreschedule',
                 icon: 'calendar-outline' as const,
                 onPress: onRescheduleOthers,
+                disabled: operationBusy,
               },
             ]
           : []),
@@ -111,6 +114,7 @@ export function ContextMenu({
                 label: '選択をreschedule',
                 icon: 'calendar-number-outline' as const,
                 onPress: onRescheduleSelected,
+                disabled: operationBusy,
               },
             ]
           : []),

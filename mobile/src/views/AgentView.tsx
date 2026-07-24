@@ -9,7 +9,6 @@ import {
 } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   AppState,
   FlatList,
   Keyboard,
@@ -47,6 +46,8 @@ import Markdown, {
 } from 'react-native-markdown-renderer';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import { DEFAULT_PORT, useServer } from '@/src/api/ServerProvider';
+import { showError } from '@/src/api/errors';
+import { useTopToast } from '@/src/components/TopToast';
 import { useVoice } from '@/src/api/VoiceContext';
 import { markdownToSpeech } from '@/src/utils/markdownToSpeech';
 import {
@@ -87,7 +88,6 @@ import {
 } from '@/src/api/agentSessionStore';
 import { formatJson } from '@/src/utils/formatJson';
 import { getTurnIndex } from '@/src/utils/getTurnIndex';
-import { showError } from '@/src/api/errors';
 import { ApprovalPanel } from '@/src/components/ApprovalPanel';
 import { ComposerRecordButton } from '@/src/components/ComposerRecordButton';
 import { DeleteConfirmButton } from '@/src/components/DeleteConfirmButton';
@@ -862,6 +862,7 @@ export function AgentView() {
   const { width } = useWindowDimensions();
   const { workersToken, ready, pushAgentConfig } = useServer();
   const { pendingSessionId, setPendingSessionId } = useVoice();
+  const { showTopToast } = useTopToast();
   const [pendingResult, setPendingResult] = useState<VoiceResult | null>(null);
   const sendTextRef = useRef(sendText);
   const client = useMemo(
@@ -1280,7 +1281,7 @@ export function AgentView() {
         if (!cancelled) setHistoryReady(true);
       } catch (e: unknown) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : String(e));
+          void showError(e, 'エラー');
         }
       }
     }
@@ -1402,9 +1403,7 @@ export function AgentView() {
         (e: unknown) => {
           if (cancelled) return;
           setAudioReady(false);
-          setError(
-            `音声モデルを準備してください: ${e instanceof Error ? e.message : String(e)}`,
-          );
+          void showError(e, '音声モデルを準備してください');
         },
       );
       return () => {
@@ -1478,7 +1477,7 @@ export function AgentView() {
       );
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      setError(message);
+      void showError(message, 'エラー');
       setBusy(false);
     }
   }
@@ -1532,7 +1531,7 @@ export function AgentView() {
       );
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      setError(message);
+      void showError(message, 'エラー');
       setBusy(false);
     }
   }
@@ -1651,7 +1650,7 @@ export function AgentView() {
           const ttsMessage =
             ttsError instanceof Error ? ttsError.message : String(ttsError);
           console.error('TTS failed:', ttsMessage);
-          setError(`音声読み上げに失敗しました: ${ttsMessage}`);
+          void showError(ttsMessage, '音声読み上げに失敗');
         }
       }
     } catch (e: unknown) {
@@ -1707,7 +1706,7 @@ export function AgentView() {
           }
           setError('Agentセッションが終了しました。もう一度送信してください');
         } else {
-          setError(message);
+          void showError(message, 'エラー');
         }
       }
     } finally {
@@ -1830,7 +1829,7 @@ export function AgentView() {
       setApproval(null);
       setUserInput(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      void showError(e, 'エラー');
     } finally {
       setBusy(false);
       setContextMenu((current) => ({ ...current, visible: false }));
@@ -1937,6 +1936,9 @@ export function AgentView() {
         newId('approval'),
       );
       setApproval(null);
+      if (result.approved) {
+        showTopToast('変更を適用しました');
+      }
       if (!result.approved) {
         setMessages((current) => {
           const next = [...current];
@@ -1967,7 +1969,7 @@ export function AgentView() {
           .catch((e: unknown) => {
             const message = e instanceof Error ? e.message : String(e);
             const errorText = `セッション権限の保存に失敗しました: ${message}`;
-            setError((prev) => (prev ? `${prev}; ${errorText}` : errorText));
+            void showError(errorText, '保存失敗');
             console.error('Failed to update session permissions:', e);
           });
 
@@ -2000,13 +2002,13 @@ export function AgentView() {
           })().catch((e: unknown) => {
             const message = e instanceof Error ? e.message : String(e);
             const errorText = `Provider 設定の保存に失敗しました: ${message}`;
-            setError((prev) => (prev ? `${prev}; ${errorText}` : errorText));
+            void showError(errorText, '保存失敗');
             console.error('Failed to persist provider permissions:', e);
           });
         }
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      void showError(e, 'エラー');
     } finally {
       setBusy(false);
     }
@@ -2020,7 +2022,7 @@ export function AgentView() {
       await client.submitUserInput(sessionId, callId, answers);
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
-      setError(`訂正の送信に失敗しました: ${message}`);
+      void showError(message, '訂正の送信に失敗');
       streamAbortRef.current?.abort();
     }
   }
@@ -2091,7 +2093,7 @@ export function AgentView() {
       }).catch(() => {});
       resetToCenter();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      void showError(e, 'エラー');
       resetToCenter();
     }
   }
@@ -2184,7 +2186,7 @@ export function AgentView() {
       sessionIdRef.current = currentId;
       setMessages(previousMessages);
       setApproval(previousApproval);
-      setError(e instanceof Error ? e.message : String(e));
+      void showError(e, 'エラー');
       resetToCenter();
     } finally {
       skipSnapshotSaveRef.current = false;
@@ -2193,12 +2195,12 @@ export function AgentView() {
 
   async function deleteCurrentSession() {
     if (isSwitchingRef.current || busy || !historyReady) return;
+    setError(null);
     const idToDelete = sessionIdRef.current;
     if (!idToDelete) return;
 
     isSwitchingRef.current = true;
     setIsSwitching(true);
-    setError(null);
 
     try {
       try {
@@ -2237,7 +2239,7 @@ export function AgentView() {
         await activateSessionId(nextId, false);
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      void showError(e, 'エラー');
     } finally {
       isSwitchingRef.current = false;
       setIsSwitching(false);
@@ -2471,7 +2473,7 @@ export function AgentView() {
           </View>
         )}
         {error && (
-          <Pressable onPress={() => Alert.alert('Agentエラー', error)}>
+          <Pressable onPress={() => void showError(error, 'Agentエラー')}>
             <Text style={styles.error}>{error}</Text>
           </Pressable>
         )}

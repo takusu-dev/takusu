@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   StyleSheet,
   Text,
@@ -15,6 +14,7 @@ import {
   type TtsProvider,
   type TtsProviderSettings,
 } from '@/src/api/settingsStore';
+import { showError } from '@/src/api/errors';
 
 const TTS_PROVIDER_TYPES: TtsProvider[] = ['cartesia', 'android'];
 
@@ -81,7 +81,7 @@ export function TtsProviderEditor({
 
   function handleSave() {
     if (!isAndroid && !provider.voiceId.trim()) {
-      Alert.alert('入力不足', 'Voice IDを入力してください');
+      void showError('Voice IDを入力してください', '入力不足');
       return;
     }
 
@@ -94,7 +94,10 @@ export function TtsProviderEditor({
         !Number.isFinite(parsedSampleRate) ||
         parsedSampleRate <= 0
       ) {
-        Alert.alert('入力不足', 'サンプルレートは正の整数を入力してください');
+        void showError(
+          'サンプルレートは正の整数を入力してください',
+          '入力不足',
+        );
         return;
       }
       nextProvider = { ...nextProvider, sampleRate: parsedSampleRate };
@@ -103,7 +106,7 @@ export function TtsProviderEditor({
     if (speed.trim() !== '') {
       const parsedSpeed = parseFloat(speed);
       if (!Number.isFinite(parsedSpeed) || parsedSpeed <= 0) {
-        Alert.alert('入力不足', '速度は正の数値を入力してください');
+        void showError('速度は正の数値を入力してください', '入力不足');
         return;
       }
       nextProvider = { ...nextProvider, speed: parsedSpeed };

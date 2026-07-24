@@ -22,6 +22,7 @@ import {
 } from '@/src/theme';
 import { UndoRedoToast } from '@/src/components/UndoRedoToast';
 import { haptic } from '@/src/components/haptics';
+import { TopToastProvider } from '@/src/components/TopToast';
 import {
   setupNotificationCategories,
   ensureNotificationPermissions,
@@ -279,25 +280,27 @@ function ThemedApp() {
   return (
     <ThemeProvider theme={theme}>
       <PaperProvider theme={paperTheme}>
-        <StatusBar style={isDark ? 'light' : 'dark'} />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: stackBg },
-          }}
-        >
-          <Stack.Screen name="index" />
-          <Stack.Screen name="agent" />
-          <Stack.Screen name="task/[id]" />
-          <Stack.Screen name="task/add" />
-          <Stack.Screen name="habit/[id]" />
-          <Stack.Screen name="habit/add" />
-          <Stack.Screen name="settings" />
-          <Stack.Screen name="stats" />
-          <Stack.Screen name="import-ical" />
-        </Stack>
-        <UndoRedoToast />
-        <FloatingVoiceButton />
+        <TopToastProvider>
+          <StatusBar style={isDark ? 'light' : 'dark'} />
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: stackBg },
+            }}
+          >
+            <Stack.Screen name="index" />
+            <Stack.Screen name="agent" />
+            <Stack.Screen name="task/[id]" />
+            <Stack.Screen name="task/add" />
+            <Stack.Screen name="habit/[id]" />
+            <Stack.Screen name="habit/add" />
+            <Stack.Screen name="settings" />
+            <Stack.Screen name="stats" />
+            <Stack.Screen name="import-ical" />
+          </Stack>
+          <UndoRedoToast />
+          <FloatingVoiceButton />
+        </TopToastProvider>
       </PaperProvider>
     </ThemeProvider>
   );

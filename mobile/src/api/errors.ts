@@ -10,7 +10,6 @@
 import { Alert, Platform } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { ApiError } from './client';
-import TakusuServerModule from '../../modules/takusu-server/src/TakusuServerModule';
 
 /** Format an unknown error into a human-readable string. */
 export function formatError(e: unknown): string {
@@ -60,6 +59,10 @@ function pushClientLog(level: string, context: string, message: string): void {
   // propagates synchronously, so use try/catch rather than
   // Promise.resolve().catch().
   try {
+    const TakusuServerModule =
+      require('../../modules/takusu-server/src/TakusuServerModule').default as {
+        pushLog: (line: string) => void;
+      };
     TakusuServerModule.pushLog(line);
   } catch {
     // native module not ready — drop silently

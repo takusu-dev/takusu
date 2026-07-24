@@ -7,7 +7,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Constants from 'expo-constants';
 import {
-  ActivityIndicator,
   Alert,
   FlatList,
   Pressable,
@@ -44,6 +43,7 @@ import Reanimated, {
 } from 'react-native-reanimated';
 import { useColors, COLORS, BRAND_COLOR } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
+import { useTopToast } from '@/src/components/TopToast';
 import { TaskProgressSheet } from '@/src/components/TaskProgressSheet';
 import { dateKey, todayDateKey } from '@/src/utils/dateKey';
 import TakusuWidgetModule from '../../modules/takusu-widget/src/TakusuWidgetModule';
@@ -179,9 +179,6 @@ export function HomeView() {
   // Server-configured timezone (from GET /api/settings). Used by dateKey
   // so date separators match the server's habit sync date grouping.
   const [serverTz, setServerTz] = useState<string | undefined>(undefined);
-  // In-progress status label shown in the top-bar center while a
-  // scheduling / Google Calendar sync operation is running.
-  const [statusLabel, setStatusLabel] = useState<string | null>(null);
   const [view, setView] = useState<ViewType>('task');
   const viewChanger = useMemo(
     () => <ViewChanger current={view} onChange={setView} />,
@@ -407,14 +404,16 @@ export function HomeView() {
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
 
-  const { startScheduleOperation, lastCompletedAt } = useScheduleOperation({
-    client,
-    workersUrl,
-    workersToken,
-    refresh,
-    setStatusLabel,
-    showError,
-  });
+  const { showTopToast, hideTopToast } = useTopToast();
+  const { startScheduleOperation, scheduleOperation, lastCompletedAt } =
+    useScheduleOperation({
+      client,
+      workersUrl,
+      workersToken,
+      refresh,
+      showTopToast,
+      hideTopToast,
+    });
 
   useFocusEffect(
     useCallback(() => {
@@ -1227,7 +1226,7 @@ export function HomeView() {
   }, []);
 
   function rescheduleSelected() {
-    if (!client) return;
+    if (!client || scheduleOperation) return;
     const pinned = tasks.filter((t) => !selected.has(t.id)).map((t) => t.id);
     const until = new Date();
     until.setDate(until.getDate() + 7);
@@ -1245,7 +1244,7 @@ export function HomeView() {
   }
 
   function rescheduleOthers() {
-    if (!client) return;
+    if (!client || scheduleOperation) return;
     const pinned = Array.from(selected);
     const until = new Date();
     until.setDate(until.getDate() + 7);
@@ -1733,6 +1732,7 @@ export function HomeView() {
           onCreateDependent={createDependent}
           onSetStatusSelected={setStatusSelected}
           onClearSelection={() => setSelected(new Set())}
+          operationBusy={scheduleOperation !== null}
         />
         <TaskSearchBar
           value={searchQuery}
@@ -1743,29 +1743,17 @@ export function HomeView() {
           style={({ pressed }) => [
             styles.topButton,
             pressed && styles.topButtonPressed,
+            scheduleOperation && styles.topButtonDisabled,
           ]}
+          disabled={scheduleOperation !== null}
           onPress={() => {
-            if (!client) return;
+            if (!client || scheduleOperation) return;
             haptic.medium();
             startScheduleOperation('generate', {}, 'タスクをスケジュール中');
           }}
         >
           <Ionicons name="refresh" size={22} color={BRAND_COLOR} />
         </Pressable>
-        {statusLabel && (
-          <View style={styles.statusLabelAbsolute} pointerEvents="none">
-            <View style={styles.statusPill}>
-              <ActivityIndicator size="small" color={BRAND_COLOR} />
-              <Text
-                style={styles.statusText}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {statusLabel}
-              </Text>
-            </View>
-          </View>
-        )}
       </View>
 
       {/* Task list */}
@@ -1977,33 +1965,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  statusLabelAbsolute: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  statusPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 14,
-    backgroundColor: 'rgba(114,97,163,0.1)',
-    maxWidth: '90%',
-  },
-  statusText: {
-    fontSize: 12,
-    color: BRAND_COLOR,
-    fontWeight: '500',
-    flex: 1,
-  },
   topButtonPressed: {
     backgroundColor: 'rgba(114,97,163,0.1)',
+  },
+  topButtonDisabled: {
+    opacity: 0.4,
   },
   topButtonText: {
     fontSize: 20,
