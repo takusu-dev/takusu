@@ -11,6 +11,7 @@ import { parseSchedule } from '@/src/api/types';
 import { type NotificationSettings, minutesToTime } from './settings';
 import { CHANNELS } from './channels';
 import { CATEGORY_TASK_IN_PROGRESS, CATEGORY_TASK_START } from './categories';
+import { dateKey, todayDateKey } from '@/src/utils/dateKey';
 
 // Android has a ~64 notification limit for scheduled notifications.
 // We limit per-task notification batches (pre-start, start-overdue, end-time)
@@ -21,33 +22,87 @@ export interface ScheduleData {
   tasks: TaskRow[];
   schedule: ScheduleEntry[];
   settings: NotificationSettings;
+  tz?: string;
 }
 
-function isToday(date: Date): boolean {
-  const now = new Date();
-  return (
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-  );
+const wallClockFormatterCache = new Map<string, Intl.DateTimeFormat | null>();
+
+function getWallClockFormatter(tz?: string): Intl.DateTimeFormat | null {
+  const key = tz ?? '';
+  let fmt = wallClockFormatterCache.get(key);
+  if (fmt === undefined) {
+    try {
+      fmt = new Intl.DateTimeFormat('en-CA', {
+        timeZone: tz || undefined,
+        hour: 'numeric',
+        minute: 'numeric',
+        hour12: false,
+        hourCycle: 'h23',
+      });
+    } catch {
+      fmt = null;
+    }
+    wallClockFormatterCache.set(key, fmt);
+  }
+  return fmt;
 }
 
-function isTomorrow(date: Date): boolean {
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  return (
-    date.getFullYear() === tomorrow.getFullYear() &&
-    date.getMonth() === tomorrow.getMonth() &&
-    date.getDate() === tomorrow.getDate()
-  );
+function getWallClockTime(
+  date: Date,
+  tz?: string,
+): { hour: number; minute: number } | null {
+  const fmt = getWallClockFormatter(tz);
+  if (!fmt) return null;
+  let hour = NaN;
+  let minute = NaN;
+  for (const part of fmt.formatToParts(date)) {
+    if (part.type === 'hour') hour = parseInt(part.value, 10);
+    if (part.type === 'minute') minute = parseInt(part.value, 10);
+  }
+  if (Number.isNaN(hour) || Number.isNaN(minute)) return null;
+  return { hour, minute };
 }
 
-function isTodayOrTomorrow(date: Date): boolean {
-  return isToday(date) || isTomorrow(date);
+function formatTimeInZone(iso: string, tz?: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '--:--';
+  const t = getWallClockTime(date, tz);
+  if (!t) {
+    return `${date.getHours().toString().padStart(2, '0')}:${date
+      .getMinutes()
+      .toString()
+      .padStart(2, '0')}`;
+  }
+  return `${t.hour.toString().padStart(2, '0')}:${t.minute
+    .toString()
+    .padStart(2, '0')}`;
 }
 
-function isFuture(date: Date): boolean {
-  return date.getTime() > Date.now();
+function addDaysToDateKey(key: string, days: number): string {
+  const [y, m, d] = key.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d + days));
+  const yy = date.getUTCFullYear();
+  const mm = (date.getUTCMonth() + 1).toString().padStart(2, '0');
+  const dd = date.getUTCDate().toString().padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
+function isToday(iso: string, tz?: string): boolean {
+  return dateKey(iso, tz) === todayDateKey(tz);
+}
+
+function isTomorrow(iso: string, tz?: string): boolean {
+  return dateKey(iso, tz) === addDaysToDateKey(todayDateKey(tz), 1);
+}
+
+function isTodayOrTomorrow(iso: string, tz?: string): boolean {
+  return isToday(iso, tz) || isTomorrow(iso, tz);
+}
+
+function isFuture(value: Date | string): boolean {
+  const ts =
+    typeof value === 'string' ? new Date(value).getTime() : value.getTime();
+  return ts > Date.now();
 }
 
 // Count incomplete tasks scheduled for a specific date.
@@ -58,14 +113,11 @@ function isFuture(date: Date): boolean {
 function countIncompleteTasksForDate(
   tasks: TaskRow[],
   schedule: ScheduleEntry[],
-  date: Date,
+  targetDate: Date,
+  tz?: string,
 ): number {
   const taskMap = new Map(tasks.map((t) => [t.id, t]));
-
-  const dayStart = new Date(date);
-  dayStart.setHours(0, 0, 0, 0);
-  const dayEnd = new Date(date);
-  dayEnd.setHours(23, 59, 59, 999);
+  const targetKey = dateKey(targetDate.toISOString(), tz);
 
   const counted = new Set<string>();
   for (const e of schedule) {
@@ -78,8 +130,7 @@ function countIncompleteTasksForDate(
     ) {
       continue;
     }
-    const start = new Date(e.start_at);
-    if (start >= dayStart && start <= dayEnd) {
+    if (dateKey(e.start_at, tz) === targetKey) {
       counted.add(e.task_id);
     }
   }
@@ -98,15 +149,32 @@ function countIdlePendingTasks(
   }).length;
 }
 
-function nextOccurrenceDate(hour: number, minute: number): Date {
+function nextOccurrenceDate(hour: number, minute: number, tz?: string): Date {
   const now = new Date();
-  const candidate = new Date(now);
-  candidate.setHours(hour, minute, 0, 0);
-
-  // If the time has already passed today, use tomorrow
-  if (candidate.getTime() <= now.getTime()) {
-    candidate.setDate(candidate.getDate() + 1);
+  if (getWallClockTime(now, tz) == null) {
+    const candidate = new Date(now);
+    candidate.setHours(hour, minute, 0, 0);
+    if (candidate.getTime() <= now.getTime()) {
+      candidate.setDate(candidate.getDate() + 1);
+    }
+    return candidate;
   }
+
+  // Start at the next whole minute after now so an exact current wall-clock
+  // time is treated as already passed (matching the old <= behavior).
+  const startMinute = Math.trunc(now.getTime() / 60000) + 1;
+  let candidate = new Date(startMinute * 60000);
+  const maxMinutes = 60 * 48;
+  for (let i = 0; i < maxMinutes; i++) {
+    const t = getWallClockTime(candidate, tz);
+    if (t && t.hour === hour && t.minute === minute) {
+      return candidate;
+    }
+    candidate = new Date(candidate.getTime() + 60000);
+  }
+
+  // Fallback for pathological timezones. Normal IANA timezones should always
+  // hit the target wall-clock time within 48 hours.
   return candidate;
 }
 
@@ -121,8 +189,9 @@ async function scheduleNextOccurrence(
   title: string,
   body: string,
   data: Record<string, unknown>,
+  tz?: string,
 ): Promise<void> {
-  const target = nextOccurrenceDate(hour, minute);
+  const target = nextOccurrenceDate(hour, minute, tz);
   await scheduleAt(channelId, target, title, body, data);
 }
 
@@ -153,7 +222,7 @@ async function scheduleAt(
 export async function rescheduleNotifications(
   data: ScheduleData,
 ): Promise<void> {
-  const { tasks, schedule, settings } = data;
+  const { tasks, schedule, settings, tz } = data;
 
   if (!settings.enabled) {
     await Notifications.cancelAllScheduledNotificationsAsync();
@@ -169,8 +238,8 @@ export async function rescheduleNotifications(
   // ── 1. Morning briefing (next occurrence only) ──
   if (settings.morningBriefing) {
     const { hour, minute } = minutesToTime(settings.morningBriefingTime);
-    const target = nextOccurrenceDate(hour, minute);
-    const count = countIncompleteTasksForDate(tasks, schedule, target);
+    const target = nextOccurrenceDate(hour, minute, tz);
+    const count = countIncompleteTasksForDate(tasks, schedule, target, tz);
     const title =
       count === 0
         ? 'おはようございます'
@@ -188,20 +257,17 @@ export async function rescheduleNotifications(
     .map((t) => ({
       task: t,
       entry: scheduleMap.get(t.id)!,
+      startDate: new Date(scheduleMap.get(t.id)!.start_at),
     }))
-    .filter(({ entry }) => {
-      const start = new Date(entry.start_at);
-      return isTodayOrTomorrow(start) && isFuture(start);
-    })
+    .filter(
+      ({ entry, startDate }) =>
+        isTodayOrTomorrow(entry.start_at, tz) && isFuture(startDate),
+    )
     .sort((a, b) => a.entry.start_at.localeCompare(b.entry.start_at))
     .slice(0, MAX_SCHEDULED_PER_TYPE);
 
-  for (const { task, entry } of upcomingTasks) {
-    const startDate = new Date(entry.start_at);
-    const startTime = `${startDate.getHours().toString().padStart(2, '0')}:${startDate
-      .getMinutes()
-      .toString()
-      .padStart(2, '0')}`;
+  for (const { task, entry, startDate } of upcomingTasks) {
+    const startTime = formatTimeInZone(entry.start_at, tz);
 
     // Pre-start reminder (#256: attach CATEGORY_TASK_START so the user can
     // start the task early from the reminder notification, not just from the
@@ -242,20 +308,17 @@ export async function rescheduleNotifications(
       .map((t) => ({
         task: t,
         entry: scheduleMap.get(t.id)!,
+        endDate: new Date(scheduleMap.get(t.id)!.end_at),
       }))
-      .filter(({ entry }) => {
-        const end = new Date(entry.end_at);
-        return isTodayOrTomorrow(end) && isFuture(end);
-      })
+      .filter(
+        ({ entry, endDate }) =>
+          isTodayOrTomorrow(entry.end_at, tz) && isFuture(endDate),
+      )
       .sort((a, b) => a.entry.end_at.localeCompare(b.entry.end_at))
       .slice(0, MAX_SCHEDULED_PER_TYPE);
 
-    for (const { task, entry } of endingTasks) {
-      const endDate = new Date(entry.end_at);
-      const endTime = `${endDate.getHours().toString().padStart(2, '0')}:${endDate
-        .getMinutes()
-        .toString()
-        .padStart(2, '0')}`;
+    for (const { task, entry, endDate } of endingTasks) {
+      const endTime = formatTimeInZone(entry.end_at, tz);
       await scheduleAt(
         CHANNELS.taskReminders,
         endDate,
@@ -280,6 +343,7 @@ export async function rescheduleNotifications(
         '未スケジュールのタスクがあります',
         `${idleCount}個のタスクが${settings.unscheduledIdleHours}時間以上放置されています`,
         { url: '/' },
+        tz,
       );
     }
   }
@@ -389,7 +453,8 @@ export async function rescheduleFromRaw(
   tasks: TaskRow[],
   scheduleJson: string | null,
   settings: NotificationSettings,
+  tz?: string,
 ): Promise<void> {
   const schedule = scheduleJson ? parseSchedule(scheduleJson) : [];
-  await rescheduleNotifications({ tasks, schedule, settings });
+  await rescheduleNotifications({ tasks, schedule, settings, tz });
 }
