@@ -375,7 +375,7 @@ pub fn minutes_between(start: &str, end: &str) -> i64 {
     }
 }
 
-fn now_timestamp() -> Result<jiff::Timestamp, String> {
+pub fn now_timestamp() -> Result<jiff::Timestamp, String> {
     let nanos: i128 = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())

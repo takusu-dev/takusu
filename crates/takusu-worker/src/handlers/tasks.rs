@@ -10,7 +10,6 @@ use crate::models::{CreateTask, HabitRow, ScheduleEntry, ScheduleRow, TaskRow, U
 use crate::validate::{
     validate_minutes, validate_quantity, validate_task_datetimes, validate_title,
 };
-use jiff::Timestamp;
 use takusu_util::search::{EvalContext, filter_tasks};
 
 const TASK_COLS: &str = "id, display_id, title, description, start_at, end_at, avg_minutes, sigma_minutes, depends, parallelizable, allows_parallel, abandonability, status, habit_id, ical_uid, user_edited, fixed, habit_step_id, quantity_total, quantity_done, quantity_unit, completed_at, split_from_task_id, original_quantity_total, created_at, updated_at, tam.actual_minutes";
@@ -125,7 +124,8 @@ async fn filter_rows_with_query(
     q: &str,
 ) -> Result<Vec<TaskRow>, WorkerError> {
     let tz = get_timezone(database).await?;
-    let now = Timestamp::now();
+    let now = takusu_util::now_timestamp()
+        .map_err(|e| WorkerError::Internal(format!("current time unavailable: {e}")))?;
 
     let habits_stmt = database.prepare(
         "SELECT id, display_id, title, description, recurrence, start_time, end_time, avg_minutes, sigma_minutes, parallelizable, allows_parallel, abandonability, active, fixed, window_mode, created_at, updated_at FROM habits",
