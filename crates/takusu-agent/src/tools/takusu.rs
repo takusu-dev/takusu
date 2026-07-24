@@ -701,7 +701,7 @@ impl Tool for ListTasks {
                 "until": {"type": "string", "description": "End of range; interpreted in server timezone."},
                 "no_overdue": {"type": "boolean", "description": "If true, exclude tasks whose end_at has passed. Do not use together with status='overdue'."},
                 "habit_id": {"type": "string", "description": "Habit reference such as h1."},
-                "q": {"type": "string", "description": "Free-form search query using qualifiers such as status:pending OR 買い物."},
+                "q": {"type": "string", "description": "Free-form search query with qualifiers. Boolean: AND (space/AND), OR, -/NOT. Parentheses supported. Qualifiers: status:<pending|scheduled|in_progress|completed|skipped|overdue>, title:<text>, desc:<text>, start:<date>, end:<date>, scheduled-start:<date>, scheduled-end:<date>, from:<date> (alias end:>=), until:<date> (alias start:<=), habit:<hN|N>, depends:<#N|UUID>, dependents:<#N|UUID>, deps_count:<op>N, is:<overdue|fixed|parallelizable|allows_parallel>, has:<description|completed_at|schedule|depends>. Date: YYYY-MM-DD, today, tomorrow, yesterday, Nd (relative), or operators like >=2026-07-25. Examples: status:pending 買い物, end:today OR end:tomorrow, -habit:h1, depends:#42"},
                 "limit": {"type": "integer", "description": "Maximum number of tasks to return."},
             },
             "additionalProperties": false,

@@ -163,38 +163,178 @@ enum MatchRank {
     NoMatch = 4,
 }
 
-fn match_rank(query: &str, item: &dyn MemoryRankable) -> MatchRank {
-    if item.normalized_key() == query {
+fn term_parts(term: &str) -> Vec<&str> {
+    term.split('*').filter(|p| !p.is_empty()).collect()
+}
+
+/// Check that the literal parts of a (possibly wildcard) term appear in `text`
+/// in the same order. `*` is the only wildcard and matches any sequence.
+fn term_matches(term: &str, text: &str) -> bool {
+    if !term.contains('*') {
+        return text.contains(term);
+    }
+    let parts = term_parts(term);
+    if parts.is_empty() {
+        return true; // term is just "*"
+    }
+    let mut start = 0usize;
+    for part in parts {
+        if let Some(pos) = text[start..].find(part) {
+            start += pos + part.len();
+        } else {
+            return false;
+        }
+    }
+    true
+}
+
+fn key_equals_term(term: &str, key: &str) -> bool {
+    if !term.contains('*') {
+        return key == term;
+    }
+    let parts = term_parts(term);
+    if parts.is_empty() {
+        return true;
+    }
+    if !key.starts_with(parts[0]) {
+        return false;
+    }
+    let mut start = parts[0].len();
+    for part in &parts[1..] {
+        if let Some(pos) = key[start..].find(part) {
+            start += pos + part.len();
+        } else {
+            return false;
+        }
+    }
+    if term.ends_with('*') {
+        true
+    } else {
+        key.ends_with(parts.last().unwrap())
+    }
+}
+
+fn key_starts_with_term(term: &str, key: &str) -> bool {
+    if !term.contains('*') {
+        return key.starts_with(term);
+    }
+    let parts = term_parts(term);
+    if parts.is_empty() {
+        return true;
+    }
+    if !key.starts_with(parts[0]) {
+        return false;
+    }
+    let mut start = parts[0].len();
+    for part in &parts[1..] {
+        if let Some(pos) = key[start..].find(part) {
+            start += pos + part.len();
+        } else {
+            return false;
+        }
+    }
+    true
+}
+
+fn match_rank(term: &str, item: &dyn MemoryRankable) -> MatchRank {
+    let key = item.normalized_key();
+    let content = item.normalized_content();
+    if key_equals_term(term, key) {
         MatchRank::Exact
-    } else if item.normalized_key().starts_with(query) {
+    } else if key_starts_with_term(term, key) {
         MatchRank::Prefix
-    } else if item.normalized_key().contains(query) {
+    } else if term_matches(term, key) {
         MatchRank::KeySubstring
-    } else if item.normalized_content().contains(query) {
+    } else if term_matches(term, content) {
         MatchRank::ContentSubstring
     } else {
         MatchRank::NoMatch
     }
 }
 
+fn item_score(terms: &[String], item: &dyn MemoryRankable) -> (u8, usize, usize) {
+    let mut sum = 0u8;
+    let mut key_hits = 0usize;
+    let mut content_hits = 0usize;
+    for term in terms {
+        let rank = match_rank(term, item);
+        sum += rank as u8;
+        if rank <= MatchRank::KeySubstring {
+            key_hits += 1;
+        } else if rank == MatchRank::ContentSubstring {
+            content_hits += 1;
+        }
+    }
+    (sum, key_hits, content_hits)
+}
+
+/// Tokenize `query` into normalized whitespace-separated terms. Multiple
+/// terms are combined with AND semantics by the caller (e.g. every term must
+/// match either the key or the content). `*` in a term acts as a wildcard
+/// matching any sequence of characters.
+pub fn tokenize_query(query: &str) -> Result<Vec<String>, String> {
+    let q = normalize_query(query)?;
+    Ok(q.split_whitespace().map(|s| s.to_string()).collect())
+}
+
+/// Build SQL `LIKE` patterns for each term. `*` is converted to `%` and other
+/// LIKE metacharacters (`%`, `_`, `\`) are escaped. The resulting patterns are
+/// always wrapped with leading/trailing `%` so they form a superset of the
+/// strings matched by [`term_matches`]: any text that `term_matches` accepts is
+/// guaranteed to satisfy the generated `LIKE` pattern.
+pub fn memory_like_patterns(terms: &[String]) -> Vec<String> {
+    terms
+        .iter()
+        .map(|term| {
+            if term.contains('*') {
+                let parts: Vec<String> = term
+                    .split('*')
+                    .filter(|seg| !seg.is_empty())
+                    .map(escape_like_pattern)
+                    .collect();
+                if parts.is_empty() {
+                    "%".to_string()
+                } else {
+                    format!("%{}%", parts.join("%"))
+                }
+            } else {
+                format!("%{}%", escape_like_pattern(term))
+            }
+        })
+        .collect()
+}
+
 /// Sort `items` by the deterministic memory search ranking in place.
 /// After sorting, the caller should truncate to the desired `limit`.
 pub fn sort_memories<T: MemoryRankable>(query: &str, items: &mut [T]) {
-    if let Ok(q) = normalize_query(query) {
-        items.sort_by(|a, b| {
-            let ra = match_rank(&q, a);
-            let rb = match_rank(&q, b);
-            ra.cmp(&rb)
-                .then_with(|| b.updated_at().cmp(a.updated_at()))
-                .then_with(|| a.id().cmp(b.id()))
-        });
-    } else {
+    let terms = match tokenize_query(query) {
+        Ok(t) => t,
+        Err(_) => {
+            items.sort_by(|a, b| {
+                b.updated_at()
+                    .cmp(a.updated_at())
+                    .then_with(|| a.id().cmp(b.id()))
+            });
+            return;
+        }
+    };
+    if terms.is_empty() {
         items.sort_by(|a, b| {
             b.updated_at()
                 .cmp(a.updated_at())
                 .then_with(|| a.id().cmp(b.id()))
         });
+        return;
     }
+    items.sort_by(|a, b| {
+        let (sa, ka, ca) = item_score(&terms, a);
+        let (sb, kb, cb) = item_score(&terms, b);
+        sa.cmp(&sb)
+            .then_with(|| kb.cmp(&ka))
+            .then_with(|| cb.cmp(&ca))
+            .then_with(|| b.updated_at().cmp(a.updated_at()))
+            .then_with(|| a.id().cmp(b.id()))
+    });
 }
 
 /// Compare two optional strings in descending order (`None` is "largest").
@@ -406,5 +546,205 @@ mod tests {
         assert_eq!(items[1].id, "2"); // exact, older
         assert_eq!(items[2].id, "3"); // prefix
         assert_eq!(items[3].id, "4"); // content substring
+    }
+
+    #[test]
+    fn tokenize_query_splits_keywords_and_keeps_wildcard() {
+        let terms = tokenize_query("  研究室 *大学  ").unwrap();
+        assert_eq!(terms, vec!["研究室", "*大学"]);
+    }
+
+    #[test]
+    fn memory_like_patterns_handle_wildcards() {
+        let patterns = memory_like_patterns(&[
+            "研究室".to_string(),
+            "大学*".to_string(),
+            "*foo".to_string(),
+            "a*b".to_string(),
+        ]);
+        assert_eq!(patterns[0], "%研究室%");
+        assert_eq!(patterns[1], "%大学%");
+        assert_eq!(patterns[2], "%foo%");
+        assert_eq!(patterns[3], "%a%b%");
+    }
+
+    #[test]
+    fn memory_like_patterns_escape_metacharacters() {
+        let patterns = memory_like_patterns(&["a%b".to_string(), "c_d".to_string()]);
+        assert_eq!(patterns[0], "%a\\%b%");
+        assert_eq!(patterns[1], "%c\\_d%");
+    }
+
+    #[test]
+    fn memory_ranking_multi_term_and_wildcard() {
+        struct M {
+            id: String,
+            key: String,
+            content: String,
+            updated: String,
+        }
+        impl MemoryRankable for M {
+            fn id(&self) -> &str {
+                &self.id
+            }
+            fn normalized_key(&self) -> &str {
+                &self.key
+            }
+            fn normalized_content(&self) -> &str {
+                &self.content
+            }
+            fn updated_at(&self) -> &str {
+                &self.updated
+            }
+        }
+        let mut items = vec![
+            M {
+                id: "1".into(),
+                key: "大学の研究室".into(),
+                content: "".into(),
+                updated: "2025-01-01T00:00:00Z".into(),
+            },
+            M {
+                id: "2".into(),
+                key: "研究室".into(),
+                content: "大学".into(),
+                updated: "2025-01-02T00:00:00Z".into(),
+            },
+            M {
+                id: "3".into(),
+                key: "研究".into(),
+                content: "".into(),
+                updated: "2025-01-03T00:00:00Z".into(),
+            },
+        ];
+        sort_memories("研究* 大学", &mut items);
+        // Both terms match in key of id 1; one term key one content for id 2; id 3 only first term.
+        assert_eq!(items[0].id, "1");
+        assert_eq!(items[1].id, "2");
+        assert_eq!(items[2].id, "3");
+    }
+
+    #[test]
+    fn memory_like_patterns_are_superset_of_term_matches() {
+        // Parse a SQL LIKE pattern using the same rules as the worker/storage
+        // queries (escape character is '\', wildcard is '%').
+        fn like_matches(pattern: &str, text: &str) -> bool {
+            #[derive(Debug, Clone)]
+            enum Token {
+                Wildcard,
+                Literal(String),
+            }
+
+            let mut tokens = Vec::new();
+            let mut current = String::new();
+            let mut chars = pattern.chars();
+            while let Some(c) = chars.next() {
+                if c == '\\' {
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                    } else {
+                        current.push('\\');
+                    }
+                } else if c == '%' {
+                    if !current.is_empty() {
+                        tokens.push(Token::Literal(current.clone()));
+                        current.clear();
+                    }
+                    tokens.push(Token::Wildcard);
+                } else {
+                    current.push(c);
+                }
+            }
+            if !current.is_empty() {
+                tokens.push(Token::Literal(current));
+            }
+
+            // Collapse consecutive wildcards.
+            let mut collapsed = Vec::new();
+            for t in tokens {
+                if matches!(t, Token::Wildcard) && matches!(collapsed.last(), Some(Token::Wildcard))
+                {
+                    continue;
+                }
+                collapsed.push(t);
+            }
+
+            fn match_tokens(tokens: &[Token], text: &str) -> bool {
+                if tokens.is_empty() {
+                    return text.is_empty();
+                }
+                match &tokens[0] {
+                    Token::Literal(lit) => {
+                        text.starts_with(lit) && match_tokens(&tokens[1..], &text[lit.len()..])
+                    }
+                    Token::Wildcard => {
+                        if tokens.len() == 1 {
+                            return true;
+                        }
+                        let lit = match &tokens[1] {
+                            Token::Literal(l) => l,
+                            Token::Wildcard => return match_tokens(&tokens[1..], text),
+                        };
+                        for i in 0..=text.len() {
+                            let suffix = &text[i..];
+                            if suffix.starts_with(lit)
+                                && match_tokens(&tokens[2..], &suffix[lit.len()..])
+                            {
+                                return true;
+                            }
+                        }
+                        false
+                    }
+                }
+            }
+
+            match_tokens(&collapsed, text)
+        }
+
+        fn generate_strings(chars: &[char], max_len: usize) -> Vec<String> {
+            let mut out = Vec::new();
+            fn rec(chars: &[char], max_len: usize, prefix: &mut String, out: &mut Vec<String>) {
+                if prefix.len() == max_len {
+                    out.push(prefix.clone());
+                    return;
+                }
+                for &c in chars {
+                    prefix.push(c);
+                    rec(chars, max_len, prefix, out);
+                    prefix.pop();
+                }
+            }
+            rec(chars, max_len, &mut String::new(), &mut out);
+            out
+        }
+
+        let term_chars = ['a', 'b', '*'];
+        let text_chars = ['a', 'b'];
+        let mut term_count = 0;
+        let mut text_count = 0;
+
+        for term_len in 1..=4 {
+            for term in generate_strings(&term_chars, term_len) {
+                term_count += 1;
+                let patterns = memory_like_patterns(std::slice::from_ref(&term));
+                let pat = &patterns[0];
+                for text_len in 0..=5 {
+                    for text in generate_strings(&text_chars, text_len) {
+                        text_count += 1;
+                        if term_matches(&term, &text) {
+                            assert!(
+                                like_matches(pat, &text),
+                                "term {term:?} matches text {text:?} but pattern {pat:?} does not"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Guard against accidental empty enumeration; we should have exercised
+        // a non-trivial search space.
+        assert!(term_count > 100, "expected many terms, got {term_count}");
+        assert!(text_count > 100, "expected many texts, got {text_count}");
     }
 }

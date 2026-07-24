@@ -150,8 +150,8 @@ impl Tool for MemorySearch {
         json!({
             "type": "object",
             "properties": {
-                "q": {"type": "string", "description": "Search query."},
-                "kind": {"type": "string", "description": "Filter by kind: proper_noun, fact, or task_note."},
+                "q": {"type": "string", "description": "Search query. Multiple keywords are ANDed. * is a wildcard matching any sequence of characters. Example: 研究室 大学, 研究*大学."},
+                "kind": {"type": "string", "description": "Filter by kind; comma-separated values are ORed. Values: proper_noun, fact, task_note."},
                 "subject_type": {"type": "string"},
                 "subject_id": {"type": "string"},
                 "limit": {"type": "integer", "description": "Maximum results (default 10, max 50)."},

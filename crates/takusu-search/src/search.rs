@@ -3,16 +3,18 @@ use std::collections::HashMap;
 use jiff::{Timestamp, civil::Date, tz::TimeZone};
 use serde::{Deserialize, Serialize};
 
-use crate::parse_date_expression;
+use crate::date::parse_date_expression_with;
 
 /// A task that can be searched.
 pub trait Task {
     fn id(&self) -> &str;
+    fn display_id(&self) -> i64;
     fn title(&self) -> &str;
     fn description(&self) -> Option<&str>;
     fn status(&self) -> &str;
     fn start_at(&self) -> Option<&str>;
     fn end_at(&self) -> &str;
+    fn depends(&self) -> &str;
     fn habit_id(&self) -> Option<&str>;
     fn fixed(&self) -> bool;
     fn parallelizable(&self) -> bool;
@@ -42,6 +44,9 @@ macro_rules! impl_search_task {
             fn id(&self) -> &str {
                 &self.id
             }
+            fn display_id(&self) -> i64 {
+                self.display_id
+            }
             fn title(&self) -> &str {
                 &self.title
             }
@@ -56,6 +61,9 @@ macro_rules! impl_search_task {
             }
             fn end_at(&self) -> &str {
                 &self.end_at
+            }
+            fn depends(&self) -> &str {
+                &self.depends
             }
             fn habit_id(&self) -> Option<&str> {
                 self.habit_id.as_deref()
@@ -96,16 +104,44 @@ pub struct EvalContext {
     pub now: Timestamp,
     pub tz: TimeZone,
     pub(crate) schedule: HashMap<String, (String, String)>,
+    pub(crate) task_ref_to_id: HashMap<String, String>,
+    pub(crate) task_id_to_display: HashMap<String, i64>,
     pub(crate) habit_ref_to_id: HashMap<String, String>,
     pub(crate) habit_id_to_display: HashMap<String, i64>,
+    /// For each task id, the set of task ids that depend on it.
+    pub(crate) dependents: HashMap<String, std::collections::HashSet<String>>,
 }
 
 impl EvalContext {
-    pub fn new<S, H>(tz: TimeZone, now: Timestamp, schedule: S, habits: &[H]) -> Self
+    pub fn new<S, T, H>(
+        tz: TimeZone,
+        now: Timestamp,
+        schedule: S,
+        tasks: &[T],
+        habits: &[H],
+    ) -> Self
     where
         S: IntoIterator<Item = (String, (String, String))>,
+        T: Task,
         H: Habit,
     {
+        let mut task_ref_to_id = HashMap::new();
+        let mut task_id_to_display = HashMap::new();
+        let mut dependents: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
+        for t in tasks {
+            let id = t.id().to_string();
+            let display_id = t.display_id();
+            task_ref_to_id.insert(format!("#{display_id}"), id.clone());
+            task_ref_to_id.insert(display_id.to_string(), id.clone());
+            task_id_to_display.insert(id.clone(), display_id);
+
+            if let Ok(ids) = serde_json::from_str::<Vec<String>>(t.depends()) {
+                for dep in ids {
+                    dependents.entry(dep).or_default().insert(id.clone());
+                }
+            }
+        }
+
         let mut habit_ref_to_id = HashMap::new();
         let mut habit_id_to_display = HashMap::new();
         for h in habits {
@@ -118,8 +154,11 @@ impl EvalContext {
             now,
             tz,
             schedule: schedule.into_iter().collect(),
+            task_ref_to_id,
+            task_id_to_display,
             habit_ref_to_id,
             habit_id_to_display,
+            dependents,
         }
     }
 
@@ -130,8 +169,11 @@ impl EvalContext {
             now,
             tz,
             schedule: HashMap::new(),
+            task_ref_to_id: HashMap::new(),
+            task_id_to_display: HashMap::new(),
             habit_ref_to_id: HashMap::new(),
             habit_id_to_display: HashMap::new(),
+            dependents: HashMap::new(),
         }
     }
 
@@ -443,6 +485,39 @@ fn eval<T: Task>(expr: &Expr, task: &T, ctx: &EvalContext) -> bool {
     }
 }
 
+fn task_dep_ids(task: &impl Task) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(task.depends()).unwrap_or_default()
+}
+
+fn resolve_task_ref<'c>(ctx: &'c EvalContext, v: &'c str) -> Option<&'c str> {
+    let v = v.trim();
+    if let Some(id) = ctx.task_ref_to_id.get(v) {
+        return Some(id.as_str());
+    }
+    if let Some(id) = ctx.task_ref_to_id.get(&format!("#{v}")) {
+        return Some(id.as_str());
+    }
+    if ctx.task_id_to_display.contains_key(v) {
+        return Some(v);
+    }
+    None
+}
+
+fn eval_compare(value: &str, against: i64) -> bool {
+    let (op, rest) = parse_op_value(value);
+    let Ok(n) = rest.trim().parse::<i64>() else {
+        return false;
+    };
+    match op {
+        ">" => against > n,
+        ">=" => against >= n,
+        "<" => against < n,
+        "<=" => against <= n,
+        "=" | "" => against == n,
+        _ => false,
+    }
+}
+
 fn eval_qualifier<T: Task>(key: &str, value: &str, task: &T, ctx: &EvalContext) -> bool {
     let v = value.trim();
     let vl = v.to_lowercase();
@@ -492,6 +567,22 @@ fn eval_qualifier<T: Task>(key: &str, value: &str, task: &T, ctx: &EvalContext) 
                 false
             }
         }
+        "depends" => {
+            let Some(target) = resolve_task_ref(ctx, v) else {
+                return false;
+            };
+            task_dep_ids(task).contains(&target.to_string())
+        }
+        "dependents" => {
+            let Some(target) = resolve_task_ref(ctx, v) else {
+                return false;
+            };
+            ctx.dependents
+                .get(target)
+                .map(|set| set.contains(task.id()))
+                .unwrap_or(false)
+        }
+        "deps_count" => eval_compare(v, task_dep_ids(task).len() as i64),
         "is" => match v {
             "overdue" => {
                 task.status() != "completed"
@@ -510,6 +601,7 @@ fn eval_qualifier<T: Task>(key: &str, value: &str, task: &T, ctx: &EvalContext) 
                 .unwrap_or(false),
             "completed_at" => task.completed_at().is_some(),
             "schedule" => task.scheduled_start(ctx).is_some(),
+            "depends" => !task_dep_ids(task).is_empty(),
             _ => false,
         },
         _ => false,
@@ -535,11 +627,11 @@ fn eval_date(task_value: &str, value: &str, ctx: &EvalContext, default_op: &str)
 
     // ".." range: "2026-07-25..2026-07-28"
     if let Some((l, r)) = value.split_once("..") {
-        let start = match parse_date_value(l, tz, today, false, now) {
+        let start = match parse_date_expression_with(l, tz, today, false, *now) {
             Ok(t) => t,
             Err(_) => return false,
         };
-        let end = match parse_date_value(r, tz, today, true, now) {
+        let end = match parse_date_expression_with(r, tz, today, true, *now) {
             Ok(t) => t,
             Err(_) => return false,
         };
@@ -549,11 +641,11 @@ fn eval_date(task_value: &str, value: &str, ctx: &EvalContext, default_op: &str)
     let (op, rest) = parse_op_value(value);
     let op = if op.is_empty() { default_op } else { op };
 
-    let start = match parse_date_value(rest, tz, today, false, now) {
+    let start = match parse_date_expression_with(rest, tz, today, false, *now) {
         Ok(t) => t,
         Err(_) => return false,
     };
-    let end = match parse_date_value(rest, tz, today, true, now) {
+    let end = match parse_date_expression_with(rest, tz, today, true, *now) {
         Ok(t) => t,
         Err(_) => return false,
     };
@@ -570,111 +662,6 @@ fn eval_date(task_value: &str, value: &str, ctx: &EvalContext, default_op: &str)
 
 fn timestamp_lt(s: &str, now: &Timestamp) -> bool {
     s.parse::<Timestamp>().map(|t| t < *now).unwrap_or(false)
-}
-
-// ── Date parsing ────────────────────────────────────────
-
-fn parse_date_value(
-    value: &str,
-    tz: &TimeZone,
-    today: Date,
-    end_of_day: bool,
-    now: &Timestamp,
-) -> Result<Timestamp, String> {
-    let s = value.trim();
-    if s.eq_ignore_ascii_case("now") {
-        return Ok(*now);
-    }
-
-    if s.eq_ignore_ascii_case("today") {
-        let dt = if end_of_day {
-            today.at(23, 59, 59, 0)
-        } else {
-            today.at(0, 0, 0, 0)
-        };
-        return dt_to_timestamp(dt, tz);
-    }
-
-    if s.eq_ignore_ascii_case("tomorrow") {
-        let date = today
-            .checked_add(jiff::Span::new().days(1))
-            .map_err(|e| format!("day overflow: {e}"))?;
-        let dt = if end_of_day {
-            date.at(23, 59, 59, 0)
-        } else {
-            date.at(0, 0, 0, 0)
-        };
-        return dt_to_timestamp(dt, tz);
-    }
-
-    if s.eq_ignore_ascii_case("yesterday") {
-        let date = today
-            .checked_sub(jiff::Span::new().days(1))
-            .map_err(|e| format!("day overflow: {e}"))?;
-        let dt = if end_of_day {
-            date.at(23, 59, 59, 0)
-        } else {
-            date.at(0, 0, 0, 0)
-        };
-        return dt_to_timestamp(dt, tz);
-    }
-
-    // Relative days: "7d", "+7d", "-7d".
-    if let Some(days_str) = s.strip_suffix('d').or_else(|| s.strip_suffix('D'))
-        && let Ok(days) = days_str.trim().parse::<i64>()
-    {
-        let date = today
-            .checked_add(jiff::Span::new().days(days))
-            .map_err(|e| format!("day overflow: {e}"))?;
-        let dt = if end_of_day {
-            date.at(23, 59, 59, 0)
-        } else {
-            date.at(0, 0, 0, 0)
-        };
-        return dt_to_timestamp(dt, tz);
-    }
-
-    // "08-09" or "8-9" -> this year 08-09
-    if let Some(idx) = s.find('-') {
-        let month_str = &s[..idx];
-        let rest = &s[idx + 1..];
-        if !month_str.is_empty()
-            && month_str.chars().all(|c| c.is_ascii_digit())
-            && !rest.is_empty()
-            && rest.chars().all(|c| c.is_ascii_digit())
-            && !month_str.contains('-')
-            && !rest.contains('-')
-        {
-            let month: i8 = month_str
-                .parse()
-                .map_err(|_| format!("invalid month: {month_str}"))?;
-            let day: i8 = rest.parse().map_err(|_| format!("invalid day: {rest}"))?;
-            let date =
-                Date::new(today.year(), month, day).map_err(|e| format!("invalid date: {e}"))?;
-            let dt = if end_of_day {
-                date.at(23, 59, 59, 0)
-            } else {
-                date.at(0, 0, 0, 0)
-            };
-            return dt_to_timestamp(dt, tz);
-        }
-    }
-
-    // "05" -> this month day 5
-    if !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()) {
-        let day: i8 = s.parse().map_err(|_| format!("invalid day: {s}"))?;
-        let date = Date::new(today.year(), today.month(), day)
-            .map_err(|e| format!("invalid date: {e}"))?;
-        let dt = if end_of_day {
-            date.at(23, 59, 59, 0)
-        } else {
-            date.at(0, 0, 0, 0)
-        };
-        return dt_to_timestamp(dt, tz);
-    }
-
-    // Let the existing parser handle YYYY-MM-DD and full timestamps.
-    parse_date_expression(s, tz, end_of_day)
 }
 
 /// Returns (operator, value_without_operator). The operator is empty when none
@@ -698,13 +685,6 @@ fn parse_op_value(value: &str) -> (&str, &str) {
     ("", value)
 }
 
-fn dt_to_timestamp(dt: jiff::civil::DateTime, tz: &TimeZone) -> Result<Timestamp, String> {
-    let zdt = dt
-        .to_zoned(tz.clone())
-        .map_err(|e| format!("could not convert to timezone: {e}"))?;
-    Ok(zdt.timestamp())
-}
-
 // ── Completion ──────────────────────────────────────────
 
 const QUALIFIERS: &[(&str, &str)] = &[
@@ -719,6 +699,9 @@ const QUALIFIERS: &[(&str, &str)] = &[
     ("from", "alias for end:>="),
     ("until", "alias for start:<="),
     ("habit", "habit reference"),
+    ("depends", "task depends on ref (#N or UUID)"),
+    ("dependents", "tasks that depend on this ref"),
+    ("deps_count", "dependency count (e.g. >0, 2)"),
     ("is", "boolean / state flag"),
     ("has", "field exists"),
 ];
@@ -732,7 +715,7 @@ const STATUS_VALUES: &[&str] = &[
     "overdue",
 ];
 const IS_VALUES: &[&str] = &["fixed", "parallelizable", "allows_parallel", "overdue"];
-const HAS_VALUES: &[&str] = &["description", "completed_at", "schedule"];
+const HAS_VALUES: &[&str] = &["description", "completed_at", "schedule", "depends"];
 
 pub fn complete<T: Task, H: Habit>(
     input: &str,
@@ -773,6 +756,14 @@ pub fn complete<T: Task, H: Habit>(
             "habit" => {
                 for h in habits {
                     let ref_ = format!("h{}", h.display_id());
+                    if ref_.starts_with(val) {
+                        push_completion(&mut out, &base, key, &ref_, &ref_);
+                    }
+                }
+            }
+            "depends" | "dependents" => {
+                for t in tasks {
+                    let ref_ = format!("#{}", t.display_id());
                     if ref_.starts_with(val) {
                         push_completion(&mut out, &base, key, &ref_, &ref_);
                     }
@@ -913,11 +904,13 @@ mod tests {
     #[derive(Debug, Clone)]
     struct TestTask {
         id: String,
+        display_id: i64,
         title: String,
         description: Option<String>,
         status: String,
         start_at: Option<String>,
         end_at: String,
+        depends: String,
         habit_id: Option<String>,
         fixed: bool,
         parallelizable: bool,
@@ -928,6 +921,9 @@ mod tests {
     impl Task for TestTask {
         fn id(&self) -> &str {
             &self.id
+        }
+        fn display_id(&self) -> i64 {
+            self.display_id
         }
         fn title(&self) -> &str {
             &self.title
@@ -943,6 +939,9 @@ mod tests {
         }
         fn end_at(&self) -> &str {
             &self.end_at
+        }
+        fn depends(&self) -> &str {
+            &self.depends
         }
         fn habit_id(&self) -> Option<&str> {
             self.habit_id.as_deref()
@@ -976,6 +975,7 @@ mod tests {
     }
 
     fn test_ctx() -> EvalContext {
+        let tasks = mk_tasks();
         EvalContext::new(
             TimeZone::UTC,
             Timestamp::from_str("2026-07-25T12:00:00Z").unwrap(),
@@ -986,6 +986,7 @@ mod tests {
                     "2026-07-25T12:00:00Z".to_string(),
                 ),
             )],
+            &tasks,
             &[TestHabit {
                 id: "h1".to_string(),
                 display_id: 1,
@@ -997,11 +998,13 @@ mod tests {
         vec![
             TestTask {
                 id: "t1".to_string(),
+                display_id: 1,
                 title: "朝の散歩".to_string(),
                 description: None,
                 status: "pending".to_string(),
                 start_at: None,
                 end_at: "2026-07-25T08:00:00Z".to_string(),
+                depends: "[\"t2\"]".to_string(),
                 habit_id: Some("h1".to_string()),
                 fixed: false,
                 parallelizable: false,
@@ -1010,11 +1013,13 @@ mod tests {
             },
             TestTask {
                 id: "t2".to_string(),
+                display_id: 2,
                 title: "買い物リスト".to_string(),
                 description: Some("卵、牛乳".to_string()),
                 status: "pending".to_string(),
                 start_at: None,
                 end_at: "2026-07-25T18:00:00Z".to_string(),
+                depends: "[]".to_string(),
                 habit_id: None,
                 fixed: false,
                 parallelizable: false,
@@ -1023,11 +1028,13 @@ mod tests {
             },
             TestTask {
                 id: "t3".to_string(),
+                display_id: 3,
                 title: "レポート".to_string(),
                 description: None,
                 status: "scheduled".to_string(),
                 start_at: Some("2026-07-25T10:00:00Z".to_string()),
                 end_at: "2026-07-25T17:00:00Z".to_string(),
+                depends: "[\"t1\",\"t2\"]".to_string(),
                 habit_id: None,
                 fixed: true,
                 parallelizable: false,
@@ -1153,8 +1160,44 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_unmatched_lparen() {
+    fn parse_rejects_unmatched_lparenthesis() {
         assert!(parse("(").is_err());
         assert!(parse("(status:pending").is_err());
+    }
+
+    #[test]
+    fn filter_depends_by_display_id_or_uuid() {
+        let ctx = test_ctx();
+        let tasks = mk_tasks();
+        // t3 depends on t1 and t2; t1 depends on t2.
+        let got = filter_tasks(tasks, "depends:1", &ctx).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, "t3"); // t3 -> t1 (display_id 1)
+
+        let tasks2 = mk_tasks();
+        let got2 = filter_tasks(tasks2, &format!("depends:{}", "t2"), &ctx).unwrap();
+        assert_eq!(got2.len(), 2);
+    }
+
+    #[test]
+    fn filter_dependents_and_deps_count() {
+        let ctx = test_ctx();
+        let tasks = mk_tasks();
+        // t3 depends on t1, so t3 is a dependent of t1.
+        let got = filter_tasks(tasks, "dependents:1", &ctx).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, "t3");
+
+        let tasks2 = mk_tasks();
+        let got2 = filter_tasks(tasks2, "deps_count:>0", &ctx).unwrap();
+        assert_eq!(got2.len(), 2); // t1 and t3
+    }
+
+    #[test]
+    fn has_depends_qualifier() {
+        let ctx = test_ctx();
+        let tasks = mk_tasks();
+        let got = filter_tasks(tasks, "has:depends", &ctx).unwrap();
+        assert_eq!(got.len(), 2);
     }
 }

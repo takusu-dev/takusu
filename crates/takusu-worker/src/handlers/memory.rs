@@ -508,56 +508,69 @@ pub async fn search(req: Request, env: Env) -> Result<Response, WorkerError> {
         }
     }
     let q = q.ok_or_else(|| WorkerError::BadRequest("q is required".into()))?;
-    let normalized_q = memory::normalize_query(&q)
+    let terms = memory::tokenize_query(&q)
         .map_err(|e| WorkerError::BadRequest(format!("invalid query: {e}")))?;
-
-    let pattern = format!("%{}%", memory::escape_like_pattern(&normalized_q));
+    let patterns = memory::memory_like_patterns(&terms);
     let database = db(&env)?;
 
-    let mut sql = String::from(
-        "SELECT * FROM memories WHERE (normalized_key LIKE ?1 ESCAPE '\\' OR normalized_content LIKE ?1 ESCAPE '\\')",
-    );
-    let mut bindings: Vec<JsValue> = vec![JsValue::from_str(&pattern)];
+    let mut sql = String::from("SELECT * FROM memories WHERE ");
+    let mut bindings: Vec<JsValue> = Vec::new();
+    let mut idx = 1;
+
+    for (i, pat) in patterns.iter().enumerate() {
+        if i > 0 {
+            sql.push_str(" AND ");
+        }
+        sql.push_str(&format!(
+            "(normalized_key LIKE ?{idx} ESCAPE '\\' OR normalized_content LIKE ?{} ESCAPE '\\')",
+            idx + 1
+        ));
+        bindings.push(JsValue::from_str(pat));
+        bindings.push(JsValue::from_str(pat));
+        idx += 2;
+    }
 
     if let Some(ref k) = kind {
-        sql.push_str(&format!(" AND kind = ?{}", bindings.len() + 1));
-        bindings.push(JsValue::from_str(k));
+        let kinds: Vec<&str> = k
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if kinds.is_empty() {
+            return json_ok(&Vec::<MemoryRow>::new());
+        }
+        if kinds.len() == 1 {
+            sql.push_str(&format!(" AND kind = ?{idx}"));
+            bindings.push(JsValue::from_str(kinds[0]));
+            idx += 1;
+        } else {
+            let kind_count = kinds.len();
+            let placeholders: Vec<String> =
+                (0..kind_count).map(|i| format!("?{}", idx + i)).collect();
+            sql.push_str(&format!(" AND kind IN ({})", placeholders.join(",")));
+            for k in kinds {
+                bindings.push(JsValue::from_str(k));
+            }
+            idx += kind_count;
+        }
     }
     if let Some(ref st) = subject_type {
-        sql.push_str(&format!(" AND subject_type = ?{}", bindings.len() + 1));
+        sql.push_str(&format!(" AND subject_type = ?{idx}"));
         bindings.push(JsValue::from_str(st));
+        idx += 1;
     }
     if let Some(ref sid) = subject_id {
-        sql.push_str(&format!(" AND subject_id = ?{}", bindings.len() + 1));
+        sql.push_str(&format!(" AND subject_id = ?{idx}"));
         bindings.push(JsValue::from_str(sid));
+        idx += 1;
     }
-    sql.push_str(&format!(" LIMIT ?{}", bindings.len() + 1));
+    sql.push_str(&format!(" LIMIT ?{idx}"));
     bindings.push(JsValue::from_f64(1000.0));
 
     let stmt = database.prepare(sql).bind(&bindings)?;
     let mut rows: Vec<MemoryRow> = safe_all(&stmt).await?;
 
-    fn rank_key<'a>(q: &str, r: &'a MemoryRow) -> (u8, &'a str, &'a str) {
-        let category = if r.normalized_key == q {
-            0
-        } else if r.normalized_key.starts_with(q) {
-            1
-        } else if r.normalized_key.contains(q) {
-            2
-        } else if r.normalized_content.contains(q) {
-            3
-        } else {
-            4
-        };
-        (category, &r.updated_at, &r.id)
-    }
-    rows.sort_by(|a, b| {
-        let ka = rank_key(&normalized_q, a);
-        let kb = rank_key(&normalized_q, b);
-        ka.0.cmp(&kb.0)
-            .then_with(|| kb.1.cmp(ka.1))
-            .then_with(|| ka.2.cmp(kb.2))
-    });
+    memory::sort_memories(&q, &mut rows);
     rows.truncate(limit as usize);
 
     json_ok(&rows)
