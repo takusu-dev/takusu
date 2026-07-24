@@ -13,6 +13,7 @@
 // This keeps the stable package (`dev.satler.takusu`) intact for release CI,
 // which never sets TAKUSU_BUILD_VARIANT.
 const { withSentry } = require('@sentry/react-native/expo');
+const withTakusuAppIcon = require('./plugins/withTakusuAppIcon');
 
 const baseConfig = require('./app.json');
 const expo = baseConfig.expo;
@@ -37,8 +38,10 @@ if (isDev) {
   }
 }
 
-module.exports = withSentry(baseConfig, {
-  url: process.env.SENTRY_URL || 'https://sentry.io/',
-  project: process.env.SENTRY_PROJECT || 'takusu',
-  organization: process.env.SENTRY_ORG || 'satler-git',
-});
+module.exports = withTakusuAppIcon(
+  withSentry(baseConfig, {
+    url: process.env.SENTRY_URL || 'https://sentry.io/',
+    project: process.env.SENTRY_PROJECT || 'takusu',
+    organization: process.env.SENTRY_ORG || 'satler-git',
+  }),
+);
