@@ -2449,6 +2449,7 @@ export function AgentView() {
           <ApprovalPanel
             approval={approval}
             busy={busy || isSwitching}
+            client={client}
             colors={colors}
             onApprove={(granted, persist) => resolve(true, granted, persist)}
             onDeny={() => resolve(false)}

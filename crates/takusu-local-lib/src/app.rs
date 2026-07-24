@@ -12,12 +12,13 @@ use takusu_core::{
 use takusu_storage::{
     CreateHabit, CreateHabitScheduledSpan, CreateMemory, CreateSkill, CreateTask,
     GoogleCalEventRow, GoogleCalSettingsRow, HabitDetail, HabitEstimateRequest,
-    HabitEstimateResult, HabitEstimateSample, HabitEstimateStep, HabitRow, HabitScheduledSpanRow,
-    HabitStepEstimateInput, HabitStepInput, HabitStepRow, MemoryQuery, MemoryRow, ProgressResult,
-    RecordProgress, SaveScheduleRequest, ScheduleEntry, ScheduleRow, SettingsRow, SimilarTaskQuery,
-    SimilarTaskRow, SkillRow, SplitResult, SplitTask, Storage, TaskProgress, TaskQuery, TaskRow,
-    TokenCreateResponse, TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateMemory,
-    UpdateSettings, UpdateSkill, UpdateTask,
+    HabitEstimateResult, HabitEstimateSample, HabitEstimateStep, HabitPreviewRequest,
+    HabitPreviewTask, HabitRow, HabitScheduledSpanRow, HabitStepEstimateInput, HabitStepInput,
+    HabitStepRow, MemoryQuery, MemoryRow, ProgressResult, RecordProgress, SaveScheduleRequest,
+    ScheduleEntry, ScheduleRow, SettingsRow, SimilarTaskQuery, SimilarTaskRow, SkillRow,
+    SplitResult, SplitTask, Storage, TaskProgress, TaskQuery, TaskRow, TokenCreateResponse,
+    TokenRow, UpdateGoogleCalSettings, UpdateHabit, UpdateMemory, UpdateSettings, UpdateSkill,
+    UpdateTask,
 };
 use takusu_util::search::{Completion, complete};
 
@@ -396,6 +397,37 @@ fn step_to_core_task_period(step: &HabitStepRow, window_start: Point, deadline: 
     }
 }
 
+fn step_input_to_preview_row(input: &HabitStepInput) -> HabitStepRow {
+    HabitStepRow {
+        id: input
+            .id
+            .clone()
+            .unwrap_or_else(|| input.position.to_string()),
+        habit_id: String::new(),
+        position: input.position,
+        title: input.title.clone(),
+        description: input.description.clone(),
+        start_time: input.start_time.clone(),
+        end_time: input.end_time.clone(),
+        avg_minutes: input.avg_minutes,
+        sigma_minutes: input.sigma_minutes.unwrap_or(0),
+        parallelizable: input.parallelizable.unwrap_or(false),
+        allows_parallel: input.allows_parallel.unwrap_or(false),
+        abandonability: input.abandonability.unwrap_or(0.5),
+        fixed: input.fixed.unwrap_or(false),
+        depends_on: serde_json::to_string(&input.depends_on).unwrap_or_default(),
+        created_at: String::new(),
+    }
+}
+
+fn core_task_to_preview(core: &CoreTask, title: &str) -> HabitPreviewTask {
+    HabitPreviewTask {
+        title: title.to_string(),
+        start_at: point_to_iso(core.start.unwrap_or(Point(0)).0).unwrap_or_default(),
+        end_at: point_to_iso(core.end.0).unwrap_or_default(),
+    }
+}
+
 /// Fallback deadline (in slots) for the last occurrence of a period-mode
 /// habit when there is no next occurrence to derive the deadline from
 /// (e.g. count-limited rules). Returns an approximate interval duration
@@ -641,26 +673,65 @@ fn habit_row_to_config(
     row: &HabitRow,
     tz: &jiff::tz::TimeZone,
 ) -> Result<takusu_habit::Habit, AppError> {
-    let recurrence: takusu_habit::RecurrenceRule = serde_json::from_str(&row.recurrence)
+    build_habit_core(
+        &row.recurrence,
+        &row.start_time,
+        &row.end_time,
+        row.avg_minutes,
+        row.sigma_minutes,
+        row.parallelizable,
+        row.allows_parallel,
+        row.abandonability,
+        row.fixed,
+        tz,
+    )
+}
+
+fn build_habit_from_preview(
+    request: &HabitPreviewRequest,
+    tz: &jiff::tz::TimeZone,
+) -> Result<takusu_habit::Habit, AppError> {
+    build_habit_core(
+        &request.recurrence,
+        &request.start_time,
+        &request.end_time,
+        request.avg_minutes,
+        request.sigma_minutes.unwrap_or(0),
+        request.parallelizable.unwrap_or(false),
+        request.allows_parallel.unwrap_or(false),
+        request.abandonability.unwrap_or(0.5),
+        request.fixed.unwrap_or(false),
+        tz,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_habit_core(
+    recurrence: &str,
+    start_time: &str,
+    end_time: &str,
+    avg_minutes: i64,
+    sigma_minutes: i64,
+    parallelizable: bool,
+    allows_parallel: bool,
+    abandonability: f64,
+    fixed: bool,
+    tz: &jiff::tz::TimeZone,
+) -> Result<takusu_habit::Habit, AppError> {
+    let recurrence: takusu_habit::RecurrenceRule = serde_json::from_str(recurrence)
         .map_err(|e| AppError::BadRequest(format!("invalid recurrence: {e}")))?;
-    let (sh, sm) = parse_hhmm(&row.start_time)?;
+    let (sh, sm) = parse_hhmm(start_time)?;
     let start_time = takusu_habit::TimeOfDay::new(sh, sm)
-        .ok_or_else(|| AppError::BadRequest(format!("invalid start_time: {}", row.start_time)))?;
-    let duration = NormalDist::new((row.avg_minutes / 5) as u64, (row.sigma_minutes / 5) as u64);
-    let (eh, em) = parse_hhmm(&row.end_time)?;
-    // fixed habit のみ end_time を deadline として使う: end_time - start_time の
-    // スロット数を deadline_slots に設定する。これにより Planner は
-    // [start_time, end_time] の範囲内でタスクを配置できる。
-    // 非 fixed habit は従来通り deadline_slots = None (avg ベース)。
-    let deadline_slots = if row.fixed {
+        .ok_or_else(|| AppError::BadRequest(format!("invalid start_time: {start_time}")))?;
+    let duration = NormalDist::new((avg_minutes / 5) as u64, (sigma_minutes / 5) as u64);
+    let (eh, em) = parse_hhmm(end_time)?;
+    let deadline_slots = if fixed {
         let start_minutes = sh as i64 * 60 + sm as i64;
         let end_minutes = eh as i64 * 60 + em as i64;
         let diff = end_minutes - start_minutes;
         if diff > 0 {
             Some((diff / 5) as u64)
         } else {
-            // Overnight habits (end_time < start_time) fall back to
-            // avg-based deadline since the window crosses midnight.
             None
         }
     } else {
@@ -672,10 +743,10 @@ fn habit_row_to_config(
         tz: tz.clone(),
         duration,
         deadline_slots,
-        parallelizable: row.parallelizable,
-        allows_parallel: row.allows_parallel,
-        abandonability: row.abandonability,
-        fixed: row.fixed,
+        parallelizable,
+        allows_parallel,
+        abandonability,
+        fixed,
     })
 }
 
@@ -1419,6 +1490,129 @@ impl TakusuApp {
             .create_habit(body)
             .await
             .map_err(storage_to_app)
+    }
+
+    /// Preview the tasks that would be generated from a habit definition
+    /// without persisting it. Uses `takusu_habit` directly so the preview
+    /// matches the server's task-generation logic.
+    pub async fn preview_habit(
+        &self,
+        request: &HabitPreviewRequest,
+    ) -> Result<Vec<HabitPreviewTask>, AppError> {
+        validate_minutes(request.avg_minutes, request.sigma_minutes)?;
+        validate_recurrence(&request.recurrence)?;
+        validate_steps(&request.steps)?;
+        if let Some(ref wm) = request.window_mode {
+            validate_window_mode(wm)?;
+        }
+
+        let settings = self.get_settings_or_default().await?;
+        let tz = parse_settings_timezone(&settings.tz)?;
+        let now_ts = Timestamp::now();
+        let start_of_today = now_ts
+            .to_zoned(tz.clone())
+            .start_of_day()
+            .map_err(|e| AppError::Internal(format!("start_of_day: {e}")))?
+            .timestamp();
+        let from_default = Point::from_timestamp(start_of_today, 5);
+        let from = request
+            .from
+            .as_ref()
+            .map(|s| iso_to_point(s, &tz))
+            .transpose()?
+            .unwrap_or(from_default);
+        let until = request
+            .until
+            .as_ref()
+            .map(|s| iso_to_point(s, &tz))
+            .transpose()?
+            .unwrap_or(Point(from.0 + 30 * 288));
+        let max_occurrences = request.max_occurrences.unwrap_or(20).max(1) as usize;
+
+        let habit = build_habit_from_preview(request, &tz)?;
+        let is_period = request.window_mode.as_deref() == Some("period");
+
+        let mut store = takusu_habit::HabitStore::new();
+        store.add(habit);
+
+        let mut occurrences: Vec<(Point, Point)> = Vec::new();
+        if is_period {
+            let rule: takusu_habit::RecurrenceRule = serde_json::from_str(&request.recurrence)
+                .map_err(|e| AppError::BadRequest(format!("invalid recurrence: {e}")))?;
+            let until_lookahead = Point(until.0 + 365 * 288);
+            let occs: Vec<(String, Point)> = store
+                .generate(from, until_lookahead)
+                .into_iter()
+                .map(|gt| {
+                    let sp = gt.task.start.unwrap_or(Point(0));
+                    let date = point_to_local_date(sp.0, &tz)?;
+                    Ok((date, sp))
+                })
+                .collect::<Result<Vec<_>, AppError>>()?;
+            for (i, (_, occ_start)) in occs.iter().enumerate() {
+                if occ_start.0 >= until.0 {
+                    break;
+                }
+                let deadline = if let Some((_, next_start)) = occs.get(i + 1) {
+                    *next_start
+                } else {
+                    Point(occ_start.0 + freq_fallback_slots(&rule))
+                };
+                occurrences.push((*occ_start, deadline));
+                if occurrences.len() >= max_occurrences {
+                    break;
+                }
+            }
+        } else {
+            for gt in store.generate(from, until) {
+                let sp = gt.task.start.unwrap_or(Point(0));
+                occurrences.push((sp, gt.task.end));
+                if occurrences.len() >= max_occurrences {
+                    break;
+                }
+            }
+        }
+
+        let step_rows: Vec<HabitStepRow> = request
+            .steps
+            .iter()
+            .map(step_input_to_preview_row)
+            .collect();
+
+        let mut tasks: Vec<HabitPreviewTask> = Vec::new();
+        for (occ_start, deadline) in occurrences {
+            if !step_rows.is_empty() {
+                let order = topo_sort_steps(&step_rows)?;
+                for &idx in &order {
+                    let step = &step_rows[idx];
+                    let core = if is_period {
+                        step_to_core_task_period(step, occ_start, deadline)
+                    } else {
+                        step_to_core_task(step, occ_start, &tz)?
+                    };
+                    tasks.push(core_task_to_preview(&core, &step.title));
+                }
+            } else {
+                let avg_slots = (request.avg_minutes / 5) as u64;
+                let sigma = request.sigma_minutes.unwrap_or(0);
+                let sigma_slots = (sigma / 5) as u64;
+                let core = CoreTask {
+                    id: 0,
+                    start: Some(occ_start),
+                    end: deadline,
+                    cost_estimate: NormalDist::new(avg_slots, sigma_slots),
+                    depends: vec![],
+                    parallelizable: request.parallelizable.unwrap_or(false),
+                    allows_parallel: request.allows_parallel.unwrap_or(false),
+                    abandonability: request.abandonability.unwrap_or(0.5),
+                    fixed: request.fixed.unwrap_or(false),
+                    habit_group: None,
+                };
+                tasks.push(core_task_to_preview(&core, &request.title));
+            }
+        }
+
+        Ok(tasks)
     }
 
     pub async fn list_habits(&self) -> Result<Vec<HabitRow>, AppError> {

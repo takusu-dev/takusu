@@ -331,6 +331,48 @@ pub struct HabitStepInput {
     pub depends_on: Vec<String>,
 }
 
+/// Preview request for `POST /api/habits/preview`. Mirrors `CreateHabit`
+/// plus an optional step list and preview range.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HabitPreviewRequest {
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub recurrence: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub avg_minutes: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sigma_minutes: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parallelizable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allows_parallel: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub abandonability: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixed: Option<bool>,
+    /// Window mode: `'day'` or `'period'` (#window_mode).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub window_mode: Option<String>,
+    #[serde(default)]
+    pub steps: Vec<HabitStepInput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub until: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_occurrences: Option<i64>,
+}
+
+/// A single task occurrence produced by `HabitPreviewRequest`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HabitPreviewTask {
+    pub title: String,
+    pub start_at: String,
+    pub end_at: String,
+}
+
 /// Step estimate update element for `Storage::apply_habit_estimate` (#919).
 /// Only the estimate fields are updated; the step row is otherwise left
 /// untouched.

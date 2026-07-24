@@ -9,12 +9,15 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { ApprovalRequest, ProposedChange } from '@/src/api/agentTypes';
+import { AgentClient } from '@/src/api/agentClient';
 import type { PermissionsMap } from '@/src/api/settingsStore';
 import type { ColorSet } from '@/src/theme';
 import {
   getPermissionTitle,
   resolvePermission,
 } from '@/src/components/PermissionsEditor';
+import { HabitPreviewModal } from '@/src/components/HabitPreviewModal';
+import { haptic } from '@/src/components/haptics';
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 
@@ -28,14 +31,30 @@ export function asNumber(value: unknown): number | undefined {
   return undefined;
 }
 
-function asBoolean(value: unknown): boolean | undefined {
+export function asBoolean(value: unknown): boolean | undefined {
   if (typeof value === 'boolean') return value;
   return undefined;
 }
 
-export function asArray<T>(value: unknown): T[] | undefined {
-  if (Array.isArray(value)) return value as T[];
-  return undefined;
+function isString(value: unknown): value is string {
+  return typeof value === 'string';
+}
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function asArray<T>(
+  value: unknown,
+  guard?: (x: unknown) => x is T,
+): T[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  if (guard && !value.every(guard)) return undefined;
+  return value as T[];
+}
+
+export function asStringArray(value: unknown): string[] {
+  return asArray(value, isString) ?? [];
 }
 
 export function formatDuration(minutes: number): string {
@@ -788,10 +807,12 @@ function ScheduleChangeRows({
 
 interface ChangeCardProps {
   change: ProposedChange;
+  client?: AgentClient;
   colors: ColorSet;
 }
 
-function ChangeCard({ change, colors }: ChangeCardProps) {
+function ChangeCard({ change, client, colors }: ChangeCardProps) {
+  const [previewVisible, setPreviewVisible] = useState(false);
   const targetType = getTargetType(change);
   const targetName = getTargetName(change);
   const op = getOperationBadge(change.operation);
@@ -799,12 +820,23 @@ function ChangeCard({ change, colors }: ChangeCardProps) {
   const after = (change.after ?? {}) as Record<string, unknown>;
   const before = (change.before ?? {}) as Record<string, unknown>;
 
+  const previewHabitData = useMemo<Record<string, unknown>>(() => {
+    const mergedAfter = (change.after ?? {}) as Record<string, unknown>;
+    const mergedBefore = (change.before ?? {}) as Record<string, unknown>;
+    if (change.operation === 'update') {
+      return { ...mergedBefore, ...mergedAfter };
+    }
+    return mergedAfter;
+  }, [change.after, change.before, change.operation]);
+
   const stepsArray = asArray<Record<string, unknown>>(
     after.steps ?? before.steps,
+    isRecord,
   );
 
   const isFixed = asBoolean(after.fixed) ?? asBoolean(before.fixed) ?? false;
   const isUpdate = change.operation === 'update';
+  const isHabit = targetType === 'habit' && change.operation !== 'delete';
 
   const rows: React.ReactNode[] =
     change.operation === 'move'
@@ -858,6 +890,29 @@ function ChangeCard({ change, colors }: ChangeCardProps) {
       )}
       {stepsArray && stepsArray.length > 0 && (
         <StepList steps={stepsArray} colors={colors} />
+      )}
+      {isHabit && (
+        <>
+          <Pressable
+            onPress={() => {
+              haptic.light();
+              setPreviewVisible(true);
+            }}
+            style={[styles.previewButton, { borderColor: colors.brand }]}
+          >
+            <Ionicons name="eye-outline" size={16} color={colors.brand} />
+            <Text style={[styles.previewButtonText, { color: colors.brand }]}>
+              プレビューを表示
+            </Text>
+          </Pressable>
+          <HabitPreviewModal
+            visible={previewVisible}
+            onClose={() => setPreviewVisible(false)}
+            client={client}
+            habit={previewHabitData}
+            title={targetName}
+          />
+        </>
       )}
       {change.description.length > 0 && (
         <Text style={[styles.changeDesc, { color: colors.gray }]}>
@@ -1080,6 +1135,7 @@ function PermissionSection({
 interface ApprovalPanelProps {
   approval: ApprovalRequest;
   busy: boolean;
+  client?: AgentClient;
   colors: ColorSet;
   onApprove: (
     grantedPermissions: PermissionsMap,
@@ -1092,6 +1148,7 @@ interface ApprovalPanelProps {
 export function ApprovalPanel({
   approval,
   busy,
+  client,
   colors,
   onApprove,
   onDeny,
@@ -1143,6 +1200,7 @@ export function ApprovalPanel({
           <ChangeCard
             key={`${change.operation}-${index}`}
             change={change}
+            client={client}
             colors={colors}
           />
         ))}
@@ -1304,6 +1362,18 @@ const styles = StyleSheet.create({
   stepMeta: { fontSize: 12 },
   stepDeps: { fontSize: 11 },
   changeDesc: { fontSize: 13 },
+  previewButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    alignSelf: 'flex-start',
+  },
+  previewButtonText: { fontSize: 13, fontWeight: '600' },
   warningBox: {
     borderWidth: 1,
     borderRadius: 8,

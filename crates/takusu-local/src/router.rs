@@ -48,6 +48,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/tasks/{id}/split", post(handlers::task::split_task))
         .route("/habits", post(handlers::habit::create_habit))
+        .route("/habits/preview", post(handlers::habit::preview_habit))
         .route("/habits", get(handlers::habit::list_habits))
         // `/habits/scheduled-spans` and `/habits/steps` must be declared before
         // `/habits/{id}` so axum matches the literal segment instead of
