@@ -48,4 +48,61 @@ describe('TakusuClient', () => {
     const url = fetchMock.mock.calls[0][0] as string;
     expect(url).toBe('http://localhost/api/tasks/foo%23bar');
   });
+
+  it('sends Idempotency-Key header for progress operations when operationId is provided', async () => {
+    const client = new TakusuClient('http://localhost', 'token');
+    fetchMock.mockResolvedValueOnce({
+      status: 200,
+      text: jest.fn().mockResolvedValue('{}'),
+    });
+    await client.startTaskWork('task-1', 'op-1');
+    const init = fetchMock.mock.calls[0][1] as RequestInit | undefined;
+    expect(init?.headers).toMatchObject({
+      Authorization: 'Bearer token',
+      'Idempotency-Key': 'op-1',
+    });
+  });
+
+  it('omits Idempotency-Key header for progress operations when operationId is not provided', async () => {
+    const client = new TakusuClient('http://localhost', 'token');
+    fetchMock.mockResolvedValueOnce({
+      status: 200,
+      text: jest.fn().mockResolvedValue('{}'),
+    });
+    await client.startTaskWork('task-1');
+    const init = fetchMock.mock.calls[0][1] as RequestInit | undefined;
+    expect(init?.headers).toEqual({
+      Authorization: 'Bearer token',
+    });
+  });
+
+  it('returns a MoveEntryResponse from moveEntry with warnings defaulting to []', async () => {
+    const client = new TakusuClient('http://localhost', 'token');
+    fetchMock.mockResolvedValueOnce({
+      status: 200,
+      text: jest.fn().mockResolvedValue(
+        JSON.stringify({
+          task_id: 'task-1',
+          start_at: '2026-07-24T10:00:00Z',
+          end_at: '2026-07-24T11:00:00Z',
+          warnings: ['overlap ignored'],
+        }),
+      ),
+    });
+    const result = await client.moveEntry('task-1', {
+      start_at: '2026-07-24T10:00:00Z',
+    });
+    expect(result.task_id).toBe('task-1');
+    expect(result.start_at).toBe('2026-07-24T10:00:00Z');
+    expect(result.end_at).toBe('2026-07-24T11:00:00Z');
+    expect(result.warnings).toEqual(['overlap ignored']);
+  });
+
+  it('revokeToken rejects non-numeric token ids before making a request', async () => {
+    const client = new TakusuClient('http://localhost', 'token');
+    await expect(client.revokeToken('not-a-number' as any)).rejects.toThrow(
+      'token id must be a positive integer',
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

@@ -456,7 +456,7 @@ pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, W
     // Treat quantity_total / original_quantity_total 0 as unset (same as None) server-side.
     let quantity_total = body.quantity_total.filter(|t| *t != 0);
     let original_quantity_total = body.original_quantity_total.filter(|t| *t != 0);
-    validate_quantity(quantity_total, body.quantity_done, original_quantity_total)?;
+    validate_quantity(quantity_total, Some(0), original_quantity_total)?;
     let database = db(&env)?;
     let tz = get_timezone(&database).await?;
     validate_task_datetimes(
@@ -481,7 +481,7 @@ pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, W
     .ok();
 
     let stmt = database.prepare(
-        "UPDATE tasks SET title=?1, description=?2, start_at=?3, end_at=?4, avg_minutes=?5, sigma_minutes=?6, depends=?7, parallelizable=?8, allows_parallel=?9, abandonability=?10, habit_id=COALESCE(?12,habit_id), fixed=?13, habit_step_id=?14, quantity_total=COALESCE(?15, quantity_total), quantity_done=COALESCE(?16, quantity_done), quantity_unit=COALESCE(?17, quantity_unit), completed_at=COALESCE(?18, completed_at), split_from_task_id=COALESCE(?19, split_from_task_id), original_quantity_total=COALESCE(?20, original_quantity_total), normalized_title=?21, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?11"
+        "UPDATE tasks SET title=?1, description=?2, start_at=?3, end_at=?4, avg_minutes=?5, sigma_minutes=?6, depends=?7, parallelizable=?8, allows_parallel=?9, abandonability=?10, status='pending', habit_id=COALESCE(?11,habit_id), fixed=?12, habit_step_id=?13, quantity_total=COALESCE(?14, quantity_total), quantity_done=0, quantity_unit=COALESCE(?15, quantity_unit), completed_at=?16, split_from_task_id=COALESCE(?17, split_from_task_id), original_quantity_total=COALESCE(?18, original_quantity_total), user_edited=CASE WHEN habit_id IS NOT NULL THEN 1 ELSE user_edited END, normalized_title=?19, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?20"
     );
     stmt.bind(&[
         JsValue::from_str(&body.title),
@@ -500,7 +500,6 @@ pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, W
         JsValue::from_bool(parallelizable),
         JsValue::from_bool(allows_parallel),
         JsValue::from_f64(abandonability),
-        JsValue::from_str(&full),
         body.habit_id
             .as_deref()
             .map(JsValue::from_str)
@@ -511,9 +510,6 @@ pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, W
             .map(JsValue::from_str)
             .unwrap_or(JsValue::NULL),
         quantity_total
-            .map(|n| JsValue::from_f64(n as f64))
-            .unwrap_or(JsValue::NULL),
-        body.quantity_done
             .map(|n| JsValue::from_f64(n as f64))
             .unwrap_or(JsValue::NULL),
         body.quantity_unit
@@ -529,6 +525,7 @@ pub async fn replace(mut req: Request, env: Env, id: &str) -> Result<Response, W
             .as_deref()
             .map(JsValue::from_str)
             .unwrap_or(JsValue::NULL),
+        JsValue::from_str(&full),
     ])?
     .run()
     .await

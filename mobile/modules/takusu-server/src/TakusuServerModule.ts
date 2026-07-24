@@ -39,6 +39,7 @@ interface TakusuServerModuleType extends NativeModule {
     paramsJson: string,
     workersUrl: string,
     token: string,
+    port: number,
   ): boolean;
   getScheduleOperationStatus(): Promise<ScheduleOperationStatus>;
   clearScheduleOperationStatus(): boolean;

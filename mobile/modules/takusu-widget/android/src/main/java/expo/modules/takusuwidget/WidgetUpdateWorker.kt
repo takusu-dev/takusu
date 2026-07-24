@@ -18,10 +18,10 @@ import org.json.JSONObject
 /**
  * Periodic worker that refreshes the widget.
  *
- * It tries to fetch from the local Rust server (127.0.0.1:3838). If the
- * server is not running, it starts it via the UniFFI bindings, fetches,
- * then stops it. The fetched snapshot is persisted to SharedPreferences
- * and the widget is updated.
+ * It tries to fetch from the local Rust server at the port persisted in
+ * SharedPreferences. If the server is not running, it starts it via the
+ * UniFFI bindings, fetches, then stops it. The fetched snapshot is persisted
+ * to SharedPreferences and the widget is updated.
  */
 class WidgetUpdateWorker(
     context: Context,
@@ -31,6 +31,7 @@ class WidgetUpdateWorker(
         val prefs = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val token = prefs.getString(KEY_TOKEN, null)
         val workersUrl = prefs.getString(KEY_WORKERS_URL, null)
+        val port = prefs.getInt(KEY_PORT, DEFAULT_PORT)
         val serverTz = prefs.getString(KEY_SERVER_TZ, null)
         val scheme = prefs.getString(KEY_SCHEME, null)
 
@@ -40,10 +41,10 @@ class WidgetUpdateWorker(
             return Result.success()
         }
 
-        var snapshot = withContext(Dispatchers.IO) { WidgetFetcher.fetch(token) }
+        var snapshot = withContext(Dispatchers.IO) { WidgetFetcher.fetch(token, port) }
 
         if (snapshot == null) {
-            snapshot = startServerAndFetch(workersUrl, token)
+            snapshot = startServerAndFetch(workersUrl, token, port)
         }
 
         if (snapshot != null) {
@@ -58,14 +59,15 @@ class WidgetUpdateWorker(
     private suspend fun startServerAndFetch(
         workersUrl: String,
         token: String,
+        port: Int,
     ): WidgetSnapshot? =
         withContext(Dispatchers.IO) {
             try {
                 val server = uniffi.takusu_android.TakusuServer()
                 try {
-                    server.start(3838.toUShort(), workersUrl, token)
+                    server.start(port.toUShort(), workersUrl, token)
                     delay(500)
-                    WidgetFetcher.fetch(token)
+                    WidgetFetcher.fetch(token, port)
                 } finally {
                     try {
                         server.stop()
@@ -85,11 +87,13 @@ class WidgetUpdateWorker(
         const val PREFS_NAME = "takusu_widget"
         const val KEY_TOKEN = "token"
         const val KEY_WORKERS_URL = "workers_url"
+        const val KEY_PORT = "port"
         const val KEY_SNAPSHOT = "snapshot_json"
         const val KEY_SERVER_TZ = "server_tz"
         const val KEY_SCHEME = "scheme"
         const val KEY_UPDATED_AT = "updated_at"
         const val WORK_NAME = "takusu_widget_update"
+        private const val DEFAULT_PORT = 3838
         private const val MAX_ATTEMPTS = 3
 
         fun persistSnapshot(

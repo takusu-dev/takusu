@@ -1,5 +1,9 @@
 import TakusuServerModule from '@/modules/takusu-server/src/TakusuServerModule';
-import { ensureLocalServer, DEFAULT_LOCAL_PORT } from '@/src/api/server';
+import {
+  ensureLocalServer,
+  getLocalServerPort,
+  DEFAULT_LOCAL_PORT,
+} from '@/src/api/server';
 
 jest.mock('@/modules/takusu-server/src/TakusuServerModule', () => ({
   status: jest.fn(),
@@ -116,5 +120,33 @@ describe('ensureLocalServer', () => {
     expect(mockedModule.start).toHaveBeenCalledWith(
       expect.objectContaining({ agentConfigJson: '{"llm":{}}' }),
     );
+  });
+});
+
+describe('getLocalServerPort', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('returns the reported port when the server is running', () => {
+    mockedModule.status.mockReturnValue({ running: true, port: 4242 });
+    expect(getLocalServerPort()).toBe(4242);
+  });
+
+  it('falls back to the default port when the server is not running', () => {
+    mockedModule.status.mockReturnValue({ running: false, port: 0 });
+    expect(getLocalServerPort()).toBe(DEFAULT_LOCAL_PORT);
+  });
+
+  it('falls back to the default port when the reported port is zero', () => {
+    mockedModule.status.mockReturnValue({ running: true, port: 0 });
+    expect(getLocalServerPort()).toBe(DEFAULT_LOCAL_PORT);
+  });
+
+  it('falls back to the default port when the native module throws', () => {
+    mockedModule.status.mockImplementation(() => {
+      throw new Error('not available');
+    });
+    expect(getLocalServerPort()).toBe(DEFAULT_LOCAL_PORT);
   });
 });

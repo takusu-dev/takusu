@@ -14,6 +14,8 @@ class WidgetConfig : Record {
     @Field val token: String = ""
 
     @Field val scheme: String? = null
+
+    @Field val port: Int = 3838
 }
 
 class WidgetTask : Record {
@@ -68,6 +70,7 @@ class TakusuWidgetModule : Module() {
                             .edit()
                             .putString(WidgetUpdateWorker.KEY_WORKERS_URL, config.workersUrl)
                             .putString(WidgetUpdateWorker.KEY_TOKEN, config.token)
+                            .putInt(WidgetUpdateWorker.KEY_PORT, config.port)
                     config.scheme?.takeIf { it.isNotEmpty() }?.let {
                         editor.putString(WidgetUpdateWorker.KEY_SCHEME, it)
                     }
