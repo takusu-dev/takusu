@@ -917,6 +917,10 @@ export function AgentView() {
   const backgroundAbortedRef = useRef(false);
   const flatListRef = useRef<FlatList<Message>>(null);
   const autoScrollRef = useRef(true);
+  const sessionJustLoadedRef = useRef(false);
+  const sessionLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const skipSnapshotSaveRef = useRef(false);
   const lastPendingSessionIdRef = useRef<string | null>(null);
   const sessionPermissionsRef = useRef<PermissionsMap>({});
@@ -950,6 +954,31 @@ export function AgentView() {
     });
     return () => subscription.remove();
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (sessionLoadTimerRef.current)
+        clearTimeout(sessionLoadTimerRef.current);
+    };
+  }, []);
+
+  function markSessionJustLoaded() {
+    sessionJustLoadedRef.current = true;
+    if (sessionLoadTimerRef.current) clearTimeout(sessionLoadTimerRef.current);
+    sessionLoadTimerRef.current = setTimeout(() => {
+      sessionJustLoadedRef.current = false;
+      sessionLoadTimerRef.current = null;
+      flatListRef.current?.scrollToEnd({ animated: false });
+    }, 500);
+  }
+
+  function clearSessionJustLoaded() {
+    if (sessionLoadTimerRef.current) {
+      clearTimeout(sessionLoadTimerRef.current);
+      sessionLoadTimerRef.current = null;
+    }
+    sessionJustLoadedRef.current = false;
+  }
 
   useEffect(() => {
     const showEvent =
@@ -995,6 +1024,7 @@ export function AgentView() {
       setSessionPermissions(perms);
       sessionPermissionsRef.current = perms;
       autoScrollRef.current = true;
+      markSessionJustLoaded();
       setMessages(snapshot?.messages ?? []);
       setApproval(snapshot?.approval ?? null);
       sessionIdRef.current = id;
@@ -1790,6 +1820,7 @@ export function AgentView() {
 
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (sessionJustLoadedRef.current) return;
       const { contentOffset, contentSize, layoutMeasurement } =
         event.nativeEvent;
       const distanceFromBottom =
@@ -1800,8 +1831,9 @@ export function AgentView() {
   );
 
   const handleMessagesContentSizeChange = useCallback(() => {
-    if (autoScrollRef.current) {
+    if (autoScrollRef.current || sessionJustLoadedRef.current) {
       flatListRef.current?.scrollToEnd({ animated: false });
+      clearSessionJustLoaded();
     }
   }, []);
 
@@ -2028,6 +2060,7 @@ export function AgentView() {
       activeIndexRef.current = nextIndex;
       setText('');
       autoScrollRef.current = true;
+      markSessionJustLoaded();
       setMessages(snapshot.messages);
       setApproval(snapshot.approval);
       if (Object.keys(perms).length > 0) {
@@ -2111,6 +2144,7 @@ export function AgentView() {
       sessionIdRef.current = created;
       setText('');
       autoScrollRef.current = true;
+      markSessionJustLoaded();
       saveSessionHistory({ ids, activeIndex: nextIndex }).catch(() => {});
       resetToCenter();
     } catch (e: unknown) {
