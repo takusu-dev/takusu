@@ -888,6 +888,54 @@ async fn task_update_status() {
 }
 
 #[tokio::test]
+async fn task_complete_query_limits() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+
+    for title in ["alpha-test", "beta-test", "gamma-test"] {
+        create_task_simple(&app, title).await;
+    }
+
+    // Default limit is respected.
+    let req = auth_req(Method::GET, "/api/tasks/complete?q=test");
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let comps = body.as_array().unwrap();
+    assert!(comps.len() <= 30, "default limit should be 30 or less");
+
+    // Explicit small limit.
+    let req = auth_req(Method::GET, "/api/tasks/complete?q=test&limit=2");
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert_eq!(body.as_array().unwrap().len(), 2);
+
+    // limit=0 is invalid.
+    let req = auth_req(Method::GET, "/api/tasks/complete?q=test&limit=0");
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // Max allowed limit.
+    let req = auth_req(Method::GET, "/api/tasks/complete?q=test&limit=100");
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // Over max limit is invalid.
+    let req = auth_req(Method::GET, "/api/tasks/complete?q=test&limit=101");
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // Empty limit value is rejected.
+    let req = auth_req(Method::GET, "/api/tasks/complete?q=test&limit=");
+    let res = app.oneshot(req).await.unwrap();
+    assert!(
+        res.status().is_client_error(),
+        "empty limit should be rejected"
+    );
+}
+
+#[tokio::test]
 async fn generate_excludes_in_progress() {
     let (state, pool) = setup().await;
 

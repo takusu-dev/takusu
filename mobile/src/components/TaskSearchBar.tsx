@@ -44,6 +44,14 @@ const DEFAULT_COMPLETIONS: Completion[] = DEFAULT_QUALIFIERS.map((q) => ({
   value: `${q}:`,
 }));
 
+const COMPLETION_CACHE_TTL_MS = 30_000;
+const COMPLETION_CACHE_MAX_SIZE = 100;
+
+interface CachedCompletions {
+  completions: Completion[];
+  timestamp: number;
+}
+
 function isOp(raw: string): boolean {
   const upper = raw.toUpperCase();
   return upper === 'OR' || upper === 'AND' || upper === 'NOT';
@@ -138,6 +146,8 @@ export function TaskSearchBar({
   const [focused, setFocused] = useState(false);
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const completionCacheRef = useRef<Map<string, CachedCompletions>>(new Map());
+  const requestIdRef = useRef(0);
 
   // Clear pending timers when the component unmounts.
   useEffect(() => {
@@ -154,20 +164,67 @@ export function TaskSearchBar({
   useEffect(() => {
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
+      debounceRef.current = null;
     }
     if (!client || value.trim().length === 0) {
       setCompletions(value.trim().length === 0 ? DEFAULT_COMPLETIONS : []);
       return;
     }
+
+    const cache = completionCacheRef.current;
+    const now = Date.now();
+    const cached = cache.get(value);
+    if (cached && now - cached.timestamp <= COMPLETION_CACHE_TTL_MS) {
+      // Move the hit to the end to keep the LRU order up to date.
+      cache.delete(value);
+      cache.set(value, cached);
+      setCompletions(cached.completions);
+      return;
+    }
+    if (cached) {
+      cache.delete(value);
+    }
+
+    const id = ++requestIdRef.current;
     debounceRef.current = setTimeout(() => {
       client
         .completeTaskQuery(value)
-        .then(setCompletions)
-        .catch(() => setCompletions([]));
-    }, 150);
+        .then((results) => {
+          if (requestIdRef.current !== id) {
+            return;
+          }
+
+          const fetchedAt = Date.now();
+          const expiredKeys: string[] = [];
+          for (const [key, entry] of cache) {
+            if (fetchedAt - entry.timestamp > COMPLETION_CACHE_TTL_MS) {
+              expiredKeys.push(key);
+            }
+          }
+          for (const key of expiredKeys) {
+            cache.delete(key);
+          }
+          if (cache.size >= COMPLETION_CACHE_MAX_SIZE) {
+            const oldest = cache.keys().next().value as string | undefined;
+            if (oldest !== undefined && oldest !== value) {
+              cache.delete(oldest);
+            }
+          }
+          // Delete and re-set to move the entry to the most-recent position.
+          cache.delete(value);
+          cache.set(value, { completions: results, timestamp: fetchedAt });
+          setCompletions(results);
+        })
+        .catch(() => {
+          if (requestIdRef.current === id) {
+            setCompletions([]);
+          }
+        });
+    }, 250);
     return () => {
       if (debounceRef.current) {
         clearTimeout(debounceRef.current);
+        debounceRef.current = null;
       }
     };
   }, [value, client]);

@@ -1056,7 +1056,29 @@ impl TakusuApp {
         self.storage.list_tasks(query).await.map_err(storage_to_app)
     }
 
-    pub async fn complete_task_query(&self, input: &str) -> Result<Vec<Completion>, AppError> {
+    pub async fn complete_task_query(
+        &self,
+        input: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<Completion>, AppError> {
+        const DEFAULT_COMPLETION_LIMIT: usize = 30;
+        const MAX_COMPLETION_LIMIT: usize = 100;
+
+        let limit = match limit {
+            None => DEFAULT_COMPLETION_LIMIT,
+            Some(0) => {
+                return Err(AppError::BadRequest(
+                    "completion limit must be at least 1".to_string(),
+                ));
+            }
+            Some(n) if n > MAX_COMPLETION_LIMIT => {
+                return Err(AppError::BadRequest(format!(
+                    "completion limit must be at most {MAX_COMPLETION_LIMIT}"
+                )));
+            }
+            Some(n) => n,
+        };
+
         let settings = self.get_settings_or_default().await?;
         let tz = parse_settings_timezone(&settings.tz)?;
         let today = Timestamp::now().to_zoned(tz).date();
@@ -1071,7 +1093,7 @@ impl TakusuApp {
             .map_err(storage_to_app)?;
         let habits = self.storage.list_habits().await.map_err(storage_to_app)?;
 
-        Ok(complete(input, today, &tasks, &habits))
+        Ok(complete(input, today, &tasks, &habits, Some(limit)))
     }
 
     pub async fn get_task(&self, id: &str) -> Result<TaskRow, AppError> {

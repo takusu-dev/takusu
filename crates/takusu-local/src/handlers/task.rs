@@ -59,13 +59,14 @@ pub async fn list_tasks(
 #[derive(Debug, Deserialize)]
 pub struct CompleteQuery {
     pub q: String,
+    pub limit: Option<usize>,
 }
 
 pub async fn complete_task_query(
     State(state): State<AppState>,
     Query(query): Query<CompleteQuery>,
 ) -> Result<Json<Vec<Completion>>, HttpError> {
-    let completions = state.app.complete_task_query(&query.q).await?;
+    let completions = state.app.complete_task_query(&query.q, query.limit).await?;
     Ok(Json(completions))
 }
 

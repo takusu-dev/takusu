@@ -112,10 +112,14 @@ export class TakusuClient {
     return this.request('GET', `/api/tasks${qs ? `?${qs}` : ''}`);
   }
 
-  async completeTaskQuery(q: string): Promise<Completion[]> {
+  async completeTaskQuery(q: string, limit?: number): Promise<Completion[]> {
+    const limitParam =
+      limit !== undefined
+        ? `&limit=${encodeURIComponent(limit.toString())}`
+        : '';
     return this.request(
       'GET',
-      `/api/tasks/complete?q=${encodeURIComponent(q)}`,
+      `/api/tasks/complete?q=${encodeURIComponent(q)}${limitParam}`,
     );
   }
 
