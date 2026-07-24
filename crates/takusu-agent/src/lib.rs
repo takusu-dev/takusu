@@ -241,7 +241,7 @@ impl AgentSession {
         llm: impl llm::LlmClient + 'static,
     ) -> Self {
         let llm: Arc<dyn llm::LlmClient + Send + Sync> = Arc::new(llm);
-        Self {
+        let session = Self {
             config: std::sync::RwLock::new(config),
             registry,
             client,
@@ -258,7 +258,9 @@ impl AgentSession {
             schedule_dirty: Mutex::new(false),
             bundled_skills_synced: std::sync::atomic::AtomicBool::new(false),
             skills_index: Mutex::new(None),
-        }
+        };
+        tracing::info!(session_id = %session.session_id, "agent session created");
+        session
     }
 
     pub fn set_session_permissions(&self, permissions: Permissions) {
@@ -276,6 +278,7 @@ impl AgentSession {
         llm: Arc<dyn llm::LlmClient + Send + Sync>,
     ) {
         let _guard = self.turn_lock.lock().await;
+        tracing::info!(session_id = %self.session_id, "agent config applied");
         *self.llm.write().unwrap() = llm;
         *self.config.write().unwrap() = config.clone();
     }
@@ -302,6 +305,7 @@ impl AgentSession {
 
     pub async fn run_turn(&self, user_text: &str) -> Result<TurnResult, AgentError> {
         let _guard = self.turn_lock.lock().await;
+        tracing::info!(session_id = %self.session_id, text_len = user_text.len(), "agent turn started");
 
         let tools = self.registry.definitions();
         let system = llm::Message::System(self.build_system_prompt().await);
@@ -409,6 +413,7 @@ impl AgentSession {
         F: FnMut(TurnEvent),
     {
         let _guard = self.turn_lock.lock().await;
+        tracing::info!(session_id = %self.session_id, text_len = user_text.len(), "agent turn stream started");
 
         let tools = self.registry.definitions();
         let system = llm::Message::System(self.build_system_prompt().await);
@@ -434,6 +439,7 @@ impl AgentSession {
         F: FnMut(TurnEvent),
     {
         let _guard = self.turn_lock.lock().await;
+        tracing::info!(session_id = %self.session_id, turn_index, text_len = user_text.len(), "agent edit turn stream started");
 
         let tools = self.registry.definitions();
         let system = llm::Message::System(self.build_system_prompt().await);
@@ -638,8 +644,10 @@ impl AgentSession {
         }
         let mut sequence = self.approval_sequence.lock().unwrap();
         *sequence += 1;
+        let id = format!("{}-approval-{}", self.session_id, *sequence);
+        tracing::info!(session_id = %self.session_id, approval_id = %id, changes = changes.len(), "approval requested");
         let request = ApprovalRequest {
-            id: format!("{}-approval-{}", self.session_id, *sequence),
+            id,
             why: why.unwrap_or_else(|| "ユーザーの承認が必要な変更です".to_owned()),
             changes,
             inferred_fields,
@@ -670,6 +678,7 @@ impl AgentSession {
     {
         let mut results = Vec::with_capacity(calls.len());
         for call in calls {
+            tracing::info!(session_id = %self.session_id, tool = %call.name, "executing tool call");
             // Generate a unique id for this tool-call invocation. This id is
             // exposed to the client via TurnEvent so that user-input providers
             // (e.g. correct_asr) can be resolved without colliding with the
@@ -706,6 +715,7 @@ impl AgentSession {
                     .await
                 {
                     Ok(output) => {
+                        tracing::info!(session_id = %self.session_id, tool = %call.name, is_error = output.is_error, "tool call completed");
                         if output.why.is_some() {
                             *approval_why = output.why;
                         }
@@ -727,6 +737,7 @@ impl AgentSession {
                         }
                     }
                     Err(e) if e.is_recoverable() => {
+                        tracing::warn!(session_id = %self.session_id, tool = %call.name, error = %e, "tool call recoverable error");
                         let content = e.to_string();
                         emit(TurnEvent::ToolResult {
                             call_id: tool_call_id,
@@ -775,6 +786,7 @@ impl AgentSession {
         approve: bool,
     ) -> Result<ApprovalResult, AgentError> {
         let _guard = self.turn_lock.lock().await;
+        tracing::info!(session_id = %self.session_id, approval_id = %id, approved = approve, "resolving approval");
         let request = {
             let mut pending = self.pending_approval.lock().unwrap();
             let current = pending.as_ref().ok_or_else(|| {
@@ -791,6 +803,7 @@ impl AgentSession {
             return Err(AgentError::Tool(ToolError::Cancelled));
         }
         if !approve {
+            tracing::info!(session_id = %self.session_id, approval_id = %id, "approval denied");
             let system_estimate = self.last_system_estimate.lock().unwrap().unwrap_or(0);
             let resolution_message =
                 Self::build_approval_resolution_message(false, &request.changes, false);
@@ -812,6 +825,7 @@ impl AgentSession {
         request: ApprovalRequest,
         auto: bool,
     ) -> Result<ApprovalResult, AgentError> {
+        tracing::info!(session_id = %self.session_id, approval_id = %request.id, count = request.changes.len(), auto, "executing approved changes");
         let changes_for_message = request.changes.clone();
         let schedule_commit = request.changes.iter().any(|change| {
             change.target_label.split_whitespace().next() == Some("schedule")
@@ -860,6 +874,7 @@ impl AgentSession {
             let mut local = self.history.lock().unwrap().clone();
             local.push(llm::Message::User(error_message));
             self.replace_history(local, None, system_estimate);
+            tracing::error!(session_id = %self.session_id, approval_id = %request.id, error = %e, "approved change failed");
             return Err(e);
         }
         let resolution_message =
@@ -867,6 +882,7 @@ impl AgentSession {
         let mut local = self.history.lock().unwrap().clone();
         local.push(llm::Message::User(resolution_message));
         self.replace_history(local, None, system_estimate);
+        tracing::info!(session_id = %self.session_id, approval_id = %request.id, count = receipts.len(), "approved changes executed");
         Ok(ApprovalResult {
             id: request.id,
             approved: true,

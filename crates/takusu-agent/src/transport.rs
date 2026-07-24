@@ -484,6 +484,7 @@ async fn update_settings(
         session.apply_config(&new_config, new_llm.clone()).await;
     }
 
+    tracing::info!(model = %new_config.llm.model, backend = %new_config.audio.tts.backend, "agent settings updated");
     Json(Versioned {
         version: API_VERSION,
         value: serde_json::json!({ "ok": true }),
@@ -521,6 +522,7 @@ async fn create_session(
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     sessions.insert(id.clone(), session);
+    tracing::info!(session_id = %id, "agent session created via API");
     Json(Versioned {
         version: API_VERSION,
         value: CreateSessionResponse { session_id: id },
@@ -556,8 +558,14 @@ async fn run_turn(
         .into_response();
     }
     let result = match session.run_turn(&body.value.text).await {
-        Ok(result) => TurnResultDto::from(result),
-        Err(error) => return agent_error(error),
+        Ok(result) => {
+            tracing::info!(session_id = %id, text_len = result.text.len(), changes = result.changes.len(), schedule_dirty = result.schedule_dirty, "agent turn completed");
+            TurnResultDto::from(result)
+        }
+        Err(error) => {
+            tracing::error!(session_id = %id, error = %error, "agent turn failed");
+            return agent_error(error);
+        }
     };
     if let Some(key) = key
         && let Ok(mut results) = state.turn_results.lock()
@@ -622,6 +630,7 @@ async fn run_turn_stream(
             }) => {
                 match result {
                     Ok(result) => {
+                        tracing::info!(session_id = %id2, text_len = result.text.len(), changes = result.changes.len(), schedule_dirty = result.schedule_dirty, "agent turn stream completed");
                         let _ = tx.send(TurnEvent::Done(result.clone()));
                         if let Some(key) = key2
                             && let Ok(mut results) = state2.turn_results.lock()
@@ -630,6 +639,7 @@ async fn run_turn_stream(
                         }
                     }
                     Err(error) => {
+                        tracing::error!(session_id = %id2, error = %error, "agent turn stream failed");
                         let _ = tx.send(TurnEvent::Error(error.to_string()));
                     }
                 }
@@ -696,6 +706,7 @@ async fn edit_turn_stream(
             }) => {
                 match result {
                     Ok(result) => {
+                        tracing::info!(session_id = %id2, turn_index, text_len = result.text.len(), changes = result.changes.len(), schedule_dirty = result.schedule_dirty, "agent edit turn stream completed");
                         let _ = tx.send(TurnEvent::Done(result.clone()));
                         if let Some(key) = key2
                             && let Ok(mut results) = state2.turn_results.lock()
@@ -704,6 +715,7 @@ async fn edit_turn_stream(
                         }
                     }
                     Err(error) => {
+                        tracing::error!(session_id = %id2, turn_index, error = %error, "agent edit turn stream failed");
                         let _ = tx.send(TurnEvent::Error(error.to_string()));
                     }
                 }
@@ -739,12 +751,18 @@ async fn revert_turn(
         .truncate_history(turn_index, body.value.after_user)
         .await
     {
-        Ok(()) => Json(Versioned {
-            version: API_VERSION,
-            value: serde_json::json!({ "ok": true }),
-        })
-        .into_response(),
-        Err(error) => agent_error(error),
+        Ok(()) => {
+            tracing::info!(session_id = %id, turn_index, after_user = body.value.after_user, "agent history reverted");
+            Json(Versioned {
+                version: API_VERSION,
+                value: serde_json::json!({ "ok": true }),
+            })
+            .into_response()
+        }
+        Err(error) => {
+            tracing::error!(session_id = %id, turn_index, error = %error, "agent history revert failed");
+            agent_error(error)
+        }
     }
 }
 
@@ -766,6 +784,7 @@ async fn update_session_settings(
     if let Some(permissions) = body.value.permissions {
         session.set_session_permissions(permissions);
     }
+    tracing::info!(session_id = %id, "agent session settings updated");
     Json(Versioned {
         version: API_VERSION,
         value: serde_json::json!({ "ok": true }),
@@ -831,8 +850,14 @@ async fn resolve_approval(
         .resolve_approval(&approval_id, body.value.approve)
         .await
     {
-        Ok(result) => ApprovalResultDto::from(result),
-        Err(error) => return agent_error(error),
+        Ok(result) => {
+            tracing::info!(session_id = %id, approval_id = %approval_id, approved = result.approved, changes = result.changes.len(), "approval resolved");
+            ApprovalResultDto::from(result)
+        }
+        Err(error) => {
+            tracing::error!(session_id = %id, approval_id = %approval_id, error = %error, "approval resolution failed");
+            return agent_error(error);
+        }
     };
     if let Ok(mut results) = state.approval_results.lock() {
         results.insert((id, key), result.clone());
@@ -870,8 +895,10 @@ async fn resolve_user_input(
         .resolve(&call_id, body.value.answers)
         .await
     {
+        tracing::error!(session_id = %id, call_id = %call_id, error = %error, "user input resolution failed");
         return agent_error(AgentError::Tool(error));
     }
+    tracing::info!(session_id = %id, call_id = %call_id, "user input resolved");
     Json(Versioned {
         version: API_VERSION,
         value: serde_json::json!({ "ok": true }),
@@ -890,6 +917,7 @@ async fn delete_session(
     match state.sessions.lock() {
         Ok(mut sessions) => {
             if sessions.remove(&id).is_some() {
+                tracing::info!(session_id = %id, "agent session deleted");
                 StatusCode::NO_CONTENT.into_response()
             } else {
                 StatusCode::NOT_FOUND.into_response()

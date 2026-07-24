@@ -29,6 +29,7 @@ thiserror = { workspace = true }
 tokio-stream = "0.1"
 toml = { workspace = true }
 tokio = { workspace = true }
+tracing = { workspace = true }
 uuid = { workspace = true }
 takusu-audio = { path = "../takusu-audio", default-features = false }
 takusu-client = { workspace = true }
