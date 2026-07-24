@@ -13,6 +13,7 @@ import { TakusuClient } from './client';
 import { AgentClient, type AgentUpdateSettings } from './agentClient';
 import { DEFAULT_LOCAL_PORT, ensureLocalServer } from './server';
 import TakusuServerModule from '@/modules/takusu-server/src/TakusuServerModule';
+import TakusuAppIconModule from '@/modules/takusu-app-icon/src/TakusuAppIconModule';
 import TakusuWidgetModule from '../../modules/takusu-widget/src/TakusuWidgetModule';
 import {
   loadSettings,
@@ -242,6 +243,13 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     if (!APP_THEMES.includes(newTheme)) return;
     await saveTheme(newTheme);
     setState((prev) => ({ ...prev, theme: newTheme }));
+    if (Platform.OS === 'android') {
+      try {
+        TakusuAppIconModule.setTheme(newTheme);
+      } catch {
+        // icon module may not be available during dev builds
+      }
+    }
   }, []);
 
   const setUndoSteps = useCallback(async (steps: number) => {
@@ -276,6 +284,14 @@ export function ServerProvider({ children }: { children: ReactNode }) {
         undoSteps: settings.undoSteps,
         notifications: settings.notifications,
       }));
+
+      if (Platform.OS === 'android') {
+        try {
+          TakusuAppIconModule.setTheme(settings.theme);
+        } catch {
+          // icon module may not be available during dev builds
+        }
+      }
 
       undoRedo.setMaxHistory(settings.undoSteps);
 

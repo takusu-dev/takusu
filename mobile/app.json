@@ -8,9 +8,8 @@
     "userInterfaceStyle": "automatic",
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#4ECDC4",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png"
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/android-icon-foreground.png"
       },
       "predictiveBackGestureEnabled": true,
       "package": "dev.satler.takusu"
@@ -34,8 +33,12 @@
         {
           "image": "./assets/splash-icon.png",
           "resizeMode": "contain",
-          "backgroundColor": "#4ECDC4",
-          "imageWidth": 200
+          "backgroundColor": "#FFFFFF",
+          "imageWidth": 200,
+          "dark": {
+            "image": "./assets/splash-icon-dark.png",
+            "backgroundColor": "#15131C"
+          }
         }
       ],
       [
@@ -43,7 +46,7 @@
         {
           "defaultChannel": "task-reminders",
           "icon": "./assets/notification_icon.png",
-          "color": "#4ECDC4"
+          "color": "#7261A3"
         }
       ],
       [

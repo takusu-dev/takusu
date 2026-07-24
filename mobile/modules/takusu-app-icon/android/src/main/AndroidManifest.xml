@@ -1,0 +1,59 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <activity-alias
+        android:name=".MainActivityLight"
+        android:targetActivity=".MainActivity"
+        android:enabled="true"
+        android:exported="true"
+        android:icon="@mipmap/ic_takusu_light"
+        android:roundIcon="@mipmap/ic_takusu_light"
+        android:label="@string/app_name">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity-alias>
+
+    <activity-alias
+        android:name=".MainActivityDark"
+        android:targetActivity=".MainActivity"
+        android:enabled="false"
+        android:exported="true"
+        android:icon="@mipmap/ic_takusu_dark"
+        android:roundIcon="@mipmap/ic_takusu_dark"
+        android:label="@string/app_name">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity-alias>
+
+    <activity-alias
+        android:name=".MainActivityCatppuccin"
+        android:targetActivity=".MainActivity"
+        android:enabled="false"
+        android:exported="true"
+        android:icon="@mipmap/ic_takusu_catppuccin"
+        android:roundIcon="@mipmap/ic_takusu_catppuccin"
+        android:label="@string/app_name">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity-alias>
+
+    <activity-alias
+        android:name=".MainActivityAuraSoftDark"
+        android:targetActivity=".MainActivity"
+        android:enabled="false"
+        android:exported="true"
+        android:icon="@mipmap/ic_takusu_aura_soft_dark"
+        android:roundIcon="@mipmap/ic_takusu_aura_soft_dark"
+        android:label="@string/app_name">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity-alias>
+  </application>
+</manifest>

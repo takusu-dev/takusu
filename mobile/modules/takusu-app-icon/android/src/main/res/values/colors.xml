@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <color name="ic_takusu_light_bg">#FFFFFF</color>
+  <color name="ic_takusu_dark_bg">#15131C</color>
+  <color name="ic_takusu_catppuccin_bg">#24273A</color>
+  <color name="ic_takusu_aura_soft_dark_bg">#141414</color>
+</resources>
