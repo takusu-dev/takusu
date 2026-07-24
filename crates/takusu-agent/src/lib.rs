@@ -2282,6 +2282,8 @@ mod tests {
         let index = crate::tools::skills::built_in_skills_index();
         assert!(index.contains("weekly-review"));
         assert!(index.contains("Run a weekly review"));
+        assert!(index.contains("search-qualifiers"));
+        assert!(index.contains("Task and memory search qualifier syntax reference."));
     }
 
     #[test]

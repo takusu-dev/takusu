@@ -1859,18 +1859,41 @@ impl Storage for SqliteStorage {
     }
 
     async fn search_memories(&self, query: &MemoryQuery) -> StorageResult<Vec<MemoryRow>> {
-        let q = takusu_util::memory::normalize_query(&query.q)
+        let terms = takusu_util::memory::tokenize_query(&query.q)
             .map_err(|e| StorageError::BadRequest(format!("invalid query: {e}")))?;
-        let pattern = format!("%{}%", takusu_util::memory::escape_like_pattern(&q));
+        let patterns = takusu_util::memory::memory_like_patterns(&terms);
 
-        let mut sql = String::from(
-            "SELECT * FROM memories WHERE (normalized_key LIKE ? ESCAPE '\\' OR normalized_content LIKE ? ESCAPE '\\')",
-        );
-        let mut bindings: Vec<String> = vec![pattern.clone(), pattern];
+        let mut sql = String::from("SELECT * FROM memories WHERE ");
+        let mut bindings: Vec<String> = Vec::new();
+
+        for (i, pat) in patterns.iter().enumerate() {
+            if i > 0 {
+                sql.push_str(" AND ");
+            }
+            sql.push_str(
+                "(normalized_key LIKE ? ESCAPE '\\' OR normalized_content LIKE ? ESCAPE '\\')",
+            );
+            bindings.push(pat.clone());
+            bindings.push(pat.clone());
+        }
 
         if let Some(ref kind) = query.kind {
-            sql.push_str(" AND kind = ?");
-            bindings.push(kind.clone());
+            let kinds: Vec<&str> = kind
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if kinds.is_empty() {
+                return Ok(Vec::new());
+            }
+            if kinds.len() == 1 {
+                sql.push_str(" AND kind = ?");
+                bindings.push(kinds[0].to_string());
+            } else {
+                let placeholders: Vec<String> = (0..kinds.len()).map(|_| "?".to_string()).collect();
+                sql.push_str(&format!(" AND kind IN ({})", placeholders.join(",")));
+                bindings.extend(kinds.iter().map(|s| s.to_string()));
+            }
         }
         if let Some(ref subject_type) = query.subject_type {
             sql.push_str(" AND subject_type = ?");
@@ -2616,7 +2639,7 @@ async fn filter_rows_with_query(
         .map(|e| (e.task_id, (e.start_at, e.end_at)))
         .collect();
 
-    let ctx = EvalContext::new(tz, now, schedule, &habits);
+    let ctx = EvalContext::new(tz, now, schedule, &rows, &habits);
     filter_tasks(rows, q, &ctx).map_err(StorageError::BadRequest)
 }
 

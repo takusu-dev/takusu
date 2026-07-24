@@ -152,7 +152,7 @@ async fn filter_rows_with_query(
         .map(|e| (e.task_id, (e.start_at, e.end_at)))
         .collect();
 
-    let ctx = EvalContext::new(tz, now, schedule, &habits);
+    let ctx = EvalContext::new(tz, now, schedule, &rows, &habits);
     filter_tasks(rows, q, &ctx).map_err(WorkerError::BadRequest)
 }
 

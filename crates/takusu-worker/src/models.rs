@@ -4,6 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::memory;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskRow {
     pub id: String,
@@ -456,6 +458,21 @@ pub struct MemoryRow {
     pub created_at: String,
     pub updated_at: String,
     pub last_used_at: Option<String>,
+}
+
+impl memory::MemoryRankable for MemoryRow {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn normalized_key(&self) -> &str {
+        &self.normalized_key
+    }
+    fn normalized_content(&self) -> &str {
+        &self.normalized_content
+    }
+    fn updated_at(&self) -> &str {
+        &self.updated_at
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

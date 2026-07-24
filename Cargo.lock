@@ -4877,6 +4877,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "takusu-search"
+version = "0.20260724.1"
+dependencies = [
+ "jiff",
+ "serde",
+ "serde_json",
+ "unicode-normalization",
+ "web-time",
+]
+
+[[package]]
 name = "takusu-storage"
 version = "0.20260724.1"
 dependencies = [
@@ -4915,7 +4926,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "unicode-normalization",
+ "takusu-search",
  "uuid",
  "web-time",
 ]
