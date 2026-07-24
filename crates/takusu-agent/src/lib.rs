@@ -2,6 +2,7 @@
 pub mod audio;
 pub mod audio_config;
 pub mod bundled_skills;
+pub(crate) mod compact;
 pub mod llm;
 pub mod permissions;
 pub mod runner;
@@ -12,6 +13,7 @@ pub mod user_input;
 
 pub use permissions::Permissions;
 
+pub use crate::llm::CompactionSettings;
 pub use tool::{
     ChangeReceipt, InferredField, ProposedChange, Tool, ToolError, ToolOutput, ToolRegistry,
     inferred_field_schema, inferred_fields_schema,
@@ -192,6 +194,8 @@ pub struct AgentSession {
     last_prompt_tokens: Mutex<Option<usize>>,
     /// Estimated tokens of the last built system prompt, used for consistent history trimming.
     last_system_estimate: Mutex<Option<usize>>,
+    /// Compacted summary of older conversation turns, injected into the system prompt.
+    compaction_summary: Mutex<Option<String>>,
     pending_approval: Mutex<Option<ApprovalRequest>>,
     /// Per-session permission overrides. Session permissions take precedence over provider
     /// permissions configured in `config.llm.permissions`.
@@ -251,6 +255,7 @@ impl AgentSession {
             turn_lock: tokio::sync::Mutex::new(()),
             last_prompt_tokens: Mutex::new(None),
             last_system_estimate: Mutex::new(None),
+            compaction_summary: Mutex::new(None),
             pending_approval: Mutex::new(None),
             session_permissions: Mutex::new(Permissions::default()),
             session_id: new_session_id(),
@@ -270,6 +275,100 @@ impl AgentSession {
     /// Returns the session identifier used for routing and approval ids.
     pub fn session_id(&self) -> &str {
         &self.session_id
+    }
+
+    /// Compacts older conversation history when it exceeds the configured
+    /// context-window budget. The compacted summary is stored and injected
+    /// into the system prompt on subsequent turns.
+    async fn maybe_compact(&self) -> Result<(), AgentError> {
+        let (max_context_tokens, settings) = {
+            let cfg = self.config.read().unwrap();
+            let settings = cfg.llm.compaction;
+            let reserve = settings.reserve_tokens;
+            let keep_recent = settings.keep_recent_tokens;
+            if !settings.enabled
+                || cfg.llm.max_context_tokens.saturating_sub(reserve) <= keep_recent
+            {
+                return Ok(());
+            }
+            (cfg.llm.max_context_tokens, settings)
+        };
+
+        let history = self.history.lock().unwrap().clone();
+        if history.is_empty() {
+            return Ok(());
+        }
+
+        let system_estimate = {
+            let last = *self.last_system_estimate.lock().unwrap();
+            match last {
+                Some(est) => est,
+                None => llm::Message::System(self.build_system_prompt().await).estimate_tokens(),
+            }
+        };
+        let tools_estimate = self.registry.definitions_estimate_tokens();
+        let system_and_tools = system_estimate + tools_estimate;
+
+        if !crate::compact::should_compact(
+            &history,
+            system_and_tools,
+            max_context_tokens,
+            &settings,
+        ) {
+            return Ok(());
+        }
+
+        let previous_summary = self.compaction_summary.lock().unwrap().clone();
+        let llm = self.llm.read().unwrap().clone();
+        let keep_recent = settings.keep_recent_tokens;
+        // Reserve response tokens for the summary itself.
+        let max_prompt_tokens = max_context_tokens.saturating_sub(settings.reserve_tokens);
+
+        match crate::compact::compact_history(
+            &history,
+            previous_summary.as_deref(),
+            &llm,
+            keep_recent,
+            system_and_tools,
+            max_prompt_tokens,
+        )
+        .await
+        {
+            Ok(Some(result)) => {
+                if result.dropped_before > 0 {
+                    tracing::warn!(
+                        session_id = %self.session_id,
+                        dropped_before = result.dropped_before,
+                        "compaction dropped oldest messages that did not fit in the summarization prompt"
+                    );
+                }
+                tracing::info!(
+                    session_id = %self.session_id,
+                    first_kept_index = result.first_kept_index,
+                    dropped_before = result.dropped_before,
+                    tokens_before = result.tokens_before,
+                    "context compacted"
+                );
+                let kept: Vec<_> = history.into_iter().skip(result.first_kept_index).collect();
+                *self.history.lock().unwrap() = kept;
+                *self.compaction_summary.lock().unwrap() = Some(result.summary);
+                // The system prompt now includes the new summary; force a
+                // re-estimate on the next turn so compaction decisions remain
+                // accurate.
+                *self.last_system_estimate.lock().unwrap() = None;
+                *self.last_prompt_tokens.lock().unwrap() = None;
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(
+                    session_id = %self.session_id,
+                    error = %e,
+                    "context compaction failed; falling back to truncation"
+                );
+            }
+        }
+
+        Ok(())
     }
 
     pub(crate) async fn apply_config(
@@ -305,6 +404,7 @@ impl AgentSession {
 
     pub async fn run_turn(&self, user_text: &str) -> Result<TurnResult, AgentError> {
         let _guard = self.turn_lock.lock().await;
+        self.maybe_compact().await?;
         tracing::info!(session_id = %self.session_id, text_len = user_text.len(), "agent turn started");
 
         let tools = self.registry.definitions();
@@ -413,6 +513,7 @@ impl AgentSession {
         F: FnMut(TurnEvent),
     {
         let _guard = self.turn_lock.lock().await;
+        self.maybe_compact().await?;
         tracing::info!(session_id = %self.session_id, text_len = user_text.len(), "agent turn stream started");
 
         let tools = self.registry.definitions();
@@ -429,6 +530,11 @@ impl AgentSession {
 
     /// Edits an existing user turn (by 0-based user-message index), truncates
     /// the history after it, and re-runs the turn from that point.
+    ///
+    /// Note: this entry point does not compact context before editing, because
+    /// `turn_index` is resolved against the current history. Compaction would
+    /// shift the indices and could edit the wrong turn. Context will be
+    /// compacted on the next normal turn.
     pub async fn edit_turn_stream<F>(
         &self,
         turn_index: usize,
@@ -1288,6 +1394,13 @@ impl AgentSession {
             .unwrap_or_else(|_| jiff::Timestamp::now().to_zoned(tz));
         let tz_name = now.time_zone().iana_name().unwrap_or("unknown");
         let skills = self.build_skills_index().await;
+        let summary_section = self
+            .compaction_summary
+            .lock()
+            .unwrap()
+            .clone()
+            .map(|s| format!("## これまでの要約\n{s}\n"))
+            .unwrap_or_default();
 
         let prompt = format!(
             r####"## 役割
@@ -1302,6 +1415,7 @@ impl AgentSession {
             - 現在日時（サーバー時刻）: {now}
             - タイムゾーン: {tz_name}
 
+            {summary_section}
             ## 使用可能なスキル
             {skills}
 
@@ -2604,5 +2718,62 @@ mod tests {
             "session permissions should override provider and auto-approve"
         );
         assert_eq!(result.changes.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn maybe_compact_summarizes_old_turns_and_keeps_recent() {
+        let mut cfg = AgentConfig::default();
+        cfg.llm.max_context_tokens = 2000;
+        cfg.llm.compaction.reserve_tokens = 500;
+        cfg.llm.compaction.keep_recent_tokens = 800;
+
+        let mut history = Vec::new();
+        for i in 0..20 {
+            let filler = "x".repeat(200);
+            history.push(llm::Message::User(format!(
+                "これは非常に長いユーザーメッセージです。番号 {i}。{filler}"
+            )));
+            history.push(llm::Message::Assistant(llm::AssistantContent::Text(
+                format!("これはアシスタントの返答です。番号 {i}。{filler}"),
+            )));
+        }
+
+        let mock = MockLlm {
+            calls: Mutex::new(Vec::new()),
+            responses: Mutex::new(vec![
+                llm::LlmResponse {
+                    content: llm::LlmResponseContent::Text("要約".to_string()),
+                    prompt_tokens: None,
+                    finish_reason: None,
+                },
+                llm::LlmResponse {
+                    content: llm::LlmResponseContent::Text("こんにちは".to_string()),
+                    prompt_tokens: None,
+                    finish_reason: None,
+                },
+            ]),
+        };
+
+        let agent = AgentSession::new(cfg, ToolRegistry::new(), mock);
+        *agent.history.lock().unwrap() = history;
+        *agent.last_system_estimate.lock().unwrap() = Some(500);
+
+        let result = agent.run_turn("hello").await.unwrap();
+        assert_eq!(result.text, "こんにちは");
+
+        let history = agent.history.lock().unwrap();
+        assert!(
+            history.len() < 40,
+            "history should be reduced by compaction"
+        );
+        assert!(
+            history
+                .iter()
+                .any(|m| matches!(m, llm::Message::User(t) if t == "hello")),
+            "current user turn should be preserved"
+        );
+
+        let summary = agent.compaction_summary.lock().unwrap();
+        assert_eq!(summary.as_deref(), Some("要約"));
     }
 }
