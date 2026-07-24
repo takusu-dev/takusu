@@ -270,4 +270,198 @@ describe('rescheduleNotifications', () => {
     expect(target.getHours()).toBe(8);
     expect(target.getMinutes()).toBe(0);
   });
+
+  it('uses server timezone for morning briefing time and count', async () => {
+    // 20:00 UTC = 05:00 JST (next day). Morning briefing at 08:00 JST
+    // should be scheduled for 23:00 UTC today and count tasks on the JST day.
+    const now = new Date('2026-07-24T20:00:00Z');
+    jest.setSystemTime(now.getTime());
+
+    const morningSettings: NotificationSettings = {
+      ...settings,
+      morningBriefing: true,
+      morningBriefingTime: 8 * 60,
+      preStartReminder: false,
+      startOverdue: false,
+    };
+    const jstMorningStart = '2026-07-24T23:00:00Z';
+    const jstMorningEnd = '2026-07-25T00:00:00Z';
+
+    const tasks: TaskRow[] = [
+      {
+        ...baseTask,
+        id: 'jst-task',
+        title: 'JST Task',
+        status: 'scheduled',
+        start_at: jstMorningStart,
+        end_at: jstMorningEnd,
+        created_at: '2026-07-22T00:00:00Z',
+        updated_at: '2026-07-22T00:00:00Z',
+      },
+    ];
+    const schedule: ScheduleEntry[] = [
+      { task_id: 'jst-task', start_at: jstMorningStart, end_at: jstMorningEnd },
+    ];
+
+    const data: ScheduleData = {
+      tasks,
+      schedule,
+      settings: morningSettings,
+      tz: 'Asia/Tokyo',
+    };
+    await rescheduleNotifications(data);
+
+    const summary = scheduled.find((r) =>
+      (r.content as { title?: string }).title?.includes('未完了タスク'),
+    );
+    expect(summary).toBeDefined();
+    expect((summary!.content as { title: string }).title).toBe(
+      '今日は1個の未完了タスクがあります',
+    );
+    const target = (summary!.trigger as { date: Date }).date;
+    expect(target.toISOString()).toBe('2026-07-24T23:00:00.000Z');
+  });
+
+  it('uses server timezone for start reminder times', async () => {
+    // 20:00 UTC = 05:00 JST. A task at 01:00 UTC is 10:00 JST today.
+    const now = new Date('2026-07-24T20:00:00Z');
+    jest.setSystemTime(now.getTime());
+
+    const reminderSettings: NotificationSettings = {
+      ...settings,
+      morningBriefing: false,
+      preStartReminder: true,
+      preStartReminderMinutes: 5,
+      startOverdue: true,
+    };
+    const startAt = '2026-07-25T01:00:00Z';
+    const endAt = '2026-07-25T02:00:00Z';
+
+    const tasks: TaskRow[] = [
+      {
+        ...baseTask,
+        id: 'jst-reminder-task',
+        title: 'JST Reminder Task',
+        status: 'scheduled',
+        start_at: startAt,
+        end_at: endAt,
+        created_at: '2026-07-22T00:00:00Z',
+        updated_at: '2026-07-22T00:00:00Z',
+      },
+    ];
+    const schedule: ScheduleEntry[] = [
+      { task_id: 'jst-reminder-task', start_at: startAt, end_at: endAt },
+    ];
+
+    const data: ScheduleData = {
+      tasks,
+      schedule,
+      settings: reminderSettings,
+      tz: 'Asia/Tokyo',
+    };
+    await rescheduleNotifications(data);
+
+    const preStart = scheduled.find(
+      (r) => (r.content as { title?: string }).title === 'タスク開始直前',
+    );
+    const start = scheduled.find(
+      (r) => (r.content as { title?: string }).title === 'タスク開始時間',
+    );
+    expect(preStart).toBeDefined();
+    expect(start).toBeDefined();
+
+    expect((preStart!.content as { body: string }).body).toContain('10:00');
+    expect((preStart!.trigger as { date: Date }).date.toISOString()).toBe(
+      '2026-07-25T00:55:00.000Z',
+    );
+    expect((start!.trigger as { date: Date }).date.toISOString()).toBe(
+      '2026-07-25T01:00:00.000Z',
+    );
+  });
+
+  it('rolls morning briefing to the next day when the time has passed in server tz', async () => {
+    // 15:00 UTC = 10:00 EST (America/New_York). 08:00 EST has passed,
+    // so the briefing should be scheduled for 08:00 EST the next day.
+    const now = new Date('2026-01-15T15:00:00Z');
+    jest.setSystemTime(now.getTime());
+
+    const morningSettings: NotificationSettings = {
+      ...settings,
+      morningBriefing: true,
+      morningBriefingTime: 8 * 60,
+      preStartReminder: false,
+      startOverdue: false,
+    };
+    const estNextDayStart = '2026-01-16T13:00:00Z'; // 08:00 EST Jan 16
+    const estNextDayEnd = '2026-01-16T14:00:00Z';
+
+    const tasks: TaskRow[] = [
+      {
+        ...baseTask,
+        id: 'est-task',
+        title: 'EST Task',
+        status: 'scheduled',
+        start_at: estNextDayStart,
+        end_at: estNextDayEnd,
+        created_at: '2026-01-14T00:00:00Z',
+        updated_at: '2026-01-14T00:00:00Z',
+      },
+    ];
+    const schedule: ScheduleEntry[] = [
+      {
+        task_id: 'est-task',
+        start_at: estNextDayStart,
+        end_at: estNextDayEnd,
+      },
+    ];
+
+    const data: ScheduleData = {
+      tasks,
+      schedule,
+      settings: morningSettings,
+      tz: 'America/New_York',
+    };
+    await rescheduleNotifications(data);
+
+    const summary = scheduled.find((r) =>
+      (r.content as { title?: string }).title?.includes('未完了タスク'),
+    );
+    expect(summary).toBeDefined();
+    expect((summary!.content as { title: string }).title).toBe(
+      '今日は1個の未完了タスクがあります',
+    );
+    const target = (summary!.trigger as { date: Date }).date;
+    expect(target.toISOString()).toBe('2026-01-16T13:00:00.000Z');
+  });
+
+  it('handles a DST spring-forward gap when scheduling the next occurrence', async () => {
+    // 2026-03-08 07:00 UTC is the spring-forward instant in the US:
+    // clocks jump from 02:00 EST to 03:00 EDT. 02:30 does not exist on Mar 8,
+    // so the next 02:30 wall-clock time is Mar 9 02:30 EDT = 06:30 UTC.
+    const now = new Date('2026-03-08T07:00:00Z');
+    jest.setSystemTime(now.getTime());
+
+    const morningSettings: NotificationSettings = {
+      ...settings,
+      morningBriefing: true,
+      morningBriefingTime: 2 * 60 + 30,
+      preStartReminder: false,
+      startOverdue: false,
+    };
+
+    const data: ScheduleData = {
+      tasks: [],
+      schedule: [],
+      settings: morningSettings,
+      tz: 'America/New_York',
+    };
+    await rescheduleNotifications(data);
+
+    const summary = scheduled.find((r) =>
+      (r.content as { title?: string }).title?.includes('おはようございます'),
+    );
+    expect(summary).toBeDefined();
+    const target = (summary!.trigger as { date: Date }).date;
+    expect(target.toISOString()).toBe('2026-03-09T06:30:00.000Z');
+  });
 });
