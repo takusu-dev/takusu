@@ -8,15 +8,40 @@ import {
   View,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
+import { Ionicons } from '@expo/vector-icons';
 import { BRAND_COLOR, COLORS, useColors, type ColorSet } from '@/src/theme';
 import { haptic } from '@/src/components/haptics';
 import { formatJson } from '@/src/utils/formatJson';
 import type { ToolCallItem } from '@/src/api/agentSessionStore';
+import {
+  asString,
+  asNumber,
+  asArray,
+  formatDuration,
+  parseDateTime,
+  formatInstant,
+} from '@/src/components/ApprovalPanel';
 
 const MAX_DEPTH = 3;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getTime(iso: string): number | null {
+  const m = iso.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)(?:\[[^\]]+\])?$/,
+  );
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s] = m;
+  return Date.UTC(
+    Number(y),
+    Number(mo) - 1,
+    Number(d),
+    Number(h),
+    Number(mi),
+    Number(s),
+  );
 }
 
 function renderValue(value: unknown, colors: ColorSet, depth = 0): ReactNode {
@@ -190,14 +215,23 @@ export function ToolCallDetailModal({
     }
     const asr = call.name === 'correct_asr';
     const done = call.result !== undefined;
+    const rejected = call.isRejected ?? false;
     return {
       title: asr ? 'ASR訂正' : call.name,
-      status: done ? (call.isError ? 'エラー' : '成功') : '実行中',
-      statusColor: done
-        ? call.isError
-          ? colors.red
-          : colors.green
-        : colors.gray,
+      status: rejected
+        ? '拒否'
+        : done
+          ? call.isError
+            ? 'エラー'
+            : '成功'
+          : '実行中',
+      statusColor: rejected
+        ? colors.red
+        : done
+          ? call.isError
+            ? colors.red
+            : colors.green
+          : colors.gray,
       isAsr: asr,
       args: call.arguments,
     };
@@ -210,6 +244,7 @@ export function ToolCallDetailModal({
       arguments: call.arguments,
       result: call.result,
       isError: call.isError,
+      isRejected: call.isRejected ?? false,
     });
     if (!text) return;
     try {
@@ -238,9 +273,13 @@ export function ToolCallDetailModal({
             />
             <Text style={[styles.title, { color: colors.black }]}>{title}</Text>
             <View style={[styles.badge, { backgroundColor: statusColor }]}>
-              <Text style={[styles.badgeText, { color: colors.white }]}>
-                {status}
-              </Text>
+              {status === '拒否' ? (
+                <Ionicons name="close" size={12} color={colors.white} />
+              ) : (
+                <Text style={[styles.badgeText, { color: colors.white }]}>
+                  {status}
+                </Text>
+              )}
             </View>
           </View>
 
@@ -275,7 +314,12 @@ export function ToolCallDetailModal({
                 >
                   {call.isError ? 'エラー' : '結果'}
                 </Text>
-                <ResultContent result={call.result} colors={colors} />
+                <ResultContent
+                  name={call.name}
+                  result={call.result}
+                  isRejected={call.isRejected ?? false}
+                  colors={colors}
+                />
               </View>
             )}
           </ScrollView>
@@ -308,11 +352,366 @@ export function ToolCallDetailModal({
   );
 }
 
+interface DetailRowProps {
+  label: string;
+  value?: string;
+  before?: string;
+  after?: string;
+  valueColor?: string;
+  colors: ColorSet;
+}
+
+function DetailRow({
+  label,
+  value,
+  before,
+  after,
+  valueColor,
+  colors,
+}: DetailRowProps) {
+  const hasDiff = before !== undefined && after !== undefined;
+  return (
+    <View style={styles.detailRow}>
+      <Text style={[styles.detailLabel, { color: colors.gray }]}>{label}</Text>
+      {hasDiff ? (
+        <Text
+          style={[styles.detailValue, { color: valueColor ?? colors.black }]}
+        >
+          <Text style={[styles.strikethrough, { color: colors.gray }]}>
+            {before}
+          </Text>{' '}
+          → {after}
+        </Text>
+      ) : (
+        <Text
+          style={[styles.detailValue, { color: valueColor ?? colors.black }]}
+        >
+          {value ?? ''}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+interface ScheduleEntryItem {
+  reference?: string;
+  display_id?: string | number;
+  title?: string;
+  start_at?: string;
+  end_at?: string;
+}
+
+interface ScheduleEntriesListProps {
+  entries: Record<string, unknown>[];
+  colors: ColorSet;
+}
+
+function ScheduleEntriesList({ entries, colors }: ScheduleEntriesListProps) {
+  const grouped = useMemo(() => {
+    const map = new Map<string, ScheduleEntryItem[]>();
+    const sorted = [...entries].sort((a, b) => {
+      const aIso = asString(a.start_at) ?? asString(a.end_at) ?? '';
+      const bIso = asString(b.start_at) ?? asString(b.end_at) ?? '';
+      const aTime = getTime(aIso);
+      const bTime = getTime(bIso);
+      if (aTime == null || bTime == null) return 0;
+      return aTime - bTime;
+    });
+    for (const entry of sorted) {
+      const start = asString(entry.start_at) ?? asString(entry.end_at);
+      const parsed = start ? parseDateTime(start) : null;
+      const date = parsed?.date ?? '不明';
+      const list = map.get(date) ?? [];
+      list.push({
+        reference: asString(entry.reference) ?? undefined,
+        display_id: entry.display_id as string | number | undefined,
+        title: asString(entry.title) ?? undefined,
+        start_at: asString(entry.start_at) ?? undefined,
+        end_at: asString(entry.end_at) ?? undefined,
+      });
+      map.set(date, list);
+    }
+    return Array.from(map.entries());
+  }, [entries]);
+
+  return (
+    <View style={{ gap: 12 }}>
+      {grouped.map(([date, list]) => (
+        <ScheduleDayCard
+          key={date}
+          date={date}
+          entries={list}
+          colors={colors}
+        />
+      ))}
+    </View>
+  );
+}
+
+interface ScheduleDayCardProps {
+  date: string;
+  entries: ScheduleEntryItem[];
+  colors: ColorSet;
+}
+
+function ScheduleDayCard({ date, entries, colors }: ScheduleDayCardProps) {
+  return (
+    <View
+      style={[
+        styles.changeCard,
+        { backgroundColor: colors.surfaceTint, borderColor: colors.separator },
+      ]}
+    >
+      <View style={styles.changeHeader}>
+        <View style={[styles.changeBadge, { backgroundColor: colors.gray }]}>
+          <Text style={styles.changeBadgeText}>{date}</Text>
+        </View>
+        <Text style={{ color: colors.gray, fontSize: 13 }}>
+          {entries.length}件
+        </Text>
+      </View>
+      <View
+        style={[
+          styles.whenBlock,
+          { backgroundColor: colors.surface, borderColor: colors.separator },
+        ]}
+      >
+        {entries.map((entry, index) => {
+          let time = '';
+          if (entry.start_at && entry.end_at) {
+            const s = parseDateTime(entry.start_at);
+            const e = parseDateTime(entry.end_at);
+            if (s && e) {
+              time =
+                s.date === e.date
+                  ? `${s.time} 〜 ${e.time}`
+                  : `${s.date} ${s.time} 〜 ${e.date} ${e.time}`;
+            }
+          } else if (entry.start_at) {
+            time = parseDateTime(entry.start_at)?.time ?? '';
+          } else if (entry.end_at) {
+            time = parseDateTime(entry.end_at)?.time ?? '';
+          }
+          const ref = entry.reference ?? String(entry.display_id ?? '');
+          const title = `${ref ? `[${ref}] ` : ''}${entry.title ?? ''}`;
+          return (
+            <DetailRow
+              key={index}
+              label={time || '時刻なし'}
+              value={title}
+              colors={colors}
+            />
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+interface OverdueCardProps {
+  item: Record<string, unknown>;
+  colors: ColorSet;
+}
+
+function OverdueCard({ item, colors }: OverdueCardProps) {
+  const title = asString(item.title);
+  const ref = asString(item.reference) ?? String(item.display_id ?? '');
+  const end = asString(item.end_at);
+  return (
+    <View
+      style={[
+        styles.changeCard,
+        { backgroundColor: colors.surfaceTint, borderColor: colors.separator },
+      ]}
+    >
+      <View style={styles.changeHeader}>
+        <View style={[styles.changeBadge, { backgroundColor: colors.red }]}>
+          <Text style={styles.changeBadgeText}>期限超過</Text>
+        </View>
+        <Text
+          style={[styles.changeTarget, { color: colors.black }]}
+          numberOfLines={1}
+        >
+          {ref ? `[${ref}] ` : ''}
+          {title ?? ''}
+        </Text>
+      </View>
+      {end && (
+        <View
+          style={[
+            styles.whenBlock,
+            { backgroundColor: colors.surface, borderColor: colors.separator },
+          ]}
+        >
+          <DetailRow label="期限" value={formatInstant(end)} colors={colors} />
+        </View>
+      )}
+    </View>
+  );
+}
+
+interface ReferenceCardProps {
+  title: string;
+  items: string[];
+  colors: ColorSet;
+}
+
+function ReferenceCard({ title, items, colors }: ReferenceCardProps) {
+  const isMove = title === '移動対象';
+  return (
+    <View
+      style={[
+        styles.changeCard,
+        { backgroundColor: colors.surfaceTint, borderColor: colors.separator },
+      ]}
+    >
+      <View style={styles.changeHeader}>
+        <View
+          style={[
+            styles.changeBadge,
+            { backgroundColor: isMove ? colors.brand : colors.gray },
+          ]}
+        >
+          <Text style={styles.changeBadgeText}>{title}</Text>
+        </View>
+      </View>
+      <View
+        style={[
+          styles.whenBlock,
+          { backgroundColor: colors.surface, borderColor: colors.separator },
+        ]}
+      >
+        <DetailRow label="タスク" value={items.join('、 ')} colors={colors} />
+      </View>
+    </View>
+  );
+}
+
+interface SleepImpactProps {
+  before?: number;
+  after?: number;
+  colors: ColorSet;
+}
+
+function SleepCard({ before, after, colors }: SleepImpactProps) {
+  const beforeStr = before !== undefined ? formatDuration(before) : '-';
+  const afterStr = after !== undefined ? formatDuration(after) : '-';
+  const reduced = before !== undefined && after !== undefined && after < before;
+  return (
+    <View
+      style={[
+        styles.changeCard,
+        { backgroundColor: colors.surfaceTint, borderColor: colors.separator },
+      ]}
+    >
+      <View style={styles.changeHeader}>
+        <View style={[styles.changeBadge, { backgroundColor: colors.gray }]}>
+          <Text style={styles.changeBadgeText}>睡眠</Text>
+        </View>
+      </View>
+      <View
+        style={[
+          styles.whenBlock,
+          { backgroundColor: colors.surface, borderColor: colors.separator },
+        ]}
+      >
+        <DetailRow label="変更前" value={beforeStr} colors={colors} />
+        <DetailRow
+          label="変更後"
+          value={afterStr}
+          colors={colors}
+          valueColor={reduced ? colors.red : undefined}
+        />
+      </View>
+    </View>
+  );
+}
+
+interface WarningListProps {
+  warnings: string[];
+}
+
+function WarningBox({ warnings }: WarningListProps) {
+  return (
+    <View style={[styles.warningBox, { borderColor: '#A65B00' }]}>
+      {warnings.map((warning, index) => (
+        <Text key={index} style={{ color: '#A65B00', fontSize: 13 }}>
+          注意: {warning}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
+interface ScheduleResultViewProps {
+  name: string;
+  data: Record<string, unknown>;
+  colors: ColorSet;
+}
+
+function ScheduleResultView({ name, data, colors }: ScheduleResultViewProps) {
+  const entries = asArray<Record<string, unknown>>(data.entries);
+
+  if (name === 'get_schedule') {
+    const overdue = asArray<Record<string, unknown>>(data.overdue);
+    return (
+      <View style={{ gap: 12 }}>
+        {entries && entries.length > 0 && (
+          <ScheduleEntriesList entries={entries} colors={colors} />
+        )}
+        {overdue && overdue.length > 0 && (
+          <View style={{ gap: 12 }}>
+            {overdue.map((item, index) => (
+              <OverdueCard key={index} item={item} colors={colors} />
+            ))}
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  if (name === 'preview_schedule') {
+    const unscheduled = asArray<string>(data.unscheduled_task_ids);
+    const displaced = asArray<string>(data.displaced_task_ids);
+    const sleepBefore = asNumber(data.sleep_minutes_before);
+    const sleepAfter = asNumber(data.sleep_minutes_after);
+    const warnings = asArray<string>(data.warnings);
+
+    return (
+      <View style={{ gap: 12 }}>
+        {entries && entries.length > 0 && (
+          <ScheduleEntriesList entries={entries} colors={colors} />
+        )}
+        {unscheduled && unscheduled.length > 0 && (
+          <ReferenceCard
+            title="未スケジュール"
+            items={unscheduled}
+            colors={colors}
+          />
+        )}
+        {displaced && displaced.length > 0 && (
+          <ReferenceCard title="移動対象" items={displaced} colors={colors} />
+        )}
+        {(sleepBefore !== undefined || sleepAfter !== undefined) && (
+          <SleepCard before={sleepBefore} after={sleepAfter} colors={colors} />
+        )}
+        {warnings && warnings.length > 0 && <WarningBox warnings={warnings} />}
+      </View>
+    );
+  }
+
+  return null;
+}
+
 function ResultContent({
+  name,
   result,
+  isRejected,
   colors,
 }: {
+  name: string;
   result: string;
+  isRejected: boolean;
   colors: ColorSet;
 }) {
   let parsed: unknown = result;
@@ -320,6 +719,13 @@ function ResultContent({
     parsed = JSON.parse(result);
   } catch {
     parsed = result;
+  }
+  if (
+    !isRejected &&
+    isRecord(parsed) &&
+    (name === 'get_schedule' || name === 'preview_schedule')
+  ) {
+    return <ScheduleResultView name={name} data={parsed} colors={colors} />;
   }
   if (isRecord(parsed)) {
     return <ObjectRows object={parsed} colors={colors} depth={0} />;
@@ -382,6 +788,57 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     padding: 10,
     gap: 8,
+  },
+  changeCard: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 10,
+    gap: 8,
+  },
+  changeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  changeBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  changeBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  changeTarget: {
+    fontWeight: '700',
+    fontSize: 14,
+    flexShrink: 1,
+  },
+  whenBlock: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 8,
+    paddingHorizontal: 10,
+    gap: 4,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+  },
+  detailLabel: {
+    minWidth: 56,
+    fontSize: 13,
+  },
+  detailValue: { fontSize: 13, fontWeight: '600' },
+  strikethrough: { textDecorationLine: 'line-through' },
+  warningBox: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    gap: 4,
   },
   nestedSectionBox: {
     borderRadius: 8,

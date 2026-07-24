@@ -18,12 +18,12 @@ import {
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 
-function asString(value: unknown): string | null {
+export function asString(value: unknown): string | null {
   if (typeof value === 'string') return value;
   return null;
 }
 
-function asNumber(value: unknown): number | undefined {
+export function asNumber(value: unknown): number | undefined {
   if (typeof value === 'number') return value;
   return undefined;
 }
@@ -33,12 +33,12 @@ function asBoolean(value: unknown): boolean | undefined {
   return undefined;
 }
 
-function asArray<T>(value: unknown): T[] | undefined {
+export function asArray<T>(value: unknown): T[] | undefined {
   if (Array.isArray(value)) return value as T[];
   return undefined;
 }
 
-function formatDuration(minutes: number): string {
+export function formatDuration(minutes: number): string {
   if (minutes >= 60) {
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
@@ -47,7 +47,7 @@ function formatDuration(minutes: number): string {
   return `${minutes}分`;
 }
 
-function parseDateTime(iso: string): {
+export function parseDateTime(iso: string): {
   date: string;
   time: string;
 } | null {
@@ -64,13 +64,13 @@ function parseDateTime(iso: string): {
   };
 }
 
-function formatInstant(iso: string): string {
+export function formatInstant(iso: string): string {
   const parsed = parseDateTime(iso);
   if (parsed) return `${parsed.date} ${parsed.time}`;
   return iso;
 }
 
-function formatDateTimeRange(start: string, end: string): string | null {
+export function formatDateTimeRange(start: string, end: string): string | null {
   const s = parseDateTime(start);
   const e = parseDateTime(end);
   if (!s || !e) return null;
