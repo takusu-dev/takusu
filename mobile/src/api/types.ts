@@ -249,6 +249,33 @@ export interface HabitEstimateResult {
   habit?: HabitRow;
 }
 
+// ── Habit preview (#1033) ──
+
+export interface HabitPreviewRequest {
+  title: string;
+  description?: string;
+  recurrence: string;
+  start_time: string;
+  end_time: string;
+  avg_minutes: number;
+  sigma_minutes?: number;
+  parallelizable?: boolean;
+  allows_parallel?: boolean;
+  abandonability?: number;
+  fixed?: boolean;
+  window_mode?: string;
+  steps?: HabitStepInput[];
+  from?: string;
+  until?: string;
+  max_occurrences?: number;
+}
+
+export interface HabitPreviewTask {
+  title: string;
+  start_at: string;
+  end_at: string;
+}
+
 export interface ScheduleEntry {
   task_id: string;
   start_at: string;

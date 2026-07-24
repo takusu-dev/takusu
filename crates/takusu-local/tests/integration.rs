@@ -2144,6 +2144,127 @@ async fn habit_create_rejects_invalid_recurrence() {
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 }
 
+// ── Habit preview (#1033) ─────────────────────────────────────────────
+
+#[tokio::test]
+async fn habit_preview_daily_without_persisting() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let req = auth_req_body(
+        Method::POST,
+        "/api/habits/preview",
+        json!({
+            "title": "preview habit",
+            "recurrence": r#"{"freq":"daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#,
+            "start_time": "06:00",
+            "end_time": "07:00",
+            "avg_minutes": 30,
+        }),
+    );
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = body_str(res.into_body()).await;
+    let tasks: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
+    assert!(!tasks.is_empty());
+    assert_eq!(tasks[0]["title"], "preview habit");
+    assert!(tasks[0]["start_at"].as_str().is_some());
+    assert!(tasks[0]["end_at"].as_str().is_some());
+
+    // No habit row is created.
+    let list_req = auth_req(Method::GET, "/api/habits");
+    let res = app.oneshot(list_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let habits: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(habits.is_empty());
+}
+
+#[tokio::test]
+async fn habit_preview_period_window_uses_next_occurrence_deadline() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let req = auth_req_body(
+        Method::POST,
+        "/api/habits/preview",
+        json!({
+            "title": "period preview",
+            "recurrence": r#"{"freq":"daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#,
+            "start_time": "06:00",
+            "end_time": "07:00",
+            "avg_minutes": 30,
+            "window_mode": "period",
+        }),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let tasks: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(!tasks.is_empty());
+    let start_at = tasks[0]["start_at"].as_str().unwrap();
+    let end_at = tasks[0]["end_at"].as_str().unwrap();
+    assert!(end_at > start_at);
+}
+
+#[tokio::test]
+async fn habit_preview_with_steps() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let req = auth_req_body(
+        Method::POST,
+        "/api/habits/preview",
+        json!({
+            "title": "step preview",
+            "recurrence": r#"{"freq":"daily","interval":1,"by_day":[],"by_month":[],"by_month_day":[],"count":null,"exdates":[]}"#,
+            "start_time": "06:00",
+            "end_time": "07:00",
+            "avg_minutes": 60,
+            "steps": [
+                {
+                    "position": 0,
+                    "title": "step A",
+                    "start_time": "06:00",
+                    "end_time": "06:30",
+                    "avg_minutes": 30,
+                },
+                {
+                    "position": 1,
+                    "title": "step B",
+                    "start_time": "06:30",
+                    "end_time": "07:00",
+                    "avg_minutes": 30,
+                },
+            ],
+        }),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let tasks: Vec<serde_json::Value> =
+        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    assert!(tasks.len() >= 2);
+    let titles: Vec<&str> = tasks.iter().map(|t| t["title"].as_str().unwrap()).collect();
+    assert!(titles.contains(&"step A"));
+    assert!(titles.contains(&"step B"));
+}
+
+#[tokio::test]
+async fn habit_preview_rejects_invalid_recurrence() {
+    let (state, _) = setup().await;
+    let app = build_router(state);
+    let req = auth_req_body(
+        Method::POST,
+        "/api/habits/preview",
+        json!({
+            "title": "bad",
+            "recurrence": "not json",
+            "start_time": "06:00",
+            "end_time": "07:00",
+            "avg_minutes": 30,
+        }),
+    );
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
 #[tokio::test]
 async fn settings_update_rejects_invalid_timezone() {
     let (state, _) = setup().await;
@@ -4062,8 +4183,7 @@ async fn progress_and_pause_cannot_share_operation_id() {
     );
     let res = app.clone().oneshot(create).await.unwrap();
     assert_eq!(res.status(), StatusCode::CREATED);
-    let task: serde_json::Value =
-        serde_json::from_str(&body_str(res.into_body()).await).unwrap();
+    let task: serde_json::Value = serde_json::from_str(&body_str(res.into_body()).await).unwrap();
     let id = task["id"].as_str().unwrap();
 
     let req = auth_req(Method::POST, &format!("/api/tasks/{id}/work/start"));

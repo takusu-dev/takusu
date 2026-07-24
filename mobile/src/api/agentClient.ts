@@ -5,6 +5,7 @@ import type {
   TurnEvent,
   UserInputAnswer,
 } from './agentTypes';
+import type { HabitPreviewRequest, HabitPreviewTask } from './types';
 import type { PermissionsMap } from './settingsStore';
 
 export type { AgentTurnResult };
@@ -83,6 +84,10 @@ export class AgentClient {
     const text = await response.text().catch(() => '');
     if (!response.ok) throw new AgentApiError(response.status, text);
     return text ? (JSON.parse(text) as T) : (undefined as T);
+  }
+
+  async previewHabit(body: HabitPreviewRequest): Promise<HabitPreviewTask[]> {
+    return this.request('POST', '/api/habits/preview', body);
   }
 
   async health(): Promise<void> {
