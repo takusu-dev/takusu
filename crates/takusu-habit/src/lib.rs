@@ -39,15 +39,17 @@
 
 mod error;
 mod generator;
+mod parse;
 mod rule;
 mod summarize;
 mod time;
 
 pub use error::Error;
 pub use generator::RecurrenceGenerator;
+pub use parse::{ParsedRule, Until, parse_rrule};
 pub use rule::{Frequency, NWeekday, RecurrenceRule, Weekday};
 pub use summarize::summarize;
-pub use time::{TimeOfDay, date_time_to_point, point_to_date};
+pub use time::{TimeOfDay, date_time_to_point, date_to_day_number, point_to_date};
 
 use jiff::tz::TimeZone;
 use takusu_core::{NormalDist, Point, Task};

@@ -67,7 +67,7 @@ impl NWeekday {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecurrenceRule {
     pub freq: Frequency,
     pub interval: u32,
