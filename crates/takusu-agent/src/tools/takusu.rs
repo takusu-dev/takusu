@@ -21,6 +21,8 @@ pub fn register_tools(
     register_read_tools(registry, client.clone(), tz_cache.clone());
     register_mutation_tools(registry, client.clone(), tz_cache.clone());
     crate::tools::progress::register_tools(registry, client.clone(), tz_cache.clone());
+    crate::tools::rrule::register_tools(registry, tz_cache.clone());
+    crate::tools::day_details::register_tools(registry, client.clone(), tz_cache.clone());
     crate::tools::memory::register_tools(registry, client.clone());
     registry.register(Box::new(PreviewScheduleTool {
         client: client.clone(),

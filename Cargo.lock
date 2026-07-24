@@ -2199,6 +2199,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "jpholiday"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a645e7e52deb355905aed96675ba36b126c7a82a0df6e36b581199f90aef62a"
+
+[[package]]
 name = "js-sys"
 version = "0.3.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4678,12 +4684,15 @@ dependencies = [
  "config",
  "futures-util",
  "jiff",
+ "jpholiday",
  "rand 0.10.1",
  "reqwest",
  "serde",
  "serde_json",
  "takusu-audio",
  "takusu-client",
+ "takusu-core",
+ "takusu-habit",
  "takusu-util",
  "thiserror 2.0.18",
  "tokio",
