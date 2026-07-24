@@ -302,7 +302,8 @@ impl Tool for SkillsProposeAdd {
                 "description":{"type":"string"},
                 "body":{"type":"string","description":"Skill instructions (markdown)"},
                 "why":{"type":"string"},
-                "warnings":{"type":"array","items":{"type":"string"}}
+                "warnings":{"type":"array","items":{"type":"string"}},
+                "inferred_fields": crate::inferred_fields_schema("Fields inferred from user input.")
             },
             "required":["slug","name","description","body"],
             "additionalProperties":false
@@ -370,6 +371,7 @@ impl Tool for SkillsProposeAdd {
                 "target": proposal.target_label,
                 "why": why,
                 "warnings": warnings,
+                "inferred_fields": inferred_fields,
             }))
             .unwrap(),
             why,
@@ -405,7 +407,8 @@ impl Tool for SkillsProposeEdit {
                 "description":{"type":"string"},
                 "body":{"type":"string"},
                 "why":{"type":"string"},
-                "warnings":{"type":"array","items":{"type":"string"}}
+                "warnings":{"type":"array","items":{"type":"string"}},
+                "inferred_fields": crate::inferred_fields_schema("Fields inferred from user input.")
             },
             "required":["slug"],
             "additionalProperties":false
@@ -496,6 +499,7 @@ impl Tool for SkillsProposeEdit {
                 "target": proposal.target_label,
                 "why": why,
                 "warnings": warnings,
+                "inferred_fields": inferred_fields,
             }))
             .unwrap(),
             why,

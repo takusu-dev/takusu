@@ -53,6 +53,27 @@ pub struct InferredField {
     pub reason: String,
 }
 
+pub fn inferred_field_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "field": {"type": "string", "description": "Name of the inferred field."},
+            "value": {"description": "Inferred value for the field."},
+            "reason": {"type": "string", "description": "Reason the field was inferred."}
+        },
+        "required": ["field", "value", "reason"],
+        "additionalProperties": false
+    })
+}
+
+pub fn inferred_fields_schema(description: &str) -> Value {
+    json!({
+        "type": "array",
+        "description": description,
+        "items": inferred_field_schema()
+    })
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChangeReceipt {
     pub operation: String,
