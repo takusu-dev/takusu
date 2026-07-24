@@ -11,6 +11,7 @@ export interface ToolCallItem {
   arguments?: unknown;
   result?: string;
   isError?: boolean;
+  isRejected?: boolean;
 }
 
 export type MessageSegment =

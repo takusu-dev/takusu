@@ -100,6 +100,28 @@ function newId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function markRejectedToolCalls(message: Message): Message {
+  if (!message.toolCalls || message.toolCalls.length === 0) return message;
+  const updated = message.toolCalls.map((call) => {
+    if (call.isRejected || call.result === undefined) return call;
+    try {
+      const parsed = JSON.parse(call.result) as unknown;
+      if (
+        parsed &&
+        typeof parsed === 'object' &&
+        !Array.isArray(parsed) &&
+        (parsed as Record<string, unknown>).approval_required === true
+      ) {
+        return { ...call, isRejected: true };
+      }
+    } catch {
+      // ignore non-JSON results
+    }
+    return call;
+  });
+  return { ...message, toolCalls: updated };
+}
+
 function appendSegment(
   segments: MessageSegment[],
   segment: MessageSegment,
@@ -254,6 +276,7 @@ interface ToolNameChipProps {
 }
 
 function ToolNameChip({ call, colors, onPress }: ToolNameChipProps) {
+  const rejected = call.isRejected ?? false;
   return (
     <Pressable
       style={[
@@ -275,7 +298,7 @@ function ToolNameChip({ call, colors, onPress }: ToolNameChipProps) {
             backgroundColor:
               call.result === undefined
                 ? colors.gray
-                : call.isError
+                : call.isError || rejected
                   ? colors.red
                   : colors.green,
           },
@@ -284,6 +307,7 @@ function ToolNameChip({ call, colors, onPress }: ToolNameChipProps) {
       <Text style={[styles.toolChipText, { color: colors.black }]}>
         {call.name}
       </Text>
+      {rejected && <Ionicons name="close" size={10} color={colors.red} />}
     </Pressable>
   );
 }
@@ -295,6 +319,7 @@ interface ToolCallCardProps {
 
 function ToolCallCard({ call, colors }: ToolCallCardProps) {
   const isAsr = call.name === 'correct_asr';
+  const rejected = call.isRejected ?? false;
   const asrCount = isAsr
     ? ((call.arguments as { questions?: unknown[] } | undefined)?.questions
         ?.length ?? 0)
@@ -314,13 +339,19 @@ function ToolCallCard({ call, colors }: ToolCallCardProps) {
           style={[
             styles.toolStatus,
             {
-              backgroundColor: call.isError ? colors.red : colors.green,
+              backgroundColor:
+                call.isError || rejected ? colors.red : colors.green,
             },
           ]}
         />
         <Text style={{ color: colors.black, fontWeight: '700' }}>
           {isAsr ? 'ASR訂正' : call.name}
         </Text>
+        {rejected && (
+          <View style={[styles.rejectedBadge, { backgroundColor: colors.red }]}>
+            <Text style={styles.rejectedBadgeText}>拒否</Text>
+          </View>
+        )}
       </View>
       {!isAsr && call.arguments !== undefined && (
         <Text style={[styles.toolArgs, { color: colors.gray }]}>
@@ -335,7 +366,7 @@ function ToolCallCard({ call, colors }: ToolCallCardProps) {
       {call.result !== undefined && (
         <Text
           style={{
-            color: call.isError ? colors.red : colors.green,
+            color: call.isError || rejected ? colors.red : colors.green,
           }}
         >
           {isAsr
@@ -544,12 +575,14 @@ function ContextGroup({
       />,
     );
   }
-  for (let i = 0; i < toolStages.length && chips.length < 3; i++) {
+  const maxToolChips = 3 - chips.length;
+  const startToolIndex = Math.max(0, toolStages.length - maxToolChips);
+  for (let i = startToolIndex; i < toolStages.length; i++) {
     const call = message.toolCalls?.[toolStages[i].callIndex];
     if (call) {
       chips.push(
         <ToolNameChip
-          key={`tool-${i}`}
+          key={`tool-${toolStages[i].callIndex}`}
           call={call}
           colors={colors}
           onPress={onToolPress}
@@ -558,10 +591,11 @@ function ContextGroup({
     }
   }
   const totalChips = (hasThinking ? 1 : 0) + toolStages.length;
+  const overflowCount = totalChips - chips.length;
   const more =
-    totalChips > 3 ? (
+    overflowCount > 0 ? (
       <Text style={[styles.toolChipText, { color: colors.gray }]}>
-        +{totalChips - 3}
+        {overflowCount}+
       </Text>
     ) : null;
 
@@ -1852,19 +1886,26 @@ export function AgentView() {
         newId('approval'),
       );
       setApproval(null);
-      const resolveText = result.approved
-        ? '変更を適用しました。'
-        : '変更を取り消しました。';
-      setMessages((current) => [
-        ...current,
-        {
-          id: newId('assistant'),
-          role: 'assistant',
-          text: resolveText,
-          segments: [{ type: 'text', text: resolveText }],
-          collapsedGroups: [],
-        },
-      ]);
+      if (!result.approved) {
+        setMessages((current) => {
+          const next = [...current];
+          for (let i = next.length - 1; i >= 0; i--) {
+            if (next[i].role === 'assistant') {
+              next[i] = markRejectedToolCalls(next[i]);
+              break;
+            }
+          }
+          const resolveText = '変更を取り消しました。';
+          next.push({
+            id: newId('assistant'),
+            role: 'assistant',
+            text: resolveText,
+            segments: [{ type: 'text', text: resolveText }],
+            collapsedGroups: [],
+          });
+          return next;
+        });
+      }
 
       if (result.approved && newSessionPermissions) {
         sessionPermissionsRef.current = newSessionPermissions;
@@ -2615,6 +2656,17 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   toolStatus: { width: 8, height: 8, borderRadius: 4 },
+  rejectedBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    marginLeft: 'auto',
+  },
+  rejectedBadgeText: {
+    color: COLORS.white,
+    fontSize: 10,
+    fontWeight: '700',
+  },
   toolArgs: { fontSize: 11, fontFamily: 'monospace' },
   userInputSheet: {
     margin: 12,
