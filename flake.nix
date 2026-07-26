@@ -935,6 +935,13 @@
                   openjdk_headless
                 ];
               };
+
+              ci-docs = pkgs.buildEnv {
+                name = "ci-docs";
+                paths = with pkgs; [
+                  mdbook
+                ];
+              };
             };
 
           devShells = {
@@ -1046,6 +1053,13 @@
               ];
             };
 
+            # Documentation build shell.
+            docs = pkgs.mkShell {
+              nativeBuildInputs = with pkgs; [
+                mdbook
+              ];
+            };
+
             # Full shell for local development — keeps everything (Android SDK,
             # Node, JVM, MCP config symlink, etc.).
             default = pkgs.mkShell {
@@ -1066,6 +1080,7 @@
                   wrangler
                   openjdk_headless
                   ktlint
+                  mdbook
                   (python3.withPackages (pythonPackages: [ pythonPackages.ortools ]))
                 ]
                 ++ lib.optional pkgs.stdenv.isLinux pkgs.perf;
